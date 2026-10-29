@@ -642,9 +642,6 @@
                             <option value="email">Email</option>
                             <option value="matrix">Matrix</option>
                         </select>
-                        <button class="btn btn-primary btn-sm" id="saveChannelsBtn" onclick="saveChannelConfig()">
-                            Save & Apply
-                        </button>
                     </div>
                 </div>
 
@@ -667,56 +664,34 @@
                                 <div class="wizard-progress-step active" id="wizProgTelegram1">1</div>
                                 <div class="wizard-progress-line" id="wizLineTelegram1"></div>
                                 <div class="wizard-progress-step" id="wizProgTelegram2">2</div>
-                                <div class="wizard-progress-line" id="wizLineTelegram2"></div>
-                                <div class="wizard-progress-step" id="wizProgTelegram3">3</div>
-                                <div class="wizard-progress-line" id="wizLineTelegram3"></div>
-                                <div class="wizard-progress-step" id="wizProgTelegram4">4</div>
                             </div>
                             <div class="channel-wizard" id="wizardTelegram">
-                                <!-- Step 1: Open BotFather -->
                                 <div class="channel-wizard-step active" id="wizStepTelegram1">
-                                    <h4>Open Telegram and find BotFather</h4>
-                                    <p>BotFather is the official Telegram bot for creating and managing bots. Click the link below to open it directly.</p>
-                                    <a class="wizard-link" href="https://t.me/BotFather" target="_blank">Open @BotFather in Telegram</a>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('telegram', 1)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 2: Create bot -->
-                                <div class="channel-wizard-step" id="wizStepTelegram2">
                                     <h4>Create your bot</h4>
-                                    <p>In the BotFather chat, send <code>/newbot</code> and follow the prompts. You will be asked to choose a name and username for your bot. The username must end in <code>bot</code> (e.g. <code>MyBhaiBot</code>).</p>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('telegram', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('telegram', 2)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 3: Paste token -->
-                                <div class="channel-wizard-step" id="wizStepTelegram3">
-                                    <h4>Paste your bot token</h4>
-                                    <p>After creating the bot, BotFather will give you an API token. Copy and paste it below.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Bot Token</label>
-                                        <input class="clean-input" type="password" id="chTelegramToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off">
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('telegram', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('telegram', 3)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 4: User ID + Test -->
-                                <div class="channel-wizard-step" id="wizStepTelegram4">
-                                    <h4>Find your user ID</h4>
-                                    <p>Message the bot below on Telegram to get your numeric user ID. Only messages from these IDs will be accepted.</p>
-                                    <a class="wizard-link" href="https://t.me/userinfobot" target="_blank" style="margin-bottom:12px;">Open @userinfobot in Telegram</a>
+                                    <p>Open BotFather, send <code>/newbot</code> and pick any name. Paste the token it sends back. Bhai checks it as you paste.</p>
+                                    <a class="wizard-link" href="https://t.me/BotFather" target="_blank">Open @BotFather</a>
                                     <div class="input-group" style="margin-top:12px;">
-                                        <label class="input-label">Allowed User IDs</label>
-                                        <input class="clean-input" type="text" id="chTelegramUserIds" placeholder="1151119331,987654321" autocomplete="off">
-                                        <span class="input-hint">Comma-separated if multiple users.</span>
+                                        <label class="input-label">Bot Token</label>
+                                        <input class="clean-input" type="password" id="chTelegramToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" oninput="onTokenInput('telegram')">
                                     </div>
+                                    <div class="channel-test-result" id="tgTokenStatus"></div>
+                                </div>
+                                <div class="channel-wizard-step" id="wizStepTelegram2">
+                                    <h4>Say hi to your bot</h4>
+                                    <p>Tap the button and press <strong>Start</strong> in Telegram. Bhai recognises you from that message and finishes setup by itself.</p>
+                                    <a class="wizard-link" id="tgBotLink" href="https://t.me/BotFather" target="_blank" onclick="onTelegramBotLinkClick()">Open your bot</a>
+                                    <div class="channel-test-result" id="tgOwnerStatus"></div>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Enter user IDs yourself</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">Allowed User IDs</label>
+                                            <input class="clean-input" type="text" id="chTelegramUserIds" placeholder="1151119331,987654321" autocomplete="off">
+                                            <span class="input-hint">Comma-separated. Only these people can talk to Bhai.</span>
+                                        </div>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('telegram')">Connect</button>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('telegram', 4)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('telegram')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('telegram', 1)">Use a different bot</button>
                                     </div>
                                 </div>
                             </div>
@@ -752,9 +727,9 @@
                                 <!-- Step 1: QR Code -->
                                 <div class="channel-wizard-step active" id="wizStepWhatsapp1">
                                     <h4>Scan the QR code</h4>
-                                    <p>Enable WhatsApp above and start the bot. A QR code will appear below. Open WhatsApp on your phone, go to Settings > Linked Devices > Link a Device, and scan the code.</p>
+                                    <p>On your phone open WhatsApp → Settings → Linked Devices → Link a Device, and scan the code below.</p>
                                     <div id="waQRArea">
-                                        <div class="qr-waiting">Enable WhatsApp and start the bot to see QR code</div>
+                                        <div class="qr-waiting">Starting WhatsApp… the code appears here in a few seconds.</div>
                                     </div>
                                 </div>
                                 <!-- Step 2: Connected -->
@@ -842,59 +817,34 @@
                                 <div class="wizard-progress-step active" id="wizProgDiscord1">1</div>
                                 <div class="wizard-progress-line" id="wizLineDiscord1"></div>
                                 <div class="wizard-progress-step" id="wizProgDiscord2">2</div>
-                                <div class="wizard-progress-line" id="wizLineDiscord2"></div>
-                                <div class="wizard-progress-step" id="wizProgDiscord3">3</div>
-                                <div class="wizard-progress-line" id="wizLineDiscord3"></div>
-                                <div class="wizard-progress-step" id="wizProgDiscord4">4</div>
                             </div>
                             <div class="channel-wizard" id="wizardDiscord">
-                                <!-- Step 1: Create bot -->
                                 <div class="channel-wizard-step active" id="wizStepDiscord1">
-                                    <h4>Create a Discord bot</h4>
-                                    <p>Go to the Discord Developer Portal. Click "New Application", give it a name, then navigate to the "Bot" section and click "Add Bot".</p>
+                                    <h4>Create the bot</h4>
+                                    <p>In the Developer Portal: <strong>New Application</strong> → <strong>Bot</strong> → turn on <strong>Message Content Intent</strong> → <strong>Reset Token</strong>. Paste the token here.</p>
                                     <a class="wizard-link" href="https://discord.com/developers/applications" target="_blank">Open Discord Developer Portal</a>
-                                    <p style="margin-top:12px;">Under the Bot section, enable the <strong>Message Content Intent</strong> toggle (required to read messages).</p>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('discord', 1)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 2: Paste token -->
-                                <div class="channel-wizard-step" id="wizStepDiscord2">
-                                    <h4>Paste your bot token</h4>
-                                    <p>In the Bot section, click "Reset Token" to reveal your bot token. Copy and paste it below.</p>
-                                    <div class="input-group">
+                                    <div class="input-group" style="margin-top:12px;">
                                         <label class="input-label">Bot Token</label>
-                                        <input class="clean-input" type="password" id="chDiscordToken" placeholder="MTIzNDU2Nzg5MDEyMzQ1Njc4OQ..." autocomplete="off" oninput="onDiscordTokenChange(this.value)">
+                                        <input class="clean-input" type="password" id="chDiscordToken" placeholder="MTIzNDU2Nzg5MDEyMzQ1Njc4OQ..." autocomplete="off" oninput="onTokenInput('discord')">
                                     </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('discord', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('discord', 2)">Next</button>
-                                    </div>
+                                    <div class="channel-test-result" id="dcTokenStatus"></div>
                                 </div>
-                                <!-- Step 3: Add to server -->
-                                <div class="channel-wizard-step" id="wizStepDiscord3">
-                                    <h4>Add bot to your server</h4>
-                                    <p>Click the invite link below to add your bot to a Discord server. You need "Manage Server" permission on the target server.</p>
-                                    <div id="discordInviteLink">
-                                        <div class="provider-note">Enter your bot token in the previous step to generate an invite link.</div>
-                                    </div>
+                                <div class="channel-wizard-step" id="wizStepDiscord2">
+                                    <h4>Add it to your server</h4>
+                                    <p>Pick a server you own. Bhai only answers you (the app's owner); add others under the option below.</p>
+                                    <div id="discordInviteLink"></div>
+                                    <div class="channel-test-result" id="dcIntentWarn"></div>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Who can talk to Bhai</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">Allowed User IDs</label>
+                                            <input class="clean-input" type="text" id="chDiscordUserIds" placeholder="123456789012345678" autocomplete="off">
+                                            <span class="input-hint">Comma-separated. Filled in with your ID automatically.</span>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('discord', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('discord', 3)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 4: Restrict access + Test -->
-                                <div class="channel-wizard-step" id="wizStepDiscord4">
-                                    <h4>Restrict access (optional)</h4>
-                                    <p>Limit who can interact with the bot by providing your Discord User ID. Enable Developer Mode in Discord Settings > Advanced, then right-click your name and "Copy User ID".</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Allowed User IDs</label>
-                                        <input class="clean-input" type="text" id="chDiscordUserIds" placeholder="123456789012345678" autocomplete="off">
-                                        <span class="input-hint">Comma-separated. Leave blank to allow all server members.</span>
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('discord', 4)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('discord')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('discord', 1)">Back</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('discord')">I've added it, connect</button>
                                     </div>
                                 </div>
                             </div>
@@ -919,17 +869,16 @@
                                 <div class="wizard-progress-step active" id="wizProgSlack1">1</div>
                                 <div class="wizard-progress-line" id="wizLineSlack1"></div>
                                 <div class="wizard-progress-step" id="wizProgSlack2">2</div>
-                                <div class="wizard-progress-line" id="wizLineSlack2"></div>
-                                <div class="wizard-progress-step" id="wizProgSlack3">3</div>
                             </div>
                             <div class="channel-wizard" id="wizardSlack">
-                                <!-- Step 1: Create Slack app -->
                                 <div class="channel-wizard-step active" id="wizStepSlack1">
-                                    <h4>Create a Slack app</h4>
-                                    <p>Go to the Slack API portal and create a new app. You can use the manifest below for quick setup -- click "Create New App" > "From a manifest" and paste it.</p>
-                                    <a class="wizard-link" href="https://api.slack.com/apps" target="_blank" style="margin-bottom:12px;">Open Slack API Portal</a>
-                                    <div style="position:relative;margin-top:12px;">
-                                        <div class="manifest-code" id="slackManifest">{
+                                    <h4>Create the Slack app</h4>
+                                    <p>One click opens Slack with Bhai's settings filled in. Pick your workspace, click <strong>Create</strong>, then <strong>Install to Workspace</strong>.</p>
+                                    <a class="wizard-link" id="slackCreateLink" href="https://api.slack.com/apps" target="_blank">Create the Bhai app in Slack</a>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Show the app manifest</summary>
+                                        <div style="position:relative;">
+                                            <div class="manifest-code" id="slackManifest">{
   "display_information": { "name": "Bhai" },
   "features": {
     "bot_user": { "display_name": "Bhai", "always_online": true }
@@ -946,43 +895,36 @@
     "socket_mode_enabled": true
   }
 }</div>
-                                        <button class="copy-manifest-btn" onclick="copySlackManifest()">Copy</button>
-                                    </div>
+                                            <button class="copy-manifest-btn" onclick="copySlackManifest()">Copy</button>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('slack', 1)">Next</button>
+                                        <button class="wizard-btn wizard-btn-primary" onclick="goToWizardStep('slack', 2)">Installed, next</button>
                                     </div>
                                 </div>
-                                <!-- Step 2: Copy tokens -->
                                 <div class="channel-wizard-step" id="wizStepSlack2">
-                                    <h4>Copy your tokens</h4>
-                                    <p>After installing the app to your workspace, copy both tokens:</p>
+                                    <h4>Paste two tokens</h4>
                                     <div class="input-group">
                                         <label class="input-label">Bot Token</label>
                                         <input class="clean-input" type="password" id="chSlackBotToken" placeholder="xoxb-..." autocomplete="off">
-                                        <span class="input-hint">Found in OAuth & Permissions > Bot User OAuth Token</span>
+                                        <span class="input-hint">OAuth &amp; Permissions → Bot User OAuth Token</span>
                                     </div>
                                     <div class="input-group">
                                         <label class="input-label">App Token</label>
                                         <input class="clean-input" type="password" id="chSlackAppToken" placeholder="xapp-..." autocomplete="off">
-                                        <span class="input-hint">Found in Basic Information > App-Level Tokens (create one with <code>connections:write</code> scope)</span>
+                                        <span class="input-hint">Basic Information → App-Level Tokens → Generate, add the <code>connections:write</code> scope</span>
                                     </div>
-                                    <div class="input-group">
-                                        <label class="input-label">Allowed User IDs (optional)</label>
-                                        <input class="clean-input" type="text" id="chSlackUserIds" placeholder="U0123456789" autocomplete="off">
-                                        <span class="input-hint">Your Slack Member ID. Click your profile picture > Profile > three dots > Copy Member ID.</span>
-                                    </div>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Who can talk to Bhai</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">Allowed Member IDs</label>
+                                            <input class="clean-input" type="text" id="chSlackUserIds" placeholder="U0123456789" autocomplete="off">
+                                            <span class="input-hint">Filled in with the workspace owner. Find yours: profile picture → Profile → ⋯ → Copy member ID.</span>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('slack', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('slack', 2)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 3: Test -->
-                                <div class="channel-wizard-step" id="wizStepSlack3">
-                                    <h4>Test your connection</h4>
-                                    <p>Everything is set up. Click below to verify Bhai can connect to your Slack workspace.</p>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('slack', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('slack')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('slack', 1)">Back</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('slack')">Connect</button>
                                     </div>
                                 </div>
                             </div>
@@ -1003,83 +945,42 @@
                             </label>
                         </div>
                         <div class="settings-fields" id="chFieldsEmail" style="display:none;">
-                            <div class="wizard-progress" id="wizardProgressEmail">
-                                <div class="wizard-progress-step active" id="wizProgEmail1">1</div>
-                                <div class="wizard-progress-line" id="wizLineEmail1"></div>
-                                <div class="wizard-progress-step" id="wizProgEmail2">2</div>
-                                <div class="wizard-progress-line" id="wizLineEmail2"></div>
-                                <div class="wizard-progress-step" id="wizProgEmail3">3</div>
-                                <div class="wizard-progress-line" id="wizLineEmail3"></div>
-                                <div class="wizard-progress-step" id="wizProgEmail4">4</div>
-                            </div>
                             <div class="channel-wizard" id="wizardEmail">
-                                <!-- Step 1: Enter email -->
                                 <div class="channel-wizard-step active" id="wizStepEmail1">
-                                    <h4>Enter your email</h4>
-                                    <p>Bhai will use this email address to send and receive messages.</p>
+                                    <p>Bhai reads and sends mail from this account. Server settings fill in by themselves for Gmail, Outlook, iCloud, Yahoo and Zoho.</p>
                                     <div class="input-group">
                                         <label class="input-label">Email Address</label>
                                         <input class="clean-input" type="email" id="chEmailUser" placeholder="you@gmail.com" autocomplete="off" oninput="onEmailDomainDetect(this.value)">
                                     </div>
-                                    <div class="provider-note" id="emailProviderNote" style="display:none;"></div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('email', 1)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 2: Enter password -->
-                                <div class="channel-wizard-step" id="wizStepEmail2">
-                                    <h4>Enter your password</h4>
-                                    <p id="emailPasswordHint">Enter the password or app password for your email account.</p>
                                     <div class="input-group">
-                                        <label class="input-label">Password / App Password</label>
+                                        <label class="input-label">App Password</label>
                                         <input class="clean-input" type="password" id="chEmailPassword" placeholder="xxxx xxxx xxxx xxxx" autocomplete="off">
                                     </div>
-                                    <div class="provider-note" id="emailPasswordProviderNote" style="display:none;"></div>
+                                    <div class="provider-note" id="emailProviderNote" style="display:none;"></div>
+                                    <details class="ch-advanced" id="emailAdvanced">
+                                        <summary class="advanced-toggle">Server settings and allowed senders</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">IMAP Host / Port</label>
+                                            <div style="display:flex;gap:8px;">
+                                                <input class="clean-input" type="text" id="chEmailImapHost" placeholder="imap.example.com" autocomplete="off" style="flex:3;">
+                                                <input class="clean-input" type="text" id="chEmailImapPort" placeholder="993" autocomplete="off" style="flex:1;">
+                                            </div>
+                                        </div>
+                                        <div class="input-group">
+                                            <label class="input-label">SMTP Host / Port</label>
+                                            <div style="display:flex;gap:8px;">
+                                                <input class="clean-input" type="text" id="chEmailSmtpHost" placeholder="smtp.example.com" autocomplete="off" style="flex:3;">
+                                                <input class="clean-input" type="text" id="chEmailSmtpPort" placeholder="465" autocomplete="off" style="flex:1;">
+                                            </div>
+                                        </div>
+                                        <div class="input-group">
+                                            <label class="input-label">Allowed Senders</label>
+                                            <input class="clean-input" type="text" id="chEmailWhitelist" placeholder="boss@company.com,friend@example.com" autocomplete="off">
+                                            <span class="input-hint">Bhai only acts on mail from these addresses. Left blank, it's just you.</span>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('email', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('email', 2)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 3: Server settings -->
-                                <div class="channel-wizard-step" id="wizStepEmail3">
-                                    <h4>Server settings</h4>
-                                    <p>These have been auto-filled based on your email provider. Only change them if you know what you are doing.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">SMTP Host</label>
-                                        <input class="clean-input" type="text" id="chEmailSmtpHost" placeholder="smtp.gmail.com" autocomplete="off" readonly>
-                                    </div>
-                                    <div class="input-group">
-                                        <label class="input-label">SMTP Port</label>
-                                        <input class="clean-input" type="text" id="chEmailSmtpPort" placeholder="465" autocomplete="off" readonly>
-                                    </div>
-                                    <div class="input-group">
-                                        <label class="input-label">IMAP Host</label>
-                                        <input class="clean-input" type="text" id="chEmailImapHost" placeholder="imap.gmail.com" autocomplete="off" readonly>
-                                    </div>
-                                    <div class="input-group">
-                                        <label class="input-label">IMAP Port</label>
-                                        <input class="clean-input" type="text" id="chEmailImapPort" placeholder="993" autocomplete="off" readonly>
-                                    </div>
-                                    <div class="advanced-toggle" onclick="toggleEmailAdvanced()">
-                                        <span id="emailAdvToggleIcon">&#9654;</span> Advanced: Edit server settings manually
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('email', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('email', 3)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 4: Allowed senders + Test -->
-                                <div class="channel-wizard-step" id="wizStepEmail4">
-                                    <h4>Allowed senders</h4>
-                                    <p>Bhai will only process emails from these addresses. Leave blank to accept all.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Email Whitelist</label>
-                                        <input class="clean-input" type="text" id="chEmailWhitelist" placeholder="boss@company.com,friend@example.com" autocomplete="off">
-                                        <span class="input-hint">Comma-separated email addresses.</span>
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('email', 4)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('email')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('email')">Connect</button>
                                     </div>
                                 </div>
                             </div>
@@ -1100,66 +1001,31 @@
                             </label>
                         </div>
                         <div class="settings-fields" id="chFieldsMatrix" style="display:none;">
-                            <div class="wizard-progress" id="wizardProgressMatrix">
-                                <div class="wizard-progress-step active" id="wizProgMatrix1">1</div>
-                                <div class="wizard-progress-line" id="wizLineMatrix1"></div>
-                                <div class="wizard-progress-step" id="wizProgMatrix2">2</div>
-                                <div class="wizard-progress-line" id="wizLineMatrix2"></div>
-                                <div class="wizard-progress-step" id="wizProgMatrix3">3</div>
-                                <div class="wizard-progress-line" id="wizLineMatrix3"></div>
-                                <div class="wizard-progress-step" id="wizProgMatrix4">4</div>
-                            </div>
                             <div class="channel-wizard" id="wizardMatrix">
-                                <!-- Step 1: Homeserver -->
                                 <div class="channel-wizard-step active" id="wizStepMatrix1">
-                                    <h4>Enter your homeserver</h4>
-                                    <p>The homeserver URL for your Matrix account. The default public server is matrix.org.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Homeserver URL</label>
-                                        <input class="clean-input" type="text" id="chMatrixHomeserver" placeholder="https://matrix.org" autocomplete="off">
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('matrix', 1)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 2: Username + password -->
-                                <div class="channel-wizard-step" id="wizStepMatrix2">
-                                    <h4>Enter username and password</h4>
-                                    <p>The bot will sign in with these credentials. You can create a dedicated Matrix account for Bhai or use your own.</p>
+                                    <p>Sign in with a Matrix account for Bhai. A separate account works best; it answers your DMs.</p>
                                     <div class="input-group">
                                         <label class="input-label">Username</label>
-                                        <input class="clean-input" type="text" id="chMatrixUsername" placeholder="@atlas:matrix.org" autocomplete="off">
+                                        <input class="clean-input" type="text" id="chMatrixUsername" placeholder="@bhai:matrix.org" autocomplete="off">
                                     </div>
                                     <div class="input-group">
                                         <label class="input-label">Password</label>
                                         <input class="clean-input" type="password" id="chMatrixPassword" placeholder="Your Matrix password" autocomplete="off">
                                     </div>
+                                    <details class="ch-advanced">
+                                        <summary class="advanced-toggle">Homeserver and rooms</summary>
+                                        <div class="input-group">
+                                            <label class="input-label">Homeserver URL</label>
+                                            <input class="clean-input" type="text" id="chMatrixHomeserver" value="https://matrix.org" autocomplete="off">
+                                        </div>
+                                        <div class="input-group">
+                                            <label class="input-label">Room IDs</label>
+                                            <input class="clean-input" type="text" id="chMatrixRooms" placeholder="!roomid:matrix.org" autocomplete="off">
+                                            <span class="input-hint">Comma-separated. Leave blank for DMs only.</span>
+                                        </div>
+                                    </details>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('matrix', 2)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('matrix', 2)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 3: Rooms -->
-                                <div class="channel-wizard-step" id="wizStepMatrix3">
-                                    <h4>Choose rooms (optional)</h4>
-                                    <p>Specify room IDs the bot should join. If left blank, the bot will respond to direct messages only. Room IDs look like <code>!abc123:matrix.org</code>.</p>
-                                    <div class="input-group">
-                                        <label class="input-label">Room IDs</label>
-                                        <input class="clean-input" type="text" id="chMatrixRooms" placeholder="!roomid:matrix.org" autocomplete="off">
-                                        <span class="input-hint">Comma-separated. Leave blank for DMs only.</span>
-                                    </div>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('matrix', 3)">Back</button>
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('matrix', 3)">Next</button>
-                                    </div>
-                                </div>
-                                <!-- Step 4: Test -->
-                                <div class="channel-wizard-step" id="wizStepMatrix4">
-                                    <h4>Test your connection</h4>
-                                    <p>Click below to verify Bhai can connect to your Matrix homeserver.</p>
-                                    <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep('matrix', 4)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="testChannelConnection('matrix')">Test Connection</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('matrix')">Connect</button>
                                     </div>
                                 </div>
                             </div>
@@ -1212,7 +1078,7 @@
                             <line x1="12" y1="16" x2="12" y2="12"></line>
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
                         </svg>
-                        Changes are saved to encrypted storage and require a bot restart to take effect.
+                        Settings save to encrypted storage and apply by themselves. Bhai restarts for a few seconds when a channel changes.
                     </div>
                 </div>
             </div>
@@ -2216,6 +2082,8 @@
             "zoho.com": { smtp: {host:"smtp.zoho.com",port:465}, imap: {host:"imap.zoho.com",port:993}, note:"Use your Zoho password." },
         };
 
+        for (const [alias, real] of [["googlemail.com","gmail.com"],["live.com","outlook.com"],["msn.com","outlook.com"],["me.com","icloud.com"],["mac.com","icloud.com"],["ymail.com","yahoo.com"]]) EMAIL_PROVIDERS[alias] = EMAIL_PROVIDERS[real];
+
         // Track current wizard step per channel
         const wizardSteps = { telegram: 1, whatsapp: 1, discord: 1, slack: 1, email: 1, matrix: 1 };
         // Track channel statuses from push events
@@ -2243,6 +2111,15 @@
             const dot = document.getElementById('chStatus' + capitalize(channel));
             if (dot) {
                 dot.className = 'channel-status-dot ' + (enabled ? 'disconnected' : 'disabled');
+            }
+            // WhatsApp needs no credentials: turning it on starts the bot so the QR shows.
+            // Turning off a saved channel applies straight away; there's no Save button.
+            const saved = channelConfig && channelConfig[channel] && channelConfig[channel].enabled;
+            if ((enabled && channel === 'whatsapp' && !saved) || (!enabled && saved)) {
+                saveChannelConfig();
+            } else if (enabled && fieldsEl) {
+                const first = fieldsEl.querySelector('.channel-wizard-step.active input:not([type=checkbox])');
+                if (first) first.focus();
             }
         }
 
@@ -2288,7 +2165,7 @@
         function goToWizardStep(channel, targetStep) {
             const cap = capitalize(channel);
             // Reset all steps
-            const totalSteps = { telegram: 4, whatsapp: 5, discord: 4, slack: 3, email: 4, matrix: 4 };
+            const totalSteps = { telegram: 2, whatsapp: 5, discord: 2, slack: 2, email: 1, matrix: 1 };
             const max = totalSteps[channel] || 4;
             for (let i = 1; i <= max; i++) {
                 const stepEl = document.getElementById('wizStep' + cap + i);
@@ -2317,89 +2194,125 @@
             const domain = (email.split('@')[1] || '').toLowerCase().trim();
             const provider = EMAIL_PROVIDERS[domain];
             const noteEl = document.getElementById('emailProviderNote');
-            const pwNoteEl = document.getElementById('emailPasswordProviderNote');
             if (provider) {
-                // Fill server fields
                 document.getElementById('chEmailSmtpHost').value = provider.smtp.host;
                 document.getElementById('chEmailSmtpPort').value = provider.smtp.port;
                 document.getElementById('chEmailImapHost').value = provider.imap.host;
                 document.getElementById('chEmailImapPort').value = provider.imap.port;
-                // Show provider note
-                if (noteEl) { noteEl.innerHTML = provider.note; noteEl.style.display = 'block'; }
-                if (pwNoteEl) { pwNoteEl.innerHTML = provider.note; pwNoteEl.style.display = 'block'; }
+                noteEl.innerHTML = provider.note;
+                noteEl.style.display = 'block';
             } else {
-                if (noteEl) noteEl.style.display = 'none';
-                if (pwNoteEl) pwNoteEl.style.display = 'none';
-                // Clear server fields if unknown provider
-                document.getElementById('chEmailSmtpHost').value = '';
-                document.getElementById('chEmailSmtpPort').value = '';
-                document.getElementById('chEmailImapHost').value = '';
-                document.getElementById('chEmailImapPort').value = '';
+                noteEl.style.display = 'none';
+                // Unknown provider: the server fields are needed, so show them.
+                if (domain.includes('.')) document.getElementById('emailAdvanced').open = true;
             }
         }
 
-        function toggleEmailAdvanced() {
-            const fields = ['chEmailSmtpHost', 'chEmailSmtpPort', 'chEmailImapHost', 'chEmailImapPort'];
-            const icon = document.getElementById('emailAdvToggleIcon');
-            const isReadonly = document.getElementById('chEmailSmtpHost').readOnly;
-            fields.forEach(id => { document.getElementById(id).readOnly = !isReadonly; });
-            if (icon) icon.innerHTML = isReadonly ? '&#9660;' : '&#9654;';
+        function setStatus(el, text, kind) {
+            if (!el) return;
+            el.textContent = text;
+            el.className = 'channel-test-result' + (text ? ' visible ' + kind : '');
+        }
+        const fieldVal = (id) => document.getElementById(id).value.trim();
+        const addId = (list, id) => [...new Set(list.split(',').map(x => x.trim()).filter(Boolean).concat(id))].join(',');
+
+        function renderDiscordInvite(clientId) {
+            const url = 'https://discord.com/api/oauth2/authorize?client_id=' + encodeURIComponent(clientId) + '&permissions=274877910016&scope=bot';
+            document.getElementById('discordInviteLink').innerHTML = '<a class="wizard-link" target="_blank" href="' + url + '">Add Bhai to a server</a>';
         }
 
-        function onDiscordTokenChange(token) {
-            const linkArea = document.getElementById('discordInviteLink');
-            if (!linkArea) return;
-            if (!token || token.length < 20) {
-                linkArea.innerHTML = '<div class="provider-note">Enter your bot token in the previous step to generate an invite link.</div>';
-                return;
+        function renderDiscordIntent(r) {
+            const warn = document.getElementById('dcIntentWarn');
+            if (r.intentOk) return setStatus(warn, '', '');
+            warn.className = 'channel-test-result visible error';
+            warn.innerHTML = 'Message Content Intent is off, so Bhai would see empty messages. <a target="_blank" href="https://discord.com/developers/applications/' + encodeURIComponent(r.clientId) + '/bot">Turn it on here</a>, then connect.';
+        }
+
+        // Paste a token → it is checked right away and the next step opens.
+        const tokenTimers = {};
+        function onTokenInput(channel) {
+            clearTimeout(tokenTimers[channel]);
+            tokenTimers[channel] = setTimeout(() => verifyToken(channel), 500);
+        }
+
+        async function verifyToken(channel) {
+            if (channel === 'telegram') {
+                const token = fieldVal('chTelegramToken');
+                const st = document.getElementById('tgTokenStatus');
+                if (!/^\d+:[A-Za-z0-9_-]{30,}$/.test(token)) return setStatus(st, token ? "That doesn't look like a full token yet." : '', 'error');
+                setStatus(st, 'Checking…', 'loading');
+                const r = await atlas.testChannel('telegram', { token });
+                if (token !== fieldVal('chTelegramToken')) return;
+                if (!r || !r.success) return setStatus(st, (r && r.message) || 'Telegram rejected this token.', 'error');
+                setStatus(st, '✓ Found @' + r.username, 'success');
+                const link = document.getElementById('tgBotLink');
+                link.href = 'https://t.me/' + encodeURIComponent(r.username);
+                link.textContent = 'Open @' + r.username;
+                goToWizardStep('telegram', 2);
+                waitForTelegramOwner(token);
+            } else if (channel === 'discord') {
+                const token = fieldVal('chDiscordToken');
+                const st = document.getElementById('dcTokenStatus');
+                if (token.length < 50) return setStatus(st, token ? "That doesn't look like a full token yet." : '', 'error');
+                setStatus(st, 'Checking…', 'loading');
+                const r = await atlas.testChannel('discord', { token });
+                if (token !== fieldVal('chDiscordToken')) return;
+                if (!r || !r.success) return setStatus(st, (r && r.message) || 'Discord rejected this token.', 'error');
+                setStatus(st, '✓ ' + r.message, 'success');
+                if (r.ownerId) document.getElementById('chDiscordUserIds').value = addId(fieldVal('chDiscordUserIds'), r.ownerId);
+                renderDiscordInvite(r.clientId);
+                renderDiscordIntent(r);
+                goToWizardStep('discord', 2);
             }
-            try {
-                // Discord bot tokens are base64(client_id).base64(timestamp).signature
-                const clientId = atob(token.split('.')[0]);
-                if (clientId && /^\d+$/.test(clientId)) {
-                    const url = 'https://discord.com/api/oauth2/authorize?client_id=' + clientId + '&permissions=274877910016&scope=bot';
-                    linkArea.innerHTML = '<div class="invite-link-box"><a href="' + url + '" target="_blank">' + url + '</a></div>';
-                } else {
-                    linkArea.innerHTML = '<div class="provider-note">Could not extract client ID from token. You can generate an invite link manually from the Developer Portal.</div>';
-                }
-            } catch {
-                linkArea.innerHTML = '<div class="provider-note">Could not parse token. Make sure you copied the full bot token.</div>';
-            }
+        }
+
+        let tgWaiting = false;
+        async function waitForTelegramOwner(token) {
+            const st = document.getElementById('tgOwnerStatus');
+            tgWaiting = true;
+            setStatus(st, 'Waiting for your message…', 'loading');
+            const r = await atlas.telegramWaitOwner(token);
+            tgWaiting = false;
+            if (token !== fieldVal('chTelegramToken')) return;
+            if (!r || !r.success) return setStatus(st, ((r && r.message) || 'No message yet') + '. Tap the button to try again.', 'error');
+            document.getElementById('chTelegramUserIds').value = addId(fieldVal('chTelegramUserIds'), r.userId);
+            setStatus(st, '✓ Found you' + (r.name ? ': ' + r.name : ''), 'success');
+            connectChannel('telegram');
+        }
+
+        function onTelegramBotLinkClick() {
+            const token = fieldVal('chTelegramToken');
+            if (token && !tgWaiting) waitForTelegramOwner(token);
         }
 
         async function testChannelConnection(channel) {
             const resultEl = document.getElementById('testResult' + capitalize(channel));
-            if (!resultEl) return;
-            resultEl.className = 'channel-test-result visible loading';
-            resultEl.textContent = 'Testing connection...';
+            setStatus(resultEl, 'Checking…', 'loading');
 
-            // Gather params based on channel
             let params = {};
             switch (channel) {
                 case 'telegram':
-                    params = { token: document.getElementById('chTelegramToken').value.trim(), userIds: document.getElementById('chTelegramUserIds').value.trim() };
+                    params = { token: fieldVal('chTelegramToken') };
                     break;
                 case 'discord':
-                    params = { token: document.getElementById('chDiscordToken').value.trim(), userIds: document.getElementById('chDiscordUserIds').value.trim() };
+                    params = { token: fieldVal('chDiscordToken') };
                     break;
                 case 'slack':
-                    params = { botToken: document.getElementById('chSlackBotToken').value.trim(), appToken: document.getElementById('chSlackAppToken').value.trim() };
+                    params = { botToken: fieldVal('chSlackBotToken'), appToken: fieldVal('chSlackAppToken') };
                     break;
                 case 'email':
                     params = {
-                        user: document.getElementById('chEmailUser').value.trim(),
-                        password: document.getElementById('chEmailPassword').value.trim(),
-                        smtpHost: document.getElementById('chEmailSmtpHost').value.trim(),
-                        smtpPort: document.getElementById('chEmailSmtpPort').value.trim(),
-                        imapHost: document.getElementById('chEmailImapHost').value.trim(),
-                        imapPort: document.getElementById('chEmailImapPort').value.trim(),
+                        user: fieldVal('chEmailUser'),
+                        password: fieldVal('chEmailPassword'),
+                        imapHost: fieldVal('chEmailImapHost'),
+                        imapPort: fieldVal('chEmailImapPort'),
                     };
                     break;
                 case 'matrix':
                     params = {
-                        homeserver: document.getElementById('chMatrixHomeserver').value.trim(),
-                        username: document.getElementById('chMatrixUsername').value.trim(),
-                        password: document.getElementById('chMatrixPassword').value.trim(),
+                        homeserver: fieldVal('chMatrixHomeserver'),
+                        username: fieldVal('chMatrixUsername'),
+                        password: fieldVal('chMatrixPassword'),
                     };
                     break;
             }
@@ -2407,17 +2320,57 @@
             try {
                 const result = await atlas.testChannel(channel, params);
                 if (result && result.success) {
-                    resultEl.className = 'channel-test-result visible success';
-                    resultEl.textContent = result.message || 'Connection successful!';
-                } else {
-                    resultEl.className = 'channel-test-result visible error';
-                    resultEl.textContent = (result && result.error) || 'Connection failed. Check your credentials.';
+                    setStatus(resultEl, result.message || 'Connection successful!', 'success');
+                    return result;
                 }
+                setStatus(resultEl, (result && (result.error || result.message)) || 'Connection failed. Check your credentials.', 'error');
             } catch (err) {
-                resultEl.className = 'channel-test-result visible error';
-                resultEl.textContent = 'Error: ' + (err.message || 'Unknown error');
+                setStatus(resultEl, 'Error: ' + (err.message || 'Unknown error'), 'error');
             }
+            return null;
         }
+
+        // The one button per channel: check the credentials, fill in what can be
+        // worked out, save, make it primary if nothing else is, and restart Bhai.
+        async function connectChannel(channel) {
+            const resultEl = document.getElementById('testResult' + capitalize(channel));
+            if (channel === 'slack' && !fieldVal('chSlackAppToken').startsWith('xapp-') && !(channelConfig.slack && channelConfig.slack.appToken)) {
+                return setStatus(resultEl, 'The App Token starts with xapp-. Generate it under Basic Information → App-Level Tokens.', 'error');
+            }
+            const r = await testChannelConnection(channel);
+            if (!r) return;
+            if (channel === 'discord') {
+                renderDiscordIntent(r);
+                if (!r.intentOk) return setStatus(resultEl, 'Turn on Message Content Intent first (link above).', 'error');
+                if (r.ownerId) document.getElementById('chDiscordUserIds').value = addId(fieldVal('chDiscordUserIds'), r.ownerId);
+            }
+            if (channel === 'slack' && !fieldVal('chSlackUserIds')) {
+                if (!r.ownerId) {
+                    document.querySelector('#wizStepSlack2 .ch-advanced').open = true;
+                    return setStatus(resultEl, 'Add your Slack member ID below so Bhai knows who to answer.', 'error');
+                }
+                document.getElementById('chSlackUserIds').value = r.ownerId;
+            }
+            if (channel === 'telegram' && !fieldVal('chTelegramUserIds')) {
+                return setStatus(resultEl, 'Say hi to your bot first, so Bhai knows who you are.', 'error');
+            }
+            if (channel === 'email' && !fieldVal('chEmailWhitelist')) {
+                document.getElementById('chEmailWhitelist').value = fieldVal('chEmailUser');
+            }
+            if (channel === 'matrix' && r.userId) document.getElementById('chMatrixUsername').value = r.userId;
+
+            const sel = document.getElementById('primaryChannelSelect');
+            const cur = sel.value;
+            if (cur !== channel && cur !== 'overlay' && !(channelConfig[cur] && channelConfig[cur].enabled)) {
+                sel.value = channel;
+                try { await atlas.saveSettings({ PRIMARY_CHANNEL: channel }); } catch { /* non-fatal */ }
+            }
+            const who = channel === 'slack' && r.ownerName ? ' Only ' + r.ownerName + ' can talk to it; change that under "Who can talk to Bhai".' : '';
+            setStatus(resultEl, '✓ ' + r.message + '. Turning it on…' + who, 'success');
+            if (await saveChannelConfig()) setStatus(resultEl, '✓ ' + capitalize(channel) + ' is on. Bhai is restarting to pick it up.' + who, 'success');
+        }
+
+        document.getElementById('slackCreateLink').href = 'https://api.slack.com/apps?new_app=1&manifest_json=' + encodeURIComponent(JSON.stringify(JSON.parse(document.getElementById('slackManifest').textContent)));
 
         function copySlackManifest() {
             const text = document.getElementById('slackManifest').textContent;
@@ -2543,7 +2496,17 @@
                     document.getElementById('chTelegramToken').value = tg.token;
                 }
                 if (tg.userIds) document.getElementById('chTelegramUserIds').value = tg.userIds;
-                if (tg.enabled && tg.token) goToWizardStep('telegram', 4);
+                if (tg.enabled && tg.token) {
+                    goToWizardStep('telegram', 2);
+                    setStatus(document.getElementById('tgOwnerStatus'), '✓ Connected' + (tg.userIds ? '. Allowed: ' + tg.userIds : ''), 'success');
+                    atlas.testChannel('telegram', { token: '' }).then(r => {
+                        if (!r || !r.success) return;
+                        const link = document.getElementById('tgBotLink');
+                        link.href = 'https://t.me/' + encodeURIComponent(r.username);
+                        link.textContent = 'Open @' + r.username;
+                        link.onclick = null; // the running bot owns its updates; don't poll them
+                    }).catch(() => {});
+                }
 
                 // WhatsApp
                 const wa = config.whatsapp || {};
@@ -2585,10 +2548,14 @@
                     document.getElementById('chDiscordToken').placeholder = 'Token saved (leave empty to keep)';
                 } else if (dc.token) {
                     document.getElementById('chDiscordToken').value = dc.token;
-                    onDiscordTokenChange(dc.token);
                 }
                 if (dc.userIds) document.getElementById('chDiscordUserIds').value = dc.userIds;
-                if (dc.enabled && dc.token) goToWizardStep('discord', 4);
+                if (dc.enabled && dc.token) {
+                    goToWizardStep('discord', 2);
+                    atlas.testChannel('discord', { token: '' }).then(r => {
+                        if (r && r.success) { renderDiscordInvite(r.clientId); renderDiscordIntent(r); }
+                    }).catch(() => {});
+                }
 
                 // Slack
                 const sl = config.slack || {};
@@ -2606,7 +2573,7 @@
                     document.getElementById('chSlackAppToken').value = sl.appToken;
                 }
                 if (sl.userIds) document.getElementById('chSlackUserIds').value = sl.userIds;
-                if (sl.enabled && sl.botToken) goToWizardStep('slack', 3);
+                if (sl.enabled && sl.botToken) goToWizardStep('slack', 2);
 
                 // Email
                 const em = config.email || {};
@@ -2622,7 +2589,6 @@
                 if (em.smtpPort) document.getElementById('chEmailSmtpPort').value = em.smtpPort;
                 if (em.imapHost) document.getElementById('chEmailImapHost').value = em.imapHost;
                 if (em.imapPort) document.getElementById('chEmailImapPort').value = em.imapPort;
-                if (em.enabled && em.user) goToWizardStep('email', 4);
 
                 // Matrix
                 const mx = config.matrix || {};
@@ -2632,93 +2598,78 @@
                 if (mx.homeserver) document.getElementById('chMatrixHomeserver').value = mx.homeserver;
                 if (mx.userId || mx.username) document.getElementById('chMatrixUsername').value = mx.userId || mx.username;
                 if (mx.allowedRooms || mx.rooms) document.getElementById('chMatrixRooms').value = mx.allowedRooms || mx.rooms;
-                if (mx.enabled && mx.homeserver) goToWizardStep('matrix', 4);
 
             } catch (err) {
                 console.error('Failed to load channel config:', err);
             }
         }
 
+        // Saves every channel and restarts Bhai (or starts it) so the change takes
+        // effect; there's no separate Save button. Returns true on success.
         async function saveChannelConfig() {
-            const btn = document.getElementById('saveChannelsBtn');
-            btn.disabled = true;
-            btn.textContent = 'Saving...';
-
             const config = {
                 telegram: {
                     enabled: document.getElementById('chToggleTelegram').checked,
-                    token: document.getElementById('chTelegramToken').value.trim(),
-                    userIds: document.getElementById('chTelegramUserIds').value.trim(),
+                    token: fieldVal('chTelegramToken'),
+                    userIds: fieldVal('chTelegramUserIds'),
                 },
                 whatsapp: {
                     enabled: document.getElementById('chToggleWhatsapp').checked,
                 },
                 discord: {
                     enabled: document.getElementById('chToggleDiscord').checked,
-                    token: document.getElementById('chDiscordToken').value.trim(),
-                    clientId: (() => { try { return atob(document.getElementById('chDiscordToken').value.trim().split('.')[0]); } catch { return ''; } })(),
-                    userIds: document.getElementById('chDiscordUserIds').value.trim(),
+                    token: fieldVal('chDiscordToken'),
+                    clientId: (() => { try { return atob(fieldVal('chDiscordToken').split('.')[0]); } catch { return ''; } })(),
+                    userIds: fieldVal('chDiscordUserIds'),
                 },
                 slack: {
                     enabled: document.getElementById('chToggleSlack').checked,
-                    botToken: document.getElementById('chSlackBotToken').value.trim(),
-                    appToken: document.getElementById('chSlackAppToken').value.trim(),
-                    userIds: document.getElementById('chSlackUserIds').value.trim(),
+                    botToken: fieldVal('chSlackBotToken'),
+                    appToken: fieldVal('chSlackAppToken'),
+                    userIds: fieldVal('chSlackUserIds'),
                 },
                 email: {
                     enabled: document.getElementById('chToggleEmail').checked,
-                    user: document.getElementById('chEmailUser').value.trim(),
-                    password: document.getElementById('chEmailPassword').value.trim(),
-                    whitelist: document.getElementById('chEmailWhitelist').value.trim(),
-                    smtpHost: document.getElementById('chEmailSmtpHost').value.trim(),
-                    smtpPort: document.getElementById('chEmailSmtpPort').value.trim(),
-                    imapHost: document.getElementById('chEmailImapHost').value.trim(),
-                    imapPort: document.getElementById('chEmailImapPort').value.trim(),
+                    user: fieldVal('chEmailUser'),
+                    password: fieldVal('chEmailPassword'),
+                    whitelist: fieldVal('chEmailWhitelist'),
+                    smtpHost: fieldVal('chEmailSmtpHost'),
+                    smtpPort: fieldVal('chEmailSmtpPort'),
+                    imapHost: fieldVal('chEmailImapHost'),
+                    imapPort: fieldVal('chEmailImapPort'),
                 },
                 matrix: {
                     enabled: document.getElementById('chToggleMatrix').checked,
-                    homeserver: document.getElementById('chMatrixHomeserver').value.trim(),
-                    username: document.getElementById('chMatrixUsername').value.trim(),
-                    password: document.getElementById('chMatrixPassword').value.trim(),
-                    rooms: document.getElementById('chMatrixRooms').value.trim(),
+                    homeserver: fieldVal('chMatrixHomeserver'),
+                    username: fieldVal('chMatrixUsername'),
+                    password: fieldVal('chMatrixPassword'),
+                    rooms: fieldVal('chMatrixRooms'),
                 },
             };
 
             try {
                 const result = await atlas.saveChannelConfig(config);
-                btn.disabled = false;
-                btn.textContent = 'Save & Apply';
-
-                if (result.success) {
-                    showToast('Channels saved!');
-                    // Offer restart if bot is running
-                    if (result.botRunning) {
-                        if (confirm('Bhai needs to restart for channel changes to take effect. Restart now?')) {
-                            showToast('Stopping bot...');
-                            await atlas.stopBot();
-                            // Wait for bot to actually stop (poll status)
-                            let waitAttempts = 0;
-                            while (waitAttempts < 15) {
-                                await new Promise(r => setTimeout(r, 1000));
-                                const status = await atlas.getBotStatus();
-                                if (status.status === 'stopped') break;
-                                waitAttempts++;
-                            }
-                            showToast('Starting bot with new config...');
-                            await atlas.startBot();
-                            // Reload channel config after restart
-                            setTimeout(() => loadChannelConfig(), 3000);
-                        }
-                    } else {
-                        showToast('Channels saved! Start the bot to apply changes.');
+                if (!result.success) {
+                    showToast('Failed to save: ' + (result.error || 'Unknown error'));
+                    return false;
+                }
+                if (result.botRunning) {
+                    showToast('Saved. Restarting Bhai…');
+                    await atlas.stopBot();
+                    for (let i = 0; i < 15; i++) {
+                        await new Promise(r => setTimeout(r, 1000));
+                        const status = await atlas.getBotStatus();
+                        if (status.status === 'stopped') break;
                     }
                 } else {
-                    showToast('Failed to save: ' + (result.error || 'Unknown error'));
+                    showToast('Saved. Starting Bhai…');
                 }
+                await atlas.startBot();
+                setTimeout(() => loadChannelConfig(), 3000);
+                return true;
             } catch (err) {
-                btn.disabled = false;
-                btn.textContent = 'Save & Apply';
                 showToast('Error saving channels: ' + err.message);
+                return false;
             }
         }
 

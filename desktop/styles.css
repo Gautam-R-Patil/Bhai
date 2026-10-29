@@ -2983,6 +2983,12 @@ body.theme-dark .installed-item {
 
 .advanced-toggle { font-size: 12px; color: rgba(255,255,255,0.4); cursor: pointer; display: flex; align-items: center; gap: 4px; margin: 8px 0; user-select: none; }
 .advanced-toggle:hover { color: rgba(255,255,255,0.6); }
+.ch-advanced { margin-top: 12px; }
+.ch-advanced > summary { list-style: none; }
+.ch-advanced > summary::-webkit-details-marker { display: none; }
+.ch-advanced > summary::before { content: "\25B8  "; }
+.ch-advanced[open] > summary::before { content: "\25BE  "; }
+.ch-advanced[open] > summary { margin-bottom: 8px; }
 .advanced-fields { display: none; margin-top: 8px; }
 .advanced-fields.visible { display: block; }
 

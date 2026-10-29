@@ -5663,58 +5663,112 @@ ${body}`;
     // ── Channel Connection Tests ─────────────────
     // These work WITHOUT the bot running — just HTTP calls to verify credentials
 
+    // Empty or masked ("***") field = use the token already saved.
+    const savedOr = (v, key) => (v && v !== "***" ? v : loadEnvKey(key) || "");
+
     ipcMain.handle("channel:test-telegram", async (_, { token }) => {
         try {
-            const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+            token = savedOr(token, "TELEGRAM_BOT_TOKEN");
+            const res = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/getMe`);
             const data = await res.json();
-            if (data.ok) return { success: true, message: `Connected as @${data.result.username} (${data.result.first_name})` };
+            if (data.ok) return { success: true, username: data.result.username, message: `Connected as @${data.result.username} (${data.result.first_name})` };
             return { success: false, message: data.description || "Invalid token" };
         } catch (err) { return { success: false, message: err.message }; }
     });
 
+    // Waits for the owner to message the new bot and returns their user id, so
+    // nobody has to look it up. Only runs before the bot uses this token (the
+    // bot's own polling would take the update instead). Single-flight per token.
+    const __tgOwnerWaits = new Map();
+    ipcMain.handle("channel:telegram-wait-owner", (_, { token }) => {
+        token = savedOr(token, "TELEGRAM_BOT_TOKEN");
+        if (!/^\d+:[A-Za-z0-9_-]{30,}$/.test(token)) return { success: false, message: "Bad Telegram token" };
+        if (token === loadEnvKey("TELEGRAM_BOT_TOKEN") && isAlive(botProcess)) return { success: false, message: "Bhai is already using this bot" };
+        if (__tgOwnerWaits.has(token)) return __tgOwnerWaits.get(token);
+        const p = (async () => {
+            const deadline = Date.now() + 3 * 60 * 1000;
+            while (Date.now() < deadline) {
+                try {
+                    const res = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/getUpdates?timeout=20&allowed_updates=["message"]`, { signal: AbortSignal.timeout(30000) });
+                    const data = await res.json();
+                    if (!data.ok) return { success: false, message: data.description || "Telegram refused getUpdates" };
+                    // Updates are not acknowledged, so the bot still sees the hi after it starts.
+                    const from = data.result.map(u => u.message && u.message.from).find(f => f && !f.is_bot);
+                    if (from) return { success: true, userId: String(from.id), name: [from.first_name, from.last_name].filter(Boolean).join(" ") || from.username || "" };
+                } catch { await new Promise(r => setTimeout(r, 2000)); }
+            }
+            return { success: false, message: "No message arrived in 3 minutes" };
+        })().finally(() => __tgOwnerWaits.delete(token));
+        __tgOwnerWaits.set(token, p);
+        return p;
+    });
+
+    // Also returns the app owner's id (fills the allowlist) and whether the
+    // Message Content intent is on (without it the bot reads empty messages).
     ipcMain.handle("channel:test-discord", async (_, { token }) => {
         try {
-            const res = await fetch("https://discord.com/api/v10/users/@me", { headers: { Authorization: `Bot ${token}` } });
-            if (!res.ok) return { success: false, message: `Invalid token (${res.status})` };
-            const data = await res.json();
-            return { success: true, message: `Connected as ${data.username}#${data.discriminator}` };
+            token = savedOr(token, "DISCORD_BOT_TOKEN");
+            const res = await fetch("https://discord.com/api/v10/applications/@me", { headers: { Authorization: `Bot ${token}` } });
+            if (!res.ok) return { success: false, message: res.status === 401 ? "Discord rejected this token. Reset it in the Bot tab and paste the new one." : `Discord error (${res.status})` };
+            const app = await res.json();
+            const owner = app.team ? (app.team.members || []).find(m => m.user && m.user.id === app.team.owner_user_id)?.user : app.owner;
+            const MESSAGE_CONTENT = (1 << 18) | (1 << 19);
+            return {
+                success: true,
+                clientId: app.id,
+                ownerId: owner ? owner.id : "",
+                ownerName: owner ? (owner.global_name || owner.username) : "",
+                intentOk: !!(app.flags & MESSAGE_CONTENT),
+                message: `Connected as ${app.bot ? app.bot.username : app.name}`,
+            };
         } catch (err) { return { success: false, message: err.message }; }
     });
 
+    // Also suggests the workspace's primary owner for the allowlist (users:read
+    // is in the manifest); the panel lets the user change it.
     ipcMain.handle("channel:test-slack", async (_, { botToken }) => {
         try {
-            const res = await fetch("https://slack.com/api/auth.test", { headers: { Authorization: `Bearer ${botToken}` } });
-            const data = await res.json();
-            if (data.ok) return { success: true, message: `Connected to ${data.team} as ${data.user}` };
-            return { success: false, message: data.error || "Invalid token" };
+            botToken = savedOr(botToken, "SLACK_BOT_TOKEN");
+            const headers = { Authorization: `Bearer ${botToken}` };
+            const data = await (await fetch("https://slack.com/api/auth.test", { headers })).json();
+            if (!data.ok) return { success: false, message: data.error || "Invalid token" };
+            let ownerId = "", ownerName = "";
+            try {
+                const ul = await (await fetch("https://slack.com/api/users.list?limit=200", { headers })).json();
+                const humans = (ul.members || []).filter(u => !u.is_bot && !u.deleted && u.id !== "USLACKBOT");
+                const owner = humans.find(u => u.is_primary_owner) || (humans.length === 1 ? humans[0] : null);
+                if (owner) { ownerId = owner.id; ownerName = owner.real_name || owner.name; }
+            } catch { /* optional */ }
+            return { success: true, ownerId, ownerName, message: `Connected to ${data.team} as ${data.user}` };
         } catch (err) { return { success: false, message: err.message }; }
     });
 
+    // Real IMAP login, not just a TLS reachability check: a wrong app password
+    // should fail here, not silently after the restart.
     ipcMain.handle("channel:test-email", async (_, { user, password, imapHost, imapPort }) => {
+        const { ImapFlow } = require("imapflow");
+        const port = Number(imapPort) || 993;
+        const client = new ImapFlow({ host: imapHost, port, secure: port === 993, auth: { user, pass: savedOr(password, "EMAIL_PASSWORD") }, logger: false });
         try {
-            // Simple TCP+TLS connection test to IMAP server
-            const net = require("net");
-            const tls = require("tls");
-            return new Promise((resolve) => {
-                const socket = tls.connect({ host: imapHost, port: imapPort || 993, rejectUnauthorized: false }, () => {
-                    socket.destroy();
-                    resolve({ success: true, message: `IMAP server ${imapHost}:${imapPort} reachable` });
-                });
-                socket.on("error", (err) => resolve({ success: false, message: `Cannot reach ${imapHost}:${imapPort}: ${err.message}` }));
-                socket.setTimeout(10000, () => { socket.destroy(); resolve({ success: false, message: "Connection timed out" }); });
-            });
-        } catch (err) { return { success: false, message: err.message }; }
+            await client.connect();
+            await client.logout();
+            return { success: true, message: `Signed in to ${user}` };
+        } catch (err) {
+            const auth = err.authenticationFailed || /auth|credential|password/i.test(String(err.responseText || err.message));
+            return { success: false, message: auth ? "Sign-in failed. Use an app password, not your normal password." : `Cannot reach ${imapHost}:${port}: ${err.message}` };
+        }
     });
 
-    ipcMain.handle("channel:test-matrix", async (_, { homeserver, userId, password }) => {
+    ipcMain.handle("channel:test-matrix", async (_, { homeserver, username, password }) => {
         try {
-            const res = await fetch(`${homeserver}/_matrix/client/v3/login`, {
+            const base = (homeserver || "https://matrix.org").replace(/\/$/, "");
+            const res = await fetch(`${base}/_matrix/client/v3/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "m.login.password", user: userId, password })
+                body: JSON.stringify({ type: "m.login.password", identifier: { type: "m.id.user", user: username }, password: savedOr(password, "MATRIX_PASSWORD") })
             });
             const data = await res.json();
-            if (data.access_token) return { success: true, message: `Logged in as ${data.user_id}` };
+            if (data.access_token) return { success: true, userId: data.user_id, message: `Logged in as ${data.user_id}` };
             return { success: false, message: data.error || "Login failed" };
         } catch (err) { return { success: false, message: err.message }; }
     });
