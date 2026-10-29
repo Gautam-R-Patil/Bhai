@@ -44,9 +44,8 @@ describe("model output that isn't the expected shape", () => {
         const out = await analyzeAndExtract(
             llmSaying('{"findings":["real finding",{"text":"object"},"",42],"follow_up_queries":[null],"categories":["a"]}') as never,
             "topic",
-            "https://example.com",
-            "Title",
             "Some page content long enough to analyse.",
+            "https://example.com",
         );
         expect(out.findings).toEqual(["real finding"]);
         expect(out.followUpQueries).toEqual([]);
