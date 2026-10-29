@@ -539,7 +539,9 @@ export function asksLeaveToLook(responseText: string, canSeeScreen = false): boo
     if (
         canSeeScreen &&
         /\b(can't|cannot|couldn't|unable to|not able to)\b/.test(l) &&
-        /\bif you can see\b|\b(check|look at|read) (it|that|the [a-z -]{1,30}) (yourself|on your screen)\b/.test(l)
+        /\bif you (can )?(see|check|look|open|click)\b|\b(check|look at|read) (it|that|the [a-z -]{1,30}) (yourself|on your screen)\b|\byou(?:'ll| will| can) (see|find) (it|the [a-z -]{1,30}) (in|on|under)\b/.test(
+            l,
+        )
     )
         return true;
     if (!/\b(haven't|have not|not yet|isn't (finished|done|complete)|not (finished|done|complete))\b/.test(l)) return false;

@@ -97,6 +97,12 @@ describe("asksLeaveToLook", () => {
             "I still can't name the network: the SSID is redacted. If you can see it in the Wi-Fi menu, tell me and I'll take it from there.";
         expect(asksLeaveToLook(reply, true)).toBe(true);
         expect(asksLeaveToLook(reply, false)).toBe(false);
+        expect(
+            asksLeaveToLook(
+                "I still can't name the network: the output redacts the SSID. If you check the Wi-Fi menu bar icon, the name will be there.",
+                true,
+            ),
+        ).toBe(true);
         expect(asksLeaveToLook("Done. If you can see any typo, tell me.", true)).toBe(false);
     });
 });
