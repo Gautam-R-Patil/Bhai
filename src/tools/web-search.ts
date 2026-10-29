@@ -398,6 +398,22 @@ export function canonicalUrl(raw: string): string {
     }
 }
 
+/**
+ * Share of the query's meaningful words the best result mentions (1 when the query has none).
+ * Scraped engines throttling a script answer only part of a query ("best laptop for
+ * programming" → pages about "best"): low coverage says the results are off-topic.
+ */
+export function bestCoverage(query: string, results: SearchResult[]): number {
+    const q = [...new Set(terms(query))];
+    if (!q.length || !results.length) return results.length ? 1 : 0;
+    const covered = (r: SearchResult) => {
+        const hay = terms(`${r.title} ${r.snippet} ${r.url}`);
+        return q.filter((t) => hay.some((h) => h === t || (h.length > 3 && t.length > 3 && (h.startsWith(t) || t.startsWith(h)))))
+            .length;
+    };
+    return Math.max(...results.map(covered)) / q.length;
+}
+
 export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResult[] {
     const seen = new Set<string>();
     const merged: SearchResult[] = [];
@@ -475,12 +491,18 @@ export const webSearch: ToolDefinition = {
         try {
             const { results, engine, empty } = await lightweightSearch(query);
             const capped = results.slice(0, numResults);
+            const offTopic = capped.length > 0 && terms(query).length >= 2 && bestCoverage(query, capped) < 0.5;
 
             return JSON.stringify({
                 success: true,
                 query,
                 engine_used: engine,
                 ...(empty.length ? { engines_without_results: empty } : {}),
+                ...(offTopic
+                    ? {
+                          note: "These results barely match the query (search engines may be limiting automated requests). Don't rely on them: try a more specific query, or search in the browser.",
+                      }
+                    : {}),
                 results: capped,
                 count: capped.length,
             });

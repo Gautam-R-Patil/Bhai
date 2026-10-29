@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { canonicalUrl, decodeBingUrl, htmlText, mergeAndRank, parseBraveHtml } from "./web-search.js";
+import { bestCoverage, canonicalUrl, decodeBingUrl, htmlText, mergeAndRank, parseBraveHtml } from "./web-search.js";
 
 const r = (title: string, url: string, snippet = "") => ({ title, url, snippet });
 
@@ -101,5 +101,17 @@ describe("parseBraveHtml", () => {
 
     it("a challenge page yields nothing", () => {
         expect(parseBraveHtml("<title>Captcha - Brave Search</title><form>verify you are human</form>")).toEqual([]);
+    });
+});
+
+describe("bestCoverage", () => {
+    const r = (title: string) => ({ title, url: "https://x.example/", snippet: "" });
+    it("flags results that answer only part of the query", () => {
+        // A throttled engine answering just "best".
+        expect(bestCoverage("best laptop for programming 2026", [r("BEST Definition & Meaning")])).toBe(0);
+        expect(
+            bestCoverage("best laptop for programming 2026", [r("The 4 Best Laptops For Programming of 2026")]),
+        ).toBe(1);
+        expect(bestCoverage("weather in mumbai today", [r("Ghaziabad Hourly Weather")])).toBeLessThan(0.5);
     });
 });
