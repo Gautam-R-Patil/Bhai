@@ -211,6 +211,7 @@ import {
     clipboard,
     darkMode,
     lockScreen,
+    openSettings,
     setDoNotDisturb,
     setVolume,
     sleepDisplay,
@@ -407,6 +408,7 @@ registry.set(setDoNotDisturb.schema.function.name, setDoNotDisturb);
 registry.set(darkMode.schema.function.name, darkMode);
 registry.set(lockScreen.schema.function.name, lockScreen);
 registry.set(sleepDisplay.schema.function.name, sleepDisplay);
+registry.set(openSettings.schema.function.name, openSettings);
 
 // App integration tools (cross-platform where possible)
 registry.set(spotifyTool.schema.function.name, spotifyTool);

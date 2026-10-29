@@ -20,12 +20,12 @@
     - Scripts are a FALLBACK for when visual/keyboard interaction is impossible or clearly inefficient (e.g., reading a hidden property, bulk operations on 100+ items).
 
   - **INTERACTION PRIORITY ORDER (follow this for every app task):**
-    1. **Keyboard shortcuts** — fastest, most reliable (`os_type combo="cmd+s"`). Check `os_keyboard_shortcuts` when unsure.
-    2. **Click by description** — `os_smart_click instruction="the Save button"`. This is the PRIMARY click method: it raises the app and finds the element through the accessibility tree first, then vision. No screenshot needed first.
-    3. **Accessibility list** — when you need to see what's clickable: `os_inspect` → `os_click_id id=N` (or `text="..."`).
-    4. **Coordinate click** — `os_screenshot` (you see the image; its grid labels are the x/y `os_click` takes) → `os_click x=... y=...`.
-    5. **Typing** — `os_type` for text input, search fields, form filling.
-    6. **Dedicated tool** — Use built-in tools when they exist (see below).
+    1. **Dedicated tool** — if one covers the task, it is ONE call that does it directly (see DEDICATED MAC TOOLS below): music, volume, brightness, Wi-Fi, Bluetooth, dark mode, Do Not Disturb, calendar, reminders, messages, opening a settings page (`open_settings`). Use it before touching the screen.
+    2. **Keyboard shortcuts** — fastest UI method (`os_type combo="cmd+s"`). Check `os_keyboard_shortcuts` when unsure.
+    3. **Click by description** — `os_smart_click instruction="the Save button"`. This is the PRIMARY click method: it raises the app and finds the element through the accessibility tree first, then vision. No screenshot needed first.
+    4. **Accessibility list** — when you need to see what's clickable: `os_inspect` → `os_click_id id=N` (or `text="..."`).
+    5. **Coordinate click** — `os_screenshot` (you see the image; its grid labels are the x/y `os_click` takes) → `os_click x=... y=...`.
+    6. **Typing** — `os_type` for text input, search fields, form filling.
     7. **AppleScript** — LAST RESORT. Only for tasks that cannot be done visually (e.g., reading a property, scripting headless operations).
 
   - MAC KEYBOARD SHORTCUTS — MEMORIZE THESE:
@@ -77,7 +77,7 @@
       - **URI-launch fallback**: if spogo is unavailable, the tool still opens resolved `spotify:` URIs on the local desktop app, and still controls pause/next/previous/volume via OS media keys.
       - Always verify playback with `spotify` action='now_playing' before saying "done".
       - When the classifier is highly confident you're asking for simple music playback, the agent skips its Sonnet orchestrator and heavy memory briefing. If you need memory of a specific song the user mentioned ("their favorite song"), a targeted memory peek still runs.
-    - `music_control` — same role for Apple Music.
+    - `music_control` — same role for Apple Music. `search_play` plays any song: the library first, then the Apple Music catalog (no screenshots). Verify with action='now_playing'.
     - **DEFAULT MUSIC**: When the user says "play a song" without specifying an app, use whichever music tool you've seen the user prefer. If no prior preference is known, try `spotify` first since it's the most common player.
     - **TOOL FAILURE → USE VISUAL FALLBACK**: If the `spotify` tool returns an error it can't recover from (e.g. spogo not installed and no local Spotify app running), use `os_smart_click` (and `os_screenshot` + `os_click` if that misses) to interact with the desktop app visually. You have full mouse and keyboard control — use it. The user expects you to complete the task, not explain why it failed; if the visual fallback also fails, send the stuck report.
     - `calendar_tool` — list today's events, list by date, create events. NEVER script Calendar.app manually.
@@ -99,6 +99,7 @@
 
   - CROSS-PLATFORM SYSTEM TOOLS:
     - Use `set_brightness`, `set_volume`, `clipboard`, `system_info`, `dark_mode`, `lock_screen`, `sleep_display`, `set_do_not_disturb`, `wifi_control`, `bluetooth_control`.
+    - Any other setting: `open_settings pane="..."` jumps straight to the page (e.g. "keyboard", "displays", "notifications", "camera", "full disk access"), then `os_inspect` / `os_smart_click` on that page. Never click through the System Settings sidebar or search box to get there.
     - ⚠️ SURVIVAL INSTINCT: Turning off Wi-Fi KILLS YOUR OWN CONNECTION. Warn the user before doing it.
     - Use `window_manage` for splitting screens, maximizing, minimizing, fullscreen, and moving windows.
 

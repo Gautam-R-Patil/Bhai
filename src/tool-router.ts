@@ -300,7 +300,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     system_controls: {
         description:
-            "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep. Platform capability detection: which shell, screenshot engine, clipboard, OCR, and automation tools are available at runtime.",
+            "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep, opening any System Settings pane or privacy permission page directly. Platform capability detection: which shell, screenshot engine, clipboard, OCR, and automation tools are available at runtime.",
         tools: [
             "set_volume",
             "clipboard",
@@ -312,6 +312,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "dark_mode",
             "lock_screen",
             "sleep_display",
+            "open_settings",
         ],
     },
     media: {
@@ -377,8 +378,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     app_management: {
         description:
-            "Managing applications, opening apps, closing apps, force-quitting apps, listing running apps, window management, moving windows, resizing windows, drag and drop operations, macOS Shortcuts.",
-        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut"],
+            "Managing applications, opening apps, closing apps, force-quitting apps, listing running apps, window management, moving windows, resizing windows, drag and drop operations, macOS Shortcuts, opening an app straight to a place with a deep link (Maps directions, a FaceTime call, a Zoom meeting, a file in VS Code).",
+        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut", "open_in_app"],
     },
     research: {
         description:

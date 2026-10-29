@@ -774,7 +774,7 @@ export const openInApp: ToolDefinition = {
         function: {
             name: "open_in_app",
             description:
-                "Open a file, folder, or URL in a specific application. If no app is specified, opens with the default app.",
+                "Open a file, folder, or URL in a specific application. If no app is specified, opens with the default app. App deep links do a whole step in one call, no clicking: maps://?daddr=<place> (directions) or maps://?q=<place>, facetime://<number or email>, facetime-audio://<number>, mailto:<to>?subject=..&body=.. (draft), sms:<number>, zoommtg://zoom.us/join?confno=<id>, vscode://file/<abs path>:<line>, shortcuts://run-shortcut?name=<name>. URL-encode values. Settings pages: use open_settings. Websites: use the browser tools.",
             parameters: {
                 type: "object",
                 properties: {
