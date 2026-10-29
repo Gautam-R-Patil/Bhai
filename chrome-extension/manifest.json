@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Bhai Bridge",
   "version": "1.0.9",
-  "description": "Send page context to Bhai overlay",
+  "description": "Lets Bhai, your AI assistant, read and use Chrome for you.",
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",

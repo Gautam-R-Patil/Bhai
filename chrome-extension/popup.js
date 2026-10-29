@@ -1,265 +1,149 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Bhai Browser Bridge — Popup UI (redesigned)
+// Bhai Bridge popup: is Bhai reachable, what is it doing, and a quick way to ask.
+// Page-controlled text (titles, replies, step details) only ever goes in via
+// textContent, never innerHTML.
 
-const tabsList    = document.getElementById('tabsList');
-const connPill    = document.getElementById('connPill');
-const connLabel   = document.getElementById('connLabel');
-const statusBanner= document.getElementById('statusBanner');
-const statusIcon  = document.getElementById('statusIcon');
-const statusText  = document.getElementById('statusText');
-const statusSpinner=document.getElementById('statusSpinner');
-const pageInfo    = document.getElementById('pageInfo');
-const pageUrl     = document.getElementById('pageUrl');
-const actionLog   = document.getElementById('actionLog');
-const msgInput    = document.getElementById('msgInput');
-const btnSend     = document.getElementById('btnSend');
-const btnPage     = document.getElementById('btnPage');
-const btnSel      = document.getElementById('btnSel');
-const btnStop     = document.getElementById('btnStop');
-const responseCard= document.getElementById('responseCard');
-const responseText= document.getElementById('responseText');
-const btnReconn   = document.getElementById('btnReconn');
+const $ = (id) => document.getElementById(id);
+const pill = $('pill');
+const msgInput = $('msgInput');
+const btnSend = $('btnSend');
+const btnSummary = $('btnSummary');
+const btnExplain = $('btnExplain');
 
-let connected = false;
-let isAgentBusy = false;
+let canChat = false;
+let busy = false;
 
-// ── Action type → icon map ───────────────────
+$('version').textContent = `Bhai Bridge ${chrome.runtime.getManifest().version}`;
 
-const ACTION_ICONS = {
-  click_at:     '🖱',
-  type_text:    '⌨️',
-  scroll:       '↕',
-  navigate:     '→',
-  scan_elements:'🔍',
-  hover:        '👆',
-  screenshot:   '📷',
-  execute_js:   '⚡',
-  keyboard:     '⌨️',
-  default:      '•',
-};
-
-// ── Relative time ────────────────────────────
+function send(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (resp) => {
+      void chrome.runtime.lastError; // popup may close mid-call
+      resolve(resp);
+    });
+  });
+}
 
 function relTime(ts) {
   const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 5) return 'just now';
+  if (s < 10) return 'just now';
   if (s < 60) return `${s}s ago`;
-  return `${Math.floor(s / 60)}m ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
 }
 
-// ── Render action log ────────────────────────
+// ── Rendering ────────────────────────────────
 
-function renderActionLog(log) {
-  if (!log || log.length === 0) {
-    actionLog.innerHTML = '';
-    return;
-  }
-  actionLog.innerHTML = log.map(entry => {
-    const icon = ACTION_ICONS[entry.type] || ACTION_ICONS.default;
-    const detail = (entry.detail || entry.type).replace(/^(Clicking|Typing|Scrolling|→)\s+/, match => `<span class="bold">${match}</span>`);
-    return `
-      <div class="action-item">
-        <span class="action-icon">${icon}</span>
-        <span class="action-text">${detail}</span>
-        <span class="action-time">${relTime(entry.ts)}</span>
-      </div>`;
-  }).join('');
+function renderStatus(resp) {
+  const browserOn = !!resp?.connected;
+  canChat = !!resp?.overlayConnected;
+  const searching = !browserOn && (resp?.discoveryAttempts || 0) > 0 && (resp?.discoveryAttempts || 0) < 3;
+
+  pill.className = `pill${browserOn ? ' on' : searching ? '' : ' off'}`;
+  pill.textContent = browserOn ? 'Connected' : searching ? 'Connecting…' : 'Not connected';
+  $('offline').classList.toggle('hidden', browserOn || searching);
+
+  for (const el of [msgInput, btnSend, btnSummary, btnExplain]) el.disabled = !canChat;
+  msgInput.placeholder = canChat ? 'Ask Bhai to do something here…' : 'Open Bhai to chat';
+  $('chatNote').textContent = browserOn && !canChat ? 'Chat is reconnecting…' : '';
 }
 
-// ── Set connection state ─────────────────────
-
-function setConnected(state, label) {
-  connected = state === 'connected';
-  connPill.className = `conn-pill ${state}`;
-  connLabel.textContent = label;
-
-  const on = connected;
-  msgInput.disabled = !on;
-  btnSend.disabled = !on;
-  btnPage.disabled = !on;
-  btnSel.disabled = !on;
-  msgInput.placeholder = on ? 'Send a message to Bhai…' : 'Not connected to Bhai';
-}
-
-// ── Set agent busy/idle state ────────────────
-
-function setAgentBusy(busy, action) {
-  isAgentBusy = busy;
-  statusSpinner.className = `status-spinner${busy ? ' visible' : ''}`;
-  if (busy) {
-    statusIcon.textContent = '⚡';
-    statusText.innerHTML = `<span class="current-action">${action || 'Working…'}</span>`;
-    btnStop.disabled = false;
-  } else {
-    statusIcon.textContent = '✅';
-    statusText.textContent = 'Ready';
-    setTimeout(() => {
-      if (!isAgentBusy) {
-        statusIcon.textContent = '💤';
-        statusText.textContent = 'Waiting for task…';
-      }
-    }, 2500);
-    btnStop.disabled = true;
-  }
-}
-
-// ── Show Bhai response ──────────────────────
-
-function showResponse(text) {
+function renderReply(text) {
   if (!text) return;
-  responseText.textContent = text.length > 200 ? text.substring(0, 197) + '…' : text;
-  responseCard.className = 'response-card visible';
+  $('reply').textContent = text;
+  $('replyCard').classList.remove('hidden');
 }
 
-// ── Render open tabs ─────────────────────────
-
-function renderTabs(tabs) {
-  if (!tabs || tabs.length === 0) {
-    tabsList.innerHTML = '';
-    return;
+function renderSteps(log) {
+  const box = $('stepsBox');
+  const list = $('steps');
+  list.replaceChildren();
+  for (const entry of (log || []).slice(0, 5)) {
+    const li = document.createElement('li');
+    const what = document.createElement('span');
+    const when = document.createElement('span');
+    what.textContent = entry.detail;
+    when.textContent = relTime(entry.ts);
+    li.append(what, when);
+    list.append(li);
   }
-  tabsList.innerHTML = tabs.map((t, i) => {
-    const domain = (() => {
-      try { return new URL(t.url || '').hostname.replace(/^www\./, ''); } catch { return t.url || '?'; }
-    })();
-    const isActive = t.active;
-    return `<div class="tab-item${isActive ? ' active' : ''}" data-idx="${i}" title="${t.url || ''}">
-      <span class="tab-idx">${i + 1}</span>
-      <span class="tab-dot"></span>
-      <span class="tab-title">${t.title || 'Untitled'}</span>
-      <span class="tab-url">${domain}</span>
-    </div>`;
-  }).join('');
-
-  // Click tab to switch Bhai focus (sends a message)
-  tabsList.querySelectorAll('.tab-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const idx = parseInt(el.dataset.idx);
-      chrome.runtime.sendMessage(
-        { type: 'send_message', text: `switch to tab ${idx + 1}` },
-        () => { void chrome.runtime.lastError; } // suppress unchecked lastError
-      );
-    });
-  });
+  box.classList.toggle('hidden', list.children.length === 0);
 }
 
-// ── Refresh status from background ──────────
-
-function refreshStatus() {
-  chrome.runtime.sendMessage({ type: 'get_status' }, (resp) => {
-    if (chrome.runtime.lastError || !resp) {
-      setConnected('disconnected', 'Offline');
-      return;
-    }
-    if (resp.connected) {
-      setConnected('connected', 'Connected');
-    } else if (resp.discoveryAttempts > 0) {
-      setConnected('connecting', 'Searching…');
-    } else {
-      setConnected('disconnected', 'Offline');
-    }
-    if (resp.lastResponse) showResponse(resp.lastResponse);
-    if (resp.actionLog) renderActionLog(resp.actionLog);
-  });
-
-  // Show all open tabs
-  chrome.tabs.query({ currentWindow: true }, (tabs) => {
-    if (tabs) renderTabs(tabs);
-  });
+function setBusy(on, text) {
+  busy = on;
+  $('working').classList.toggle('hidden', !on);
+  if (on && text) $('workingText').textContent = text;
 }
 
-// ── Send quick message ───────────────────────
+async function refresh() {
+  const resp = await send({ type: 'get_status' });
+  renderStatus(resp);
+  if (resp?.lastResponse) renderReply(resp.lastResponse);
+  renderSteps(resp?.actionLog);
+}
 
-function sendQuickMessage() {
-  const txt = msgInput.value.trim();
-  if (!txt || !connected) return;
-  btnSend.disabled = true;
-  btnSend.textContent = '…';
+// ── Actions ──────────────────────────────────
+
+async function flash(btn, label, message) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  const resp = await send(message);
+  btn.textContent = resp?.ok ? 'Sent ✓' : "Couldn't send";
+  if (resp?.ok) setBusy(true, label);
+  setTimeout(() => { btn.textContent = original; btn.disabled = !canChat; }, 1500);
+  return resp?.ok;
+}
+
+function sendTyped() {
+  const text = msgInput.value.trim();
+  if (!text || !canChat) return;
   msgInput.value = '';
-  chrome.runtime.sendMessage({ type: 'send_message', text: txt }, (resp) => {
-    btnSend.disabled = false;
-    btnSend.textContent = 'Send';
-    if (resp?.ok) {
-      btnSend.textContent = '✓';
-      setTimeout(() => { btnSend.textContent = 'Send'; }, 1200);
-    }
-  });
+  flash(btnSend, 'Thinking…', { type: 'send_message', text });
 }
 
-// ── Button wiring ────────────────────────────
+btnSend.addEventListener('click', sendTyped);
+msgInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); sendTyped(); }
+});
+btnSummary.addEventListener('click', () =>
+  flash(btnSummary, 'Reading the page…', { type: 'send_page', question: 'Summarize this page for me.' }));
+btnExplain.addEventListener('click', () =>
+  flash(btnExplain, 'Thinking…', { type: 'send_selection', question: 'Explain this simply.' }));
 
-btnSend.addEventListener('click', sendQuickMessage);
-msgInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendQuickMessage(); } });
-
-btnPage.addEventListener('click', () => {
-  if (!connected) return;
-  btnPage.textContent = '📄 Sending…';
-  btnPage.disabled = true;
-  chrome.runtime.sendMessage({ type: 'send_page' }, (resp) => {
-    btnPage.disabled = false;
-    btnPage.textContent = resp?.ok ? '📄 ✓ Sent' : '📄 Send page';
-    setTimeout(() => { btnPage.textContent = '📄 Send page'; }, 1500);
-  });
+$('btnStop').addEventListener('click', () => {
+  send({ type: 'send_message', text: 'stop' });
+  setBusy(false);
 });
 
-btnSel.addEventListener('click', () => {
-  if (!connected) return;
-  btnSel.textContent = '✏️ Sending…';
-  btnSel.disabled = true;
-  chrome.runtime.sendMessage({ type: 'send_selection' }, (resp) => {
-    btnSel.disabled = false;
-    btnSel.textContent = resp?.ok ? '✏️ ✓ Sent' : '✏️ Selection';
-    setTimeout(() => { btnSel.textContent = '✏️ Selection'; }, 1500);
-  });
+$('btnRetry').addEventListener('click', async () => {
+  const btn = $('btnRetry');
+  btn.disabled = true;
+  btn.textContent = 'Looking for Bhai…';
+  await send({ type: 'reconnect' });
+  btn.disabled = false;
+  btn.textContent = 'Try again';
+  refresh();
 });
 
-btnStop.addEventListener('click', () => {
-  chrome.runtime.sendMessage(
-    { type: 'send_message', text: 'stop' },
-    () => { void chrome.runtime.lastError; }
-  );
-  setAgentBusy(false);
-});
-
-btnReconn.addEventListener('click', () => {
-  btnReconn.textContent = 'Reconnecting…';
-  btnReconn.disabled = true;
-  chrome.runtime.sendMessage({ type: 'reconnect' }, () => {
-    setTimeout(() => {
-      btnReconn.textContent = 'Reconnect';
-      btnReconn.disabled = false;
-      refreshStatus();
-    }, 2000);
-  });
-});
-
-// ── Live updates from background ────────────
+// ── Live updates from the background worker ──
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'atlas_response') {
-    showResponse(msg.text);
-    setAgentBusy(false, '');
-  }
-  if (msg.type === 'atlas_progress') {
-    setAgentBusy(true, msg.text || 'Working…');
-  }
-  if (msg.type === 'atlas_error') {
-    statusIcon.textContent = '⚠️';
-    statusText.textContent = msg.text || 'An error occurred';
-    statusSpinner.className = 'status-spinner';
-    isAgentBusy = false;
-  }
-  if (msg.type === 'atlas_action') {
-    // Real-time action entry pushed from background
-    chrome.runtime.sendMessage({ type: 'get_status' }, (resp) => {
-      if (chrome.runtime.lastError) return; // popup may be closing, ignore
-      if (resp?.actionLog) renderActionLog(resp.actionLog);
-    });
-    setAgentBusy(true, msg.entry?.detail || 'Working…');
+    renderReply(msg.text);
+    setBusy(false);
+  } else if (msg.type === 'atlas_progress') {
+    setBusy(true, msg.text || 'Working…');
+  } else if (msg.type === 'atlas_error') {
+    setBusy(false);
+    renderReply(msg.text || 'Something went wrong.');
+  } else if (msg.type === 'atlas_action') {
+    setBusy(true, msg.entry?.detail || 'Working…');
+    refresh();
   }
 });
 
-// ── Init ─────────────────────────────────────
-
-refreshStatus();
-setInterval(refreshStatus, 2500);
+refresh();
+setInterval(refresh, 2500);
+msgInput.focus();

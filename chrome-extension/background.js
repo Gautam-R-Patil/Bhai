@@ -283,7 +283,13 @@ const _actionLog = [];
 const MAX_ACTION_LOG = 6;
 
 function logAction(type, detail) {
-  const entry = { type, detail: (detail || '').substring(0, 60), ts: Date.now() };
+  if (!detail) return; // internal step (reading tab info etc.): not worth showing
+  const entry = { type, detail: detail.substring(0, 60), ts: Date.now() };
+  // The same step again within a few seconds just refreshes the old line.
+  if (_actionLog[0] && _actionLog[0].detail === entry.detail && entry.ts - _actionLog[0].ts < 10000) {
+    _actionLog[0].ts = entry.ts;
+    return;
+  }
   _actionLog.unshift(entry);
   if (_actionLog.length > MAX_ACTION_LOG) _actionLog.pop();
   chrome.runtime.sendMessage({ type: 'atlas_action', entry }).catch(() => {});
@@ -467,18 +473,26 @@ async function handleCommand(cmd) {
 
   // Activate badge + log action
   setBadgeActive(true);
+  // Plain words for the popup's activity list; anything not listed (tab
+  // lookups, cookies, CDP plumbing) is internal and not shown.
+  const host = (() => { try { return new URL(payload?.url || '').hostname.replace(/^www\./, ''); } catch { return ''; } })();
   const actionLabels = {
-    click_at: `Clicking (${payload?.x|0},${payload?.y|0})`,
-    type_text: payload?.secret ? 'Typing a saved secret' : `Typing "${(payload?.text||'').substring(0,25)}"`,
-    scroll: `Scrolling ${payload?.direction||'down'} ${payload?.amount||''}px`,
-    navigate: `→ ${(payload?.url||'').replace(/^https?:\/\/(www\.)?/,'')}`,
-    scan_elements: 'Scanning page elements',
-    hover: `Hovering (${payload?.x|0},${payload?.y|0})`,
-    screenshot: 'Taking screenshot',
-    execute_js: 'Running script',
-    keyboard: `Key: ${payload?.key||payload?.combo||''}`,
+    click_at: 'Clicking',
+    mouse_path: 'Clicking',
+    type_text: payload?.secret ? 'Typing a saved password' : `Typing "${(payload?.text||'').substring(0,25)}"`,
+    scroll: `Scrolling ${payload?.direction||'down'}`,
+    navigate: host ? `Opening ${host}` : 'Opening a page',
+    scan_elements: 'Reading the page',
+    execute_js: 'Reading the page',
+    screenshot: 'Looking at the page',
+    hover: 'Pointing at something',
+    keyboard: `Pressing ${payload?.key||payload?.combo||'a key'}`,
+    select_option: 'Choosing an option',
+    switch_tab: 'Switching tabs',
+    close_tab: 'Closing a tab',
+    go_back: 'Going back',
   };
-  const actionDetail = actionLabels[type] || type;
+  const actionDetail = actionLabels[type] || '';
   logAction(type, actionDetail);
 
   try {
@@ -2081,7 +2095,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: "Could not capture page context" });
         return;
       }
-      const text = `[From browser: ${ctx.url}]\nPage title: "${ctx.title}"\n\nPage content:\n${ctx.pageContent || "(could not extract)"}`;
+      const ask = typeof msg.question === "string" && msg.question.trim() ? `\n\nAsk: ${msg.question.trim()}` : "";
+      const text = `[From browser: ${ctx.url}]\nPage title: "${ctx.title}"\n\nPage content:\n${ctx.pageContent || "(could not extract)"}${ask}`;
       const sent = sendToAtlas(text, {
         url: ctx.url,
         title: ctx.title,
@@ -2099,7 +2114,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       const selectedText = ctx.selectedText || "(no text selected)";
-      const text = `[From browser: ${ctx.url}] User selected: "${selectedText}"`;
+      const ask = typeof msg.question === "string" && msg.question.trim() ? ` ${msg.question.trim()}` : "";
+      const text = `[From browser: ${ctx.url}] User selected: "${selectedText}"${ask}`;
       const sent = sendToAtlas(text, {
         url: ctx.url,
         title: ctx.title,
