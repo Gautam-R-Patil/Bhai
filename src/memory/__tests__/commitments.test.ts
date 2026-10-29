@@ -75,6 +75,7 @@ describe("commitmentDue gate", () => {
         expect(tools.hasDoneCue("sent it to Riya, done")).toBe(true);
         expect(tools.hasDoneCue("bhej diya")).toBe(true);
         expect(tools.hasDoneCue("what's on my plate?")).toBe(false);
+        expect(tools.hasDoneCue("did Riya reply? check my inbox")).toBe(false);
     });
 });
 
@@ -117,6 +118,19 @@ describe("commitments in memory_store", () => {
         });
         expect(rowOf(id).category).toBe("commitment_done");
 
+        // One per turn: text riding the owner's "done" can't retire every commitment on the card.
+        const a = commitment("Book flights", inDays(1));
+        const b = commitment("Renew insurance", inDays(1));
+        const ctx: CronCallerContext = { isOwner: true, message: "done", shownMemories: new Set([a, b]) };
+        const both = await cron.runWithCallerContext(ctx, () =>
+            cron.runAsMainLoopTool("memory_store", async () => [
+                JSON.parse(await tools.memoryStore.handler({ content: "x", done_id: a })),
+                JSON.parse(await tools.memoryStore.handler({ content: "x", done_id: b })),
+            ]),
+        );
+        expect(both.map((o) => o.success)).toEqual([true, false]);
+        expect(rowOf(b).category).toBe("commitment");
+
         const { buildMemoryCards } = await import("../cards.js");
         const rec = { id, content: "Call the bank about the card", tags: "", importance: 5, access_count: 0 };
         const created_at = "2026-10-30 09:00:00";
@@ -140,6 +154,10 @@ describe("commitment_due source", () => {
         expect(first[0]).toMatchObject({ source: "commitment_due", urgency: "normal", mode: "question" });
         expect(first[0].expiresAt).toBeGreaterThan(now);
         expect(await src.COMMITMENT_DUE.collectIntents({ now })).toEqual([]);
+        // Never sent (held, suppressed, failed): it has expired by the retry, which collects it again.
+        expect(first[0].expiresAt).toBe(now + 60 * 60_000);
+        const retry = await src.COMMITMENT_DUE.collectIntents({ now: now + 61 * 60_000 });
+        expect(retry.map((i) => i.payload.memoryId)).toEqual([soon]);
 
         const { SourceRegistry } = await import("../../proactive/sources/registry.js");
         const reg = new SourceRegistry();

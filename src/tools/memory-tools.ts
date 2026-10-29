@@ -24,6 +24,7 @@ import {
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
 import {
     canPinMemory,
+    claimCommitmentDone,
     claimPin,
     claimSupersede,
     isMainLoopCall,
@@ -88,7 +89,7 @@ export function commitmentDue(message: string, dueAt: unknown, now = Date.now())
 /** The owner's message says a commitment is done or off. */
 export function hasDoneCue(text: string): boolean {
     return (
-        /\b(?:done|did|finished|completed?|sent|submitted|delivered|handled|sorted|paid|called|cancell?ed|dropped|not doing|ho gaya|ho gya|kar diya|kar di|bhej diya|bhej di)\b/i.test(
+        /\b(?:done|finished|completed?|sent|submitted|delivered|paid|cancell?ed|dropped|not doing|ho gaya|ho gya|kar diya|kar di|bhej diya|bhej di)\b/i.test(
             text,
         ) || /हो गया|कर दिया|भेज दिया/.test(text)
     );
@@ -139,8 +140,8 @@ export const memoryStore: ToolDefinition = {
     async handler(input) {
         const doneId = input.done_id == null ? 0 : Number(String(input.done_id).replace(/^#/, ""));
         if (doneId > 0) {
-            // Owner only, on their own word, on a commitment shown this turn.
-            if (!hasDoneCue(ownerTurnMessage()) || !canPinMemory(doneId) || !markCommitmentDone(doneId)) {
+            // Owner only, on their own word, once per turn, on a commitment shown this turn.
+            if (!hasDoneCue(ownerTurnMessage()) || !claimCommitmentDone(doneId) || !markCommitmentDone(doneId)) {
                 return JSON.stringify({ success: false, error: `Can't mark #${doneId} done.` });
             }
             return JSON.stringify({ success: true, id: doneId, done: true });

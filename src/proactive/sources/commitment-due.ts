@@ -9,8 +9,10 @@ import type { IntentSourceModule } from "./source.js";
 const LEAD_MS = 30 * 60_000; // nudge from half an hour before it's due
 const GRACE_MS = 12 * 60 * 60_000; // one held by quiet hours can still go out the next morning
 
-// Enqueued this run; fired_at (set once it reaches the owner) covers restarts.
-const queued = new Set<number>();
+const RETRY_MS = 60 * 60_000; // each intent lives this long; one never sent is collected again after
+
+// When each was last enqueued; fired_at (set once it reaches the owner) stops it for good, across restarts.
+const queued = new Map<number, number>();
 
 /** The owner's commitments (memory_store due_at), each nudged once near its due time. */
 export const COMMITMENT_DUE: IntentSourceModule = {
@@ -25,9 +27,9 @@ export const COMMITMENT_DUE: IntentSourceModule = {
             .all(new Date(ctx.now + LEAD_MS).toISOString(), new Date(ctx.now - GRACE_MS).toISOString()) ??
             []) as Array<{ id: number; content: string; due_at: string }>;
         return rows
-            .filter((r) => !queued.has(r.id))
+            .filter((r) => ctx.now > (queued.get(r.id) ?? 0) + RETRY_MS)
             .map((r): ProactiveIntent => {
-                queued.add(r.id);
+                queued.set(r.id, ctx.now);
                 const dueMs = Date.parse(r.due_at);
                 return {
                     id: makeIntentId("commitment_due"),
@@ -40,7 +42,8 @@ export const COMMITMENT_DUE: IntentSourceModule = {
                     evidence: [{ label: "due", value: r.due_at }],
                     payload: { kind: "commitment_due", memoryId: r.id, content: r.content, dueMs },
                     createdAt: ctx.now,
-                    expiresAt: dueMs + GRACE_MS,
+                    // Expired before the retry, so a held or dropped nudge never has a live twin.
+                    expiresAt: Math.min(ctx.now + RETRY_MS, dueMs + GRACE_MS),
                 };
             });
     },

@@ -24,6 +24,7 @@ export interface CronCallerContext {
     shownMemories?: Set<number>;
     superseded?: boolean;
     pinChanged?: boolean;
+    commitmentDone?: boolean;
     /** storedMemory is a supersede's new row: its undo is the only way back to the old one. */
     undoPinned?: boolean;
 }
@@ -88,6 +89,14 @@ export function claimPin(id: number): boolean {
     const ctx = _callerStorage.getStore();
     if (!ctx || !canPinMemory(id) || ctx.pinChanged) return false;
     ctx.pinChanged = true;
+    return true;
+}
+
+/** Like claimPin, for done_id: one commitment marked done per turn. */
+export function claimCommitmentDone(id: number): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !canPinMemory(id) || ctx.commitmentDone) return false;
+    ctx.commitmentDone = true;
     return true;
 }
 
