@@ -220,12 +220,13 @@ export async function runReflection(
     llm: LLMClient,
     conversationHistory: ChatCompletionMessageParam[],
     sessionId: string = generateUUID(),
+    // An expired session passes its own: by then the live session is the new, empty one.
+    sessionSummaryInput: string = getShortSummary(),
 ): Promise<void> {
     console.log("[MEMORY][REFLECTION] Starting post-session reflection...");
 
     try {
         // ── 1. Build input ────────────────────────
-        const sessionSummaryInput = getShortSummary();
         const transcript = buildTranscript(conversationHistory);
 
         const reflectionInput = sessionSummaryInput
