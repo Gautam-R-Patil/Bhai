@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// A CAPTCHA mid-task: site_task stops before the skill sees it (the skill must
-// never click it), hands it to the owner via browser_handle_captcha, and
+// A CAPTCHA mid-task the solvers can't pass: site_task stops before the skill sees it
+// (the skill must never click it), hands it to the owner via browser_handle_captcha, and
 // `resume` re-runs the phase it stopped in with the same input.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +15,10 @@ const snap = { url: "https://shop.test/", title: "Shop", text: "", elements: [] 
 vi.mock("./browser/core.js", () => ({
     getActivePage: async () => ({ url: () => snap.url, evaluate: async () => snap }),
 }));
-vi.mock("./browser/captcha.js", () => ({ quickCaptchaCheck: async () => (captchaOn.value ? "recaptcha-v2" : null) }));
+// A CAPTCHA the solvers can't get past (when they can, the skill never sees it at all).
+vi.mock("./browser/captcha.js", () => ({
+    autoHandleCaptcha: async () => (captchaOn.value ? { captcha_detected: true, captcha_type: "recaptcha-v2" } : {}),
+}));
 vi.mock("../skills/site/registry.js", () => ({ findSiteSkill: () => "/s/skill.cjs" }));
 vi.mock("../skills/site/runtime.js", async (orig) => ({ ...(await orig<object>()), runSiteTask }));
 

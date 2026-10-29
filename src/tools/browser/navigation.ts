@@ -8,7 +8,7 @@
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCachedActions, markActionFailed, replayActions, shouldReplayActions } from "./action-cache.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
-import { CAPTCHA_HINT, quickCaptchaCheck } from "./captcha.js";
+import { autoHandleCaptcha } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
     getAccessibilityTree,
@@ -117,10 +117,7 @@ export const browserNavigate: ToolDefinition = {
             // Clear HUD once page is ready
             await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
 
-            const captchaType = navError ? null : await quickCaptchaCheck(page);
-            const captchaFields = captchaType
-                ? { captcha_detected: true, captcha_type: captchaType, hint: CAPTCHA_HINT }
-                : {};
+            const captchaFields = navError ? {} : await autoHandleCaptcha(page);
             if (!navError && page.url().startsWith("chrome-error://"))
                 navError = "browser error page (site unreachable)";
             if (!navError && status !== null && BLOCKING_STATUSES.has(status)) navError = `HTTP ${status}`;
@@ -460,16 +457,28 @@ export const browserBack: ToolDefinition = {
 async function switchTabInChrome(input: Record<string, unknown>): Promise<string> {
     const { getExtensionTabs, sendBridgeCommand } = await import("./chrome-bridge.js");
     const list = async () =>
-        (await getExtensionTabs()).map((t, index) => ({ index, title: t.title, url: t.url, active: t.active, id: t.id }));
+        (await getExtensionTabs()).map((t, index) => ({
+            index,
+            title: t.title,
+            url: t.url,
+            active: t.active,
+            id: t.id,
+        }));
     const view = (tabs: Awaited<ReturnType<typeof list>>) => tabs.map(({ id: _id, ...t }) => t);
     let tabs = await list();
     const at = (i: unknown) => (typeof i === "number" ? tabs[i] : undefined);
     if (typeof input.close_tab_index === "number" || input.close_active) {
-        const target = typeof input.close_tab_index === "number" ? at(input.close_tab_index) : tabs.find((t) => t.active);
+        const target =
+            typeof input.close_tab_index === "number" ? at(input.close_tab_index) : tabs.find((t) => t.active);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
         await sendBridgeCommand("close_tab", { tabId: target.id });
         tabs = await list();
-        return JSON.stringify({ success: true, action: "closed", closed: { title: target.title, url: target.url }, tabs: view(tabs) });
+        return JSON.stringify({
+            success: true,
+            action: "closed",
+            closed: { title: target.title, url: target.url },
+            tabs: view(tabs),
+        });
     }
     if (input.new_tab) {
         await sendBridgeCommand("navigate", { url: (input.url as string) || "about:blank", newTab: true });
@@ -480,7 +489,13 @@ async function switchTabInChrome(input: Record<string, unknown>): Promise<string
         const target = at(input.tab_index);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
         await sendBridgeCommand("switch_tab", { tabId: target.id });
-        return JSON.stringify({ success: true, action: "switched", title: target.title, url: target.url, active_tab: input.tab_index });
+        return JSON.stringify({
+            success: true,
+            action: "switched",
+            title: target.title,
+            url: target.url,
+            active_tab: input.tab_index,
+        });
     }
     return JSON.stringify({ success: true, tabs: view(tabs), open_tabs: tabs.length });
 }
@@ -505,7 +520,10 @@ export const browserSwitchTab: ToolDefinition = {
                         description: "If new_tab=true, optionally navigate to this URL immediately",
                     },
                     close_active: { type: "boolean", description: "Close the currently active tab" },
-                    close_tab_index: { type: "number", description: "Close the tab at this index (0-based, from the list)" },
+                    close_tab_index: {
+                        type: "number",
+                        description: "Close the tab at this index (0-based, from the list)",
+                    },
                 },
                 required: [],
             },

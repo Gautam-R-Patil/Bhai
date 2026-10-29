@@ -675,8 +675,9 @@ export function getToolSchemasByNames(names: string[]): ChatCompletionTool[] {
 // Per-tool timeouts (in ms) - longer for I/O heavy operations
 const TOOL_TIMEOUTS: Record<string, number> = {
     // Browser tools - can be slow due to page loads
-    browser_navigate: 30_000,
+    browser_navigate: 240_000, // the page load has its own 30s cap; this leaves room for a CAPTCHA solve
     browser_click: 15_000,
+    browser_click_at: 240_000, // a click can open a CAPTCHA, solved before the result returns
     browser_type: 30_000, // long text + submit + page-ready can take a while
     site_task: 180_000, // up to 40 steps; a cut-off checkout would keep running unseen
     site_skill_mint: 600_000, // start returns at once; a safety net

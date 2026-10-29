@@ -104,3 +104,35 @@ describe("Turnstile", () => {
         vi.useRealTimers();
     });
 });
+
+describe("autoHandleCaptcha", () => {
+    const captchaPage = () => ({
+        url: () => "https://shop.test",
+        screenshot: vi.fn(),
+        mouse: { move: vi.fn(), click: vi.fn() },
+        evaluate: vi.fn(async (code: unknown) => {
+            if (typeof code !== "function") return false; // no token yet
+            return String(code).includes("innerHTML") ? '<div class="h-captcha"></div>' : { type: "hcaptcha", siteKey: null };
+        }),
+    });
+
+    it("reports a CAPTCHA it couldn't solve so the agent can hand it to the owner", async () => {
+        const { autoHandleCaptcha } = await import("./captcha.js");
+        expect(await autoHandleCaptcha(captchaPage())).toMatchObject({ captcha_detected: true, captcha_type: "hcaptcha" });
+    });
+
+    it("leaves CAPTCHAs to the agent when the owner turned it off", async () => {
+        process.env.ATLAS_NO_CAPTCHA_AUTO = "true";
+        const { autoHandleCaptcha, CAPTCHA_HINT } = await import("./captcha.js");
+        const page = captchaPage();
+        expect(await autoHandleCaptcha(page)).toEqual({ captcha_detected: true, captcha_type: "hcaptcha", hint: CAPTCHA_HINT });
+        expect(page.mouse.click).not.toHaveBeenCalled();
+        delete process.env.ATLAS_NO_CAPTCHA_AUTO;
+    });
+
+    it("returns nothing on a page without a CAPTCHA", async () => {
+        const { autoHandleCaptcha } = await import("./captcha.js");
+        const page = { evaluate: vi.fn(async (code: unknown) => (String(code).includes("innerHTML") ? "<p>hi</p>" : { type: "none", siteKey: null })) };
+        expect(await autoHandleCaptcha(page)).toEqual({});
+    });
+});

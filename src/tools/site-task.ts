@@ -137,8 +137,9 @@ async function run(input: Record<string, unknown>): Promise<string> {
         const driver: PageDriver = {
             ...base,
             snapshot: async () => {
-                const { quickCaptchaCheck } = await import("./browser/captcha.js"); // lazy: avoids an import cycle via the bridge
-                if (await quickCaptchaCheck(page)) throw new Error(HUMAN_CHECK);
+                const { autoHandleCaptcha } = await import("./browser/captcha.js"); // lazy: avoids an import cycle via the bridge
+                const check = await autoHandleCaptcha(page);
+                if (check.captcha_detected) throw new Error(HUMAN_CHECK); // the solvers couldn't: the owner does it
                 return base.snapshot();
             },
         };

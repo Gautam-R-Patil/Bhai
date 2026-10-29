@@ -206,6 +206,29 @@ export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | nu
     }
 }
 
+/**
+ * A CAPTCHA a browser action runs into is handled right there, by the solver tiers
+ * (the owner's setting; ATLAS_NO_CAPTCHA_AUTO=true turns it off). No owner wait
+ * inside a navigate/click: if the solvers can't, the result says so and the agent
+ * calls browser_handle_captcha, which asks the owner. Fields to merge into the
+ * tool result; {} when the page has no CAPTCHA.
+ */
+export async function autoHandleCaptcha(page: unknown): Promise<Record<string, unknown>> {
+    const type = await quickCaptchaCheck(page);
+    if (!type) return {};
+    const unsolved = { captcha_detected: true, captcha_type: type, hint: CAPTCHA_HINT };
+    if (process.env.ATLAS_NO_CAPTCHA_AUTO === "true") return unsolved;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = await handleCaptchaIfPresent(page as any).catch(() => null);
+    if (!r?.handled) return unsolved;
+    return {
+        captcha_solved: true,
+        captcha_type: type,
+        captcha_method: r.method,
+        note: "This page had a CAPTCHA; Bhai's CAPTCHA handler already got past it (the owner's setting). Carry on with the task.",
+    };
+}
+
 export const CAPTCHA_HINT =
     "A human-verification check (CAPTCHA) is on this page. Call browser_handle_captcha: it solves it, or hands it to the owner if it can't, then continue the task.";
 
