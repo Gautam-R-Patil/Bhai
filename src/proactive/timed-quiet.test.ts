@@ -24,7 +24,15 @@ describe("timed quiet", () => {
     });
 
     it("short brush-offs quiet for 2h; ordinary messages don't", () => {
-        for (const t of ["not now", "busy", "in a meeting, later", "abhi nahi yaar", "can't talk"]) {
+        for (const t of [
+            "not now",
+            "busy",
+            "in a meeting, later",
+            "abhi nahi yaar",
+            "can't talk",
+            "not now, I'm busy bro",
+            "busy rn, talk later!",
+        ]) {
             clearQuiet();
             noteOwnerBusy(t, 0);
             expect(isQuietNow(119 * 60_000), t).toBe(true);
@@ -37,6 +45,8 @@ describe("timed quiet", () => {
             "hey",
             "busy, book the tatkal ticket for me",
             "busy week, what's on my calendar?",
+            "busy, call mom",
+            "later, send it",
         ]) {
             noteOwnerBusy(t, 0);
             expect(isQuietNow(1), t).toBe(false);

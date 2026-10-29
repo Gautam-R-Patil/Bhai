@@ -302,7 +302,8 @@ function stripChannelTags(text: string): string {
 export function isAboutBhai(text: string): boolean {
     return (
         /github\.com\/xagi-lab\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b/i.test(text) ||
-        (/\bbhai\b/i.test(text) && /\bxagi\b/i.test(text))
+        // Bhai described as itself, not "bhai, send the XAGI invoice".
+        /\bbhai\b[^.\n]{0,60}\b(?:(?:personal )?ai (?:agent|assistant|companion)|built by xagi)/i.test(text)
     );
 }
 const ABOUT_SELF_NOTE =

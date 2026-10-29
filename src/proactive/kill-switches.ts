@@ -52,15 +52,16 @@ export function isQuietNow(now = Date.now()): boolean {
     return now < quietUntil;
 }
 
-// The owner brushing Bhai off in their own words. A few words and no question
-// only, so "busy, book the tatkal ticket for me" or "later today remind me to
-// file the GST return" isn't one.
-const BUSY_RE = /^\s*(not now|busy|later|in a meeting|can'?t talk|abhi nahi|baad me(in)?)\b/i;
+// The owner brushing Bhai off in their own words: the whole message is brush-off
+// phrases and filler, so "not now, I'm busy bro" is one and "busy, call mom" or
+// "later today remind me to file the GST return" isn't.
+const BRUSH = "not now|busy|i'?m busy|later|talk later|ttyl|in a meeting|can'?t talk|abhi nahi|baad me(?:in)?";
+const FILLER = "bro|bhai|man|dude|yaar|sorry|pls|please|rn|right now|now|abhi|thoda";
+const BUSY_RE = new RegExp(`^\\s*(?:${BRUSH})(?:[\\s,.!]+(?:${BRUSH}|${FILLER}))*[\\s,.!]*$`, "i");
 
 /** An owner message like "not now" or "busy" quiets proactive sends for 2h. */
 export function noteOwnerBusy(text: string, now = Date.now()): void {
-    if (text.trim().split(/\s+/).length <= 4 && !text.includes("?") && BUSY_RE.test(text))
-        setQuietUntil(now + 2 * 3_600_000);
+    if (BUSY_RE.test(text)) setQuietUntil(now + 2 * 3_600_000);
 }
 
 /** "bhai resume": the owner wants Bhai back now. */

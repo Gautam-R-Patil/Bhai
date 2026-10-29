@@ -14,11 +14,13 @@ describe("isAboutBhai", () => {
         expect(isAboutBhai("what's on https://xagilab.com")).toBe(true);
         expect(isAboutBhai("the Bhai Bridge popup is blank")).toBe(true);
         expect(isAboutBhai("Bhai, built by XAGI Labs, reviewed")).toBe(true);
+        expect(isAboutBhai("Bhai: a proactive personal AI agent with computer use")).toBe(true);
     });
 
     it("ignores bhai as a word for a person, and Bhai mail addresses", () => {
         expect(isAboutBhai("bhai kal milte hain")).toBe(false);
         expect(isAboutBhai("my brother is my bhai")).toBe(false);
         expect(isAboutBhai("mail priya.bhai@xagilab.com the deck")).toBe(false);
+        expect(isAboutBhai("bhai, send the XAGI invoice to Ravi")).toBe(false);
     });
 });
