@@ -3260,7 +3260,12 @@
                 // Update hotkey display
                 const info = await atlas.getAppInfo();
                 const customHotkey = prefs.overlayHotkey;
-                if (customHotkey) {
+                // Show the shortcut that actually works: if the preferred one was taken by
+                // another app, main registered a fallback (e.g. Cmd+Shift+J).
+                if (info.overlayShortcut) {
+                    document.getElementById('prefHotkeyShow').textContent = formatAccelerator(info.overlayShortcut, info.platform);
+                    document.getElementById('prefHotkeyReset').style.display = customHotkey ? '' : 'none';
+                } else if (customHotkey) {
                     document.getElementById('prefHotkeyShow').textContent = formatAccelerator(customHotkey, info.platform);
                     document.getElementById('prefHotkeyReset').style.display = '';
                 } else if (info.platform === 'darwin') {
@@ -3781,8 +3786,9 @@
                 document.getElementById('aboutVersion').textContent = `Version ${info.version}`;
 
                 const prefs = await atlas.getPrefs();
-                if (prefs.overlayHotkey) {
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${formatAccelerator(prefs.overlayHotkey, info.platform)}</kbd>`;
+                const activeHotkey = info.overlayShortcut || prefs.overlayHotkey;
+                if (activeHotkey) {
+                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${formatAccelerator(activeHotkey, info.platform)}</kbd>`;
                 } else if (info.platform === 'darwin') {
                     document.getElementById('aboutHotkey').innerHTML = '<kbd>⌘ Cmd + J</kbd>';
                 }

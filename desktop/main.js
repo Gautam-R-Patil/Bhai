@@ -4660,6 +4660,8 @@ function registerIPC() {
         isDev: IS_DEV,
         defaultWorkspace: path.join(app.getPath("desktop"), "Bhai Files"),
         platform: process.platform,
+        // The shortcut actually registered: a fallback when the preferred one was taken.
+        overlayShortcut: getActiveOverlayShortcut(),
     }));
 
     // ── Auto-Updater IPC ─────────────────────────
