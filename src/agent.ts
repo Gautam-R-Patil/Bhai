@@ -1859,7 +1859,19 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // ── Build conversation context for tool router ──
             // Gives the tool selector awareness of recent conversation turns so it
             // can disambiguate references like "open the file manager" (OS app vs. website button)
-            const convCtx = buildToolRouterContext(workingHistory);
+            // The router classifies the bare words, so "do this for me" needs the situation
+            // the words point at: what's attached, and whether a page in the owner's Chrome
+            // can be driven (no title/URL: the page writes those). First, so the router's
+            // cache key (the context's first 200 chars) tells the situations apart.
+            const situation = [
+                media?.some((m) => m.type === "image") ? "The user attached an image (or a screenshot of their screen)." : "",
+                userMessage.includes("[BROWSER CONTEXT: Chrome extension is connected")
+                    ? "The user has a web page open in their own Chrome, which the browser tools can act on."
+                    : "",
+            ].filter(Boolean);
+            const convCtx = [situation.length ? `(${situation.join(" ")})` : "", buildToolRouterContext(workingHistory)]
+                .filter(Boolean)
+                .join("\n");
 
             // ── Start tool selection in parallel with memory injection ──
             // For llm_only (greetings/acks): use fast-path (no embeddings, instant)

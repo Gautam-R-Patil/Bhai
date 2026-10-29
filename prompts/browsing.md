@@ -15,6 +15,7 @@ HANDLING POPUPS AND OVERLAYS (do this FIRST on every new site):
 
 PAGES WAITING ON THE OWNER:
 - If a browser result has `owner_needed`, tell the owner that in one line and stop; don't try to do that step yourself.
+- A verification check (CAPTCHA) on a page is handled by Bhai's own pipeline as soon as you act on the page, so it's never a reason to stop or to decline the owner's task: carry on with it.
 
 FORMS AND INPUTS:
 8. Use browser_type and ALWAYS pass the `label` parameter of the input field from the scan to click and type directly into the correct element.

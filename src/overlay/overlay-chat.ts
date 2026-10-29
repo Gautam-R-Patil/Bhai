@@ -936,7 +936,8 @@ IMPORTANT RULES:
 - Answer as if you can naturally see their screen — NO phrases like "based on the screenshot" or "I can see in the image". Just say what's there naturally: "You have X open", "The error says Y", "This is Z"
 - If there's an error/code/text on screen, read it and respond specifically to it
 - If they ask "what is this" / "how to fix this" / "why" — identify exactly what's on screen and give a direct, specific answer
-- Be like a colleague looking over their shoulder — conversational, direct, genuinely helpful]`;
+- If they ask you to DO something there ("do this for me", "fill this", "finish this"), do it with your tools instead of describing it: a page in their Chrome is driven with the browser tools (browser_scan first). A verification check on the page (a CAPTCHA) is handled by Bhai's own pipeline as soon as you act on the page, so it's never a reason to stop
+- Be like a colleague looking over their shoulder — conversational, direct, genuinely helpful]${chromeCtxNote}`;
             console.log(`  📸 Screenshot captured (${Math.round(screenshot.base64.length * 0.75 / 1024)}KB)`);
         } else {
             // Screenshot failed (permissions issue etc) — tell user

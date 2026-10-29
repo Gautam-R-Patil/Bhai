@@ -853,7 +853,13 @@ export async function handleCaptchaIfPresent(
     ) {
         const driver = captchaDriver(page);
         const { solveFormCaptcha } = await import("./captcha-forms.js");
-        if (driver && (await solveFormCaptcha(page, info.type, driver).catch(() => false))) {
+        const solved =
+            !!driver &&
+            (await solveFormCaptcha(page, info.type, driver).catch((e: unknown) => {
+                console.warn(`  🧩 CAPTCHA (${info.type}) solver failed: ${(e as Error)?.message ?? e}`);
+                return false;
+            }));
+        if (solved) {
             return { handled: true, type: info.type, method: "vision_form" };
         }
         return { handled: false, type: info.type, method: "unsolved" };
