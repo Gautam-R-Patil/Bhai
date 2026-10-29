@@ -266,13 +266,19 @@ func labelAndValue(
     return (sliceValue(label), sliceValue(valueStr))
 }
 
+/// Int(_:) traps on NaN, infinity or out-of-range values, and some SwiftUI elements report
+/// them (System Settings > Appearance killed every dump of that page). Off-range → 0.
+func px(_ v: CGFloat) -> Int {
+    v.isFinite && abs(v) < 1_000_000 ? Int(v) : 0
+}
+
 func makeNode(
     role: String?, subrole: String?, labelValue: (String?, String?),
     pos: CGPoint, size: CGSize, focused: Bool, enabled: Bool, children: [AXNode]
 ) -> AXNode {
     AXNode(
         role: role, subrole: subrole, label: labelValue.0, value: labelValue.1,
-        x: Int(pos.x), y: Int(pos.y), w: Int(size.width), h: Int(size.height),
+        x: px(pos.x), y: px(pos.y), w: px(size.width), h: px(size.height),
         focusable: focused, enabled: enabled, children: children
     )
 }
@@ -410,7 +416,7 @@ if let act = actionName {
     if let r = expectRole, cfString(axCopy(el, kAXRoleAttribute)) != r { fail("element_changed") }
     if expectFrame.count == 4 {
         let p = cfPoint(axCopy(el, kAXPositionAttribute)), sz = cfSize(axCopy(el, kAXSizeAttribute))
-        let cur = [Int(p.x), Int(p.y), Int(sz.width), Int(sz.height)]
+        let cur = [px(p.x), px(p.y), px(sz.width), px(sz.height)]
         if zip(cur, expectFrame).contains(where: { abs($0 - $1) > 2 }) { fail("element_changed") }
     }
     var extra = ""
@@ -441,7 +447,7 @@ if let act = actionName {
         guard res == .success else { fail("failed:\(res.rawValue)") }
     }
     let p = cfPoint(axCopy(el, kAXPositionAttribute)), sz = cfSize(axCopy(el, kAXSizeAttribute))
-    FileHandle.standardOutput.write("ok|\(Int(p.x)),\(Int(p.y)),\(Int(sz.width)),\(Int(sz.height))\(extra)\n".data(using: .utf8)!)
+    FileHandle.standardOutput.write("ok|\(px(p.x)),\(px(p.y)),\(px(sz.width)),\(px(sz.height))\(extra)\n".data(using: .utf8)!)
     exit(0)
 }
 
