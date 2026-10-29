@@ -88,6 +88,10 @@ struct ChannelState {
     pending_scheduled: BinaryHeap<Reverse<ScheduledIntent>>,
 }
 
+/// Tests share STATE: each holds this for its whole run (cargo runs tests in parallel).
+#[cfg(test)]
+static TEST_SERIAL: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
 static STATE: Lazy<Arc<Mutex<HashMap<String, ChannelState>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
@@ -247,16 +251,35 @@ fn _release_candidates(
     let p = cs.posture.clone();
     let boundary_active = now <= cs.boundary_window_until_ms;
     let mut selected: Vec<QueuedIntent> = Vec::new();
+    // The gap is checked once per release: checking it per item, after the first selected
+    // item reset last_sent_ms, let only one morning item out per release (with any real
+    // gap), so the morning batch never formed and each piece used up the daily cap.
+    let gap_ok = (now - cs.last_sent_ms) >= (p.min_gap_min as f64) * 60_000.0;
+    // Morning items released together become ONE message (scheduler_release_grouped): one
+    // slot. With a gap configured, a release sends at most one non-urgent message (the batch
+    // or a single), so messages stay spaced; with no gap, everything eligible goes.
+    let one_per_release = p.min_gap_min > 0;
+    let mut morning_slot = false;
+    let mut single_slot = false;
 
     for q in sorted {
         let urgent = q.urgency == "urgent";
         let can_bypass = urgent && p.urgent_bypass;
 
-        if cs.sent_today >= p.max_per_day && !can_bypass {
-            cs.queue.push_back(q);
+        // Same topic as something already sent (or selected just now): a stale queued copy.
+        // Urgent alerts are never dropped for looking similar.
+        if !urgent
+            && cs
+                .recent_topic_embeddings
+                .iter()
+                .any(|(_, e)| cosine(&q.topic_embedding, e) > 0.9)
+        {
+            dropped.push(DropEntry {
+                id: q.id.clone(),
+                reason: "dedup".into(),
+            });
             continue;
         }
-        let gap_ok = (now - cs.last_sent_ms) >= (p.min_gap_min as f64) * 60_000.0;
         if !gap_ok && !can_bypass {
             cs.queue.push_back(q);
             continue;
@@ -269,9 +292,35 @@ fn _release_candidates(
             cs.queue.push_back(q);
             continue;
         }
+        let batchable = q.mode != "review" && is_morning_kind(&q.payload_kind);
+        let new_slot = if can_bypass {
+            true
+        } else if batchable {
+            if one_per_release && single_slot {
+                cs.queue.push_back(q);
+                continue;
+            }
+            !morning_slot
+        } else if one_per_release && (single_slot || morning_slot) {
+            cs.queue.push_back(q);
+            continue;
+        } else {
+            true
+        };
+        if new_slot && cs.sent_today >= p.max_per_day && !can_bypass {
+            cs.queue.push_back(q);
+            continue;
+        }
+        if new_slot {
+            cs.sent_today += 1;
+        }
+        if batchable && !can_bypass {
+            morning_slot = true;
+        } else if !can_bypass {
+            single_slot = true;
+        }
 
         cs.last_sent_ms = now;
-        cs.sent_today += 1;
         cs.recent_topic_embeddings
             .push_back((now, q.topic_embedding.clone()));
         selected.push(q);
@@ -391,9 +440,11 @@ pub fn scheduler_debug_state(channel: String) -> String {
 mod tests {
     use super::*;
 
-    fn fresh() {
-        let mut st = STATE.lock();
-        st.clear();
+    #[must_use]
+    fn fresh() -> parking_lot::MutexGuard<'static, ()> {
+        let g = TEST_SERIAL.lock();
+        STATE.lock().clear();
+        g
     }
 
     fn mk(id: &str, channel: &str, urgency: &str, embedding: Vec<f64>) -> QueuedIntent {
@@ -432,14 +483,14 @@ mod tests {
 
     #[test]
     fn enqueue_without_posture_returns_error() {
-        fresh();
+        let _serial = fresh();
         let r = scheduler_enqueue(mk("a", "t", "normal", vec![1.0, 0.0]));
         assert_eq!(r, "no_posture_configured");
     }
 
     #[test]
     fn dedup_rejects_same_topic() {
-        fresh();
+        let _serial = fresh();
         configure("t", 10, 0, false, true);
         assert_eq!(
             scheduler_enqueue(mk("a", "t", "normal", vec![1.0, 0.0, 0.0])),
@@ -455,7 +506,7 @@ mod tests {
 
     #[test]
     fn boundary_gate_holds_non_urgent() {
-        fresh();
+        let _serial = fresh();
         configure("t", 10, 0, true, true);
         scheduler_enqueue(mk("q", "t", "normal", vec![1.0, 0.0]));
         let r = scheduler_try_release("t".into());
@@ -470,7 +521,7 @@ mod tests {
 
     #[test]
     fn urgent_bypasses_boundary() {
-        fresh();
+        let _serial = fresh();
         configure("t", 10, 0, true, true);
         scheduler_enqueue(mk("u", "t", "urgent", vec![1.0, 0.0]));
         let r = scheduler_try_release("t".into());
@@ -479,7 +530,7 @@ mod tests {
 
     #[test]
     fn dnd_blocks_non_urgent() {
-        fresh();
+        let _serial = fresh();
         configure("t", 10, 0, false, true);
         scheduler_set_dnd("t".into(), true);
         scheduler_enqueue(mk("a", "t", "normal", vec![1.0, 0.0]));
@@ -489,7 +540,7 @@ mod tests {
 
     #[test]
     fn dnd_allows_urgent_with_bypass() {
-        fresh();
+        let _serial = fresh();
         configure("t", 10, 0, false, true);
         scheduler_set_dnd("t".into(), true);
         scheduler_enqueue(mk("u", "t", "urgent", vec![1.0, 0.0]));
@@ -499,7 +550,7 @@ mod tests {
 
     #[test]
     fn expired_intents_are_dropped() {
-        fresh();
+        let _serial = fresh();
         configure("t", 10, 0, false, true);
         let mut q = mk("old", "t", "normal", vec![1.0, 0.0]);
         q.expires_at = now_ms() - 1000.0;
@@ -514,7 +565,7 @@ mod tests {
 
     #[test]
     fn rate_limit_blocks_extra_sends() {
-        fresh();
+        let _serial = fresh();
         configure("t", 1, 0, false, true);
         scheduler_enqueue(mk("a", "t", "normal", vec![1.0, 0.0]));
         scheduler_enqueue(mk("b", "t", "normal", vec![0.0, 1.0]));
@@ -526,7 +577,7 @@ mod tests {
 
     #[test]
     fn priority_orders_urgent_first() {
-        fresh();
+        let _serial = fresh();
         configure("t", 10, 0, false, true);
         scheduler_enqueue(mk("normal", "t", "normal", vec![1.0, 0.0]));
         scheduler_enqueue(mk("urgent", "t", "urgent", vec![0.0, 1.0]));
@@ -534,14 +585,58 @@ mod tests {
         assert_eq!(r.released.len(), 2);
         assert_eq!(r.released[0], "urgent");
     }
+
+    fn morning(id: &str, ch: &str, kind: &str, axis: usize) -> QueuedIntent {
+        let mut e = vec![0.0; 8];
+        e[axis] = 1.0;
+        let mut q = mk(id, ch, "normal", e);
+        q.payload_kind = kind.into();
+        q
+    }
+
+    #[test]
+    fn morning_batch_forms_with_a_real_gap() {
+        // Production postures have a 45+ min gap: the batch must still go out whole, as one slot.
+        let _serial = fresh();
+        configure("mb", 3, 45, false, true);
+        scheduler_enqueue(morning("w", "mb", "weather_today", 0));
+        scheduler_enqueue(morning("n", "mb", "news_today", 1));
+        scheduler_enqueue(morning("c", "mb", "calendar_today_summary", 2));
+        scheduler_enqueue(mk("other", "mb", "normal", {
+            let mut e = vec![0.0; 8];
+            e[3] = 1.0;
+            e
+        }));
+        let r = scheduler_release_grouped("mb".into());
+        assert_eq!(r.morning_batch.len(), 3);
+        assert!(
+            r.singles.is_empty(),
+            "the single waits for the next gap, not right behind the batch"
+        );
+        assert!(scheduler_debug_state("mb".into()).contains("sent_today=1"));
+    }
+
+    #[test]
+    fn a_stale_same_topic_copy_is_dropped_at_release() {
+        let _serial = fresh();
+        configure("dd", 10, 0, false, true);
+        scheduler_enqueue(morning("w1", "dd", "weather_today", 0));
+        scheduler_enqueue(morning("w2", "dd", "weather_today", 0)); // hourly re-emit, queued first
+        let r = scheduler_release_grouped("dd".into());
+        assert_eq!(r.singles.len() + r.morning_batch.len(), 1);
+        assert!(r.dropped.iter().any(|d| d.reason == "dedup"));
+    }
 }
 
 #[cfg(test)]
 mod tests_scheduled_fire {
     use super::*;
 
-    fn clear_state() {
+    #[must_use]
+    fn clear_state() -> parking_lot::MutexGuard<'static, ()> {
+        let g = TEST_SERIAL.lock();
         STATE.lock().clear();
+        g
     }
 
     fn mk_intent(id: &str, channel: &str, scheduled_for: f64) -> QueuedIntent {
@@ -563,7 +658,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn enqueue_future_scheduled_goes_to_pending() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "sfire_a".into(),
             max_per_day: 10,
@@ -579,7 +674,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn enqueue_zero_scheduled_takes_normal_path() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "sfire_b".into(),
             max_per_day: 10,
@@ -594,7 +689,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn scheduled_cap_enforced_at_500() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "sfire_c".into(),
             max_per_day: 10,
@@ -615,7 +710,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn drain_before_time_returns_empty() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "drain_a".into(),
             max_per_day: 10,
@@ -632,7 +727,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn drain_after_time_promotes_to_queue() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "drain_b".into(),
             max_per_day: 10,
@@ -650,7 +745,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn drain_preserves_heap_order() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "drain_c".into(),
             max_per_day: 10,
@@ -669,7 +764,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn grouped_release_batches_morning_kinds() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "grp_a".into(),
             max_per_day: 10,
@@ -715,7 +810,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn grouped_release_demotes_single_morning_kind() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "grp_b".into(),
             max_per_day: 10,
@@ -735,7 +830,7 @@ mod tests_scheduled_fire {
 
     #[test]
     fn grouped_release_review_never_in_batch() {
-        clear_state();
+        let _serial = clear_state();
         scheduler_configure(PostureParams {
             channel: "grp_c".into(),
             max_per_day: 10,
