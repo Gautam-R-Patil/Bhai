@@ -19,12 +19,19 @@ import { getTimezone } from "./location/index.js";
 const recentPhrases = new Map<string, string[]>(); // category → last N phrases
 const MAX_HISTORY = 3;
 
-function pickPhrase(category: string, options: string[]): string {
+export function pickPhrase(category: string, options: string[]): string {
     const history = recentPhrases.get(category) || [];
 
-    // Filter out recently used phrases
-    const available = options.filter(opt => !history.includes(opt));
-    const pool = available.length > 0 ? available : options;
+    // Filter out recently used phrases.
+    const available = options.filter((opt) => !history.includes(opt));
+    // When every option is in the history window (categories with ≤ MAX_HISTORY
+    // phrases — most of them), still exclude the LAST one used, or the random
+    // pick could land on it and repeat the phrase back-to-back — the exact thing
+    // this function exists to prevent. Fall back to all options only when a
+    // category has a single phrase.
+    const last = history[history.length - 1];
+    const pool =
+        available.length > 0 ? available : options.filter((opt) => opt !== last).length > 0 ? options.filter((opt) => opt !== last) : options;
 
     // Random selection
     const chosen = pool[Math.floor(Math.random() * pool.length)];
@@ -35,6 +42,11 @@ function pickPhrase(category: string, options: string[]): string {
     recentPhrases.set(category, history);
 
     return chosen;
+}
+
+/** @internal test-only — clear the phrase-repetition history. */
+export function _resetPhraseHistory(): void {
+    recentPhrases.clear();
 }
 
 // ── Time-of-Day Awareness ──────────────────────────
