@@ -63,7 +63,12 @@ export const runWideGrant = (run: SwarmRunContext | undefined): boolean => !!run
  * A payment refused inside a swarm. Unlike a gate hold, it is never approved by a
  * confirmed swarm_task re-run: the main agent makes it itself after the owner's OK.
  */
-export const isPaymentHold = (b: { tool: string }): boolean => b.tool === "vault_authorize_payment";
+/** Pays or places an order: the vault payment, or a site skill's checkout confirm. A swarm never does either. */
+export const isPaymentCall = (name: string, args: Record<string, unknown>): boolean =>
+    name === "vault_authorize_payment" || (name === "site_task" && args.action === "confirm");
+/** A hold recorded for a payment call (site_task is only ever held at confirm). */
+export const isPaymentHold = (b: { tool: string }): boolean =>
+    b.tool === "vault_authorize_payment" || b.tool === "site_task";
 
 /** Calls the gate has held back so far in the current step (0 outside a swarm). */
 export function stepBlockCount(): number {

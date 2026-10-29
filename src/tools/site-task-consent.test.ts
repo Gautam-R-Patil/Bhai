@@ -17,7 +17,7 @@ vi.mock("../skills/site/registry.js", () => ({ findSiteSkill: () => "/skills/sho
 
 const { executeTool } = await import("./index.js");
 const { noteOwnerMessage, _resetConsent } = await import("../security/consent.js");
-const { withSwarmRun, swarmConsentKey } = await import("../agents/swarm-context.js");
+const { withSwarmRun, withSwarmStep, swarmConsentKey, isPaymentHold } = await import("../agents/swarm-context.js");
 
 describe("site_task checkout consent", () => {
     it("refuses confirm until the owner says yes after being asked", async () => {
@@ -74,5 +74,28 @@ describe("site_task checkout consent", () => {
         const r = JSON.parse(await executeTool("site_task", { action: "confirm", amount: 199, confirmed: true }));
         expect(r.needs_confirmation).toBe(true);
         expect(runSiteTask).toHaveBeenCalledTimes(1);
+    });
+
+    it("a swarm never places an order: confirm is refused even in an approved step, and reported as a payment", async () => {
+        _resetConsent();
+        runSiteTask.mockReset();
+        const run = {
+            consentKey: swarmConsentKey("t2"),
+            consentGranted: true,
+            blocked: [] as Array<{ step?: string; tool: string; summary: string }>,
+            approvedSteps: new Set<string>(["s1"]),
+        };
+        const r = JSON.parse(
+            await withSwarmRun(run, () =>
+                withSwarmStep({ stepId: "s1", stepApproved: true }, () =>
+                    executeTool("site_task", { action: "confirm", amount: 199, confirmed: true }),
+                ),
+            ),
+        );
+        expect(r.needs_owner_approval).toBe(true);
+        expect(runSiteTask).not.toHaveBeenCalled();
+        expect(run.blocked).toHaveLength(1);
+        expect(isPaymentHold(run.blocked[0])).toBe(true);
+        expect(run.blocked[0].summary).toContain("199");
     });
 });

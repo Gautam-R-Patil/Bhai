@@ -110,7 +110,7 @@ Do NOT use for simple, single-focus tasks — just handle those directly.`,
                     ? {
                           payments_not_made: payments,
                           payment_next_step:
-                              "These payments were NOT made: a swarm never makes a payment. Do NOT re-run swarm_task for them. Tell the owner the merchant and amount and ask; only if they say yes in a new message, call vault_authorize_payment yourself on that checkout page.",
+                              "These payments/orders were NOT made: a swarm never pays or places an order. Do NOT re-run swarm_task for them. Tell the owner the merchant and amount and ask; only if they say yes in a new message, make it yourself (vault_authorize_payment on that checkout page, or site_task confirm).",
                       }
                     : {}),
             });
