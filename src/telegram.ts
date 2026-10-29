@@ -36,6 +36,9 @@ import {
     isStopCommand,
     markdownToPlainText,
     markdownToTelegramHtml,
+    stuckCallbackMessage,
+    stuckKeyboard,
+    withStuckReplyLine,
 } from "./channel-text.js";
 import { getThinkingLevel, handleCommand, initCommands } from "./commands/index.js";
 import { getConvexSiteUrl } from "./config/keys.js";
@@ -130,6 +133,63 @@ async function sendTelegramMarkdown(
         last = { messageId: sent?.message_id, md: chunk.md };
     }
     return last;
+}
+
+/** A stuck report gets one-tap handoff buttons only in the owner's private chat. */
+function wantsStuckButtons(res: { stuck?: boolean }, senderIsOwner: boolean, chatType?: string): boolean {
+    return res.stuck === true && senderIsOwner && chatType === "private";
+}
+
+/**
+ * Put the I'll take over / Retry / Skip buttons under the report's last bubble. If that edit fails
+ * (or nothing was sent), they go out under a short follow-up instead, so they are never silently lost.
+ */
+async function attachStuckKeyboard(
+    api: Bot["api"],
+    chatId: number,
+    messageId: number | undefined,
+    lastEditAt = 0,
+): Promise<void> {
+    const reply_markup = stuckKeyboard();
+    if (messageId) {
+        // Telegram throttles rapid edits of one message — keep them ≥1s apart
+        const wait = lastEditAt + 1000 - Date.now();
+        if (wait > 0) await sleep(wait);
+        try {
+            await withTelegramRetry(() => api.editMessageReplyMarkup(chatId, messageId, { reply_markup }));
+            return;
+        } catch (err) {
+            console.warn("[TELEGRAM] Failed to attach stuck keyboard, sending it separately:", (err as Error).message);
+        }
+    }
+    // As a reply to the report, so a tap still carries the report as its reply context.
+    const reply_parameters = messageId ? { message_id: messageId, allow_sending_without_reply: true } : undefined;
+    await withTelegramRetry(() => api.sendMessage(chatId, "What next?", { reply_markup, reply_parameters })).catch(
+        (err: Error) => console.warn("[TELEGRAM] Failed to send stuck keyboard:", err.message),
+    );
+}
+
+/** Send a media or voice turn's reply as bubbles; a stuck report gets the handoff buttons or the reply line. */
+async function replyInBubbles(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ctx: any,
+    result: { text: string; stuck?: boolean },
+    senderIsOwner: boolean,
+): Promise<void> {
+    const buttons = wantsStuckButtons(result, senderIsOwner, ctx.chat?.type);
+    const bubbles = splitIntoBubbles(buttons ? result.text : withStuckReplyLine(result, senderIsOwner));
+    let lastId: number | undefined;
+    for (let i = 0; i < bubbles.length; i++) {
+        const bubble = bubbles[i];
+        if (i > 0) {
+            await ctx.replyWithChatAction("typing");
+            const delay = Math.min(600, Math.max(300, bubble.length * 2));
+            await new Promise((r) => setTimeout(r, delay));
+        }
+        const sent = await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
+        lastId = sent.messageId ?? lastId;
+    }
+    if (buttons) await attachStuckKeyboard(ctx.api, ctx.chat.id, lastId);
 }
 
 // ── Inline Keyboards ─────────────────────────
@@ -567,7 +627,20 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             }
         }
 
-        // ── Buffer message and debounce ──
+        bufferMessage(ctx, chatId, triggerMessageId, userMessage, replyToText, replyToAuthor);
+    });
+
+    // ── Buffer a message from the sender of `ctx` and debounce ──
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function bufferMessage(
+        ctx: any,
+        chatId: number,
+        triggerMessageId: number,
+        userMessage: string,
+        replyToText?: string,
+        replyToAuthor?: string,
+    ) {
+        const bufKey = batchKey(chatId, ctx.from?.id);
         const existing = messageBuffer.get(bufKey);
         if (existing) {
             // Add to buffer and reset timer
@@ -594,7 +667,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 ctx: ctx as never,
             });
         }
-    });
+    }
 
     // ── Process buffered messages ───────────────────
     // eslint-disable-next-line @typescript-eslint/no-floating-promises, @typescript-eslint/no-explicit-any
@@ -1059,8 +1132,11 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                 // ── Response-time awareness ──────────────────────────────────
                 // If the response took a while, acknowledge it naturally using alive-ux
-                let responseText = response.text;
-                const timeAck = getResponseTimeAck(taskDurationMs, response.toolCalls > 0);
+                // A stuck report gets one-tap handoff buttons in the owner's private chat, else the plain reply line.
+                const stuckButtons = wantsStuckButtons(response, senderIsOwner, ctx.chat?.type);
+                let responseText = stuckButtons ? response.text : withStuckReplyLine(response, senderIsOwner);
+                // No "finally!"/"phew" in front of a stuck report: it reads as success.
+                const timeAck = response.stuck ? null : getResponseTimeAck(taskDurationMs, response.toolCalls > 0);
                 if (timeAck) {
                     const lowerResp = responseText.toLowerCase();
                     if (
@@ -1083,7 +1159,12 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                 const replyOpts = shouldFork ? { reply_parameters: { message_id: triggerMessageId } } : {};
                 const reply: TelegramReply = (text, opts) => ctx.reply(text, opts);
-                const track = (id: number) => botMessageToTask.set(id, taskId);
+                let lastSentId: number | undefined;
+                let lastEditAt = 0;
+                const track = (id: number) => {
+                    botMessageToTask.set(id, taskId);
+                    lastSentId = id;
+                };
 
                 if (useStreaming) {
                     // Send first bubble immediately, then append the rest by editing it in place
@@ -1093,7 +1174,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         replyOpts,
                         track,
                     );
-                    let lastEditAt = Date.now();
+                    lastEditAt = Date.now();
 
                     for (let i = 1; i < bubbles.length; i++) {
                         const delay = Math.min(600, Math.max(200, bubbles[i].length * 1.5));
@@ -1151,6 +1232,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         await sendTelegramMarkdown(reply, bubble, replyOpts, track);
                     }
                 }
+                if (stuckButtons) await attachStuckKeyboard(ctx.api, chatId, lastSentId, lastEditAt);
             } catch (err) {
                 if (!controller.signal.aborted) {
                     console.error("❌ Agent error:", err);
@@ -1275,6 +1357,20 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 console.log("[TG] inbox callback failed (non-fatal):", (err as Error).message);
                 await ctx.answerCallbackQuery({ text: "error" });
             }
+            return;
+        }
+
+        // ── Stuck-report handoff: stuck:takeover|retry|skip → that user's next message ──
+        if (data.startsWith("stuck:")) {
+            // A tap queued while the bot was down is "too old" to answer; still run the turn.
+            await ctx.answerCallbackQuery().catch(() => {});
+            await ctx.editMessageReplyMarkup().catch(() => {});
+            const message = stuckCallbackMessage(data);
+            const stuckMsg = ctx.callbackQuery.message;
+            // Carry the report as reply context, so an old or concurrent tap answers this report, not the latest turn.
+            // Buttons under the "What next?" fallback reply to the report: carry that instead.
+            const reportText = stuckMsg?.reply_to_message?.text ?? stuckMsg?.text;
+            if (message && chatId && stuckMsg) bufferMessage(ctx, chatId, stuckMsg.message_id, message, reportText);
             return;
         }
 
@@ -1644,16 +1740,7 @@ async function handleMediaMessage(
             return;
         }
 
-        const bubbles = splitIntoBubbles(result.text);
-        for (let i = 0; i < bubbles.length; i++) {
-            const bubble = bubbles[i];
-            if (i > 0) {
-                await ctx.replyWithChatAction("typing");
-                const delay = Math.min(600, Math.max(300, bubble.length * 2));
-                await new Promise((r) => setTimeout(r, delay));
-            }
-            await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
-        }
+        await replyInBubbles(ctx, result, senderIsOwner);
     } catch (err) {
         console.error("❌ Media processing error:", err);
         const errorType = categorizeError(err as Error);
@@ -1799,16 +1886,7 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
         }
 
         // Send response
-        const bubbles = splitIntoBubbles(result.text);
-        for (let i = 0; i < bubbles.length; i++) {
-            const bubble = bubbles[i];
-            if (i > 0) {
-                await ctx.replyWithChatAction("typing");
-                const delay = Math.min(600, Math.max(300, bubble.length * 2));
-                await new Promise((r) => setTimeout(r, delay));
-            }
-            await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
-        }
+        await replyInBubbles(ctx, result, senderIsOwner);
     } catch (err) {
         console.error("❌ Audio processing error:", err);
         const errorType = categorizeError(err as Error);

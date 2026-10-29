@@ -8,6 +8,7 @@
 // Uses smart context windowing to limit token usage in long-running tasks.
 
 import path from "node:path";
+import { takeStuckMarker } from "../channel-text.js";
 import { isUntrustedToolResult, wrapUntrustedToolResult } from "../context-scrubber.js";
 import type { ChatCompletionMessageParam, ChatCompletionTool, LLMClient } from "../llm.js";
 import { selectForSubAgent } from "../model-router.js";
@@ -566,7 +567,8 @@ export async function runSubAgent(
             }
 
             const toolCalls = choice.message?.tool_calls;
-            const content = choice.message?.content || "";
+            // A sub-agent's [[STUCK]] marker must never reach a user raw (long-task review, swarm synthesis).
+            const content = takeStuckMarker(choice.message?.content || "").text;
 
             // No tool calls → agent is done
             if (!toolCalls || toolCalls.length === 0) {

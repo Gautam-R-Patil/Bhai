@@ -16,6 +16,7 @@ import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { getWorkspaceDir } from "../config/paths.js";
+import { isStuckReplyPhrase, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
 import {
     runAgent,
@@ -769,6 +770,9 @@ function isScreenQuery(msg: string): boolean {
     const lower = msg.toLowerCase().trim();
     const words = lower.split(/\s+/);
 
+    // A stuck report's handoff reply ("retry it", "skip it") is about the task, not the screen.
+    if (isStuckReplyPhrase(msg)) return false;
+
     // 1. Direct keyword match
     if (SCREEN_KEYWORDS.some(kw => lower.includes(kw))) return true;
 
@@ -983,7 +987,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         console.log(`📡 [Overlay] WS state: ${ws.readyState}, clients: ${overlayClients.size}`);
 
         // Strip internal debug blocks + [SOURCE: ...] and [no_reply] tags the LLM may have echoed back
-        const cleanText = result.text
+        const cleanText = withStuckReplyLine(result, wsIsOwner(ws))
             .replace(/<system_log>[\s\S]*?<\/system_log>/g, '')
             .replace(/<tool_log[\s\S]*?<\/tool_log>/g, '')
             .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, '')
@@ -1080,7 +1084,7 @@ async function handleFileAttachment(
             sendToClient(ws, { type: "response", text: "Stopped.", stopped: true });
             return;
         }
-        const cleanText = result.text
+        const cleanText = withStuckReplyLine(result, wsIsOwner(ws))
             .replace(/<system_log>[\s\S]*?<\/system_log>/g, '')
             .replace(/<tool_log[\s\S]*?<\/tool_log>/g, '')
             .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, '')

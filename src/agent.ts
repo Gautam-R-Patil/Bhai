@@ -19,6 +19,7 @@ import {
     tryHalfOpen,
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
+import { takeStuckMarker } from "./channel-text.js";
 import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
 import {
@@ -508,6 +509,8 @@ export type ProgressCallback = (message: string) => Promise<void>;
 export interface AgentResponse {
     text: string;
     toolCalls: number;
+    /** The turn ended in a stuck report: Bhai needs the user to unblock it. */
+    stuck?: boolean;
 }
 
 export interface ChannelContext {
@@ -1265,6 +1268,11 @@ export async function runAgent(
                         return null;
                     });
             }
+        }
+        if (typeof res?.text === "string") {
+            const { text, stuck } = takeStuckMarker(res.text);
+            res.text = text;
+            if (stuck) res.stuck = true;
         }
         // The model only ever sees handles ([OTP_1], [CARD_2]); the owner asked
         // about their own values, so show them. Everyone else keeps the handle.
@@ -3514,7 +3522,8 @@ PLAN:`,
                     responseText.length < 200) ||
                 (isGivingUp && totalToolCalls < 15);
 
-            if (shouldForceRetry) {
+            // A stuck report ([[STUCK]]) is the agreed way to hand back a blocker; never force a retry over it.
+            if (shouldForceRetry && !takeStuckMarker(responseText).stuck) {
                 // Build context-aware continuation prompt based on what failed
                 const failedTools = recentToolErrors
                     .map((m) => {
@@ -4026,7 +4035,7 @@ PLAN:`,
                     /* best-effort */
                 }
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
-                return { text: stuckMsg, toolCalls: totalToolCalls };
+                return { text: stuckMsg, toolCalls: totalToolCalls, stuck: true };
             }
         }
 

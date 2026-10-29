@@ -13,7 +13,7 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { type MediaAttachment, runAgent } from "./agent.js";
 import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
-import { isStopCommand } from "./channel-text.js";
+import { isStopCommand, STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import { getDataDir } from "./config/paths.js";
 import type { LLMClient } from "./llm.js";
 import { recall } from "./memory/sqlite.js";
@@ -1485,7 +1485,7 @@ async function handleOwnerMessage(
         ownerConversations.set(jid, history);
         lastConvoActivity.set(jid, Date.now());
 
-        const responseText = result.text;
+        const responseText = withStuckReplyLine(result, true);
         console.log(`[WA] Response: ${responseText.substring(0, 200)}...`);
 
         if (responseText.trim() === "[NO_REPLY]") {
@@ -1505,8 +1505,10 @@ async function handleOwnerMessage(
 
         // Voice note response: if incoming was a voice note and response is short, reply with audio
         const wasVoiceNote = message?.message?.audioMessage?.ptt === true;
-        if (wasVoiceNote && responseText.length < 300) {
-            await sendVoiceReply(jid, responseText);
+        if (wasVoiceNote && result.text.length < 300) {
+            await sendVoiceReply(jid, result.text);
+            // The handoff line is for reading, not hearing: send it as text.
+            if (result.stuck) await sendMessage(jid, STUCK_REPLY_LINE);
         } else {
             const bubbles = splitIntoBubbles(responseText);
             for (let i = 0; i < bubbles.length; i++) {

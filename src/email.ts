@@ -10,6 +10,7 @@ import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
 import type { SendMailOptions, Transporter } from "nodemailer/lib/mailer";
 import { type ChannelContext, runAgent } from "./agent.js";
+import { withStuckReplyLine } from "./channel-text.js";
 import type { Config } from "./config.js";
 import type { LLMClient } from "./llm.js";
 import { sendOverlayNotification } from "./overlay/overlay-chat.js";
@@ -472,7 +473,7 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                         isOwner: senderIsOwner,
                     },
                 );
-                const replyText = response.text;
+                const replyText = withStuckReplyLine(response, senderIsOwner);
                 console.log(`   🤖 Agent response: ${replyText.substring(0, 200)}...`);
 
                 if (replyText.trim() && replyText.trim() !== "[NO_REPLY]") {

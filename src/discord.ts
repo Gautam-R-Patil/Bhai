@@ -17,6 +17,7 @@ import {
     type ThreadChannel,
     type Attachment,
 } from "discord.js";
+import { withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
 import {
     runAgent,
@@ -241,7 +242,7 @@ async function runAndReply(
             return;
         }
 
-        await sendFollowUps(interaction, result.text, contractShown);
+        await sendFollowUps(interaction, withStuckReplyLine(result, senderIsOwner), contractShown);
     } finally {
         clearSwarmProgress();
         clearDeepResearchProgress();
@@ -325,7 +326,7 @@ async function runInThread(
         }
 
         // Post final result as an embed
-        const sanitized = sanitizeReply(result.text);
+        const sanitized = sanitizeReply(withStuckReplyLine(result, senderIsOwner));
         const embed = buildResultEmbed(
             embedTitle,
             sanitized.substring(0, DISCORD_EMBED_DESC_LIMIT),
@@ -722,7 +723,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                 return;
             }
 
-            const sanitized = sanitizeReply(result.text);
+            const sanitized = sanitizeReply(withStuckReplyLine(result, senderIsOwner));
             const chunks = splitForDiscord(sanitized);
 
             for (const chunk of chunks) {

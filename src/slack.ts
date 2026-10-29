@@ -8,6 +8,7 @@
 // formats with Block Kit, and processes file uploads.
 
 import type { App, SayFn } from "@slack/bolt";
+import { withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
 import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
 import { classifyQuery } from "./memory/classifier.js";
@@ -208,7 +209,7 @@ async function handleSlackMessage(
         const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, { channel: "slack", userId: slackUserId || "", userName: undefined, isOwner: senderIsOwner });
 
         // Clean the response
-        const cleanText = result.text
+        const cleanText = withStuckReplyLine(result, senderIsOwner)
             .replace(/<system_log>[\s\S]*?<\/system_log>/g, "")
             .replace(/<tool_log[\s\S]*?<\/tool_log>/g, "")
             .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, "")

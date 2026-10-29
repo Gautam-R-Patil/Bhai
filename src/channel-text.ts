@@ -4,9 +4,10 @@
 
 /**
  * Pure text helpers shared by the chat channels: Markdown → Telegram HTML,
- * HTML-length-aware chunking, and stop-command matching.
+ * HTML-length-aware chunking, stop-command matching, and the stuck-report handoff.
  */
 
+import type { InlineKeyboardMarkup } from "grammy/types";
 import { smartChunkMessage } from "./alive-ux.js";
 
 export const TELEGRAM_MAX_MESSAGE = 4096;
@@ -196,4 +197,75 @@ export function isStopCommand(text: string): boolean {
     const words = normalized.split(" ");
     if (words.length > 4) return false;
     return [STOP_ADDRESS, STOP_FILLER].some((drop) => STOP_COMMANDS.has(words.filter((w) => !drop.has(w)).join(" ")));
+}
+
+// ── Stuck report handoff ──
+
+/** Each handoff choice: its button label and the message it sends as the user. */
+const STUCK_ACTIONS = new Map([
+    [
+        "takeover",
+        {
+            label: "I'll take over",
+            message: "I'll take it from here myself. Tell me exactly where you stopped so I can continue.",
+        },
+    ],
+    ["retry", { label: "Retry", message: "Try that again, with a different approach this time." }],
+    ["skip", { label: "Skip", message: "Skip that part and carry on with the rest." }],
+]);
+
+/**
+ * The stuck-report marker [[STUCK]] (or **[[ stuck ]]**, `[[STUCK]]`, _[[STUCK]]_), anywhere in the reply:
+ * the double-bracket token only exists as our prompt's protocol marker, so it never reaches the user.
+ * Single-bracket [STUCK] labels are ordinary text and stay.
+ */
+// A wrapper is stripped only when the same characters close it, so "**OTP**[[STUCK]]" keeps OTP's closing **.
+const STUCK_MARKER = String.raw`([*_\`]{0,2})\[\[[ \t]*stuck[ \t]*\]\]\1`;
+const STUCK_LINE_START_RE = new RegExp(String.raw`^[ \t]*${STUCK_MARKER}[ \t]*`, "gim");
+const STUCK_ANYWHERE_RE = new RegExp(String.raw`[ \t]*${STUCK_MARKER}`, "gi");
+
+/** Drop the stuck-report marker from a final reply; `stuck` says whether it was there. */
+export function takeStuckMarker(text: string): { text: string; stuck: boolean } {
+    const stripped = text.replace(STUCK_LINE_START_RE, "").replace(STUCK_ANYWHERE_RE, "");
+    if (stripped === text) return { text, stuck: false };
+    return { text: stripped.replace(/\n{3,}/g, "\n\n").trim(), stuck: true };
+}
+
+/** Where a channel has no buttons, a stuck report to the owner ends with this line. */
+// "retry it" / "skip it", not a bare "skip": exact-match handlers (WhatsApp's inbox fallback) own bare words.
+export const STUCK_REPLY_LINE = "Reply: retry it · skip it · I'll take over";
+
+const STUCK_REPLY_PHRASES = new Set(STUCK_REPLY_LINE.slice("Reply: ".length).toLowerCase().split(" · "));
+
+/** True when a message is one of the reply line's phrases ("retry it", "skip it", "I'll take over"). */
+export function isStuckReplyPhrase(msg: string): boolean {
+    return STUCK_REPLY_PHRASES.has(
+        msg
+            .trim()
+            .toLowerCase()
+            .replace(/[’]/g, "'")
+            .replace(/[.!\s]+$/, ""),
+    );
+}
+
+/**
+ * The reply text for a channel without buttons: a stuck report to the owner gets the reply line.
+ * Others (contacts, group members, email senders) can't hand Bhai's task back, so they get the report alone.
+ */
+export function withStuckReplyLine(res: { text: string; stuck?: boolean }, toOwner: boolean): string {
+    return res.stuck && toOwner ? `${res.text}\n\n${STUCK_REPLY_LINE}` : res.text;
+}
+
+/** Telegram's one-row keyboard under a stuck report; callback data is "stuck:<action>". */
+export function stuckKeyboard(): InlineKeyboardMarkup {
+    return {
+        inline_keyboard: [
+            [...STUCK_ACTIONS].map(([action, a]) => ({ text: a.label, callback_data: `stuck:${action}` })),
+        ],
+    };
+}
+
+/** What a "stuck:<action>" button says on the user's behalf; undefined for any other data. */
+export function stuckCallbackMessage(data: string): string | undefined {
+    return data.startsWith("stuck:") ? STUCK_ACTIONS.get(data.slice(6))?.message : undefined;
 }
