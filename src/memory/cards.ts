@@ -7,6 +7,12 @@ import { ageLabel, getRawDb, type MemoryRecord, recallableSql } from "./sqlite.j
 const MAX_ENTITIES = 3; // per card kind
 const MAX_FACTS = 3; // per person/project
 const MAX_LIST = 5; // preferences, commitments
+// Capitalized words that start sentences, not names.
+const NOT_NAMES = new Set(
+    "the a an he she it they we you my our his her their this that these those what when where who why how can could will would should do does did is are was please also and but so if hey hi ok yes no".split(
+        " ",
+    ),
+);
 
 /** memory_store tags: person:/project: names lowercased and space-collapsed, other tags kept as given. */
 export function normalizeTags(tags: string): string {
@@ -26,8 +32,8 @@ const tagNames = (tags: string, kind: string) =>
         .filter((t) => t.startsWith(`${kind}:`))
         .map((t) => t.slice(kind.length + 1));
 
-const hasWord = (text: string, word: string, flags = "iu") =>
-    new RegExp(`(?<![\\p{L}\\p{N}])${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, flags).test(text);
+const hasWord = (text: string, word: string) =>
+    new RegExp(`(?<![\\p{L}\\p{N}])${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "iu").test(text);
 
 const title = (name: string) => name.replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase());
 
@@ -36,16 +42,18 @@ const fact = (m: MemoryRecord) =>
 
 /**
  * People / Projects / Preferences / Commitments cards for the owner's first iteration. People and
- * projects come from person:/project: tags named in the message (or capitalized names in untagged
- * 'person' rows); recalled preference/commitment rows join their cards. `rest` is the recalled
- * remainder for the plain list; `ids` are every memory the cards show. Rows in `skip` are left out.
+ * projects come from person:/project: tags named in the message (or a capitalized name from the
+ * message that starts an untagged 'person' row); recalled preference/commitment rows join their
+ * cards. `rest` is the recalled remainder for the plain list; `ids` are every memory the cards show. Rows in `skip` are left out.
  */
 export function buildMemoryCards(
     message: string,
     recalled: MemoryRecord[],
     skip: Set<number> = new Set(),
 ): { cards: string; ids: number[]; rest: MemoryRecord[] } {
-    const caps = message.match(/(?<![\p{L}\p{N}])\p{Lu}\p{L}+/gu) ?? [];
+    const caps = (message.match(/(?<![\p{L}\p{N}])\p{Lu}\p{L}+/gu) ?? []).filter(
+        (c) => !NOT_NAMES.has(c.toLowerCase()),
+    );
     const capsLower = new Set(caps.map((c) => c.toLowerCase()));
     // ponytail: scans up to 500 tagged/person rows per owner turn; add a tag table if it grows past that.
     const rows = (
@@ -69,7 +77,11 @@ export function buildMemoryCards(
         if (person) return [people, person];
         const project = tagNames(m.tags, "project").find(named);
         if (project) return [projects, project];
-        const token = m.category === "person" ? caps.find((c) => hasWord(m.content, c, "u")) : undefined;
+        // Untagged person rows are written name-first ("Arjun plays the guitar").
+        const token =
+            m.category === "person"
+                ? caps.find((c) => new RegExp(`^${c}(?![\\p{L}\\p{N}])`, "u").test(m.content))
+                : undefined;
         return token ? [people, token.toLowerCase()] : null;
     };
 

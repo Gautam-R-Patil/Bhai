@@ -2522,9 +2522,11 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const topScore = queriedMems.length > 0 ? ((queriedMems[0] as any).score ?? 0) : 0;
                     if (_harnessTraceId) recordMemoryHit(_harnessTraceId, uniqueMems.length, topScore);
-                    // Owner-only: contacts and autonomous runs keep the plain list, never the owner's cards.
+                    // Owner-only, never in groups: contacts, group chats and autonomous runs keep the plain list.
                     const { cards, ids, rest } =
-                        channelContext?.isOwner !== false && !channelContext?.autonomous
+                        channelContext?.isOwner !== false &&
+                        channelContext?.isPrivate !== false &&
+                        !channelContext?.autonomous
                             ? buildMemoryCards(rawUserMessage, uniqueMems, new Set(coreMems.map((c) => c.id)))
                             : { cards: "", ids: [], rest: uniqueMems };
                     if (cards) {

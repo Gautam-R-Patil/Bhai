@@ -69,6 +69,17 @@ describe("memory cards", () => {
         expect(new Set(out.ids)).toEqual(new Set([riya, riya2, mom, arjun, pref, promise]));
     });
 
+    it("sentence-start words are not names, and untagged person rows must start with the name", () => {
+        const raj = row("Raj is the manager. He approves leave", "person");
+        row("The owner's cousin Dev lives in Goa", "person");
+        const meera = row("Meera books the flights", "person");
+        row("Kabir and Meera share a desk", "person"); // names Meera, but is about Kabir
+        const out = cards.buildMemoryCards("The flight for Meera — He said book it, ask Raj", []);
+        expect(out.cards).not.toMatch(/PEOPLE — (The|He):|Goa|Kabir/);
+        expect(out.cards).toContain(`PEOPLE — Meera: Meera books the flights (#${meera}`);
+        expect(out.cards).toContain(`PEOPLE — Raj: Raj is the manager. He approves leave (#${raj}`);
+    });
+
     it("no names, no cards: recalled rows stay in the plain list", () => {
         const plain = row("Owner's wifi password hint is the dog's name");
         const out = cards.buildMemoryCards("what's the weather like", [rec(plain)]);
