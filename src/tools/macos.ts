@@ -495,7 +495,11 @@ export const osType: ToolDefinition = {
             parameters: {
                 type: "object",
                 properties: {
-                    text: { type: "string", description: "Text to type (types character by character)" },
+                    text: {
+                        type: "string",
+                        description:
+                            "Text to type. Can be combined with key: types the text, then presses the key (text='45*12', key='return').",
+                    },
                     key: {
                         type: "string",
                         description:
@@ -521,6 +525,18 @@ export const osType: ToolDefinition = {
         const delayMs = (input.delay_ms as number) || 200;
         const delaySec = delayMs / 1000;
         let script: string;
+
+        // text plus key/combo in one call ("45*12" then return): type, then press.
+        // Taking only the key dropped the text while reporting success.
+        let typedFirst = 0;
+        if (input.text && (input.key || input.combo)) {
+            try {
+                await withCursorTyping(() => typeTextMac(String(input.text)));
+                typedFirst = String(input.text).length;
+            } catch (err) {
+                return JSON.stringify({ success: false, error: `Typing failed: ${(err as Error).message}` });
+            }
+        }
 
         if (input.combo) {
             // Parse combo like "command+shift+s"
@@ -555,8 +571,15 @@ export const osType: ToolDefinition = {
             const text = input.text as string;
             try {
                 const method = await withCursorTyping(() => typeTextMac(text));
-                await new Promise((r) => setTimeout(r, delayMs));
-                return JSON.stringify({ success: true, typed_chars: text.length, method }); // not echoed: it may be a secret
+                const [into] = await Promise.all([getFrontmostApp(), new Promise((r) => setTimeout(r, delayMs))]);
+                // Which app got the text, so a wrong window shows up now rather than at the end.
+                return JSON.stringify({
+                    success: true,
+                    typed_chars: text.length, // not echoed: it may be a secret
+                    method,
+                    into: into?.name,
+                    next: "Typed only. To submit or evaluate it (search box, form, calculator =), press os_type key='return'.",
+                });
             } catch (err) {
                 return JSON.stringify({ success: false, error: `Typing failed: ${(err as Error).message}` });
             }
@@ -571,7 +594,8 @@ export const osType: ToolDefinition = {
             await fs.unlink(tmpFile).catch(() => {});
             return JSON.stringify({
                 success: true,
-                ...(input.text ? { typed_chars: String(input.text).length } : { pressed: input.key || input.combo }),
+                ...(typedFirst ? { typed_chars: typedFirst } : {}),
+                pressed: input.key || input.combo,
                 stdout: (stdout || "").substring(0, 500),
                 stderr: (stderr || "").substring(0, 500),
             });

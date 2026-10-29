@@ -76,6 +76,9 @@ const CASES: [string, string][] = [
     ["make the window full screen", "window_manage"],
     ["put chrome and vscode side by side", "window_manage"],
     ["take a screenshot", "os_screenshot"],
+    // From the model-ladder eval: light mode got 6 tools and no dark_mode; a typing task got no app_manager.
+    ["switch my mac to light mode", "dark_mode"],
+    ["open textedit, make a new document and type hello", "app_manager"],
 ];
 
 describe("computer-use routing without the classifier", () => {

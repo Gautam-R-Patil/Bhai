@@ -70,3 +70,18 @@ describe("os_click_id after os_inspect", () => {
         expect(out.success).toBe(true);
     });
 });
+
+// From the model-ladder eval: the Calculator result lives in an AXStaticText value,
+// and without it a model re-pressed "=" (540 → 6,480) to "check".
+describe("os_inspect shows on-screen text but not field contents", () => {
+    it("shows a static text's value and hides a text field's", async () => {
+        frontPid = 55;
+        tree = app("Calculator", 55, [
+            n("AXStaticText", "Edit field", "540", 10),
+            n("AXTextField", "Password hint", "hunter2", 40),
+        ]);
+        const out = JSON.parse(await osInspect.handler({}));
+        expect(out.elements).toContain('"Edit field" = "540"');
+        expect(out.elements).not.toContain("hunter2");
+    });
+});

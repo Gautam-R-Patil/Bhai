@@ -660,7 +660,10 @@ export const osSmartClick: ToolDefinition = {
                     nearest: m?.nearest,
                     ambiguous: m?.ambiguous,
                     tier_errors: m?.tierErrors,
-                    tip: missTip(m),
+                    // "Open TextEdit" isn't a click: weak models reach for this tool to launch apps.
+                    tip: /^\s*(open|launch|start|switch to|go to)\s+(the\s+)?[\w .]+(app)?\s*$/i.test(instruction)
+                        ? "To open or switch to an app, call app_manager with action='activate' and app='<name>' (it launches the app if needed). Then act inside it."
+                        : missTip(m),
                 });
             }
             if (!res.ok) {

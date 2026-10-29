@@ -124,17 +124,20 @@ export const osInspect: ToolDefinition = {
                 timestamp: Date.now(),
             };
 
-            // SECURITY: summary uses ONLY `label`, never `value`. Text-field contents (which
-            // include passwords, account numbers, etc. if a parent app's AX implementation is
-            // imperfect) stay in the in-process cache for os_click_id disambiguation but never
-            // reach the LLM's prompt context.
+            // SECURITY: summary uses `label`, and `value` only for read-only static text (a
+            // calculator display, a status line: what a screenshot shows anyway). Text-field
+            // contents (which include passwords, account numbers, etc. if a parent app's AX
+            // implementation is imperfect) stay in the in-process cache for os_click_id
+            // disambiguation but never reach the LLM's prompt context.
             // Also capped by bytes: past ~8KB the agent swaps the whole result for a
             // 2KB preview (non-Latin labels hit that well before 60 elements).
             const lines: string[] = [];
             let bytes = 0;
             for (const e of elements) {
                 const display = e.label ? truncate(e.label, 60) : `<${e.role.toLowerCase()}>`;
-                const line = `[${e.id}] (${e.role}) "${display}" at (${e.center.x},${e.center.y})${e.enabled ? "" : " [disabled]"}${e.offscreen ? " [offscreen]" : ""}`;
+                const shown =
+                    e.role === "AXStaticText" && e.value && e.value !== e.label ? ` = "${truncate(e.value, 80)}"` : "";
+                const line = `[${e.id}] (${e.role}) "${display}"${shown} at (${e.center.x},${e.center.y})${e.enabled ? "" : " [disabled]"}${e.offscreen ? " [offscreen]" : ""}`;
                 bytes += Buffer.byteLength(line) + 1;
                 if (bytes > 6000) break;
                 lines.push(line);

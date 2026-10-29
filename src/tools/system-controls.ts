@@ -1167,10 +1167,36 @@ export const openSettings: ToolDefinition = {
             const { waitForFrontmost } = await import("../screen/frontmost.js");
             const front = !!(await waitForFrontmost("System Settings", 5000));
             if (front) await new Promise((r) => setTimeout(r, 500)); // the pane's content draws a moment later
+            // Name the page showing: without it, small models kept clicking and left the page
+            // they had opened (model-ladder eval, "which apps can use my camera"). A freshly
+            // launched Settings shows its last pane first, so wait for the asked-for one.
+            const want = [
+                norm(pane),
+                norm(url.split(/[:?]/).pop() ?? "").replace(/^comapple(systempreferences)?|settings|extension|privacy/g, ""),
+            ]
+                .filter((w) => w.length >= 3)
+                .map((w) => w.slice(0, 6));
+            let page = "";
+            for (let i = 0; front && i < 12; i++) {
+                page = await execFileAsync(
+                    "osascript",
+                    ["-e", 'tell application "System Events" to tell process "System Settings" to get name of window 1'],
+                    { timeout: 2000 },
+                ).then(
+                    (r) => r.stdout.trim(),
+                    () => "",
+                );
+                if (page && want.some((w) => norm(page).includes(w))) break;
+                page = ""; // never report a page that may be the previous one
+                await new Promise((r) => setTimeout(r, 250));
+            }
             return JSON.stringify({
                 success: true,
                 opened: url,
-                ...(front ? {} : { note: "System Settings isn't in front yet: check with os_inspect app='System Settings'." }),
+                ...(page ? { page } : {}),
+                note: front
+                    ? "This page is on screen now. If the user only asked to open or see it, you're done: don't click anything else."
+                    : "System Settings isn't in front yet: check with os_inspect app='System Settings'.",
             });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
