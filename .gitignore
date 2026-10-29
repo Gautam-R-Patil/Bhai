@@ -229,6 +229,7 @@ desktop/hostinger-upload/
 !src/proactive/observer-state-persist.test.ts
 !src/memory/at-rest-scrub.test.ts
 !src/memory/session-expiry.test.ts
+!src/tools/browser/secret-fields.test.ts
 !src/tools/browser/extension-agent-tab.test.ts
 !convex/devices.test.ts
 !src/llm-guest.test.ts

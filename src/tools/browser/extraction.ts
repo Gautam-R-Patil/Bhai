@@ -101,7 +101,16 @@ export const browserAnalyze: ToolDefinition = {
                                     type: inp.type || "text",
                                     x: Math.round(rect.x + rect.width / 2),
                                     y: Math.round(rect.y + rect.height / 2),
-                                    value: inp.value?.substring(0, 50) || "",
+                                    // Passwords, card fields, one-time codes: filled or not, never the value.
+                                    value:
+                                        inp.type === "password" ||
+                                        /\b(cc-[a-z-]+|one-time-code|current-password|new-password)\b/.test(
+                                            inp.getAttribute("autocomplete") || "",
+                                        )
+                                            ? inp.value
+                                                ? "[filled, hidden]"
+                                                : ""
+                                            : inp.value?.substring(0, 50) || "",
                                 });
                         }
                     });

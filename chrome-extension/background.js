@@ -868,9 +868,13 @@ function scanPageElements() {
     if (seenCoords.has(coordKey)) continue;
     seenCoords.add(coordKey);
 
+    // A password, card field or one-time code is labelled, never read: its value would
+    // reach the model.
+    const secretField = el.type === "password" ||
+      /\b(cc-[a-z-]+|one-time-code|current-password|new-password)\b/.test(el.getAttribute("autocomplete") || "");
     const text = el.innerText?.replace(/\n/g, " ").substring(0, 40)
       || el.placeholder
-      || el.value?.substring(0, 40)
+      || (secretField ? "" : el.value?.substring(0, 40))
       || el.getAttribute("aria-label")
       || el.getAttribute("title")
       || "";
