@@ -3939,11 +3939,19 @@
                         <span class="installed-item-name">${escapeHtml(item.name || item.slug)}</span>
                         <span class="installed-item-version">v${escapeHtml(item.version || '1.0.0')}</span>
                     </div>
-                    <button class="btn btn-sm btn-danger" onclick="quickUninstall('${item.slug}', '${item.type}')">
+                    <button class="btn btn-sm btn-danger" data-uninstall-slug="${escapeHtml(item.slug)}" data-uninstall-type="${escapeHtml(item.type)}">
                         Uninstall
                     </button>
                 </div>
             `).join('');
+            // Delegated, so slug/type never enter an inline handler string (XSS-safe).
+            if (!list.dataset.uninstallWired) {
+                list.dataset.uninstallWired = "1";
+                list.addEventListener("click", (e) => {
+                    const btn = e.target.closest("[data-uninstall-slug]");
+                    if (btn) quickUninstall(btn.dataset.uninstallSlug, btn.dataset.uninstallType);
+                });
+            }
         }
 
         function closeInstalledModal() {
