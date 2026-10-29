@@ -1520,6 +1520,9 @@ async function _runAgentBody(
     // historyFork already supplies the contact's context and we must not
     // leak the owner's identity, memories, location, or traits.
     const isContactAgent = isForked && channelContext?.isOwner === false;
+    // What a contact or guest says is never the owner's: it must not become the owner's goal,
+    // session context or anticipation pattern. (No channel context = an owner path, e.g. voice.)
+    const ownerTurn = channelContext?.isOwner !== false;
 
     // Tag every runAgent invocation with a unique turn id so offloaded
     // tool outputs cluster per turn on disk.
@@ -1574,7 +1577,7 @@ async function _runAgentBody(
 
     // ── Goal detection: check if user mentioned a goal ──
     try {
-        const detectedGoal = detectGoalFromMessage(userIntentText);
+        const detectedGoal = ownerTurn ? detectGoalFromMessage(userIntentText) : null;
         if (detectedGoal) {
             createGoal(detectedGoal.description, detectedGoal.deadline ?? undefined);
             console.log(`  🎯 Goal detected: "${detectedGoal.description}"`);
@@ -2900,8 +2903,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // would otherwise re-emerge in the next turn's session-summary
             // injection (and into overnight dream-replay), defeating the
             // boundary sanitizer.
-            appendTurn("user", safeUserMessage);
-            trackSessionForAnticipation();
+            if (ownerTurn) {
+                appendTurn("user", safeUserMessage);
+                trackSessionForAnticipation();
+            }
         }
 
         // Smart thinking: use router's recommended thinking level
@@ -3895,7 +3900,7 @@ PLAN:`,
                         continue;
                     }
                     messages.push({ role: "assistant", content: text });
-                    appendTurn("assistant", text);
+                    if (ownerTurn) appendTurn("assistant", text);
                     maybeReflect();
                     if (usedBrowserTools) autoSaveSession();
                     // Credits deducted per-API-call in llm.ts
@@ -3965,7 +3970,7 @@ PLAN:`,
             }
 
             messages.push({ role: "assistant", content: text });
-            appendTurn("assistant", text);
+            if (ownerTurn) appendTurn("assistant", text);
             maybeReflect();
             if (usedBrowserTools) autoSaveSession();
 
@@ -4192,7 +4197,7 @@ PLAN:`,
                 const stuckMsg =
                     "I tried several approaches but couldn't get a useful result — the commands kept returning nothing or failing. Rather than keep retrying, here's where I got stuck: the tool calls aren't returning the data I need. Could you tell me a bit more, or try running it directly?";
                 messages.push({ role: "assistant", content: stuckMsg });
-                appendTurn("assistant", stuckMsg);
+                if (ownerTurn) appendTurn("assistant", stuckMsg);
                 // P5.2 STEP-0: genuine reasoning-failure terminal exit (gave up after
                 // sustained no-progress) → true-negative label for calibration.
                 try {
@@ -4222,7 +4227,7 @@ PLAN:`,
                 const phaseCount = parsed.phases || 0;
                 const delegationText = `I've started working on your task in the background (${phaseCount} phases). Task ID: ${taskId}. I'll keep you updated on progress — you can also ask me to check anytime.`;
                 messages.push({ role: "assistant", content: delegationText });
-                appendTurn("assistant", delegationText);
+                if (ownerTurn) appendTurn("assistant", delegationText);
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
                 return { text: delegationText, toolCalls: totalToolCalls };
             } catch {

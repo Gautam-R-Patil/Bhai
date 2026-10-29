@@ -223,6 +223,7 @@ desktop/hostinger-upload/
 !src/tools/browser/live-center.test.ts
 !src/tools/browser/chrome-tabs.test.ts
 !src/language-scope.test.ts
+!src/agent.owner-state.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts
