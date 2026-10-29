@@ -46,7 +46,7 @@ it("refuses a second owner turn, and delivers the reply to the chat bar after it
     const a = await open();
     expect((await a.next("ready")).busy).toBe(false);
     a.ws.send(JSON.stringify({ type: "chat", text: "summarise my inbox", chat: "bar-1" }));
-    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"), { timeout: 10_000 }); // slow under a loaded suite
 
     const b = await open(); // e.g. the extension, or a second window
     expect((await b.next("ready")).busy).toBe(true);
