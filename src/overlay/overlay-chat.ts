@@ -641,7 +641,14 @@ export function initOverlayChat(llm: LLMClient): void {
                         /^image\/(jpeg|png|webp)$/.test(image.mimeType)
                             ? ({ type: "image", base64: image.base64, mimeType: image.mimeType } as MediaAttachment)
                             : undefined;
-                    await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim(), tabShot);
+                    await handleOverlayMessage(
+                        ws,
+                        messageText,
+                        messageSource,
+                        msg.text.trim(),
+                        tabShot,
+                        msg.meta?.imageKind === "pasted" ? "pasted" : "tab",
+                    );
                 } else if (msg.type === "quick_action" && msg.text) {
                     const actionText = msg.text.trim();
                     if (actionText.startsWith("mem:forget:")) {
@@ -901,6 +908,7 @@ async function handleOverlayMessage(
     source = "overlay",
     logText = userMessage,
     tabShot?: MediaAttachment,
+    imageKind: "tab" | "pasted" = "tab",
 ): Promise<void> {
     if (!llmClient) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
@@ -981,7 +989,11 @@ async function handleOverlayMessage(
         taggedMessage = `${userMessage}
 
 [SOURCE: Bhai's side panel in the user's Chrome — respond there, NOT on Telegram. Keep it short.
-Attached: a screenshot of the Chrome tab the user is looking at (the page only). Orange strokes or boxes on it are the user's own drawing: focus on what they marked. Answer as if you can see the page, without "based on the screenshot". To act on the page, use the browser tools on this tab; to point something out to them, use browser_mark.]${chromeCtxNote}`;
+${
+            imageKind === "pasted"
+                ? "Attached: an image the user pasted into the chat. Answer about it directly."
+                : `Attached: a screenshot of the Chrome tab the user is looking at (the page only). Orange strokes or boxes on it are the user's own drawing: focus on what they marked. Answer as if you can see the page, without "based on the screenshot". To act on the page, use the browser tools on this tab; to point something out to them, use browser_mark.`
+        }]${chromeCtxNote}`;
     } else if (wsIsOwner(ws) && source !== "chrome-extension" && isScreenQuery(userMessage)) {
         // Only the owner's own chat bar may look at the screen — never a web-widget visitor,
         // and not the Chrome panel, which sends its tab instead.

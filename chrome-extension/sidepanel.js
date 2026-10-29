@@ -51,7 +51,8 @@ function inline(s) {
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/(?<![="'>\w])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 }
 
 function renderMarkdown(text) {
@@ -125,7 +126,69 @@ function messageEl(m) {
       setTimeout(() => copy.replaceChildren(icon('copy', 15)), 1200);
     });
     tools.append(copy);
-    el.append(body, tools);
+    const actions = m.meta?.actions || [];
+    const feedback = actions.filter((a) => a.action.startsWith('feedback:'));
+    const forget = actions.filter((a) => a.action.startsWith('mem:forget:'));
+    const followups = actions.filter((a) => !feedback.includes(a) && !forget.includes(a));
+    if (feedback.length) {
+      for (const [action, name, label] of [['feedback:good', 'up-thumb', 'This helped'], ['feedback:bad', 'down-thumb', "This didn't help"]]) {
+        if (!feedback.some((a) => a.action === action)) continue;
+        const b = document.createElement('button');
+        b.className = 'icon-btn';
+        b.title = label;
+        b.setAttribute('aria-label', label);
+        b.append(icon(name, 15));
+        b.dataset.fb = '1';
+        b.addEventListener('click', () => {
+          send({ type: 'quick_action', action, label });
+          tools.querySelectorAll('[data-fb]').forEach((x) => x.remove());
+          const t = document.createElement('span');
+          t.className = 'thanks';
+          t.textContent = 'Thanks';
+          tools.append(t);
+        });
+        tools.append(b);
+      }
+    }
+    for (const f of forget) {
+      const b = document.createElement('button');
+      b.className = 'link-btn';
+      b.textContent = 'Forget that';
+      b.title = 'Bhai just remembered something from this. Take it back.';
+      b.addEventListener('click', () => { b.remove(); runAction(f); });
+      tools.append(b);
+    }
+    el.append(body);
+    const safeLinks = (m.meta?.links || []).filter((u) => /^https?:\/\//.test(u));
+    if (safeLinks.length) {
+      const list = document.createElement('ul');
+      list.className = 'links';
+      for (const url of safeLinks) {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        const text = document.createElement('span');
+        text.textContent = url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+        a.append(icon('link', 13), text);
+        li.append(a);
+        list.append(li);
+      }
+      el.append(list);
+    }
+    if (followups.length) {
+      const row = document.createElement('div');
+      row.className = 'followups';
+      for (const f of followups.slice(0, 4)) {
+        const b = document.createElement('button');
+        b.textContent = f.label;
+        b.addEventListener('click', () => runAction(f));
+        row.append(b);
+      }
+      el.append(row);
+    }
+    el.append(tools);
   } else {
     el.textContent = m.text;
   }
@@ -139,12 +202,16 @@ function renderChat(chat) {
   const working = $('workingRow');
   for (const m of chat.slice(rendered)) thread.insertBefore(messageEl(m), working || null);
   rendered = chat.length;
+  const rows = thread.querySelectorAll('.bhai .followups');
+  rows.forEach((r, i) => { r.hidden = i !== rows.length - 1 || chat[chat.length - 1]?.role !== 'bhai'; });
   $('welcome').hidden = chat.length > 0;
   thread.scrollTop = thread.scrollHeight;
 }
 
+let lastProgress = 0;
 function setBusy(on, text) {
   busy = on;
+  lastProgress = Date.now();
   sendBtn.classList.toggle('busy', on);
   sendBtn.title = on ? 'Stop' : 'Send';
   sendBtn.setAttribute('aria-label', sendBtn.title);
@@ -173,12 +240,13 @@ function renderStatus(resp) {
   dot.title = canChat ? 'Connected to Bhai' : searching ? 'Connecting…' : browserOn ? 'Chat is reconnecting…' : "Bhai isn't running";
   $('offline').hidden = browserOn || searching;
   for (const b of document.querySelectorAll('.suggest button, #btnDraw, #btnAt')) b.disabled = !canChat;
+  document.querySelectorAll('.followups button').forEach((b) => { b.disabled = !canChat; });
   input.placeholder = canChat ? 'Ask Bhai…' : 'Open Bhai to chat';
   updateSendState();
 }
 
 function updateSendState() {
-  sendBtn.disabled = !busy && (!canChat || !input.value.trim());
+  sendBtn.disabled = !busy && (!canChat || !(input.value.trim() || pendingImage));
 }
 
 async function refreshTab() {
@@ -194,6 +262,7 @@ async function refreshTab() {
   extraTabs.delete(tab.id); // the current tab is shared as itself
   const sharable = /^(https?|file):/.test(tab.url || '');
   renderSharing();
+  renderSuggestions();
   const title = $('welcomeTitle');
   title.replaceChildren();
   if (sharable && host(tab.url)) {
@@ -283,23 +352,107 @@ function renderSharing() {
   }
 }
 
+// ── Suggestions that fit the site ────────────
+
+function suggestionsFor(tab) {
+  const h = host(tab?.url || '');
+  const path = (() => { try { return new URL(tab.url).pathname; } catch { return ''; } })();
+  const ask = (label, text, ic = 'ask') => ({ label, ic, run: () => sendMessage({ type: 'send_message', text }) });
+  const summary = { label: 'Summarize this page', ic: 'doc', run: () => sendMessage({ type: 'send_page', question: 'Summarize this page for me.', display: 'Summarize this page' }) };
+  const explain = { label: "Explain what's here", ic: 'ask', run: () => sendMessage({ type: 'send_selection', question: 'Explain this simply.' }) };
+  const draw = { label: 'Circle something and ask about it', ic: 'pen', run: startDrawing };
+  if (/youtube\.com$/.test(h) && path.startsWith('/watch')) {
+    return [ask('Summarize this video', 'Summarize this video for me.', 'doc'), ask('What are the key points?', 'What are the key points of this video?'), draw];
+  }
+  if (h === 'github.com') {
+    return [ask('Explain this repo', 'Explain what this repo is and how it is organised.', 'doc'), ask('What changed recently?', 'What changed recently here?'), draw];
+  }
+  if (h === 'mail.google.com') {
+    return [ask('Summarize this email', 'Summarize this email for me.', 'doc'), ask('Draft a reply', 'Draft a reply to this email. Show it to me before sending.'), draw];
+  }
+  if (h === 'docs.google.com') {
+    return [ask('Summarize this doc', 'Summarize this document.', 'doc'), ask('How can this be better?', 'Suggest concrete improvements to this document.'), draw];
+  }
+  if (/(^|\.)(amazon|flipkart|myntra|ebay)\./.test(h)) {
+    return [ask('Is this a good deal?', 'Is this a good deal? Check the price, reviews and alternatives.', 'doc'), ask('Compare with similar ones', 'Compare this with 2-3 similar products.'), draw];
+  }
+  if (/(^|\.)google\./.test(h) && path.startsWith('/search')) {
+    return [ask('Which result should I open?', 'Which of these results is the most useful for what I searched, and why?', 'doc'), explain, draw];
+  }
+  return [summary, explain, draw];
+}
+
+function renderSuggestions() {
+  const list = $('suggest');
+  list.replaceChildren();
+  for (const sgt of suggestionsFor(activeTab)) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.append(icon(sgt.ic, 17), document.createTextNode(sgt.label));
+    b.disabled = !canChat;
+    b.addEventListener('click', sgt.run);
+    li.append(b);
+    list.append(li);
+  }
+}
+
+function runAction(a) {
+  setBusy(true, 'Thinking…');
+  send({ type: 'quick_action', action: a.action, label: a.label }).then((r) => { if (!r?.ok) setBusy(false); });
+}
+
+// ── Pasted / dropped image ───────────────────
+
+let pendingImage = null; // data URL
+
+async function attachImage(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale);
+    c.height = Math.round(bmp.height * scale);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    pendingImage = c.toDataURL('image/jpeg', 0.85);
+    $('attachImg').src = pendingImage;
+    $('attachment').hidden = false;
+    updateSendState();
+  } catch {
+    showHint("Couldn't use that image.");
+  }
+}
+
+function clearImage() {
+  pendingImage = null;
+  $('attachment').hidden = true;
+  $('attachImg').removeAttribute('src');
+  updateSendState();
+}
+
 // ── Sending ──────────────────────────────────
 
 async function sendMessage(message) {
   setBusy(true, message.type === 'send_page' ? 'Reading the page…' : 'Thinking…');
-  const resp = await send({ ...message, noScreenshot: !shareTab, ignoreSelection: selectionIgnored });
+  const resp = await send({
+    ...message,
+    noScreenshot: !shareTab,
+    ignoreSelection: selectionIgnored,
+    ...(pendingImage && message.type === 'send_message' ? { image: pendingImage } : {}),
+  });
   if (!resp?.ok) {
     setBusy(false);
     showHint("Couldn't reach Bhai. Is the app open?");
     return false;
   }
   if (resp.drawing) $('drawChip').hidden = true;
+  if (message.type === 'send_message') clearImage();
   if (resp.drawing) $('workingRow').lastElementChild.textContent = 'Looking at your drawing…';
   return true;
 }
 
 async function sendText() {
-  const text = input.value.trim();
+  const text = input.value.trim() || (pendingImage ? 'What is this?' : '');
   if (!text || !canChat) return;
   const mentions = [...extraTabs.keys()];
   input.value = '';
@@ -443,6 +596,23 @@ input.addEventListener('keydown', (e) => {
 });
 
 sendBtn.addEventListener('click', () => (busy ? stop() : sendText()));
+input.addEventListener('paste', (e) => {
+  const file = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith('image/'));
+  if (file) { e.preventDefault(); attachImage(file); }
+});
+const composer = document.querySelector('.composer');
+composer.addEventListener('dragover', (e) => { if ([...e.dataTransfer.items].some((i) => i.type.startsWith('image/'))) { e.preventDefault(); composer.classList.add('dragging'); } });
+composer.addEventListener('dragleave', () => composer.classList.remove('dragging'));
+composer.addEventListener('drop', (e) => {
+  composer.classList.remove('dragging');
+  const file = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'));
+  if (file) { e.preventDefault(); attachImage(file); }
+});
+$('btnAttachOff').addEventListener('click', clearImage);
+setInterval(() => {
+  const row = $('workingRow');
+  if (busy && row && Date.now() - lastProgress > 45000) row.lastElementChild.textContent = 'Still working on it…';
+}, 5000);
 $('btnDraw').addEventListener('click', startDrawing);
 $('btnDrawEdit').addEventListener('click', startDrawing);
 $('btnDrawRemove').addEventListener('click', async () => {
@@ -466,14 +636,6 @@ $('btnSelOff').addEventListener('click', () => {
   selectionIgnored = true;
   renderSelection();
 });
-for (const b of document.querySelectorAll('.suggest button')) {
-  b.addEventListener('click', () => {
-    const act = b.dataset.act;
-    if (act === 'summary') sendMessage({ type: 'send_page', question: 'Summarize this page for me.', display: 'Summarize this page' });
-    else if (act === 'explain') sendMessage({ type: 'send_selection', question: 'Explain this simply.' });
-    else startDrawing();
-  });
-}
 $('btnNew').addEventListener('click', async () => {
   await send({ type: 'clear_chat' });
   renderChat([]);

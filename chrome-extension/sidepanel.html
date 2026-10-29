@@ -93,6 +93,17 @@
     .bhai:hover .reply-tools, .reply-tools:focus-within { opacity: 1; }
     .reply-tools .icon-btn { width: 26px; height: 26px; }
     .error { color: var(--bad); font-size: 13px; }
+    .followups { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .followups button { font-size: 12.5px; padding: 5px 10px; border-radius: var(--r-md); border: 1px solid var(--line); color: var(--ink); text-align: left; transition: border-color .15s, background .15s, transform .1s; }
+    .followups button:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); background: var(--raised); }
+    .followups button:active { transform: scale(.97); }
+    .links { list-style: none; margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+    .links a { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; font-size: 13px; color: var(--accent); text-decoration: none; }
+    .links a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .links a:hover span { text-decoration: underline; text-underline-offset: 2px; }
+    .reply-tools { display: flex; align-items: center; gap: 2px; }
+    .reply-tools .thanks { font-size: 12px; color: var(--ink-3); padding: 0 6px; }
+    .reply-tools .link-btn { font-size: 12px; margin-left: 6px; }
 
     .working { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: 13px; animation: rise .18s ease-out both; }
     .working span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -164,6 +175,11 @@
     .share-list .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .share-list .h { color: var(--ink-3); flex: none; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .share-list .icon-btn { width: 22px; height: 22px; border-radius: 5px; }
+    .attachment { position: relative; display: inline-block; margin: 0 0 6px; }
+    .attachment img { display: block; max-height: 72px; max-width: 120px; border-radius: var(--r-md); border: 1px solid var(--line); }
+    .attachment .icon-btn { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; background: var(--ink); color: var(--bg); }
+    .attachment .icon-btn:hover { background: var(--ink); color: var(--bg); }
+    .composer.dragging { border-color: var(--accent); }
     .mention-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 4px; box-shadow: var(--shadow); max-height: 264px; overflow-y: auto; animation: rise .12s ease-out both; z-index: 2; }
     .mention-head { font-size: 11.5px; color: var(--ink-3); padding: 6px 8px 4px; }
     .mention-item { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: var(--r-md); cursor: pointer; }
@@ -192,6 +208,10 @@
       <symbol id="i-quote" viewBox="0 0 24 24"><path d="M5 5.5h14M5 10h14M5 14.5h8" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
       <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6.5 14.5l5.5-5.5 5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
+      <symbol id="i-up-thumb" viewBox="0 0 24 24"><path d="M7.5 10.5v9h-3v-9h3zM7.5 10.5l3.6-6.3a1.6 1.6 0 0 1 3 .9l-.6 3.9h4.8a2 2 0 0 1 2 2.4l-1.3 6.2a2 2 0 0 1-2 1.6H7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+      <symbol id="i-down-thumb" viewBox="0 0 24 24"><g transform="rotate(180 12 12)"><path d="M7.5 10.5v9h-3v-9h3zM7.5 10.5l3.6-6.3a1.6 1.6 0 0 1 3 .9l-.6 3.9h4.8a2 2 0 0 1 2 2.4l-1.3 6.2a2 2 0 0 1-2 1.6H7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></g></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M4 17l5-4.5 3.5 3 3-2.5 4.5 4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></symbol>
       <symbol id="i-tab" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M3.5 9.5h17" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
     </defs>
   </svg>
@@ -204,7 +224,7 @@
     <button class="icon-btn" id="btnNew" title="New chat" aria-label="New chat"><svg width="17" height="17"><use href="#i-plus"/></svg></button>
   </header>
 
-  <main class="thread" id="thread">
+  <main class="thread" id="thread" aria-live="polite">
     <div class="notice" id="offline" hidden>
       <strong>Bhai isn't running</strong>
       <p>Open the Bhai app on this computer. This panel connects by itself once it's open.</p>
@@ -213,11 +233,7 @@
     <section class="welcome" id="welcome">
       <h1 id="welcomeTitle">Hey, I'm right here with you.</h1>
       <p>Ask about this page, or tell me what to do in it.</p>
-      <ul class="suggest">
-        <li><button data-act="summary"><svg width="17" height="17"><use href="#i-doc"/></svg>Summarize this page</button></li>
-        <li><button data-act="explain"><svg width="17" height="17"><use href="#i-ask"/></svg>Explain what's here</button></li>
-        <li><button data-act="draw"><svg width="17" height="17"><use href="#i-pen"/></svg>Circle something and ask about it</button></li>
-      </ul>
+      <ul class="suggest" id="suggest"></ul>
     </section>
   </main>
 
@@ -243,6 +259,10 @@
           <svg class="chev" width="14" height="14"><use href="#i-chev"/></svg>
         </button>
         <ul class="share-list" id="shareList" hidden></ul>
+      </div>
+      <div class="attachment" id="attachment" hidden>
+        <img id="attachImg" alt="Image you pasted">
+        <button class="icon-btn" id="btnAttachOff" title="Remove image" aria-label="Remove image"><svg width="12" height="12"><use href="#i-x"/></svg></button>
       </div>
       <textarea id="input" rows="1" placeholder="Ask Bhai, or type @ to add tabs" aria-label="Message Bhai"></textarea>
       <div class="tools">

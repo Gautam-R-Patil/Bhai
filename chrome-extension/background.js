@@ -403,7 +403,10 @@ async function sendFromPanel(msg) {
   const title = ctx?.title || tab?.title || "";
   const selection = msg.ignoreSelection ? "" : (ctx?.selectedText || "").trim().slice(0, 2000);
   // "Not sharing" in the panel skips the screenshot, unless they drew (that's the point of drawing).
-  const shot = msg.noScreenshot && !drawnTabs.has(tab?.id) ? null : await captureTab(tab);
+  const pasted = typeof msg.image === "string" ? /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(msg.image) : null;
+  const shot = pasted
+    ? { image: { mimeType: pasted[1], base64: pasted[2] }, drew: false, pasted: true }
+    : msg.noScreenshot && !drawnTabs.has(tab?.id) ? null : await captureTab(tab);
   const quote = (t) => `"${t.slice(0, 100)}${t.length > 100 ? "…" : ""}"`;
 
   let body;
@@ -423,12 +426,13 @@ async function sendFromPanel(msg) {
   }
   const mentions = await mentionedTabs(msg.mentions);
   const text = `${url ? `[From browser: ${url}] ` : ""}${body}${mentions.text}`;
-  const sent = sendToAtlas(text, { url, title, action: msg.type }, shot?.image || null);
+  const sent = sendToAtlas(text, { url, title, action: msg.type, imageKind: shot?.pasted ? "pasted" : "tab" }, shot?.image || null);
   // What went with the message, for the panel to show as chips.
   if (sent) {
     addChat("you", display, {
       drew: !!shot?.drew,
-      shared: !!shot,
+      pasted: !!shot?.pasted,
+      shared: !!shot && !shot.pasted,
       selection: msg.type === "send_message" && selection ? selection.slice(0, 140) : "",
       tabs: mentions.titles,
     });
@@ -491,7 +495,14 @@ function handleOverlayMessage(msg) {
 
   if (msg.type === "response") {
     lastAtlasResponse = msg.text || "";
-    addChat("bhai", lastAtlasResponse);
+    // Follow-ups, feedback and "Forget that" ride with the reply; the panel shows them as buttons.
+    const actions = (Array.isArray(msg.quickActions) ? msg.quickActions : [])
+      .map((a) => (typeof a === "string" ? { label: a, action: a } : a))
+      .filter((a) => a && typeof a.label === "string" && typeof a.action === "string")
+      .slice(0, 8)
+      .map((a) => ({ label: a.label.slice(0, 80), action: a.action.slice(0, 300) }));
+    const links = (Array.isArray(msg.links) ? msg.links : []).filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 6);
+    addChat("bhai", lastAtlasResponse, actions.length || links.length ? { actions, links } : null);
     chrome.runtime.sendMessage({
       type: "atlas_response",
       text: lastAtlasResponse,
@@ -2227,6 +2238,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ── Overlay Bridge: send page context to Bhai ──
 
+  // A button under Bhai's reply (a follow-up, feedback or "Forget that").
+  if (msg.type === "quick_action" && typeof msg.action === "string") {
+    const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
+    if (ok) {
+      overlayWs.send(JSON.stringify({ type: "quick_action", text: msg.action }));
+      if (!msg.action.startsWith("feedback:")) addChat("you", msg.label || msg.action);
+    }
+    sendResponse({ ok });
+    return true;
+  }
   if (msg.type === "send_message" && msg.text === "stop") {
     sendResponse({ ok: sendToAtlas("stop", { action: "send_message" }) });
     return true;
