@@ -30,6 +30,7 @@ import type { AgentRole, SubAgentResult } from "./sub-agent.js";
 import {
     currentSwarmRun,
     currentSwarmStep,
+    isPaymentHold,
     runWideGrant,
     type SwarmRunContext,
     swarmConsentKey,
@@ -56,6 +57,8 @@ export interface SwarmResult {
     needsApproval?: string[];
     /** Side-effecting tool calls the swarm's tool gate did not run (tool + target). */
     blocked?: string[];
+    /** Payments a sub-agent tried: never made in a swarm; the main agent makes them after the owner's OK. */
+    paymentsNotMade?: string[];
     /** Every step's result (a held-back run is resumed from these). */
     stepResults?: Map<string, SubAgentResult>;
 }
@@ -151,10 +154,19 @@ export async function runSwarm(
         // Ask the owner once, now that swarm_task is about to tell them what was
         // held (gate holds and Telegram asks that timed out alike). Only a yes
         // sent after this grants the confirmed re-run, never one sent mid-run.
-        if (result.needsApproval?.length || run.blocked.length) checkConsent(consentKey, false);
+        // A refused payment isn't asked for here: the main agent asks for it itself.
+        if (result.needsApproval?.length || run.blocked.some((b) => !isPaymentHold(b))) checkConsent(consentKey, false);
     }
-    const blocked = [...new Set(run.blocked.map((b) => b.summary))];
-    return blocked.length > 0 ? { ...result, blocked } : result;
+    const summaries = (payments: boolean) => [
+        ...new Set(run.blocked.filter((b) => isPaymentHold(b) === payments).map((b) => b.summary)),
+    ];
+    const blocked = summaries(false);
+    const paymentsNotMade = summaries(true);
+    return {
+        ...result,
+        ...(blocked.length > 0 ? { blocked } : {}),
+        ...(paymentsNotMade.length > 0 ? { paymentsNotMade } : {}),
+    };
 }
 
 interface HeldRun {

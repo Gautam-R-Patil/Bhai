@@ -56,4 +56,14 @@ describe("vault_authorize_payment binds to the live merchant", () => {
             expect.objectContaining({ step: "s1", tool: "vault_authorize_payment", summary: expect.stringContaining("checkout.zomato.com") }),
         ]);
     });
+
+    it("inside a swarm a payment records no ask, so a later unrelated 'ok' grants nothing", async () => {
+        const run = { consentKey: "k", consentGranted: false, blocked: [] as Array<{ step?: string; tool: string; summary: string }> };
+        const inSwarm = (confirmed: boolean) =>
+            withSwarmRun(run, () => withSwarmStep({ stepId: "s1", stepApproved: true }, () => pay(confirmed)));
+        expect(JSON.parse(await inSwarm(false)).needs_owner_approval).toBe(true);
+        noteOwnerMessage("ok");
+        expect(JSON.parse(await inSwarm(true)).needs_owner_approval).toBe(true); // still refused
+        expect(JSON.parse(await pay(true)).needs_confirmation).toBe(true); // no ask was pending to grant
+    });
 });

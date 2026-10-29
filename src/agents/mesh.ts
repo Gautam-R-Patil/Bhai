@@ -17,7 +17,7 @@ import { shouldSpeculate, executeSpeculatively } from "./speculative.js";
 import { Blackboard } from "./blackboard.js";
 import { requestHumanApproval } from "./human-interrupt.js";
 import { getActiveChannel } from "../tools/channel-send.js";
-import { currentSwarmRun, runWideGrant, withSwarmStep } from "./swarm-context.js";
+import { currentSwarmRun, isPaymentHold, runWideGrant, withSwarmStep } from "./swarm-context.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -433,7 +433,18 @@ export async function executeMesh(
                 }
 
                 // A side effect the gate held back: the step is NOT done, whatever its sub-agent said.
-                const blocked = (run?.blocked.slice(blockedBefore) ?? []).filter((b) => b.step === step.id);
+                const stepBlocks = (run?.blocked.slice(blockedBefore) ?? []).filter((b) => b.step === step.id);
+                // A refused payment is not held for a confirmed re-run (that would refuse it
+                // again and loop): the step fails and swarm_task hands the payment to the main agent.
+                const blocked = stepBlocks.filter((b) => !isPaymentHold(b));
+                const payments = stepBlocks.filter(isPaymentHold);
+                if (payments.length > 0 && blocked.length === 0) {
+                    result = {
+                        ...result,
+                        success: false,
+                        output: `NOT done: the payment was NOT made (${[...new Set(payments.map((b) => b.summary))].join("; ")}). The main agent must make it itself after the owner's OK.`,
+                    };
+                }
                 if (blocked.length > 0) {
                     const tried = blocked.map((b) => b.summary);
                     result = {

@@ -336,6 +336,26 @@ describe("executeMesh with the tool gate", () => {
         expect(r?.output).not.toMatch(/Sent!/);
     });
 
+    it("a refused payment fails the step instead of holding it for a confirmed re-run", async () => {
+        runSubAgentMock.mockImplementation(async (_l: unknown, t: { id: string }) => {
+            currentSwarmRun()?.blocked.push({
+                step: t.id,
+                tool: "vault_authorize_payment",
+                summary: "vault_authorize_payment → shop.example",
+            });
+            return ok(t.id);
+        });
+        const run = newRun();
+        const res = await withSwarmRun(run, () =>
+            executeMesh(llm, [{ id: "s1", role: "browser", description: "Check out the cart", depends_on: [] }], undefined, 1000),
+        );
+        const r = res.results.get("s1");
+        expect(r?.needsApproval).toBeFalsy();
+        expect(r?.success).toBe(false);
+        expect(r?.output).toMatch(/payment was NOT made/);
+        expect(r?.output).not.toMatch(/confirmed: true/);
+    });
+
     it("off Telegram never consults step text: a 'delete' step that only reads runs", async () => {
         runSubAgentMock.mockImplementation(async (_l: unknown, t: { id: string }) => ok(t.id));
         const res = await withSwarmRun(newRun(), () =>

@@ -83,7 +83,8 @@ Do NOT use for simple, single-focus tasks — just handle those directly.`,
             const result = await runSwarm(_llm, task, _onProgress || undefined, input.confirmed === true);
 
             const held = [...(result.needsApproval ?? []), ...(result.blocked ?? [])];
-            if (result.stepsCompleted === 0 && !result.synthesis && held.length === 0) {
+            const payments = result.paymentsNotMade ?? [];
+            if (result.stepsCompleted === 0 && !result.synthesis && held.length === 0 && payments.length === 0) {
                 return JSON.stringify({
                     status: "skipped",
                     reason: result.plan.reasoning,
@@ -103,6 +104,13 @@ Do NOT use for simple, single-focus tasks — just handle those directly.`,
                           blocked_actions: result.blocked ?? [],
                           next_step:
                               "These steps/actions were NOT done. Tell the owner plainly what was not done and ask. Only if the owner says yes in a new message, call swarm_task again with the SAME task text and confirmed: true; that runs only the held steps and does not repeat finished ones.",
+                      }
+                    : {}),
+                ...(payments.length
+                    ? {
+                          payments_not_made: payments,
+                          payment_next_step:
+                              "These payments were NOT made: a swarm never makes a payment. Do NOT re-run swarm_task for them. Tell the owner the merchant and amount and ask; only if they say yes in a new message, call vault_authorize_payment yourself on that checkout page.",
                       }
                     : {}),
             });

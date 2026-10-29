@@ -848,10 +848,12 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     );
     if (
         confirmCheck.needsConfirmation &&
-        // The swarm gate stands in for this inside a swarm, except for a payment:
-        // its OK must stay bound to the merchant captured above.
-        (!currentSwarmRun() || name === "vault_authorize_payment") &&
-        checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted"
+        // The swarm gate stands in for this inside a swarm. A payment is refused there
+        // outright, without checkConsent: recording an ask the owner never sees would let
+        // an unrelated "ok" mid-run grant a sub-agent's confirmed retry.
+        (currentSwarmRun()
+            ? name === "vault_authorize_payment"
+            : checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted")
     ) {
         console.log(`  ⚠️  ${name} needs the owner's OK first`);
         auditLog({
@@ -863,7 +865,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             error: "needs_confirmation",
         });
         // Only a payment gets here inside a swarm. A sub-agent can't ask the owner, so
-        // hold it like the swarm gate does: swarm_task then reports it to the main agent.
+        // record it: swarm_task tells the main agent to make it itself (isPaymentHold).
         const run = currentSwarmRun();
         if (run) {
             const summary = `${name} → ${String(actionArgs.site ?? "unknown site")} (a payment can't be approved inside a swarm: make it yourself after the owner's OK)`;

@@ -59,6 +59,12 @@ export const currentSwarmStep = (): SwarmStepContext | undefined => stepStore.ge
 /** The run's grant covers every step (a swarm nested in an approved step). */
 export const runWideGrant = (run: SwarmRunContext | undefined): boolean => !!run?.consentGranted && !run.approvedSteps;
 
+/**
+ * A payment refused inside a swarm. Unlike a gate hold, it is never approved by a
+ * confirmed swarm_task re-run: the main agent makes it itself after the owner's OK.
+ */
+export const isPaymentHold = (b: { tool: string }): boolean => b.tool === "vault_authorize_payment";
+
 /** Calls the gate has held back so far in the current step (0 outside a swarm). */
 export function stepBlockCount(): number {
     const run = currentSwarmRun();
