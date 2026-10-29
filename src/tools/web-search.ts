@@ -12,7 +12,13 @@ import { baseUrlHostMatches } from "../utils/atomic-io.js";
 // One log line per engine and failure kind — a silent `return []` hid that
 // Tavily/Exa had no API key, so every search quietly ran on Bing scraping.
 const reportedFailures = new Set<string>();
+// Engines the server says aren't configured (no API key there): every search used to ask
+// again and get the same 500. Skip them for an hour.
+const unconfiguredUntil = new Map<string, number>();
+const engineOff = (engine: string) => (unconfiguredUntil.get(engine) ?? 0) > Date.now();
+
 function engineFailed(engine: string, why: string): void {
+    if (/not configured/i.test(why)) unconfiguredUntil.set(engine, Date.now() + 60 * 60_000);
     const key = `${engine}:${why.slice(0, 60)}`;
     if (reportedFailures.has(key)) return;
     reportedFailures.add(key);
@@ -273,6 +279,7 @@ export function parseBraveHtml(html: string): SearchResult[] {
 // ── Tavily Search (proxied via Convex) ──────
 
 async function searchTavilyLite(query: string): Promise<SearchResult[]> {
+    if (engineOff("tavily")) return [];
     try {
         const sessionToken = await getSessionToken();
         if (!sessionToken) return [];
@@ -302,6 +309,7 @@ async function searchTavilyLite(query: string): Promise<SearchResult[]> {
 // ── Exa Search (proxied via Convex) ─────────
 
 async function searchExaLite(query: string): Promise<SearchResult[]> {
+    if (engineOff("exa")) return [];
     try {
         const sessionToken = await getSessionToken();
         if (!sessionToken) return [];
