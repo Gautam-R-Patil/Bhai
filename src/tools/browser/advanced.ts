@@ -21,6 +21,7 @@ import {
 } from "./core.js";
 import { signBrowserAction, validateJsCode } from "./native-browser.js";
 import { vaultTaintError } from "./vault-typing.js";
+import { unsafeBrowserUrl } from "../../security/url-safety.js";
 
 // ═══════════════════════════════════════════════
 // TOOL: Parallel Tab Execution
@@ -149,6 +150,8 @@ export const browserParallelTabs: ToolDefinition = {
 
                     try {
                         // Navigate if URL provided
+                        const badUrl = tabAction.url ? unsafeBrowserUrl(tabAction.url as string) : null;
+                        if (badUrl) throw new Error(badUrl);
                         if (tabAction.url) {
                             await page
                                 .goto(tabAction.url as string, {
@@ -579,6 +582,8 @@ export const browserMultiAction: ToolDefinition = {
             ): Promise<{ success: boolean; result?: any; error?: string }> => {
                 switch (act.action) {
                     case "navigate": {
+                        const badUrl = act.url ? unsafeBrowserUrl(act.url as string) : null;
+                        if (badUrl) throw new Error(badUrl);
                         if (act.url) {
                             await page
                                 .goto(act.url as string, { waitUntil: "domcontentloaded", timeout: 30000 })

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bhai Bridge",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Send page context to Bhai overlay",
   "minimum_chrome_version": "116",
   "permissions": [

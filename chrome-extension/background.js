@@ -1577,6 +1577,12 @@ async function getCookies(payload) {
 }
 
 async function navigate(payload) {
+  // Only web pages (and the blank page): never file://, javascript:, data: or chrome:// —
+  // a second check behind the bridge's own, in case a caller skips it.
+  const target = String(payload.url || "about:blank");
+  if (target !== "about:blank" && !/^https?:\/\//i.test(target)) {
+    throw new Error(`unsafe URL scheme — only http(s) is allowed`);
+  }
   if (payload.newTab) {
     const created = await chrome.tabs.create({ url: payload.url, active: true });
     pinAgentTab(created?.id);

