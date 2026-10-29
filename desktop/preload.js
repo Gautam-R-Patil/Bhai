@@ -115,8 +115,6 @@ contextBridge.exposeInMainWorld("atlas", {
     },
 
     // ── Account ──────────────────────────────
-    // accountLogin receives an OTPless payload: { userId, token, email, phone, name }
-    accountLogin: (otplessData) => ipcRenderer.invoke("account:login", otplessData),
     accountLogout: () => ipcRenderer.invoke("account:logout"),
     getAccountInfo: () => ipcRenderer.invoke("account:info"),
     getDevices: () => ipcRenderer.invoke("account:devices"),
