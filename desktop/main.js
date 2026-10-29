@@ -5798,9 +5798,15 @@ ${body}`;
 
     ipcMain.handle("wa:save-persona", (_, persona) => {
         try {
+            const { mergeWaPersona } = require("./wa-persona-merge");
             const personaPath = path.join(DATA_DIR, "whatsapp-persona.json");
             fs.mkdirSync(path.dirname(personaPath), { recursive: true });
-            fs.writeFileSync(personaPath, JSON.stringify(persona, null, 2));
+            // Merge onto the persisted persona so fields the Settings form
+            // doesn't send (notably allowedToolNames, set via WhatsApp commands)
+            // survive the save instead of being wiped.
+            let existing = {};
+            try { if (fs.existsSync(personaPath)) existing = JSON.parse(fs.readFileSync(personaPath, "utf-8")); } catch {}
+            fs.writeFileSync(personaPath, JSON.stringify(mergeWaPersona(existing, persona), null, 2));
             return { success: true };
         } catch (err) { return { success: false, error: err.message }; }
     });

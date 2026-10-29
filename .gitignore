@@ -296,6 +296,10 @@ desktop/hostinger-upload/
 !desktop/tests/try-this.test.js
 !desktop/tests/wizard.terms.test.js
 !desktop/tests/vault-store.test.js
+!desktop/tests/wa-owner-row.test.js
+!desktop/tests/wa-persona-merge.test.js
+!desktop/tests/ready-hub-route.test.js
+!desktop/tests/channel-card-qr.test.js
 !src/setup/wizard-seed.test.ts
 !src/prompts/persona-bias.test.ts
 !src/tool-router.persona.test.ts
