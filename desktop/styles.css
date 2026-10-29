@@ -5437,7 +5437,7 @@ body.hig .channel-status-dot.disconnected { box-shadow: none; background: var(--
 body.hig .channel-status-dot.connecting { box-shadow: none; }
 
 /* ── Store ───────────────────────────────────────────────────────── */
-body.hig .store-toolbar { padding: 0 24px 8px; gap: 8px; }
+body.hig .store-toolbar { padding: 0 28px 8px; gap: 8px; } /* 28px: same edges as .tab-header */
 body.hig .store-search { padding: 0 8px; height: 28px; gap: 6px; border-radius: 6px; background: var(--fill-quaternary); border: 0; }
 body.hig .store-search:focus-within { box-shadow: 0 0 0 3px var(--accent-ring); }
 body.hig .store-search svg { width: 14px; height: 14px; color: var(--text-muted); }
