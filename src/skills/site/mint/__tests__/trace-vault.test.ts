@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // A saved secret (security/vault.ts) typed while a site is being recorded for
 // the Skill Minter is written to the trace as its token, never as the value.
 // Offline: the synthetic shop and local Chromium.

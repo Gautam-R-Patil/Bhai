@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // libfvad-backed voice activity detection for live-voice barge-in gating.
 //
 // Built only when the `vad` cargo feature is enabled (default OFF). libfvad

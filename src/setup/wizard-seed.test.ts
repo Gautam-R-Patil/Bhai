@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tests buildIdentityUpdate — name + tone + W2 persona validation.
 import { describe, it, expect } from "vitest";
 import { buildIdentityUpdate } from "./wizard-seed.js";

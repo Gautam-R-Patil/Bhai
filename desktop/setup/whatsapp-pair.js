@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Wizard-scoped WhatsApp pairing. Runs Baileys from the Electron main process
 // so the user can scan a QR inside the setup wizard BEFORE the bot has booted.
 // Writes data/whatsapp-users/owners.json on successful pair so detectWhatsApp

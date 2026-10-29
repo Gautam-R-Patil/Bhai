@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { CONVERSATIONS_FTS_SYNC_SQL, MEMORIES_FTS_SYNC_SQL } from "./fts-triggers.js";

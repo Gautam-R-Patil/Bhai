@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Hot-reload system for store items.
 // Allows injecting newly installed items without restarting Bhai.
 

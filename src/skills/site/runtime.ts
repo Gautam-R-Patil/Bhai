@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Site Skill runtime: drives one site task (search → options → select →
 // confirm → done) with a small per-site skill that decides the next page

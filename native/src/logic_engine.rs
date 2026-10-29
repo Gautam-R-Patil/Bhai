@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Neurosymbolic Logic Engine — SAT solving, simple FOL operations,
 // proof-by-contradiction for verifying agent reasoning chains.
 // Inspired by Aristotle (ACL 2025) and LogicReward (ICLR 2026).

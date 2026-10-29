@@ -1,6 +1,6 @@
 # Bhai Business Model Design
 **Date:** 2026-04-26  
-**Company:** XAGI Labs Private Limited  
+**Company:** TRUSCOR Private Limited  
 **Product:** Bhai v0.2.1 — Autonomous Personal AI Agent  
 **Status:** Approved for implementation
 
@@ -74,7 +74,7 @@ All pricing is derived from actual model costs in `native/src/model_router.rs` a
 
 Sold when monthly credits are exhausted. Highest-margin product in the lineup.
 
-| Pack | Credits | $/credit | XAGI Cost | **Margin** |
+| Pack | Credits | $/credit | TRUSCOR Cost | **Margin** |
 |---|---|---|---|---|
 | **Starter** | 150 | $0.067 | $3.30 | **68%** |
 | **Standard** | 400 | $0.063 | $8.80 | **66%** |
@@ -90,13 +90,13 @@ Infrastructure already exists: `convex/schema.ts` (`store_items`, `submissions`,
 
 **Model:**
 - Free tools: no revenue share; increases Bhai stickiness and first-run value
-- Paid tools: **70/30 split** (developer keeps 70%, XAGI takes 30%)
+- Paid tools: **70/30 split** (developer keeps 70%, TRUSCOR takes 30%)
 - Pricing unit: credits (e.g., a skill priced at 500 credits = ~$11 value at Pro plan rates)
 
 **Developer portal** (`portals/developer-portal/`) — already built. Needs payment wiring.
 
 **Marketplace tiers:**
-| Listing type | XAGI cut | Notes |
+| Listing type | TRUSCOR cut | Notes |
 |---|---|---|
 | Free skill/tool | 0% | Grows ecosystem |
 | Paid skill/tool | 30% | Revenue share on each install |
@@ -121,7 +121,7 @@ Infrastructure already exists: `convex/schema.ts` (`store_items`, `submissions`,
 ### Phase 2 — Team/Cloud Tier (Month 6–12)
 
 **Goal:** First 50 Team accounts.  
-**Distribution:** Bhai runs in XAGI's cloud (VPS per team, or containerized); users connect via their existing channels.  
+**Distribution:** Bhai runs in TRUSCOR's cloud (VPS per team, or containerized); users connect via their existing channels.  
 **Revenue drivers:** Team subscriptions ($449/mo), extra seats ($35/seat).  
 **Infrastructure cost added:** ~$50/team/mo for cloud agent hosting (Node.js process + Convex namespace).  
 **Marketing motion:** Founder/operator communities (IndieHackers, Product Hunt, Twitter/X builders), cold outreach via Bhai's own marketing brain tools.

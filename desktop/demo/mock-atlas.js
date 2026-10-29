@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Browser-only mock of the Electron `window.atlas` IPC bridge so the
 // setup wizard, ready hub, and channels pages can be rendered in plain
 // Chrome for design review. Must be loaded BEFORE wizard/router.js,

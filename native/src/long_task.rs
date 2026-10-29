@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Long-Running Task Executor — Rust port via napi-rs
 // Phase planning, checkpoint management, heartbeat, recovery logic.
 // Actual LLM calls, file I/O, and agent execution stay in JS.

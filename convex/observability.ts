@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Observability queries for the admin panel dashboard.
 // Aggregates data from accounts, sessions, and activity logs.
 

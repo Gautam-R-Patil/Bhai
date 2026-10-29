@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Source Credibility Model — Bayesian credibility tracking per domain/author.
 // Updates credibility scores based on cross-referencing research results.
 

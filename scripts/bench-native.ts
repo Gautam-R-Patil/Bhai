@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Cross-module bench harness for the Rust expansion plan (prancy-painting-reef).
 //
 // Modes:

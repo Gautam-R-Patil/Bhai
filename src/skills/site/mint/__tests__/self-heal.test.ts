@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // P4 of the Skill Minter, offline: a minted skill on the synthetic shop stops
 // fitting the site (a renamed button), the run leaves a capture, Bhai finishes
 // the task by hand while recording, and a scripted LLM re-mints only the broken

@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // A site task parked on a question survives a bot restart (its checkpoint is on
 // disk), and a restored task asks for consent again instead of reusing an old yes.
 import { mkdtempSync } from "node:fs";

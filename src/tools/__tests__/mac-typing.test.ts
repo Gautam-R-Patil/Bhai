@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { MAC_TYPE_JXA, shouldRealKeystroke } from "../os-computer-action.js";

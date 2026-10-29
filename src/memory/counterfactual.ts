@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Counterfactual Memory — Store "what would have happened" for regret-based learning.
 
 import type { Database } from "./sqlite.js";

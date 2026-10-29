@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Native SIMD-accelerated harness optimization for Bhai
 //
 // Provides fast, numerically stable operations for the Meta-Harness

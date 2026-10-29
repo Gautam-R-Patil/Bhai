@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Swarm Orchestrator — Rust port via napi-rs
 // Task decomposition planning and synthesis structure.
 // Actual LLM calls for decomposition/synthesis stay in JS.

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //! Real macOS Liquid Glass: Apple's `NSGlassEffectView` (AppKit, macOS 26+)
 //! placed behind an Electron window's web contents. Raw Objective-C runtime
 //! FFI, no extra crates. Call from Electron's main-process JS, which runs on

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Window buttons for frameless pages. These pages' CSP (script-src 'self')
 // blocks inline onclick handlers, so the buttons are wired here instead.
 document.addEventListener("click", (e) => {

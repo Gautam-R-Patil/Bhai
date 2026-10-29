@@ -1,4 +1,5 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
+// Portions adapted and modified from OpenCLI (https://github.com/jackwener/opencli), licensed under Apache-2.0. See CREDITS.md.
 // TypeScript wrapper for native Rust browser-agent acceleration module.
 // Mirrors the pattern of src/native/index.ts — graceful JS fallback if .node unavailable.
 //

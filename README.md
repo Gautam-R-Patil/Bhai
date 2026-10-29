@@ -2,7 +2,7 @@
   <img src="./desktop/logo.png" alt="Bhai Logo" width="120" />
   <h1>Bhai</h1>
   <p><b>Advanced Technology for Logical Autonomous Systems</b></p>
-  <p>v0.2.1 &middot; Autonomous Personal AI Agent &middot; Built by <a href="https://tryatlasagi.com">XAGI Labs</a></p>
+  <p>v0.2.1 &middot; Autonomous Personal AI Agent &middot; Built by TRUSCOR Private Limited</p>
 </div>
 
 ---
@@ -478,6 +478,6 @@ data/
 
 ---
 
-*Proprietary software. Copyright &copy; 2024-2026 XAGI Labs Private Limited. All rights reserved.*
+*Proprietary software. Copyright &copy; 2024-2026 TRUSCOR Private Limited. All rights reserved.*
 
 *Website: [tryatlasagi.com](https://tryatlasagi.com)*

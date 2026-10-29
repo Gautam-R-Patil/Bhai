@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Translates the client's OpenAI-format chat requests (previously forwarded to
 // OpenRouter) into Claude Messages API calls, and Claude's reply back into the
 // OpenAI chat-completion shape the client already parses.

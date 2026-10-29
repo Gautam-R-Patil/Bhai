@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // code_action / code_execute programs run in a vm realm that must hold no host
 // object: any host function inside leads to the host Function constructor,
 // then process, and past the tool allowlist, plan-mode and confirmation gates,

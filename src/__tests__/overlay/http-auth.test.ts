@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 // Boots the overlay HTTP + WS server in-process. Verifies:
 //  F2: /api/file and /api/browse require auth + workspace containment + deny-list.

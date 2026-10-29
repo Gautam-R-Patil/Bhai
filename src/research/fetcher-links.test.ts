@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Deep research follows citation chains from each page's outbound links. They
 // must come from the raw HTML: the page content handed back has its tags stripped.
 import { describe, expect, it, vi } from "vitest";

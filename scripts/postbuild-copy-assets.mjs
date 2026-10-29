@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Copies non-TypeScript assets that `tsc` doesn't touch into `dist/` so the
 // production build (`node dist/index.js`) and the Electron bundle have
 // everything they need at runtime.

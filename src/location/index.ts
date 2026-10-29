@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Location Service — automatic device location with GPS → Wi-Fi → IP fallback.
 // Singleton pattern matches network-health.ts. Fail-open: null if all providers fail.
 

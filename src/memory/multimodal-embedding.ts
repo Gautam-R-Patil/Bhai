@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Multimodal Embedding — Unified text + image vectors for cross-modal retrieval.
 // "Remember that diagram I showed you" → find by image similarity.
 

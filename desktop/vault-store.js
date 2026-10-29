@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // The owner's Vault (logins, API keys, cards, UPI IDs) on disk: one file,
 // vault.enc in userData, encrypted with Electron safeStorage (Keychain on

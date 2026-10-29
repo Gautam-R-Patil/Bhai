@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Inner Thoughts Engine — Rust hot-path module
 // Handles: thought scoring, novelty detection, trigger aggregation, suppression stats
 // LLM calls stay in TypeScript; Rust handles the compute-intensive scoring/filtering.

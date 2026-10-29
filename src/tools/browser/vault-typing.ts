@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Typing a saved secret (security/vault.ts) into the browser. The origin is
 // checked where the keys land, right before they are typed: the live tab (the

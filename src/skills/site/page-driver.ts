@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // PageDriver over a Playwright Page (or the Chrome bridge's ChromePageProxy,
 // which mirrors the same subset). The snapshot is a string expression, not a

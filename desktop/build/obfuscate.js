@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pre-bytecode JavaScript obfuscation script
 // Transforms readable code into complex, hard-to-understand code
 
@@ -129,7 +129,7 @@ function obfuscateFile(filePath, outputPath) {
         const obfuscated = JavaScriptObfuscator.obfuscate(code, options);
 
         // Add protection header
-        const header = `// Protected by XAGI Labs © 2024-2026\n// Unauthorized access prohibited\n`;
+        const header = `// Protected by TRUSCOR Private Limited © 2024-2026\n// Unauthorized access prohibited\n`;
         const protectedCode = header + obfuscated.getObfuscatedCode();
 
         fs.writeFileSync(outputPath, protectedCode);

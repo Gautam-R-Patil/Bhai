@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // IP-based geolocation provider — final fallback in the location chain.
 // Uses ip-api.com (free, no API key, 45 req/min, city-level accuracy).
 

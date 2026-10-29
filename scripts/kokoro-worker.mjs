@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Kokoro TTS worker — loads the 82M ONNX model in an isolated Node process
 // so its onnxruntime-node 1.21 binding doesn't collide with the 1.14 the
 // main Bhai process has already loaded via @xenova/transformers.

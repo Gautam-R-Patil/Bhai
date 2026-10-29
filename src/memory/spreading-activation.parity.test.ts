@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Phase 0 parity test — Rust BFS vs TS BFS on identical synthetic graphs.
 
 import { describe, expect, it } from "vitest";

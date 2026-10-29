@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath, sep } from "node:path";

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Scheduled background jobs. Convex picks this file up automatically — no
 // manual deploy step beyond `npx convex deploy`.

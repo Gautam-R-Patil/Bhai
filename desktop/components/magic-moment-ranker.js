@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Magic Moment ranker — maps an AppSnapshot + persona + best-effort signals
 // into a small ordered list of MagicMomentSignal observations. Pure
 // function; no IPC, no DOM. Consumed by desktop/components/magic-moment.js.

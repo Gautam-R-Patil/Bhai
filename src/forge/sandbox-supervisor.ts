@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // TS shim wrapping the Rust forge sandbox napi exports.
 //
 // Routes synthesized-tool invocations through the OS-isolated child process

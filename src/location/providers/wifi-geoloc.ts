@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Wi-Fi BSSID-based geolocation provider.
 // Scans nearby access points and uses their BSSIDs for location estimation.
 // Most useful on Linux systems without GeoClue2; on macOS/Windows the native

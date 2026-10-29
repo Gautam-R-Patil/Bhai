@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // End-to-End Encrypted Transport Layer.
 // ECDH P-256 key exchange + AES-256-GCM payload encryption.
 // Provides forward secrecy and MITM protection on top of HTTPS.

@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // One stray character in an inline <script> kills a whole window (the chat bar
 // once shipped-to-be with a missing comma). Typecheck never sees these scripts.
 import fs from "node:fs";

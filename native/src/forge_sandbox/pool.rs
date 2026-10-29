@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // LRU-bounded per-slug worker pool. The Pool's only knob is `cap`; eviction
 // is automatic, and inflight workers are skipped during eviction so a slow
 // call never gets its child killed out from under it.

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Never import from a client bundle — `clientSecret` must stay server-side.
 
 import { internalAction, internalMutation, type MutationCtx } from "./_generated/server";

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Client-side session token manager.
 // Authenticates with Convex HTTP actions using session tokens instead of deploy keys.
 // Token is held in memory only — never written to disk.

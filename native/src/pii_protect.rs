@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Linear-time port of src/security/credential-mask.ts (`maskCredentials`) and
 // src/security/pii-redactor.ts (`findPii`). Opt-in: ATLAS_NATIVE_PROTECT=true.
 //

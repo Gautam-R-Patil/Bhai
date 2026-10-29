@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // site_skill_mint start returns at once; when the background mint ends, the
 // owner gets one proactive message on the channel they asked on: the approval
 // card when it was installed, else why not and the credits it used. Offline:

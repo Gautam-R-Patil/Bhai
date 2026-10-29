@@ -178,7 +178,7 @@ Consumed by desktop/wizard/steps/persona.js in Task 2."
 Create `desktop/wizard/steps/persona.js`:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Persona step — five cards in a 2×3 grid (explorer spans both columns
 // at the bottom). Selecting a card writes profile.persona via
 // atlas.saveProfile. Tone defaults to professional or friendly per
@@ -880,7 +880,7 @@ without persona behave exactly as before."
 Create `src/prompts/persona-bias.ts`:
 
 ```typescript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 
 /**
@@ -1029,7 +1029,7 @@ the spec's invented names (code/git/email/calendar)."
 Create `src/prompts/persona-bias.test.ts`:
 
 ```typescript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { describe, it, expect } from "vitest";
 import {
     asPersona,
@@ -1456,7 +1456,7 @@ read never breaks routing."
 Create `src/tool-router.persona.test.ts`:
 
 ```typescript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Persona overlay integration test for the tool-router scoring loop.
 // Doesn't run the full router (LLM + embeddings); validates the pure
 // overlay behaviour by exercising getPersonaToolWeights against the

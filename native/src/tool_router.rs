@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tool Router — Rust port of structural classification, cache, scoring,
 // request_tools handling, and stats.
 // Embedding pipeline stays in JS; pre-computed Float32Array vectors are

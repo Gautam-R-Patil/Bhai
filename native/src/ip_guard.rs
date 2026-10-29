@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // IP Protection module for browser agent.
 // Handles: JS code validation + exfiltration prevention, proprietary variable
 // obfuscation, HMAC-signed action audit log, and module integrity fingerprint.

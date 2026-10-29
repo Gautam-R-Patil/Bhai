@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Vision-nav smoke test. Exercises the full P0→P5 surface end-to-end without
 // requiring a live UI:

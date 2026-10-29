@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // chat({ timeoutMs }) bounds each model attempt with its own deadline; without
 // it the deadline follows thinking effort (attemptTimeoutMs). Offline:
 // the transport, session, router, health monitor and middleware are stubbed.

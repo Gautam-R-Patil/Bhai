@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // DNS-rebinding guard for Bhai's local servers (overlay :18792, Chrome bridge
 // :18800). Any website can point its own hostname at 127.0.0.1 and then reach

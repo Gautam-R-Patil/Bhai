@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Extracts a PDF's text in its own process (src/documents/ingest.ts forks it per
 // parse, with a 512MB heap and a deadline after which it is killed). pdf.js

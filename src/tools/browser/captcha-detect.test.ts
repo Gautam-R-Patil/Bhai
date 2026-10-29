@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // The detector runs in the page; here it runs against a tiny fake DOM.
 // - A visible v2 checkbox is v2 even when v3 (or api.js?render=explicit) is loaded.

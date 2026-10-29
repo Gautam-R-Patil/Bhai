@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Server-side session management for Bhai.
 // Sessions replace client-side deploy keys — clients authenticate with a session token.
 

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Rotating "Try this" prompt strip for the Ready Hub. Picks 3 prompts from
 // a catalog, weighted by which integrations are connected, cross-fades every
 // 6s. pickPrompts is deterministic given a seed (for tests + stable UI).

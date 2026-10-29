@@ -1,6 +1,6 @@
 # Technical Overview — Bhai v0.2.1
 
-> **Bhai** (Advanced Technology for Logical Autonomous Systems) is a continuously running personal AI agent built by [XAGI Labs](https://xagilab.com). This document covers how it is built — its architecture, tech stack, key components, and deployment.
+> **Bhai** (Advanced Technology for Logical Autonomous Systems) is a continuously running personal AI agent built by TRUSCOR Private Limited. This document covers how it is built — its architecture, tech stack, key components, and deployment.
 
 ---
 
@@ -1690,5 +1690,4 @@ Bhai/
 
 ---
 
-*Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.*
-*Website: [tryatlasagi.com](https://tryatlasagi.com) · [xagilab.com](https://xagilab.com)*
+*Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.*

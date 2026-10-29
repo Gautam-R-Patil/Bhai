@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Working Memory — Rust hot-path for attention-weighted buffer management.
 // Implements explicit working memory separation from LTM.
 // Handles: attention scoring, capacity management, spill-to-LTM decisions.

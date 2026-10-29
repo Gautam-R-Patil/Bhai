@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Bhai's credential masking: real credentials are masked by structure, and
 // prose, identifiers, code and URLs come through byte for byte.
 import { describe, expect, it } from "vitest";

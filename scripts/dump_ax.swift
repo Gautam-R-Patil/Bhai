@@ -1,5 +1,5 @@
 #!/usr/bin/env swift
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Dumps the macOS Accessibility tree for the frontmost (or specified) app to JSON.
 //

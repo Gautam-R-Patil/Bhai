@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tiny renderer helper: ambient cinematic effects across the wizard.
 // Browser: attaches to window.Cinematic. Tests: CommonJS require/import.
 //

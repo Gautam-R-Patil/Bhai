@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Generic error log. Any subsystem that wants a backend error to surface on
 // the admin dashboard / Error Logs page calls `internal.errorLog.record`.

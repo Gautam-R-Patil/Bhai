@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // SPA primitives without a browser: the expect outcome reaching the skill, the
 // refused result and the pick refusal, retry classes, and the submit's verdict
 // (judgeCommit) reverting "sent" once. A fake page driver stands in for the page.

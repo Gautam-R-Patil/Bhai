@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Regression tests for the vault review: each case was a way a saved secret
 // could reach the model, or be typed where it shouldn't.

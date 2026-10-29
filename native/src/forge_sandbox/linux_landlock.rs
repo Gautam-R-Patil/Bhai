@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Forge sandbox — Linux Landlock LSM ruleset builder.
 //
 // Landlock is best-effort: kernels <5.13 don't have it at all, and even on

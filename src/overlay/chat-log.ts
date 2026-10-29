@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Saved chat-bar transcript: one JSON line per message in
 // <data>/chat-history.jsonl ({ chat, ts, role, text, source }). The desktop
 // dashboard's Chats page reads it, and on boot the last few turns are put back

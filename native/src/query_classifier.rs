@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Query Mode Classification — Full port of src/memory/classifier.ts
 
 use napi_derive::napi;

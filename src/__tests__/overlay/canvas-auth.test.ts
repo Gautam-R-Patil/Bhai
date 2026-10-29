@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 // F5: Canvas WS requires an in-band auth handshake. Unauthenticated
 // connections are dropped after the auth timeout (or on bad credentials).

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Notification Tracker — Rust hot-path for wake-time estimation, engagement scoring,
 // and notification fatigue detection.
 

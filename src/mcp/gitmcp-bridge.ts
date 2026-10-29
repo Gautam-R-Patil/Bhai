@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // GitMCP Bridge — Creates instant MCP servers for any GitHub repo on-the-fly.
 // Based on GitMCP (7.9K stars). Zero setup — AI gets access to up-to-date docs.
 

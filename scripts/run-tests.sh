@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+# Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 #
 # Hermetic test runner — closes the dev-machine vs CI drift surface.
 #

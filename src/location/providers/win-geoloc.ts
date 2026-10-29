@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Windows geolocation provider — uses PowerShell + Windows.Devices.Geolocation WinRT API.
 // Requires Location Services enabled in Windows Settings.
 

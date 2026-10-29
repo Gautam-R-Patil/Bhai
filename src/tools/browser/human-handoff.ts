@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // browser_wait_for_human: a page shows a human-verification check (reCAPTCHA,
 // hCaptcha, Turnstile, a Cloudflare interstitial). Bhai never ticks or solves

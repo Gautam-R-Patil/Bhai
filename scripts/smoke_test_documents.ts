@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Smoke test for the document subsystem. Not a formal test — runs end-to-end:
 //   create a resume → export PDF → export DOCX → ingest the exported PDF back →
 //   update it with append_resume_work → re-export. Prints paths and sizes.

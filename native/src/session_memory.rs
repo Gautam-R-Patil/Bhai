@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Session Memory — Full port of src/memory/session.ts (algorithmic parts)
 // Persistence (SQLite) stays in JS; Rust handles compression and state logic.
 

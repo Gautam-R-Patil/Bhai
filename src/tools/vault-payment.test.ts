@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // vault_authorize_payment binds the owner's OK to the MERCHANT: the consent prompt
 // names the live host, and a yes for one site can't authorize paying on another
 // (the tab can't be swapped between the ask and the confirm). Finding #1.

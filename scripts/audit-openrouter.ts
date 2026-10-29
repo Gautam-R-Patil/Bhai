@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Usage:  ADMIN_API_KEY=... npx tsx scripts/audit-openrouter.ts
 // Optional:  ATLAS_ENV=prod            # probe the prod Convex deployment
 //            CONVEX_SITE_URL=https://...  # override the endpoint URL

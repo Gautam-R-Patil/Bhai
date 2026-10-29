@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Per-slug worker — owns one sandboxed Node child plus its piped stdio.
 //
 // Single-flight: only one in-flight call at a time. The agent's tool-call

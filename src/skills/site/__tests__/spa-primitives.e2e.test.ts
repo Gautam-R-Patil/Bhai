@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // SPA primitives on the synthetic shop in headless Chromium: results that render
 // in place (expect), a typeahead location picker (pick), a sold-out item
 // (refused) and a site that turns the order down (the submit's verdict), plus

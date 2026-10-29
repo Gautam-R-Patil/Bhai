@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The decay MATH (DB round-trip is CI-only). LAMBDA=0.02/day, cap 14 days,
 // prune < 0.1. Incremental from the anchor must converge to one full-gap decay.
 import { describe, expect, it } from "vitest";

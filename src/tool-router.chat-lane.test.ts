@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Routing budget + banter chat lane. From a real turn (2026-10-28): "it's 1am,
 // i have 40 chrome tabs open and my code still doesn't build. roast me" took
 // 14.9s to route (5s budget) and got 37 tools across 9 categories.

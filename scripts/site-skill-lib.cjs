@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Helpers every Site Skill gets as step()'s third argument (the host shim
 // passes it in): step(phase, ctx, lib). Pure functions, no I/O, so a skill

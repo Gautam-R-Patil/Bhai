@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // FunctionGemma Tool Router — 270M CPU model for function calling.
 // 85% accuracy after fine-tuning on tool schemas. Zero API cost.
 

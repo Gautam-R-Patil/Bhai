@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Security modules — Rust port of allowlist + crypto operations.
 // Cross-platform: macOS, Windows, Linux.
 

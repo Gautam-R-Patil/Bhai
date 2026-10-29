@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import vm from "node:vm";

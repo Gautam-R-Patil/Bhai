@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Chrome-bridge page-ready is event-driven (no fixed sleeps): the in-page
 // promise waits for a fresh, loaded document whose DOM has gone quiet.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";

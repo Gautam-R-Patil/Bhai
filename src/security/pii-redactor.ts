@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Finds personal secrets that the API-key sanitizer (secrets-sanitizer.ts)
 // doesn't cover: payment cards, Aadhaar numbers, UPI IDs, one-time codes and

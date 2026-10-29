@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Bhai's in-page cursor on the synthetic shop (headless Chromium): one host,
 // removable, invisible to Bhai's own page reading, click-through, latency-capped.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

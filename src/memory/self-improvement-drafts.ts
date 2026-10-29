@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 // Local SQLite buffer for bot-authored self-improvement drafts. Throughout
 // the day the agent calls self_improvement_draft and the entries accumulate

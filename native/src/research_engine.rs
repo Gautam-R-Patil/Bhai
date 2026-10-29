@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Deep Research v2 — Rust-compiled IP: scoring, dedup, cross-reference, domain ranking
 
 use std::collections::{HashMap, HashSet};

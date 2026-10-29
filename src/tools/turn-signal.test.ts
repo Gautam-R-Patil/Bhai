@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Stop must reach browser_wait_for_human wherever it runs: called from a
 // sub-agent or swarm under the turn (no explicit signal), or after a
 // PreToolUse hook rewrote its input.

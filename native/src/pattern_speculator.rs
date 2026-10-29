@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pattern Speculator — PASTE-inspired speculative tool execution.
 // Learns recurring tool-call patterns and pre-executes likely next calls.
 // 48.5% latency reduction in the PASTE paper.

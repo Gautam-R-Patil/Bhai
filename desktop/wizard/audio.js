@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Audio cues for the wizard. Two clips. Default off — user opts in via
 // the speaker toggle in the chrome bar, which writes personalize.audio.enabled.
 (function () {

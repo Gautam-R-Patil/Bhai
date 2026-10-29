@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Local TTS — Chatterbox-Turbo (350M, MIT) or macOS say fallback.
 // Sub-200ms latency. Emotion exaggeration control. 23 languages.
 

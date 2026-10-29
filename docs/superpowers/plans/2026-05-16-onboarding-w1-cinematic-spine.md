@@ -241,7 +241,7 @@ Expected: FAIL with "Failed to load url ../wizard/cinematic.js".
 
 ```javascript
 // desktop/wizard/cinematic.js
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tiny renderer helper: ambient cinematic effects across the wizard.
 // Browser: attaches to window.Cinematic. Tests: ESM import.
 "use strict";
@@ -344,7 +344,7 @@ Expected: FAIL with "Failed to load url ../wizard/copy.js".
 
 ```javascript
 // desktop/wizard/copy.js
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Single source of truth for every user-visible string in the wizard.
 // Step renderers MUST read through Copy.get(stepId, key). Inline literals
 // in step files are a review-blocking finding.
@@ -595,7 +595,7 @@ The boot script now drives: confidence ramp, iridescent scribe on transitions, t
 Open `desktop/wizard/boot.js`. Replace the entire file with:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Renderer bootstrap for the cinematic wizard. IIFE at bottom runs on page load
 // when #step-root exists; pure helpers exposed on window.__WizardBoot for tests.
 (function () {
@@ -835,7 +835,7 @@ Three small steps, all rewritten to consume `Copy.get()` and the new CSS classes
 Replace the entire file with:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 (function () {
     "use strict";
 
@@ -893,7 +893,7 @@ Replace the entire file with:
 Open `desktop/wizard/steps/terms.js`. Keep the existing acceptance-validation logic; only rewrite the DOM. Replace the file with:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 (function () {
     "use strict";
 
@@ -989,7 +989,7 @@ Open `desktop/wizard/steps/terms.js`. Keep the existing acceptance-validation lo
 Replace the entire file with:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 (function () {
     "use strict";
 
@@ -1123,7 +1123,7 @@ Profile becomes name-only — the tone dropdown moves out of W1 and into W2's pe
 Replace the entire file with:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 (function () {
     "use strict";
 
@@ -1230,7 +1230,7 @@ This file is the largest in the wizard. Open `desktop/wizard/steps/personalize.j
 Replace the entire `personalize.js` with the version below. Component mounts (`HotkeyPicker`, `ThemeSwitch`, `VoicePicker`) keep their existing API:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 (function () {
     "use strict";
 
@@ -1470,7 +1470,7 @@ The underlying `PermissionsGrid` component stays. We just rewrite the step file'
 Replace the entire file with:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 (function () {
     "use strict";
 
@@ -1679,7 +1679,7 @@ Open `desktop/onboarding-demo/demo.js`. Find `STEP_RENDERERS["awakening"]` (arou
 Write `desktop/wizard/steps/awakening.js`:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The cinematic opener. Greets the user by OS-detected name, then a single
 // iridescent rule scribes beneath, then status text rotates, then CTA.
 // Total runtime ~2.5s. ESC fast-forwards.
@@ -2429,7 +2429,7 @@ Expected: FAIL with "Failed to resolve module specifier".
 
 ```javascript
 // desktop/components/magic-moment.js
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Ready Hub margin-note. Picks one observation from a small ranker driven
 // by best-effort signals. W3 will swap the data source for rich detection.
 "use strict";
@@ -2644,7 +2644,7 @@ Lightweight audio helper. Preloads both clips. `play(id)` plays unless disabled.
 - [ ] **Step 1: Write the file.**
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Audio cues for the wizard. Two clips. Default off — user opts in via
 // the 🔊 toggle in the chrome bar, which writes personalize.audio.enabled.
 "use strict";

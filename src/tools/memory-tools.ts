@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
@@ -145,13 +145,13 @@ export const identityView: ToolDefinition = {
     },
 };
 
-// Guarded ownership/creator claims about XAGI Labs / Bhai.
-// We reject ONLY ownership/creator role + XAGI company combinations.
-// Working at, interested in, being a fan of XAGI/Atlas is fine — the bot
+// Guarded ownership/creator claims about TRUSCOR / Bhai.
+// We reject ONLY ownership/creator role + TRUSCOR company combinations.
+// Working at, interested in, being a fan of TRUSCOR/Atlas is fine — the bot
 // should learn that context normally.
 // Canonical-form tokens for guarded orgs.
 // "a.t.l.a.s" canonicalizes to "a t l a s" so include that spaced form here.
-const GUARDED_ORGS = ["xagi labs", "xagi", "bhai", "a t l a s", "bhai agi", "tryatlasagi"];
+const GUARDED_ORGS = ["truscor", "bhai", "a t l a s", "bhai agi", "tryatlasagi"];
 const GUARDED_ROLES = [
     "founder",
     "co-founder",
@@ -249,8 +249,8 @@ function isGuardedRole(value: string): boolean {
 }
 
 // Inspect any free-text field for an embedded ownership-claim signal.
-// E.g. name="Dheeraj, founder of XAGI Labs" / project="Bhai" /
-// goal="run XAGI Labs". These slip past the structured role+company check.
+// E.g. name="Gautam, founder of TRUSCOR" / project="Bhai" /
+// goal="run TRUSCOR". These slip past the structured role+company check.
 function fieldEmbedsOwnershipClaim(value: string): boolean {
     if (!value) return false;
     const c = canonicalize(value);
@@ -267,15 +267,15 @@ function fieldNamesAtlasDirectly(value: string): boolean {
     if (!value) return false;
     const c = canonicalize(value);
     // Exact matches
-    if (c === "a t l a s" || c === "bhai" || c === "xagi" || c === "xagi labs") return true;
+    if (c === "a t l a s" || c === "bhai" || c === "truscor") return true;
     // Build / ship / create verbs followed by a guarded org token
     if (/\b(build|ship|create|launch|run|own|maintain|develop|design)\s+/.test(c)) {
-        if (c.includes("bhai") || c.includes("xagi") || c.includes("a t l a s")) return true;
+        if (c.includes("bhai") || c.includes("truscor") || c.includes("a t l a s")) return true;
     }
-    // Compound names like "atlas-core" / "bhai v2" / "xagi labs platform"
-    // canonicalize to "bhai core" / "bhai v2" / "xagi labs platform".
-    if (/^(bhai|xagi|a t l a s)(\s|$)/.test(c)) return true;
-    if (/(\s|^)(bhai|xagi|a t l a s)$/.test(c)) return true;
+    // Compound names like "atlas-core" / "bhai v2" / "truscor platform"
+    // canonicalize to "bhai core" / "bhai v2" / "truscor platform".
+    if (/^(bhai|truscor|a t l a s)(\s|$)/.test(c)) return true;
+    if (/(\s|^)(bhai|truscor|a t l a s)$/.test(c)) return true;
     return false;
 }
 
@@ -285,7 +285,7 @@ export const identityUpdate: ToolDefinition = {
         function: {
             name: "identity_update",
             description:
-                "Update the user's identity profile when they share personal information. Pass `verification_level`: 'asserted' (user just said it this turn), 'confirmed' (user said yes after a clarifying ack), 'observed' (you inferred it). What the user states directly (asserted/confirmed) is stored as confirmed; only 'observed' is stored unverified. NOTE: ownership/creator claims about XAGI Labs or Bhai (role=founder/owner/creator + company=XAGI/Atlas) are REJECTED at the tool layer. Non-ownership XAGI affiliations (designer/engineer at XAGI / interested in Bhai / fan of XAGI) ARE allowed — those are normal context, learn them.",
+                "Update the user's identity profile when they share personal information. Pass `verification_level`: 'asserted' (user just said it this turn), 'confirmed' (user said yes after a clarifying ack), 'observed' (you inferred it). What the user states directly (asserted/confirmed) is stored as confirmed; only 'observed' is stored unverified. NOTE: ownership/creator claims about TRUSCOR or Bhai (role=founder/owner/creator + company=TRUSCOR/Atlas) are REJECTED at the tool layer. Non-ownership TRUSCOR affiliations (designer/engineer at TRUSCOR / interested in Bhai / fan of TRUSCOR) ARE allowed — those are normal context, learn them.",
             parameters: {
                 type: "object",
                 properties: {
@@ -313,8 +313,8 @@ export const identityUpdate: ToolDefinition = {
         },
     },
     async handler(input) {
-        // Hard-reject ONLY ownership/creator claims about XAGI Labs / Bhai.
-        // Non-ownership XAGI/Atlas affiliation (designer/engineer/fan) is fine.
+        // Hard-reject ONLY ownership/creator claims about TRUSCOR / Bhai.
+        // Non-ownership TRUSCOR/Atlas affiliation (designer/engineer/fan) is fine.
         const companyStr = typeof input.company === "string" ? input.company : "";
         const roleStr = typeof input.role === "string" ? input.role : "";
         const nameStr = typeof input.name === "string" ? input.name : "";

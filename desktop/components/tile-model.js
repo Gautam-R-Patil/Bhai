@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pure tileModel(state, name) helper for the Ready Hub tiles. Returns
 // {label, value, secondary?, status, onClickRoute} — or null if the
 // tile should not render on this platform/state.

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Account guard — validates account status and credits via Convex HTTP proxy.
 // Credits are deducted server-side atomically with each LLM call.
 // This module only checks whether the account is allowed to proceed.

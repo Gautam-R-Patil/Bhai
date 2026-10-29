@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 (function () {
     "use strict";
     const STATUS_CLASSES = { green: "sp-tile--green", amber: "sp-tile--amber", neutral: "sp-tile--neutral" };

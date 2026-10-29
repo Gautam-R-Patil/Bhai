@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Phase 1.1 parity test — Rust sanitizer vs TS sanitizer, byte-for-byte equal.
 //
 // Compares the production TS impl (`_sanitizeSecretsTs`) directly against the

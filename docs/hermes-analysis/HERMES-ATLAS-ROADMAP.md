@@ -275,6 +275,6 @@ Remote MCP servers can't connect (`StdioClientTransport` only). The SDK already 
 
 4. **Verification** — Add a parity test (or a manual check) asserting `cachedTokens` in `convex/llmCallLog.ts` jumps from ~0 to >0 on the 2nd+ iteration of an Anthropic-model tool loop. Run a 3-iteration Opus tool loop and confirm `cachedTokens > 0` on iterations 2 and 3.
 
-5. **No Convex schema change, no native rebuild.** Pure TS, ESM, minimal comments, `© 2024-2026 XAGI Labs Private Limited` header preserved on any touched file.
+5. **No Convex schema change, no native rebuild.** Pure TS, ESM, minimal comments, `© 2024-2026 TRUSCOR Private Limited` header preserved on any touched file.
 
 Scope is ~20–40 lines across three files. It's a cost regression fix masquerading as a one-liner — exactly the kind of high-confidence, low-blast-radius change to lead with before the larger durable-spine and checkpoint work.

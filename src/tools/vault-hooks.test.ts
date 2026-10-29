@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // User hooks never see a saved secret, and can't rewrite a call that types one
 // (the vault checked the origin for the input as it was).
 import { beforeEach, describe, expect, it, vi } from "vitest";

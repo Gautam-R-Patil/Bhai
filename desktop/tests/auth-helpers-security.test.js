@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // F1 + F2 unit tests. The actual Electron handlers are integration-level
 // (require the BrowserWindow + http.createServer wiring), so the path

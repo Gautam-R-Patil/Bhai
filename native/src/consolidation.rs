@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Memory Consolidation — Full port of src/memory/consolidation.ts (algorithmic parts)
 
 use napi_derive::napi;

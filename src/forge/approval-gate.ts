@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Per-channel approval message builder for persisted dynamic tools.
 //
 // Renders the manifest into a user-readable prompt explaining what the

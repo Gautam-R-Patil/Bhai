@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Forge sandbox — Linux seccomp-bpf filter builder.
 //
 // Two-tier strategy: the allowlist covers every syscall Node.js needs for

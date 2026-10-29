@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Run untrusted (LLM-written) JS in a fresh vm context without handing it a
 // single host-realm object. Any host function, object, Promise or Error that

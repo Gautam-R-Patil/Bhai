@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Proactive Intent — Rust-side validator for the ProactiveIntent shape.
 // Called from TypeScript to validate intents before enqueue; returns
 // a structured result that the TS layer can reflect into debug logs.

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Forge sandbox — Linux backend.
 //
 // Layered defense, applied in pre_exec (after fork, before exec):

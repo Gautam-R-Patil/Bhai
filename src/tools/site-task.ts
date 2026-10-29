@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // site_task: book/order on a site that has a Site Skill (src/skills/site) in
 // ~3 calls instead of 20-40 raw browser steps. Checkout goes through the

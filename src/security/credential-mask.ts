@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Masks credentials by their structure — never by ordinary words — before text
 // reaches the model, the logs or chat history (pii-vault.protect). A false

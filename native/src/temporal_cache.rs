@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Temporal Locality Cache — Full port of src/memory/temporal-cache.ts
 
 use napi_derive::napi;

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Persona overlay integration test for the tool-router scoring loop.
 // Doesn't run the full router (LLM + embeddings); validates the pure
 // overlay behaviour by exercising getPersonaToolWeights against the

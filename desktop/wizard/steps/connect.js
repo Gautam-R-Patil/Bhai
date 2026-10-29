@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Connect step: while setup installs in the background, the user adds the
 // Bhai Bridge extension to Chrome. Once install is done the bot starts, and the
 // screen moves on by itself when the extension says hello. Skippable: the

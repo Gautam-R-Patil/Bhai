@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Information Gain — Entropy computation for Bayesian query ranking.
 
 use napi::bindgen_prelude::*;

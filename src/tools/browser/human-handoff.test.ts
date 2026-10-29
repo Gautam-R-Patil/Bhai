@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // browser_wait_for_human: detect → bring the tab up → ask the owner → poll
 // until the check is gone. It must never reach a solver (2captcha, NopeCHA,

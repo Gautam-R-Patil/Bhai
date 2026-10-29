@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Phase 3 tests — native libfvad PCM voice-activity detection.
 //
 // libfvad classifies speech via spectral analysis, not amplitude. These

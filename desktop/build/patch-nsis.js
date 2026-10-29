@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pre-build script: Patches electron-builder's NSIS template to show
 // file extraction details during installation instead of a blank log.
 

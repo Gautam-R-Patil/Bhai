@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 // Auto-skills no longer live on disk. The agent drafts them via
 // self_improvement_draft into a local SQLite buffer; nightly synthesis

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Sub-Agent Runtime — Rust port via napi-rs
 // Role definitions, tool subsets per role, context windowing logic,
 // summarization thresholds. Actual LLM calls and tool execution stay in JS.

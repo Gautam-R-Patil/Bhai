@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Active Inference — Free energy minimization for principled information-seeking.
 // Based on "Active Inference for Self-Organizing Multi-LLM Systems" (2025)
 // and DR-FREE (Nature Communications, Dec 2025).

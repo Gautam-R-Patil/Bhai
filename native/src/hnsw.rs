@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // HNSW Vector Index — Full port of src/memory/vector-index.ts
 
 use napi::bindgen_prelude::*;

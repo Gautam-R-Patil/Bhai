@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
@@ -685,7 +685,7 @@ exports.default = async function afterPack(context) {
         protected: true,
         timestamp: new Date().toISOString(),
         layers: ["obfuscation", "bytecode", "string-encoding", "integrity"],
-        copyright: "© 2024-2026 XAGI Labs Private Limited. All rights reserved.",
+        copyright: "© 2024-2026 TRUSCOR Private Limited. All rights reserved.",
         warning: "Tampering with this application is prohibited. Reverse engineering attempts are logged.",
     };
     fs.writeFileSync(path.join(resourcesDir, ".protected"), JSON.stringify(marker, null, 2));

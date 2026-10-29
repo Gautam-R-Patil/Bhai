@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
@@ -102,7 +102,7 @@ autoUpdater.autoInstallOnAppQuit = true;
 
 // ── Constants ─────────────────────────────────
 
-const COPYRIGHT = "© 2024-2026 XAGI Labs Private Limited. All rights reserved.";
+const COPYRIGHT = "© 2024-2026 TRUSCOR Private Limited. All rights reserved.";
 const IS_DEV = !app.isPackaged;
 const BOT_DIR = IS_DEV
     ? path.join(__dirname, "..")
@@ -1638,7 +1638,7 @@ function createWizardWindow() {
             allowRunningInsecureContent: false,
             devTools: IS_DEV,
         },
-        title: "Bhai Setup — © XAGI Labs",
+        title: "Bhai Setup — © TRUSCOR Private Limited",
     });
 
     hardenBrowserWindow(mainWindow);
@@ -1681,7 +1681,7 @@ async function createPanelWindow() {
             allowRunningInsecureContent: false,
             devTools: IS_DEV,
         },
-        title: "Bhai — © XAGI Labs",
+        title: "Bhai — © TRUSCOR Private Limited",
     });
 
     hardenBrowserWindow(mainWindow);
@@ -3808,7 +3808,7 @@ function registerIPC() {
         try {
             const envLines = [
                 "# Bhai — Environment Variables",
-                "# Encrypted by XAGI Labs Secure Storage",
+                "# Encrypted by TRUSCOR Secure Storage",
                 "",
                 `TELEGRAM_BOT_TOKEN=${creds.botToken}`,
                 `ALLOWED_USER_IDS=${creds.userIds}`,
@@ -3954,7 +3954,7 @@ function registerIPC() {
                     "Feel free to organize or move files —",
                     "Bhai will always save new files to this folder.",
                     "",
-                    "─── XAGI Labs ───",
+                    "─── TRUSCOR ───",
                 ].join("\n")
             );
             return { success: true };

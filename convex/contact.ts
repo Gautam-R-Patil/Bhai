@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Isolated contact-form subsystem for xagilab.com — same shape as waitlist,
 // different funnel. Public submit handler in convex/http.ts calls
 // `insertContactSubmission` / `getRecentDuplicate`; admin panel reads via

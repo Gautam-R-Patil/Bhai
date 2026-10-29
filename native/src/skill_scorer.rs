@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Skill Scorer — SAGE-style skill relevance scoring per agent turn.
 // Ranks skills by relevance to current task for dynamic injection.
 

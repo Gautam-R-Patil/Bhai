@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Each Brave result's snippet must come from its OWN result block. The old code
 // scanned snippet blocks and links as two independent arrays and paired them by
 // index, so a non-result link before the results shifted every snippet.

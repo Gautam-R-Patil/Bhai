@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Network Watcher — detects Wi-Fi SSID changes and triggers location refresh.
 // Reuses the same platform commands from system-controls.ts for SSID detection.
 

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Bhai Browser Bridge — Popup UI (redesigned)
 
 const tabsList    = document.getElementById('tabsList');

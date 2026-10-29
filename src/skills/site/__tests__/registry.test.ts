@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // findSiteSkill finds only live skills: not ones awaiting approval, drifted or
 // archived, not ones without domains (the same-site fence would be off), and
 // nothing in a "_" folder such as _staging.

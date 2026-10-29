@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 // Self-improvement synthesis pipeline. Runs as part of nightly dream replay.
 // For each slug with local drafts: fetch the user's current server-side

@@ -1,6 +1,6 @@
 # CREDITS
 
-Bhai is built by **XAGI Labs Private Limited** and uses the following open-source libraries.
+Bhai is built by **TRUSCOR Private Limited** and uses the following open-source libraries.
 We gratefully acknowledge their authors and communities.
 
 ---
@@ -187,6 +187,27 @@ The native performance layer is built in Rust via napi-rs. It links the followin
 | [hex](https://github.com/KokaKiwi/rust-hex) (`hex`) | MIT OR Apache-2.0 | Hex encoding/decoding |
 | [libc](https://github.com/rust-lang/libc) (`libc`) | MIT OR Apache-2.0 | Raw FFI bindings to platform C libraries |
 | [webrtc-vad](https://github.com/kpcyrd/webrtc-vad-rs) (`webrtc-vad`) | MIT OR Apache-2.0 | libfvad-backed voice activity detection (gated behind cargo feature `vad`, used by `pcm_vad.rs`) |
+
+## Adapted Source Code
+
+Parts of Bhai's source were adapted from these projects and modified. Each affected file
+says so in its header.
+
+| Project | License | Where |
+|---------|---------|-------|
+| [OpenCLI](https://github.com/jackwener/opencli) | Apache-2.0 ([full text](./licenses/OpenCLI-LICENSE.txt)) | Browser stealth, DOM compaction and helper tools: `src/tools/browser/opencli-tools.ts`, `core.ts`, `chrome-backend.ts`, `native-browser.ts`, `native/src/browser_guard.rs` |
+
+## Design References
+
+Bhai's design draws on ideas from these projects. No code was copied from them.
+
+| Project | License | Ideas used |
+|---------|---------|------------|
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) (Copyright (c) 2025 Nous Research) | MIT | Periodic memory nudges, LLM memory briefing, automatic skill creation |
+| [Claude Code](https://github.com/anthropics/claude-code) (Anthropic) | Proprietary | Tool hooks, plan mode, tool-permission patterns |
+| [Letta / MemGPT](https://github.com/letta-ai/letta) | Apache-2.0 | Core memory blocks and self-editing memory |
+| [Graphiti](https://github.com/getzep/graphiti) (Zep) | Apache-2.0 | Temporal knowledge-graph memory |
+| Generative Agents (Park et al., 2023) | Research paper | Memory retrieval scoring (recency, importance, relevance) and reflection |
 
 ---
 

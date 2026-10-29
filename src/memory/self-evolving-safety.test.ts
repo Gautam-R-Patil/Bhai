@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Deletes on memories really happen now, so the nightly prune must never
 // remove important or never-recalled memories, nor more than a tenth at once.
 import { createRequire } from "node:module";

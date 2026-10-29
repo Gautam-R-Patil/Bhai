@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Deep Research v2 — LLM analysis helpers
 
 import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";

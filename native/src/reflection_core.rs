@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Reflection Core — Full port of src/memory/reflection.ts (pipeline/scoring logic)
 // LLM calls stay in JS; Rust handles transcript building, clustering, validation,
 // instability detection, keyword extraction, and HMAC signing.

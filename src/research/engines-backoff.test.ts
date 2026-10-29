@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Semantic Scholar and arXiv must back off on timeout/network error/non-ok like
 // every other engine — otherwise a dead endpoint is re-queried (and blocks each
 // academic round on its 12s timeout) forever.

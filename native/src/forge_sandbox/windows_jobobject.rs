@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Forge sandbox — Windows JobObject limits.
 //
 // JobObject groups the sandboxed child process and applies hard limits:

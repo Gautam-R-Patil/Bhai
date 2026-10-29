@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // SleepGate — Biologically inspired memory consolidation (March 2026).
 // Three mechanisms: conflict-aware temporal tagger, forgetting gate, consolidation merger.
 // Reduces proactive interference from O(n) to O(log n).

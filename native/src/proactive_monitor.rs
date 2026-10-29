@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Proactive Monitor — Rust-side latent-topic matcher.
 // Called on every inbound message across every channel. Read-heavy: uses
 // RwLock. Cosine is naive (f64, 384-d) — fast enough even at 100 rules.

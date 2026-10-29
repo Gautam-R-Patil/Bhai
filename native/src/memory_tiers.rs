@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tiered Memory Architecture — Full port of src/memory/memory-tiers.ts
 
 use napi_derive::napi;

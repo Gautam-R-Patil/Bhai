@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Single source of truth for every user-visible string in the wizard.
 // Step renderers MUST read through Copy.get(stepId, key). Inline literals
 // in step files are a review-blocking finding.

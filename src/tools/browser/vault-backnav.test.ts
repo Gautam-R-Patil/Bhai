@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Real-Chromium probes for the page-JS / screenshot lock after a saved secret is
 // typed (security/vault.ts). The lock is keyed on ORIGIN, so it survives Back to a
 // no-store page that the browser refills (finding #0) and covers a page that echoes

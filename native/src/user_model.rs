@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // User Model — Rust hot-path for routine detection, communication style analysis,
 // and need prediction scoring.
 

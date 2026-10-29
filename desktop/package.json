@@ -2,7 +2,7 @@
     "name": "bhai-desktop",
     "version": "0.2.1",
     "description": "Bhai AI — Desktop Control Panel & Installer",
-    "author": "XAGI Labs Private Limited",
+    "author": "TRUSCOR Private Limited",
     "license": "UNLICENSED",
     "private": true,
     "main": "main.js",
@@ -40,7 +40,7 @@
     "build": {
         "appId": "com.xagilabs.bhai",
         "productName": "Bhai",
-        "copyright": "Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.",
+        "copyright": "Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.",
         "publish": {
             "provider": "generic",
             "url": "https://avid-finch-726.convex.site/api/updates",
@@ -182,7 +182,7 @@
                 }
             ],
             "icon": "logo.ico",
-            "legalTrademarks": "© 2024-2026 XAGI Labs Private Limited. All rights reserved.",
+            "legalTrademarks": "© 2024-2026 TRUSCOR Private Limited. All rights reserved.",
             "requestedExecutionLevel": "asInvoker",
             "extraResources": [
                 {

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Server-side system prompts and skills management.
 // Prompts and skill instructions NEVER leave the server — they are injected
 // into the LLM request server-side before forwarding to OpenRouter.

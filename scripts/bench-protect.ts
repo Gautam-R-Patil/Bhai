@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // protect() pipeline bench (pii-vault.ts), no vitest:
 //   b4  a 20-iteration agent turn: the history grows by an assistant call and a

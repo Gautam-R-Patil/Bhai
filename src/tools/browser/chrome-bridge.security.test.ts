@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // F10: /discover must reject any request whose Origin header isn't a
 // chrome-extension://... origin. The "Sec-Fetch-Site: none" escape hatch

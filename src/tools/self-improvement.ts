@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 // Agent-facing self-improvement tools. The bot drafts learnings throughout
 // the day to a LOCAL SQLite buffer; the nightly dream-replay synthesis pass

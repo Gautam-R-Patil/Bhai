@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The SSRF guard must PIN the vetted IP: validating a hostname then letting the
 // fetch re-resolve it reopens a DNS-rebinding TOCTOU (public IP to the guard,
 // 127.0.0.1 / 169.254.169.254 to the fetch).

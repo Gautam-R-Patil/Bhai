@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // A recorded session ends by itself and is not kept forever: a new trace on
 // the same browser closes the old one (its last page kept), a step after a
 // long pause or past the page cap is not recorded, and trace folders older

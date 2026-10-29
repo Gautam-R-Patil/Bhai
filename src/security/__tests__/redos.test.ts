@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // ReDoS guard for the protect() pipeline. Before the fixes in
 // credential-mask.ts and secrets-sanitizer.ts, maskCredentials("a-".repeat(n/2))

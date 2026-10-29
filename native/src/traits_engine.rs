@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Traits Engine — Full port of src/memory/traits.ts (scoring, injection, decay logic)
 // SQLite I/O stays in JS; Rust handles all computation.
 

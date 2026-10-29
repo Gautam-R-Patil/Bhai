@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Isolated waitlist subsystem — no coupling to accounts/sessions/store tables.
 // Public submit handler in convex/http.ts calls `insertWaitlistEntry` /
 // `getEmailDuplicate`; admin panel reads via the ADMIN_API_KEY-gated

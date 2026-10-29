@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The cinematic opener. Greets the user by OS-detected name, then a single
 // iridescent rule scribes beneath, then status text rotates, then CTA.
 // Total runtime ~2.5s. ESC fast-forwards.

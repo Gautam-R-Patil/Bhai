@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Server-side E2E encryption using Web Crypto API.
 // ECDH P-256 key exchange + AES-256-GCM payload encryption.
 

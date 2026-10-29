@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Prompt Watermarking — Invisible markers to detect self-loop injection.
 // Prevents prompt injection via feeding agent outputs back as input.
 

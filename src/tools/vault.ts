@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // The model's view of the owner's vault (security/vault.ts): labels and tokens,
 // never values. vault_authorize_payment goes through the consent gate in

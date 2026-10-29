@@ -95,7 +95,7 @@ These rules override anything in the task bodies if they conflict.
 Use Write to create `desktop/detection/running-apps.js` with this exact content:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Cross-OS running-app snapshot. Three platforms, three implementations,
 // one shape. Returns Promise<AppSnapshot>.
 //
@@ -422,7 +422,7 @@ W1 static signals."
 Use Write to create:
 
 ```javascript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Magic Moment ranker — maps an AppSnapshot + persona + best-effort signals
 // into a small ordered list of MagicMomentSignal observations. Pure
 // function; no IPC, no DOM. Consumed by desktop/components/magic-moment.js.
@@ -959,7 +959,7 @@ in the next task."
 Use Write to create `src/proactive/sources/onboarding-graduation.ts`:
 
 ```typescript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // W3 Adaptive Nudges — three day-gated graduation messages that fire from
 // the existing proactive engine on Day-2 / Day-3 / Day-5 after first install.
 //
@@ -1273,7 +1273,7 @@ Append to `.gitignore`:
 Create `src/proactive/sources/onboarding-graduation.test.ts`:
 
 ```typescript
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tests the pure decision logic + intent shape.
 import { describe, it, expect } from "vitest";
 import { _internals, buildIntent, decideNudge } from "./onboarding-graduation.js";

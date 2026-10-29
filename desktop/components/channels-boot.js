@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Channels page bootstrap. Renders the 6-cell grid of ChannelCard components.
 // Guarded by presence of #channels-grid so jsdom tests importing the file don't
 // auto-trigger.

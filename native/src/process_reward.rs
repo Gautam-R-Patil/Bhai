@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Process Reward Model — Rust hot-path for step-level reward scoring.
 // Inspired by ThinkPRM (2025), BiRM (A*-inspired), and Skywork-o1-Open-PRM.
 // Handles: step reward aggregation, bidirectional scoring, threshold-based decisions.

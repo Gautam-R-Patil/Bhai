@@ -182,7 +182,7 @@ async function main() {
         email: testEmail,
         passwordHash: "$2a$12$test.hash.not.real", // Not a real login
         displayName: "Bhai Team",
-        companyName: "XAGI Labs Private Limited",
+        companyName: "TRUSCOR Private Limited",
         website: "https://atlas.app",
         bio: "Official Bhai development team",
       });

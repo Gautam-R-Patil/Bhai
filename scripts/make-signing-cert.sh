@@ -1,5 +1,5 @@
 #!/bin/bash
-# © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+# © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 #
 # Creates a self-signed "Bhai Local Signing" code-signing identity in your login
 # keychain, so local Bhai builds share one signature and macOS keeps their Screen

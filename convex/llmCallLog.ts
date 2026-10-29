@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Per-call LLM log. One row per /api/llm/chat invocation (success or failure)
 // so the admin panel can drill from "Sonnet was called 1,247 times" down to

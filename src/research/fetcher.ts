@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Deep Research v2 — Page fetching with retry, citation extraction, domain scoring
 
 import type { SearchResult } from "./types.js";

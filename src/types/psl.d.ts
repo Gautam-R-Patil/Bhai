@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // psl ships types, but its package.json "exports" hides them from NodeNext resolution.
 declare module "psl" {
     const psl: {

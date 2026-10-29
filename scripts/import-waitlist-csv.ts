@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // One-shot CSV → waitlist importer. Reads a Web3Forms-style CSV from STDIN
 // or a file path, normalizes the rows, and POSTs to /api/admin/waitlist/import.
 // Idempotent server-side (skips emails that already exist), safe to re-run.

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Mesh Workflow Engine — Rust port via napi-rs
 // DAG validation (Kahn's algorithm) and parallel/sequential execution planning.
 // Actual agent execution stays in JS.

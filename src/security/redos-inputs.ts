@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Adversarial inputs for the protect() pipeline: each one made a credential,
 // PII or secrets pattern rescan to the end of the text from every offset

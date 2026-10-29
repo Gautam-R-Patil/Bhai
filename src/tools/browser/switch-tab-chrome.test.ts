@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // In the user's real Chrome, browser_switch_tab works on Chrome's tabs (it used
 // to list the headless browser's — zero — and could close nothing).
 import { describe, expect, it, vi } from "vitest";

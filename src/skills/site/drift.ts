@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Self-healing bookkeeping for minted Site Skills (a skill.json with a
 // `minted` field; hand-written and built-in skills are left alone):

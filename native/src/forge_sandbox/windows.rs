@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Forge sandbox — Windows backend.
 //
 // Architecture: AppContainer profile + ACL grants for caps.fs_*, plus a

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Forge sandbox — Windows ManagedProcess wrapping raw Win32 handles.
 //
 // Used by the future Windows backend integration (windows.rs) once tokio

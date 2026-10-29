@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Forge Phase 4 sandbox supervisor — module root.
 //
 // Owns the cross-platform `Sandbox` trait and the per-OS factory. Each backend

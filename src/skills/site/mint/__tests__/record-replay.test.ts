@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // P1 of the Skill Minter, offline: the recorder turns a session on the
 // synthetic shop into a trace, and replay proves the reference skill does what
 // the session did, phase by phase, with no model call and no network. Each

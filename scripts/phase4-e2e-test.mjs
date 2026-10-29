@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Phase 4 end-to-end test — exercises the full sandbox lifecycle on macOS.
 //
 // Validates:

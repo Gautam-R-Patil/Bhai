@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // A tiny shop for Site Skill tests: search → results → cart (captcha stub) →
 // order → optional OTP → done, with a cookie modal on the home page.
 // spa: results render in place from a fetch (600 ms, the URL never changes;

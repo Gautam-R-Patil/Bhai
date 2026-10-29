@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The shim fails closed: only built-in skills (<bot>/site-skills) get plain
 // require(). A user/store skill with no `minted` flag still runs in the vm
 // context (no require, no process), and a bad skill.json is a load error.

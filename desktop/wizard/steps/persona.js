@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Persona step — five cards in a 2×3 grid (explorer spans both columns
 // at the bottom). Selecting a card writes profile.persona via
 // atlas.saveProfile. Tone defaults to professional or friendly per

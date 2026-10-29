@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // "Actually, keep it short" must win over an earlier preference in the same
 // session, and a capped update must not be reported as a success.
 import { createRequire } from "node:module";

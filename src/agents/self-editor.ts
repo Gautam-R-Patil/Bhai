@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // SICA Self-Editing Agent — Edits own instructions after repeated failures.
 // Inspired by SICA (ICLR 2025 Workshop): 17-53% improvement on coding tasks.
 

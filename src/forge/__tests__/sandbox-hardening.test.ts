@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Regression suite for the May-2026 sandbox hardening pass. Covers F1-F9 from
 // the audit brief. Each describe block maps to one of those fixes; the final

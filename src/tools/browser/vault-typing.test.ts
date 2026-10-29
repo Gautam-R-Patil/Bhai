@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // A saved secret is typed only where the vault allows it at the moment the
 // keys land: not after a click that navigated, not into a cross-origin frame,

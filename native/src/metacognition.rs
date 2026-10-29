@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Metacognition Module — Rust hot-path for confidence scoring and struggle detection.
 // Runs every agent iteration to assess reasoning quality and decide interventions.
 

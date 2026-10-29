@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Finds the Site Skill for a URL. Skills live in folders with a skill.json
 // manifest ({ name, domains, version, status? }) next to skill.cjs: user/store skills in

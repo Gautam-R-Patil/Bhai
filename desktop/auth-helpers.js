@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pure helpers pulled out of main.js for unit-testability. No Electron imports.
 
 function parseOtplessVerifyResponse(raw) {

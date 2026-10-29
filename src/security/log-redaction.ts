@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Imported first by src/index.ts: every console line the bot prints (which the
 // desktop app also writes to its log files) goes through the API-key sanitizer

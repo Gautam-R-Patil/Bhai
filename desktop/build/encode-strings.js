@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Sensitive String Encoding Script
 // Encodes prompts, skills, and other sensitive text files
 
@@ -79,7 +79,7 @@ function generateDecoder(buildKey) {
         keyParts.push(keyHex.slice(i, i + 8));
     }
 
-    return `// Auto-generated decoder - © XAGI Labs
+    return `// Auto-generated decoder - © TRUSCOR Private Limited
 'use strict';
 
 const crypto = require('crypto');

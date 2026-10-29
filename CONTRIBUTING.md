@@ -1,6 +1,6 @@
 # Contributing
 
-Internal to XAGI Labs. Build commands and architecture are in `CLAUDE.md`.
+Internal to TRUSCOR Private Limited. Build commands and architecture are in `CLAUDE.md`.
 
 ## Workflow
 

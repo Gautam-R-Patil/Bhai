@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // The owner's saved secrets (logins, API keys, cards, UPI IDs). Bhai can USE
 // them but the model never SEES them:

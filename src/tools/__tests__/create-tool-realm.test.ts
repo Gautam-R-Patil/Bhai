@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Dynamic tool handlers run in a vm realm whose global is Object.create(null)
 // and whose host functions live only in bootstrap closures. Each payload here
 // must end in a codegen/Reference error, never "object" (= reached process).

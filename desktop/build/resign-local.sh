@@ -1,5 +1,5 @@
 #!/bin/bash
-# © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+# © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 #
 # Re-signs the built app with a stable local identity ("Bhai Local Signing",
 # made by scripts/make-signing-cert.sh) when it exists. Ad-hoc signatures change

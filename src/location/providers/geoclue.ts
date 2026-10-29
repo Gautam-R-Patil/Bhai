@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Linux GeoClue2 provider — uses gdbus to query location via D-Bus.
 // Falls through if GeoClue2 is not installed (common on servers/minimal installs).
 

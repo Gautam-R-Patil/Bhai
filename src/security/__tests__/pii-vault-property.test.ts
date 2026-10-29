@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Property test for pii-vault's known-value masker: every char of every
 // occurrence of every form of every stored value is masked, whatever other

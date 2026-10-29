@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Ready Hub margin-note. Picks one observation from a small ranker driven
 // by best-effort signals. W3 will swap the data source for rich detection.
 (function () {

@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Reference Site Skill for the synthetic shop (src/skills/site/__tests__/synthetic-shop.ts).
 // A skill is a pure function of (phase, snapshot): it never remembers where it

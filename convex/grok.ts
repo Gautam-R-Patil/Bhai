@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Unhinged mode (an 18+ owner opt-in) runs on xAI Grok through Azure AI
 // Foundry. The client's request is already OpenAI chat-completion format, which
 // Azure's /openai/v1 endpoint speaks, so it passes through with only the fields

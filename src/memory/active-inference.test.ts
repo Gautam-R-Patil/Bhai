@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The native path uses napi camelCase fields; snake_case made every call throw
 // (input) or read undefined (output). These assert a well-formed result on
 // whichever path runs — native here, JS fallback on CI without the binary.

@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // site_task when the site changed under a learned skill: the agent is told to
 // tell the user and to go on by hand only if they want, a fresh recording
 // starts (so its session begins after the failure, even if one was already

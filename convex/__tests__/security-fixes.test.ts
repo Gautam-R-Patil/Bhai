@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tests for F1-F11 security fixes.
 //
 // These tests exercise the security logic added to the Convex backend. They

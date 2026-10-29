@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // P2 of the Skill Minter, offline: a scripted LLM (a fake LLMClient that pops
 // predetermined replies and checks what it was offered) drives the minter over
 // a session recorded on the synthetic shop. The static gate, replay, review,

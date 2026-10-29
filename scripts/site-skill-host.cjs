@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Runs one Site Skill in its own process (src/skills/site/host.ts forks it per
 // task). A throw, hang, process.exit or OOM in the skill ends this process,

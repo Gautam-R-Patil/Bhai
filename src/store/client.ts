@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Store client — communicates with Convex via session-authenticated HTTP proxy.
 // No deploy keys on client. All auth via session tokens.
 

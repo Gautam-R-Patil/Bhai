@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Playwright sends a page callback as fn.toString(). The release obfuscator
 // rewrites string literals into calls to a decoder that only exists in Node,
 // so an unmarked callback throws "ReferenceError: <decoder> is not defined" in

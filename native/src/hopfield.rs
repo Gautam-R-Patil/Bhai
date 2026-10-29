@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Hopfield Network — Modern continuous Hopfield network for associative memory.
 // Pattern-completion: partial cues complete to nearest stored memory.
 // Exponential storage capacity with O(d) retrieval.

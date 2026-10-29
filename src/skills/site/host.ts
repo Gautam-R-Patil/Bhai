@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Calls a Site Skill in a child process (scripts/site-skill-host.cjs). The
 // child gets a bare environment (no API keys) and 128MB of heap; every call has

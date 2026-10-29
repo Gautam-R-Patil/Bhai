@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Trust step. Per-document clickwrap consent: each canonical legal
 // document has its own row with an UNCHECKED checkbox and a "Read full
 // document" link that opens the canonical URL via the OS browser

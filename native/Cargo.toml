@@ -2,7 +2,7 @@
 name = "atlas-native"
 version = "0.1.0"
 edition = "2021"
-authors = ["XAGI Labs Private Limited"]
+authors = ["TRUSCOR Private Limited"]
 description = "Native SIMD-accelerated operations for Bhai"
 license = "Proprietary"
 

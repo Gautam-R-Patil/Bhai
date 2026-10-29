@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Bundles the entire bot dist/ into a single bot-bundle.mjs file so that
 // individual source file names are never shipped in the production app.
 // Called from protect-source.js afterPack hook or directly via:

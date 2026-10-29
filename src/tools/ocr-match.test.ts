@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
 import "./index.js"; // load the registry first, as the app does (macos.ts is in an import cycle with it)
 import { _findBestMatchForTest as findBestMatch } from "./macos.js";

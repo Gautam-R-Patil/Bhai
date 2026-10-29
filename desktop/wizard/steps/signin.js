@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Sign-in step: single OTPless CTA. Tapping opens the OTPless popup
 // (atlas.openAuthWindow). The wizard advances automatically once
 // account.signedIn flips true (handled by boot.js refreshState).

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Configuration — public endpoint URLs only.
 // ALL API keys are server-side (Convex env vars). No keys exist in client code.
 

@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Checkout through site_task needs the owner's yes in a new message; a
 // confirmed:true the model sets on its own (say, because a page told it to) is refused.
 import { describe, expect, it, vi } from "vitest";

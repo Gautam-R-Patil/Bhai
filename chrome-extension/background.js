@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Bhai Browser Bridge — Background Service Worker
 // Maintains a WebSocket connection to the Bhai agent and routes
 // commands between Bhai and the user's Chrome browser.

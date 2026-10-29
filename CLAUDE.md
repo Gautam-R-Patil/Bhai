@@ -333,7 +333,7 @@ Original "more Rust = more speed" plan didn't hold. Captured so contributors don
 - **Graceful shutdown**: all subsystems have cleanup handlers
 - **Dependency injection**: `LLMClient` created once at boot, passed in — never a singleton
 - **OpenAI-compatible types**: all LLM uses `openai` types (`ChatCompletionMessageParam`, `ChatCompletionTool`) since Convex proxies via OpenRouter
-- **Copyright headers**: all sources carry `© 2024-2026 XAGI Labs Private Limited`
+- **Copyright headers**: all sources carry `© 2024-2026 TRUSCOR Private Limited`
 - **Plan-mode state is a runtime gate**: `plan`/`spec`/`awaiting_approval` each have `*_ALLOWED_TOOLS` in `plan-mode.ts`; `filterToolsFor*` strips BEFORE the LLM call; `checkWritePathInApprovalMode()` enforces at execution. New state: extend union, add allowlist + filter fn, wire into `isToolAllowedInCurrentMode`.
 - **Structured debug logs**: coding tools emit `logToolAction()`; silence with `ATLAS_TOOL_DEBUG=false`.
 

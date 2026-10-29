@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The reference skill drives the synthetic shop in headless Chromium:
 // search → options → select → confirm (consent token) → done, and the OTP path.
 // SITE_E2E_RUNS=100 for the acceptance run; plain `npm test` does 10.

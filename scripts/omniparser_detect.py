@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+# Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 #
 # OmniParser-v2 style element detector. Uses YOLOv8 (small detector, ~6MB) to find
 # interactive UI elements in a screenshot. Optionally adds Florence-2 captions

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 import type { FunctionGemmaResult } from "../models/function-gemma.js";
 import { getToolBySlug, listTools, searchByEmbedding, searchByFTS } from "./library.js";

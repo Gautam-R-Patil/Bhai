@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Sandbox code must never run on a host stack without vm's timeout: a loop in
 // a microtask, a getter or Proxy trap on a thrown value, or a hook on the
 // launcher global would otherwise freeze the whole bot.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+# Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 #
 # Dumps the Linux AT-SPI accessibility tree to JSON, schema-compatible with scripts/dump_ax.swift.
 #

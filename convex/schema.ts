@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Convex database schema for Bhai account management and store.
 
 import { defineSchema, defineTable } from "convex/server";

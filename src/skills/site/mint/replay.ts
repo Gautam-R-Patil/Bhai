@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Offline replay: proves a Site Skill does what the recorded session did, with
 // no model call, no network and no write. The real SkillHost runs the skill on

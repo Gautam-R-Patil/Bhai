@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pure CommonJS — shared main+renderer.
 // Browser: attaches to window.WizardRouter. Main process: required from main.js.
 "use strict";

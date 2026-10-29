@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 import type { Capabilities } from "./capabilities.js";

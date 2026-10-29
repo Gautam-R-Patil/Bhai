@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 
 // Memory Studio AI insights — four cards summarizing the user's recent

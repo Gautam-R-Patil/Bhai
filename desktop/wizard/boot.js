@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Renderer bootstrap for the cinematic wizard. IIFE at bottom runs on page load
 // when #step-root exists; pure helpers exposed on window.__WizardBoot for tests.
 (function () {

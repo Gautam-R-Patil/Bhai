@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // macOS CoreLocation provider — uses a compiled Swift helper binary.
 // The helper is compiled at build time (npm run build:location) and embeds an
 // Info.plist so macOS can show the location permission dialog on first run.

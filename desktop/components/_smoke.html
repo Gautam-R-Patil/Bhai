@@ -1,4 +1,4 @@
-<!-- Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved. -->
+<!-- Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -50,7 +50,7 @@
   (async () => {
     const C = window.SetupComponents;
     const tiles = document.getElementById("tiles");
-    new C.StatusTile({ label: "ACCOUNT", value: "dheeraj@xagi.co", secondary: "pro · 2400 credits", status: "green", onClick: () => console.log("account") }).mount(tiles);
+    new C.StatusTile({ label: "ACCOUNT", value: "you@example.com", secondary: "pro · 2400 credits", status: "green", onClick: () => console.log("account") }).mount(tiles);
     new C.StatusTile({ label: "PERMISSIONS", value: "2 of 4 granted", secondary: "Mic, Screen missing", status: "amber" }).mount(tiles);
     new C.StatusTile({ label: "WAKE WORD", value: "Off", status: "neutral" }).mount(tiles);
 

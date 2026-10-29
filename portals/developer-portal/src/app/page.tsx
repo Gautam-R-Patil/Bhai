@@ -148,7 +148,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="container mx-auto px-6 py-8 border-t border-gray-700">
         <div className="flex items-center justify-between text-gray-400">
-          <p>&copy; 2024-2026 XAGI Labs Private Limited. All rights reserved.</p>
+          <p>&copy; 2024-2026 TRUSCOR Private Limited. All rights reserved.</p>
           <div className="space-x-6">
             <Link href="/docs" className="hover:text-white">Documentation</Link>
             <Link href="/terms" className="hover:text-white">Terms</Link>

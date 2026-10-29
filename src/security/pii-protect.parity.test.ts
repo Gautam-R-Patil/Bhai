@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Parity: native/src/pii_protect.rs vs the TS maskCredentials / findPii,
 // byte for byte. Corpus: every string literal in credential-mask.test.ts,
 // pii-redactor.test.ts and pii-vault.test.ts, pii-redactor.test.ts's seeded

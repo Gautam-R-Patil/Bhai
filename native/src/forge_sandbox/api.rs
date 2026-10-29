@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // napi-exposed entry points for the Forge sandbox supervisor.
 //
 // All async functions return `Promise<T>` to JS. Errors come back as

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Store MCP `npm install` must not run third-party install scripts, must not
 // let the package's .npmrc pick npm config, and must not hand the bot's
 // secrets to npm or anything it spawns.

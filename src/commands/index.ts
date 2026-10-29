@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
@@ -117,7 +117,7 @@ function cmdStatus(): string {
         `🧠 Thinking: \`${_thinkingLevel}\``,
         `⏱️ Uptime: ${hours}h ${mins}m ${secs}s`,
         `💬 Conversations: ${_ctx.conversationCount()}`,
-        `🏢 Built by: XAGI Labs`,
+        `🏢 Built by: TRUSCOR Private Limited`,
         `🔒 Allowed users: ${_ctx.config.allowedUserIds.size}`,
     ].join("\n");
 }

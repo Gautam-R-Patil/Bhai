@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Agent Core — Rust port via napi-rs
 // Agent loop decision logic: memory injection pipeline, tool batching rules,
 // persistence nudge thresholds, cascade escalation rules.

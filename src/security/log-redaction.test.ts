@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The console wrapper formats whatever it is given, including an unhandled
 // rejection reason that came out of a vm sandbox. util.inspect would call that
 // value's custom-inspect hook with host objects, so the wrapper must not.

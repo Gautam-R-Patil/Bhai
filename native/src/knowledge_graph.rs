@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Knowledge Graph — Full port of src/memory/knowledge-graph.ts (algorithmic parts)
 // SQLite I/O stays in JS; Rust handles graph traversal and relationship scoring.
 

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Per-slug strike accounting. Three strikes within `window` archives the slug.
 //
 // The rolling-window math is dead simple: every `record_strike()` appends a

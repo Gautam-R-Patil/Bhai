@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright (c) 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Context Pruning — Full port of src/memory/context-pruning.ts (algorithmic parts)
 // LLM summarization calls stay in JS; Rust handles token estimation, split finding,
 // and tool history compression.

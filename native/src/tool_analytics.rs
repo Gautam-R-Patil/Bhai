@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tool Router Analytics — Rust port via napi-rs
 // Tracks tool usage patterns to improve future selections:
 // - Co-occurrence matrix: which tools are used together

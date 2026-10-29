@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Habit Detector — Detects recurring user patterns for proactive automation.
 // Uses native Rust time-series analysis for pattern matching.
 

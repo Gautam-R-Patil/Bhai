@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // site_skill_mint / approve_site_skill: the agent's side of the Skill Minter
 // (src/skills/site/mint). After Bhai finished a task on a site with the browser

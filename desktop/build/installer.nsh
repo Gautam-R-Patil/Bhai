@@ -1,4 +1,4 @@
-; Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+; Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 ; Custom NSIS installer include — show install details/log panel
 ; so users can see that the installer is actively working.
 

@@ -1,4 +1,4 @@
-# Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+# Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 #
 # Dumps the Windows UI Automation tree for the foreground (or specified) process to JSON.
 #

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Surprise Gate (D-MEM inspired) — Rust hot-path for Reward Prediction Error computation,
 // surprise-weighted importance scoring, and batch analysis for memory consolidation.
 

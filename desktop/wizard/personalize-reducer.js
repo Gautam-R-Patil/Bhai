@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pure merge helper for Personalize step. Validates fields, normalizes wake-word
 // phrase default, and keeps unrelated prefs keys intact.
 "use strict";

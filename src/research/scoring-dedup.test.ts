@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Dedup must keep ONE representative per cluster — including for exact-duplicate
 // texts. The old executor re-filtered originals by `dedupedTexts.includes(text)`,
 // which re-admitted every copy of a surviving text (no-op for exact dupes).

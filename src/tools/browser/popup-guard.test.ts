@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // A page with a "Leave site?" prompt must not hang the agent's next navigation.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { attachPopupGuard } from "./popup-guard.js";

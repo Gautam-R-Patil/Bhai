@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Dynamic tool handlers must not reach the host process. Every one of these
 // used to work: a host function or object in the sandbox leads to the host
 // Function constructor, then process, then child_process.

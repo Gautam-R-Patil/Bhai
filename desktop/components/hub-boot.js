@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Ready Hub page bootstrap. Runs on ready-hub.html only — guarded by the
 // presence of #hub-root so vitest/jsdom tests can import other files
 // without auto-booting.

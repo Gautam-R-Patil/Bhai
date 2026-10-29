@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Declarative install phase list. Each phase is `{id, label, run(ctx, log), idempotent}`.
 // `run()` receives a ctx with: BOT_DIR, DATA_DIR, SETUP_FLAG, runCommand, checkNodeInstalled,
 // downloadAndInstallNode, loadEnvDecrypted, saveEnvEncrypted, documentsDir, options, sendProgress.

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // V8 Bytecode Compilation Script
 // Compiles JavaScript to V8 bytecode that cannot be decompiled
 
@@ -54,7 +54,7 @@ async function compileFile(inputPath, outputPath) {
         });
 
         // Create loader stub
-        const loaderCode = `// Bytecode loader - © XAGI Labs
+        const loaderCode = `// Bytecode loader - © TRUSCOR Private Limited
 'use strict';
 require('bytenode');
 module.exports = require('${path.basename(jscPath)}');
@@ -79,7 +79,7 @@ module.exports = require('${path.basename(jscPath)}');
  * Create entry point wrapper for bytecode
  */
 function createEntryWrapper(originalPath, jscPath) {
-    const wrapperCode = `// Bhai Entry Point - © XAGI Labs
+    const wrapperCode = `// Bhai Entry Point - © TRUSCOR Private Limited
 // Protected with V8 bytecode compilation
 'use strict';
 

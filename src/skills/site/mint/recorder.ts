@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Records a browser session (the agent driving a site with browser tools) as a
 // trace a Site Skill can be minted from and replayed against offline:

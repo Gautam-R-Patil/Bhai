@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Untrusted fetched page text must be wrapped in a delimited, instruction-free
 // block (and sanitized) before it reaches the LLM — it is the injection vector.
 import { describe, expect, it, vi } from "vitest";

@@ -4,7 +4,7 @@
     "description": "Bhai — lean, secure, personal AI agent",
     "private": true,
     "license": "UNLICENSED",
-    "author": "XAGI Labs Private Limited",
+    "author": "TRUSCOR Private Limited",
     "type": "module",
     "scripts": {
         "predev": "(npm run build:location && npm run build:ax) 2>/dev/null || true",

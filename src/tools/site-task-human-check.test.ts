@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // A CAPTCHA mid-task: site_task stops before the skill sees it (the skill must
 // never click it), hands it to the owner via browser_wait_for_human, and
 // `resume` re-runs the phase it stopped in with the same input.

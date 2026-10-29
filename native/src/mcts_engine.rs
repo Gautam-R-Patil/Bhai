@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // MCTS Engine — Monte Carlo Tree Search for agent planning.
 // Inspired by ReST-MCTS* (NeurIPS 2024) and ToolTree (ICLR 2026).
 // Handles: tree structure, UCB1 selection, backpropagation, branch pruning.

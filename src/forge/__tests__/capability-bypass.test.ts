@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Adversarial capability-bypass regression suite.
 //
 // 15 known bypass patterns from the original Phase 4 JS-runner code review

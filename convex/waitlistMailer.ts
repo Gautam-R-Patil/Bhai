@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // "use node"; — required because nodemailer depends on Node built-ins (net, tls, dns).
 // Kept in a separate file from convex/waitlist.ts so the queries/mutations
 // there stay in Convex's default V8 runtime (mixing the two in one file is

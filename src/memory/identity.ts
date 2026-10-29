@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
@@ -166,7 +166,7 @@ export function getIdentityPromptSnippet(userId = DEFAULT_USER_ID): string {
         // Treat raw-string legacy fields as UNVERIFIED — they may have been
         // written by an older identity_update that didn't gate ownership claims.
         // Forcing them into the unverified bucket breaks the self-poisoning loop
-        // where pre-existing data ("Company: XAGI Labs") would re-surface as
+        // where pre-existing data ("Company: TRUSCOR") would re-surface as
         // confirmed truth on every iteration.
         if (verified === true) confirmed.push(`- ${label}: ${value}`);
         else unverified.push(`- ${label}: ${value}`);

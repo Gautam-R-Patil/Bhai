@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Standalone Gemini Live test harness — reproduces Bhai's tool-response flow
 // and logs every single server message so we can see what Gemini actually
 // sends back. Run with:

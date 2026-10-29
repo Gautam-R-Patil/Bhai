@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Bhai Browser Bridge — Content Script
 // Handles DOM interactions requested by the Bhai agent via the background service worker.
 // Also provides page context capture for the overlay bridge (URL, title, selection, content).

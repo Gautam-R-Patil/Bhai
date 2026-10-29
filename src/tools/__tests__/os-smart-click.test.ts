@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const findClickTarget = vi.fn();

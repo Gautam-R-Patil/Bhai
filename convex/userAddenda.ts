@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Per-user bot-authored prompt addenda. Layered on top of the core
 // system_prompts at assembly time. Bot writes here via session-auth
 // HTTP routes; admins read via admin-auth HTTP routes.

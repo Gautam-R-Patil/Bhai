@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Tests the pure decision logic + intent shape.
 import { describe, it, expect } from "vitest";
 import { _internals, buildIntent, decideNudge } from "./onboarding-graduation.js";

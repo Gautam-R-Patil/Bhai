@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Lightweight per-model usage counters. Bumped from convex/http.ts after each
 // successful /api/llm/chat call. The admin dashboard reads via getTopModels.
 

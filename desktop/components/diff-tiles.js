@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pure helper: diff the model output for two SystemStates and return the list
 // of tile ids whose model changed. Used by ready-hub-body to decide which
 // tiles to re-render + pulse-animate on the next 3s refresh.

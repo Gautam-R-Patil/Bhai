@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Habit Detector — Time-series pattern detection for user behavioral habits.
 // Detects recurring temporal patterns for proactive automation.
 

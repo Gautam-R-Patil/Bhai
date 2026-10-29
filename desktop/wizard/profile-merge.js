@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Pure merge helper for the wizard's Profile + Persona steps. Validates
 // required fields, normalizes tone to the allowed set, and (W2) accepts an
 // optional persona enum that flows through to the bot's identity store

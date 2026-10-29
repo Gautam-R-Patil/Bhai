@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // The static gate a minted Site Skill passes before it is replayed, reviewed or
 // shown to the owner. Deterministic, no model, no browser:

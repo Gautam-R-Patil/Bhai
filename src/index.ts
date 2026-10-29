@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
@@ -653,7 +653,7 @@ async function boot() {
 
     console.log(`\n📋 Config loaded`);
     console.log(`   Model   : Pro`);
-    console.log(`   Provider: XAGI Labs`);
+    console.log(`   Provider: TRUSCOR Private Limited`);
     console.log(
         `   Telegram: ${config.telegramEnabled ? `${config.allowedUserIds.size} allowed user(s)` : "disabled"}`,
     );

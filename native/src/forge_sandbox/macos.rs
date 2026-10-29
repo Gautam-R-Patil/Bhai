@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // macOS sandbox-exec backend.
 //
 // `sandbox-exec` is the userland binary that takes an SBPL (Sandbox Profile

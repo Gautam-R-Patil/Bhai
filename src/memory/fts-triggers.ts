@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Triggers that keep the standalone FTS5 mirrors in sync on delete/update.
 // The FTS tables have no content= table, so rows are removed with a plain

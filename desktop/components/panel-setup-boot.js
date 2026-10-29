@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Panel Setup tab bootstrap. Lazy-mounts the Ready Hub into #panel-hub-root the
 // first time the user clicks the Setup tab. Reuses the same components +
 // SystemState that ready-hub.html uses, so the two surfaces are identical.

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // One-click installer for store items.
 // Downloads content, extracts, installs dependencies, and hot-reloads.
 

@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Proactive Scheduler — Rust-side queue + dedup + priority + boundary + DND + rate limits.
 // See docs/superpowers/specs/2026-04-21-proactiveness-overhaul-design.md
 

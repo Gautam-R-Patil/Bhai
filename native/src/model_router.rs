@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Model Router — Rust port via napi-rs
 // Multi-strategy routing engine that selects the optimal LLM model
 // based on task type, message analysis, conversation context, and

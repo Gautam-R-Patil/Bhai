@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Human-handoff polling: waitForCaptchaCleared() must keep polling through
 // detector errors, return true once the CAPTCHA is gone, and give up at the

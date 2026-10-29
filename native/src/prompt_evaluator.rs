@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Prompt Evaluator — Rust hot-path for prompt quality scoring.
 // Inspired by HyperAgent (Meta, ICLR 2026) self-modification loop.
 // Scores prompts based on: task success correlation, response quality signals,

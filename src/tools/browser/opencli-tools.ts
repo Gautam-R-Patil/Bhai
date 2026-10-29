@@ -1,4 +1,5 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
+// Portions adapted and modified from OpenCLI (https://github.com/jackwener/opencli), licensed under Apache-2.0. See CREDITS.md.
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 

@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // Consent for irreversible actions (deleting files, emptying Trash, dangerous
 // shell commands, and later checkout in site skills).

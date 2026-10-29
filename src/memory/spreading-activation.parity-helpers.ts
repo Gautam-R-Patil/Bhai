@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Shared parity helpers used by both the vitest parity suite and the
 // scripts/bench-native.ts --parity-check mode. Keeping this in one place
 // prevents the bench's CI gate from drifting away from the test's tolerance.

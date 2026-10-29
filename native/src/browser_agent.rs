@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Native Rust module for browser agent acceleration.
 // Handles: element scoring, video player state cache, action rate limiting,
 // loop detection, and hover coordinate caching.

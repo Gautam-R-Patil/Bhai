@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // protect() memo (ATLAS_NO_PROTECT_CACHE) and the single-pass known-value regex
 // in pii-vault.ts. Each test loads a fresh vault.

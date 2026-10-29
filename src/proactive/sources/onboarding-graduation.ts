@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // W3 Adaptive Nudges — three day-gated graduation messages that fire from
 // the existing proactive engine on Day-2 / Day-3 / Day-5 after first install.
 //

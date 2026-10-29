@@ -1,4 +1,4 @@
-// © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // The extra-discovery (Phase 1 fallback) page loop must honor maxSources like the
 // three sibling page loops, or it overshoots the source budget.
 import { describe, expect, it, vi } from "vitest";

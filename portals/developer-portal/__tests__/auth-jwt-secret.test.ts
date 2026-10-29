@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
 // F14: lib/auth.ts must refuse the placeholder JWT secret on import. The
 // validation runs at module load time so we use vi.resetModules() + dynamic

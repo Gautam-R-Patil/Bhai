@@ -1,4 +1,4 @@
-// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Location tool — exposes device location to the agent.
 
 import { getLocation, getLocationString, getTimezone, refreshLocation } from "../location/index.js";
