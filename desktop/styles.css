@@ -6083,13 +6083,22 @@ body.hig .chats-empty { margin: auto; padding: 24px; text-align: center; font-si
    Children are capped at a readable width and stay left-aligned with it. */
 .vault-page {
     flex: 1; min-height: 0; overflow-y: auto;
-    display: flex; flex-direction: column; gap: 22px;
+    display: flex; flex-direction: column; gap: 14px;
     padding: 0 24px 32px;
 }
 body.hig .vault-page { padding: 4px 28px 32px; }
 .vault-page > * { width: 100%; max-width: 760px; box-sizing: border-box; }
-.vault-intro { font-size: 13px; line-height: 1.55; color: var(--text-secondary); margin: 0; max-width: 640px; }
-.vault-nowrap { white-space: nowrap; }
+.vault-hero { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.vault-intro { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); margin: 0; max-width: 640px; }
+.vault-trust { display: flex; flex-wrap: wrap; gap: 6px; }
+.vault-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px 3px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 550; line-height: 16px; color: var(--text-secondary);
+    background: var(--fill-quaternary, rgba(127, 127, 127, 0.12));
+    border: 1px solid var(--separator, var(--border));
+}
+.vault-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-success, #34c759); }
 
 .vault-lock {
     display: flex; gap: 12px; padding: 14px 16px; border-radius: 12px;
@@ -6100,11 +6109,21 @@ body.hig .vault-page { padding: 4px 28px 32px; }
 .vault-lock-row { display: flex; gap: 8px; }
 .vault-lock-row .clean-input { flex: 1; }
 
-.vault-section { display: flex; flex-direction: column; }
-.vault-section-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding-bottom: 8px; border-bottom: 1px solid var(--separator, var(--border));
+/* Each kind is a card: icon + title + what Bhai may do with it, then its entries. */
+.vault-section {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 14px 16px; border-radius: 14px;
+    background: var(--bg-group, var(--fill-quaternary, rgba(127, 127, 127, 0.08)));
+    border: 1px solid var(--separator, var(--border));
 }
+.vault-section-head { display: flex; align-items: center; gap: 12px; }
+.vault-section-icon {
+    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--accent-tint); color: var(--accent-primary);
+}
+.vault-section-title { flex: 1; min-width: 0; }
+.vault-section-sub { margin: 2px 0 0; font-size: 12px; line-height: 1.4; color: var(--text-secondary); }
 .vault-section-head h3 {
     margin: 0; display: flex; align-items: center;
     font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary);
@@ -6117,15 +6136,18 @@ body.hig .vault-page { padding: 4px 28px 32px; }
 .vault-count:empty { display: none; }
 .vault-add {
     flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-    width: 26px; height: 26px; border-radius: 7px; border: 0; padding: 0;
-    background: var(--fill-quaternary, rgba(127, 127, 127, 0.14)); color: var(--text-secondary);
-    font-size: 16px; line-height: 1; cursor: pointer;
+    height: 28px; padding: 0 12px; border-radius: 8px; border: 0;
+    background: var(--bg-control, rgba(127, 127, 127, 0.18)); color: var(--text-primary);
+    box-shadow: 0 0 0 0.5px var(--separator-strong, transparent);
+    font: inherit; font-size: 12.5px; font-weight: 600; line-height: 1; cursor: pointer;
     transition: background .15s, color .15s;
 }
 .vault-add:hover { background: var(--accent-tint); color: var(--accent-primary); }
+/* An empty card already offers "Add your first …" — one add control at a time. */
+.vault-section:has(.vault-empty) .vault-add { display: none; }
 .vault-add:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); }
 
-.vault-list { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; }
+.vault-list { display: flex; flex-direction: column; gap: 2px; }
 /* Rows bleed 8px past the column so the icon lines up with the heading while
    the hover fill still has breathing room on both sides. */
 .vault-row {
@@ -6145,10 +6167,16 @@ body.hig .vault-page { padding: 4px 28px 32px; }
 .vault-row-actions { flex: 0 0 auto; display: flex; gap: 6px; opacity: 0; transition: opacity .12s; }
 .vault-row:hover .vault-row-actions, .vault-row:focus-within .vault-row-actions { opacity: 1; }
 .vault-del:hover { color: var(--accent-danger); border-color: var(--accent-danger); }
-.vault-empty { font-size: 13px; color: var(--text-muted, var(--text-secondary)); padding: 10px 0 2px; }
-
-.vault-foot { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.5; color: var(--text-muted, var(--text-secondary)); }
-.vault-foot svg { flex: 0 0 auto; margin-top: 2px; }
+.vault-empty {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 9px 12px; border-radius: 10px; cursor: pointer;
+    border: 1px dashed var(--separator-strong, var(--border)); background: transparent;
+    font: inherit; font-size: 13px; color: var(--text-secondary); text-align: left;
+    transition: border-color .15s, color .15s, background .15s;
+}
+.vault-empty:hover { border-color: var(--accent-primary); color: var(--accent-primary); background: var(--accent-tint); }
+.vault-empty:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); }
+.vault-empty-plus { font-size: 15px; line-height: 1; }
 
 /* Add / Edit modal. The card is OPAQUE (bg-window, lifted a touch) so the page
    behind never shows through the form; the page itself is dimmed and blurred. */
