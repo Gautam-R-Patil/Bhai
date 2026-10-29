@@ -300,6 +300,7 @@ async function validateRequest(
     ai_credits: number;
     sharedKey: string | null;
     deviceFingerprint: string | null;
+    email: string | null;
   };
 } | Response> {
   const authHeader = request.headers.get("Authorization");
@@ -4049,10 +4050,13 @@ http.route({
     if (validation instanceof Response) return validation;
     if (!process.env.BHAI_MAIL_USER || !process.env.BHAI_MAIL_PASS) return jsonReply({ error: "not_configured" }, 503);
     const body = await request.json().catch(() => ({}));
-    if (!isEmail(body.ownerEmail)) return jsonReply({ error: "bad_email" }, 400);
+    // The sign-in email is verified (OTPless); a client-supplied one is not, and it picks
+    // the address Bhai writes to (and the lookalike .bhai name).
+    const ownerEmail = isEmail(validation.account.email) ? validation.account.email : body.ownerEmail;
+    if (!isEmail(ownerEmail)) return jsonReply({ error: "bad_email" }, 400);
     const address = await ctx.runMutation(internal.bhaiMail.claimAddress, {
       otplessUserId: validation.account.otplessUserId,
-      ownerEmail: body.ownerEmail,
+      ownerEmail,
     });
     return jsonReply({ address });
   }),
@@ -4101,6 +4105,17 @@ http.route({
     const reply = (data: unknown, status = 200) => buildResponse(data, status, encrypted, account.sharedKey, request);
     const mine = await ctx.runQuery(internal.bhaiMail.addressFor, { otplessUserId: account.otplessUserId });
     if (!mine) return await reply({ ok: false, error: "no_address" }, 404);
+    // Only from a verified owner address: the sign-in email, or one that has emailed this
+    // Bhai address (authenticated). Otherwise any new account could send as xagilab.com
+    // to an address it merely typed in.
+    const ownerVerified =
+      (typeof account.email === "string" && account.email.toLowerCase() === mine.ownerEmail) || mine.lastInboundAt > 0;
+    if (!ownerVerified) {
+      return await reply(
+        { ok: false, error: `unverified_owner: email ${mine.address} once from ${mine.ownerEmail} so I know that address is yours` },
+        403,
+      );
+    }
     const to = parseRecipients(body?.to);
     const cc = parseRecipients(body?.cc);
     if (!to || !cc) return await reply({ ok: false, error: "bad_recipient" }, 400);

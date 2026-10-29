@@ -79,6 +79,49 @@ export function isAutomatedMail(from: string, headers: Record<string, string>): 
 }
 
 // Raw header block → { lower-case name: value } (folded lines joined).
+/** The first (topmost) value of a header: the one our receiving server added. */
+export function firstHeader(raw: string, name: string): string | null {
+    const unfolded = raw.replace(/\r?\n[ \t]+/g, " ");
+    const m = new RegExp(`^${name}:\\s*(.+)$`, "im").exec(unfolded);
+    return m ? m[1].trim() : null;
+}
+
+const domainOf = (addr: string | undefined): string =>
+    ((/@([a-z0-9.-]+)/i.exec(addr ?? "") ?? /^([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec((addr ?? "").trim()))?.[1] ?? "")
+        .toLowerCase()
+        .replace(/\.$/, "");
+
+/**
+ * Did the receiving server verify that this mail really comes from `fromAddress`'s domain?
+ * Fail-closed: no Authentication-Results, any fail/softfail, or a pass for another domain
+ * (what a spoofer gets for free) is "no". Same rule as src/email.ts isEmailAuthenticated:
+ * the From header alone is anyone's to write, and it decided who got owner Bhai.
+ */
+export function senderAuthenticated(authResults: string | null, fromAddress: string): boolean {
+    if (!authResults) return false;
+    const fromDomain = domainOf(fromAddress);
+    if (!fromDomain) return false;
+    const aligned = (d: string) => !!d && (d === fromDomain || fromDomain.endsWith(`.${d}`) || d.endsWith(`.${fromDomain}`));
+    let pass = false;
+    for (const seg of authResults.split(";")) {
+        const m = /\b(spf|dkim|dmarc)\s*=\s*(\w+)/i.exec(seg);
+        if (!m) continue;
+        const method = m[1].toLowerCase();
+        const result = m[2].toLowerCase();
+        if (result === "fail" || result === "softfail") return false;
+        const prop = (n: string) => new RegExp(`\\b${n.replace(".", "\\.")}\\s*=\\s*([^\\s;]+)`, "i").exec(seg)?.[1];
+        const domain = domainOf(
+            method === "dkim"
+                ? prop("header.d") || prop("header.i")
+                : method === "spf"
+                  ? prop("smtp.mailfrom") || prop("smtp.helo")
+                  : prop("header.from"),
+        );
+        if (result === "pass" && aligned(domain)) pass = true;
+    }
+    return pass;
+}
+
 export function parseHeaderBlock(raw: string): Record<string, string> {
     const out: Record<string, string> = {};
     for (const line of raw.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
