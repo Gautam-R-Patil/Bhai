@@ -86,7 +86,7 @@ export function noteShownMemories(ids: number[]): void {
 export function claimSupersede(id: number): boolean {
     const ctx = _callerStorage.getStore();
     // Private chats only: that's where the reply's "Forget that" tap can bring the old memory back.
-    if (!ctx || !ctx.isPrivate || !canPinMemory(id) || ctx.superseded) return false;
+    if (!ctx?.isPrivate || !canPinMemory(id) || ctx.superseded) return false;
     ctx.superseded = true;
     return true;
 }

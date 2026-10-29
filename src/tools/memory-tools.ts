@@ -73,7 +73,11 @@ const YEAR_MS = 366 * 86_400_000;
  * ("I'll send Riya the deck by Friday", "kal tak bhej dunga"), never one inferred; `dueAt` is
  * the model's ISO reading of that time. "Remind me" asks for the cron tool, not this.
  */
-export function commitmentDue(message: string, dueAt: unknown, now = Date.now()): { dueAt: string } | { error: string } {
+export function commitmentDue(
+    message: string,
+    dueAt: unknown,
+    now = Date.now(),
+): { dueAt: string } | { error: string } {
     if (/\bremind me\b|yaad dila/i.test(message)) {
         return { error: "Not stored: the owner asked for a reminder; use the cron tool for that." };
     }
@@ -219,9 +223,9 @@ export const memoryStore: ToolDefinition = {
                     ? "Memory stored and pinned."
                     : dueAt
                       ? "Commitment stored; Bhai nudges the owner once near due_at."
-                    : input.pin === true
-                      ? "Memory stored; not pinned: only the owner's own ask can pin."
-                      : "Memory stored.",
+                      : input.pin === true
+                        ? "Memory stored; not pinned: only the owner's own ask can pin."
+                        : "Memory stored.",
             });
         if (retired) {
             return JSON.stringify({
@@ -315,7 +319,10 @@ export const memoryForget: ToolDefinition = {
         if (!isOwnerCaller()) return JSON.stringify({ success: false, error: "Only the owner can make Bhai forget." });
         // The preview and the digest item quote what Bhai knows; a group would read them too.
         if (!isPrivateOwnerCaller()) {
-            return JSON.stringify({ success: false, error: "Ask me in our private chat: forgetting shows what I know." });
+            return JSON.stringify({
+                success: false,
+                error: "Ask me in our private chat: forgetting shows what I know.",
+            });
         }
         if (input.digest_item != null) {
             const n = Number(String(input.digest_item).replace(/^#/, ""));
@@ -333,7 +340,8 @@ export const memoryForget: ToolDefinition = {
             const row = getRawDb()?.prepare("SELECT content FROM memories WHERE id = ?").get(id) as
                 | { content: string }
                 | undefined;
-            if (!row || !forgetMemoryById(id, "digest")) return JSON.stringify({ success: false, error: "Already gone." });
+            if (!row || !forgetMemoryById(id, "digest"))
+                return JSON.stringify({ success: false, error: "Already gone." });
             return JSON.stringify({
                 success: true,
                 forgotten: row.content,
