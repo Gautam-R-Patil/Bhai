@@ -34,7 +34,7 @@ export function bhaiAddress(handle: string, n: number, domain: string): string {
 
 // The .bhai suffix keeps users off real staff mailboxes on the same domain.
 export function pickBhaiRecipient(addresses: string[], domain: string): string | null {
-    const re = new RegExp(`^[a-z0-9]+\\.bhai@${domain.replace(/\./g, "\\.")}$`);
+    const re = new RegExp(`^[a-z0-9]+\\.bhai@${domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
     for (const a of addresses) {
         const addr = a.trim().toLowerCase();
         if (re.test(addr)) return addr;

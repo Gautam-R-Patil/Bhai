@@ -65,10 +65,10 @@ const htmlToText = (html: string) =>
         .replace(/<br\s*\/?>|<\/p>|<\/div>/gi, "\n")
         .replace(/<[^>]+>/g, "")
         .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"');
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, "&"); // last, so "&amp;lt;" stays the text "&lt;"
 
 export const poll = internalAction({
     args: {},
