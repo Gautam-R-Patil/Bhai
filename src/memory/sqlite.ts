@@ -1254,9 +1254,14 @@ async function _smartWriteDecision(
                     const rows = rawDb
                         .prepare(
                             `SELECT id, content, access_count, importance FROM memories
-             WHERE id IN (${placeholders}) AND decay_score > 0.2 AND consolidated_into IS NULL`,
+             WHERE id IN (${placeholders}) AND decay_score > 0.2 AND consolidated_into IS NULL
+               AND COALESCE(pinned, 0) = 0 AND category = ?
+               AND COALESCE(scope, 'global') = (SELECT COALESCE(scope, 'global') FROM memories WHERE id = ?)`,
                         )
-                        .all(...ids) as Array<{
+                        // Only same-category, same-scope, unpinned neighbours: the model's
+                        // UPDATE/DELETE verdict (on model-written content) must never reach
+                        // a pinned memory or another scope's.
+                        .all(...ids, category, newId) as Array<{
                         id: number;
                         content: string;
                         access_count: number;
@@ -1655,7 +1660,10 @@ export async function recall(
 
     // ── Layer 0: Temporal Cache (Prefrontal Working Memory) ──
     const cache = getTemporalCache();
-    const cached = cache.get(query);
+    // Limit, mode and scopes are part of the key: a recall(q, 3) must not answer a
+    // recall(q, 10), and rows from one scope must not come back for another.
+    const cacheKey = `${limit}|${queryMode ?? ""}|${[...(scopes ?? [])].sort().join(",")}|${query}`;
+    const cached = cache.get(cacheKey);
     if (cached) {
         return cached;
     }
@@ -2336,7 +2344,7 @@ export async function recall(
             }
             commitTransaction();
             // Only cache if transaction succeeded
-            cache.set(query, records);
+            cache.set(cacheKey, records);
         } catch {
             rollbackTransaction();
             // Still return the records but don't cache stale data

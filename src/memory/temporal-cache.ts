@@ -86,14 +86,9 @@ export class TemporalCache {
     // ── Query Hash ────────────────────────────
 
     private hashQuery(query: string): string {
-        // Simple hash for cache keying
-        let hash = 0;
-        const normalized = query.toLowerCase().trim();
-        for (let i = 0; i < normalized.length; i++) {
-            hash = Math.imul(hash, 31) + normalized.charCodeAt(i);
-            hash |= 0; // Convert to 32-bit integer
-        }
-        return hash.toString(36);
+        // The normalized text itself: a 32-bit hash let two different queries share
+        // an entry (and get each other's memories). The LRU is small, so keys stay cheap.
+        return query.toLowerCase().trim();
     }
 
     // ── Bloom Filter API ──────────────────────

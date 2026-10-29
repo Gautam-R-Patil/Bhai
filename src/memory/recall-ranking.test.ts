@@ -65,3 +65,15 @@ describe("visibility filters", () => {
         expect(hits).toEqual(["zebracorn: user prefers dark roast coffee"]);
     });
 });
+
+describe("recall cache", () => {
+    it("is keyed on scopes and limit, not just the query text", async () => {
+        // Global first, then the same text with the session scope: the cached global-only
+        // answer must not stand in for it.
+        expect((await sqlite.recall("zebracorn", 10)).map((m) => m.content)).not.toContain("zebracorn session scratch");
+        const scoped = (await sqlite.recall("zebracorn", 10, undefined, undefined, ["session:abc"])).map((m) => m.content);
+        expect(scoped).toContain("zebracorn session scratch");
+        expect(await sqlite.recall("zebracorn", 1, undefined, undefined, ["session:abc"])).toHaveLength(1);
+        expect(await sqlite.recall("zebracorn", 10, undefined, undefined, ["session:abc"])).toHaveLength(scoped.length);
+    });
+});
