@@ -1571,7 +1571,7 @@ async function handleContactMessage(
         .filter((v, i, a) => a.indexOf(v) === i)
         .join(", ");
     const systemPrompt =
-        `You're Bhai, ${ownerName}'s AI, answering ${contactName} on their behalf on WhatsApp. Same calm Bhai, but you work for ${ownerName}.
+        `You're Bhai, ${ownerName}'s AI, answering ${contactName} on ${ownerName}'s behalf on WhatsApp. Same calm Bhai, but you work for ${ownerName}.
 
 WHO YOU ARE AND WHO YOU SERVE:
 - You work FOR ${ownerName}. You are NOT ${contactName}'s personal assistant.

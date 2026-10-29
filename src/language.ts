@@ -91,6 +91,9 @@ let currentLanguage = "English";
 let lastDetectionTime = 0;
 const DETECTION_COOLDOWN_MS = 30000; // Don't re-detect within 30s
 let loaded = false;
+// A switch is saved only when the next detection confirms it, so a one-off paste
+// (a text to translate, a quoted email) doesn't become the language after a restart.
+let pendingSave = "";
 
 // The owner's language is kept in their identity profile, so proactive sends after a restart
 // don't fall back to English. Read once the identity store is up (its row carries a version).
@@ -203,17 +206,21 @@ export function updateSessionLanguage(userMessage: string): string {
         console.log(`[LANG] Language switch: ${currentLanguage} → ${detection.language} (confidence: ${detection.confidence.toFixed(2)}, script: ${detection.script})`);
         currentLanguage = detection.language;
         lastDetectionTime = now;
-        try {
-            updateIdentityProfile({ preferences: { language: currentLanguage } });
-        } catch {
-            /* identity store not up: this session only */
-        }
+        pendingSave = currentLanguage;
     } else if (detection.confidence > 0 && detection.language === currentLanguage) {
         // Only a REAL same-language detection refreshes the cooldown. A message
         // too short to detect returns the inherited language at confidence 0 —
         // if that armed the 30s window, a quick "ok" before a long foreign
         // message would block its detection and keep replies in the old language.
         lastDetectionTime = now;
+        if (detection.confidence >= 0.8 && pendingSave === currentLanguage) {
+            pendingSave = "";
+            try {
+                updateIdentityProfile({ preferences: { language: currentLanguage } });
+            } catch {
+                /* identity store not up: this session only */
+            }
+        }
     }
 
     return currentLanguage;
@@ -249,4 +256,5 @@ export function resetLanguage(): void {
     currentLanguage = "English";
     lastDetectionTime = 0;
     loaded = false;
+    pendingSave = "";
 }

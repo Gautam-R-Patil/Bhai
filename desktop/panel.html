@@ -752,6 +752,7 @@
                                     <div class="input-group">
                                         <label class="input-label">Role Preset</label>
                                         <select class="clean-input" id="waPersonaPreset" onchange="onPersonaPresetChange()" style="background:var(--bg-control);color:var(--text-primary);border:1px solid var(--separator);padding:8px 12px;border-radius:8px;">
+                                            <option value="bhai">Bhai (default)</option>
                                             <option value="pa">Personal Assistant</option>
                                             <option value="cs">Customer Support</option>
                                             <option value="info">Information Desk</option>
@@ -2904,6 +2905,7 @@
 
         // WhatsApp Persona
         const PERSONA_PRESETS = {
+            bhai: { name: 'Bhai', prompt: '' },
             pa: { name: 'Personal Assistant', prompt: 'You are a helpful personal assistant. Be polite, professional, and concise. Help with scheduling, information lookup, and general queries.' },
             cs: { name: 'Customer Support', prompt: 'You are a customer support representative. Be friendly, empathetic, and solution-oriented. Help resolve issues and answer product questions.' },
             info: { name: 'Information Desk', prompt: 'You are an information desk assistant. Provide accurate, concise answers to questions. Direct complex queries to the appropriate person.' },
@@ -2918,7 +2920,7 @@
 
         async function saveWhatsAppPersona() {
             const preset = document.getElementById('waPersonaPreset').value;
-            const p = PERSONA_PRESETS[preset] || PERSONA_PRESETS.pa;
+            const p = PERSONA_PRESETS[preset] || PERSONA_PRESETS.bhai;
             const persona = {
                 name: p.name,
                 systemPrompt: document.getElementById('waPersonaPrompt').value.trim() || p.prompt,
