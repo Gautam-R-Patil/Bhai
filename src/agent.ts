@@ -479,8 +479,11 @@ export function finalReplyText(raw: string, channelContext?: ChannelContext): st
         return "[NO_REPLY]";
     }
     const text = sanitizeAgentResponse(raw);
-    // Overlay markers (<!--QUICK_ACTIONS-->, <!--WIDGET-->) mean nothing elsewhere and would show as literal text.
-    return channelContext?.channel === "overlay" ? text : text.replace(/<!--[\s\S]*?-->/g, "").trim();
+    // Overlay markers (<!--QUICK_ACTIONS-->, <!--WIDGET-->, <!--COLLAPSE-->) mean nothing elsewhere and would show
+    // as literal text. Only those: other HTML comments can be real content (code, "A --> B").
+    return channelContext?.channel === "overlay"
+        ? text
+        : text.replace(/<!--\s*(?:QUICK_ACTIONS|WIDGET|\/?COLLAPSE)\b[\s\S]*?-->/g, "").trim();
 }
 
 /**
