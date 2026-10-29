@@ -132,7 +132,18 @@ function checkPassword(pw, stored) {
  *   promptTouchId(why)   → Promise<boolean>: the owner passed it
  *   onChange(entries)    → the full decrypted list, for the bot
  */
-function registerVaultIpc({ ipcMain, safeStorage, file, trusted, canTouchId, promptTouchId, onChange }) {
+const GRACE_MS = 60_000;
+
+function registerVaultIpc({
+    ipcMain,
+    safeStorage,
+    file,
+    trusted,
+    canTouchId,
+    promptTouchId,
+    onChange,
+    now = Date.now,
+}) {
     const load = () => readVault(file, safeStorage);
     const save = (vault) => {
         writeVault(file, safeStorage, vault);
@@ -140,13 +151,18 @@ function registerVaultIpc({ ipcMain, safeStorage, file, trusted, canTouchId, pro
         return { success: true, entries: publicView(vault.entries) };
     };
     // Touch ID where the Mac has it; else the vault password (set on first use).
-    const authenticate = async (vault, password, reason) => {
-        if (canTouchId())
-            return promptTouchId(reason).then(
-                () => true,
-                () => false,
-            );
-        return checkPassword(password, vault.pw);
+    // A pass covers that one entry for a minute, so Edit (load, then save) asks once.
+    const passed = new Map(); // entry id → when it was last unlocked
+    const authenticate = async (vault, password, reason, id) => {
+        if (id && now() - (passed.get(id) ?? -Infinity) < GRACE_MS) return true;
+        const ok = canTouchId()
+            ? await promptTouchId(reason).then(
+                  () => true,
+                  () => false,
+              )
+            : checkPassword(password, vault.pw);
+        if (ok && id) passed.set(id, now());
+        return ok;
     };
     const guard =
         (fn) =>
@@ -191,7 +207,10 @@ function registerVaultIpc({ ipcMain, safeStorage, file, trusted, canTouchId, pro
             const i = entry?.id ? vault.entries.findIndex((e) => e.id === entry.id) : -1;
             if (entry?.id && i < 0) return { success: false, error: "That entry no longer exists" };
             // Editing can point a login at another website: same check as viewing it.
-            if (i >= 0 && !(await authenticate(vault, password, `change "${vault.entries[i].label}" in your vault`))) {
+            if (
+                i >= 0 &&
+                !(await authenticate(vault, password, `change "${vault.entries[i].label}" in your vault`, entry.id))
+            ) {
                 return { success: false, error: "auth_failed" };
             }
             const e = sanitizeEntry(entry, i >= 0 ? vault.entries[i] : null);
@@ -207,7 +226,7 @@ function registerVaultIpc({ ipcMain, safeStorage, file, trusted, canTouchId, pro
             const e = vault.entries.find((x) => x.id === id);
             if (!e) return { success: false, error: "That entry no longer exists" };
             // Gated like viewing or editing it: the Touch ID prompt is also the "are you sure".
-            if (!(await authenticate(vault, password, `delete "${e.label}" from your vault`)))
+            if (!(await authenticate(vault, password, `delete "${e.label}" from your vault`, id)))
                 return { success: false, error: "auth_failed" };
             vault.entries = vault.entries.filter((x) => x.id !== id);
             return save(vault);
@@ -219,7 +238,7 @@ function registerVaultIpc({ ipcMain, safeStorage, file, trusted, canTouchId, pro
             const vault = load();
             const e = vault.entries.find((x) => x.id === id);
             if (!e) return { success: false, error: "Not found" };
-            if (!(await authenticate(vault, password, `show "${e.label}" from your vault`)))
+            if (!(await authenticate(vault, password, `show "${e.label}" from your vault`, id)))
                 return { success: false, error: "auth_failed" };
             const out = {};
             for (const f of FIELDS[e.kind]) out[f] = e[f];
