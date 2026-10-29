@@ -427,8 +427,15 @@ async function switchTabInChrome(input: Record<string, unknown>): Promise<string
     let tabs = await list();
     const at = (i: unknown) => (typeof i === "number" ? tabs[i] : undefined);
     if (typeof input.close_tab_index === "number" || input.close_active) {
+        // "The active tab" is the focused window's: every window has an active tab, so
+        // tabs.find(t => t.active) could close the owner's tab in another window.
+        const current = input.close_active
+            ? ((await sendBridgeCommand("get_active_tab", {}).catch(() => null)) as { id?: number } | null)
+            : null;
         const target =
-            typeof input.close_tab_index === "number" ? at(input.close_tab_index) : tabs.find((t) => t.active);
+            typeof input.close_tab_index === "number"
+                ? at(input.close_tab_index)
+                : tabs.find((t) => t.id === current?.id);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
         await sendBridgeCommand("close_tab", { tabId: target.id });
         tabs = await list();
@@ -447,7 +454,9 @@ async function switchTabInChrome(input: Record<string, unknown>): Promise<string
     if (typeof input.tab_index === "number") {
         const target = at(input.tab_index);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
-        await sendBridgeCommand("switch_tab", { tabId: target.id });
+        // focus: a tab in another window must also bring that window forward, or the next
+        // command (which acts on the focused window's tab) still hits the old one.
+        await sendBridgeCommand("switch_tab", { tabId: target.id, focus: true });
         return JSON.stringify({
             success: true,
             action: "switched",
