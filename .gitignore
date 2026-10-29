@@ -88,6 +88,7 @@ desktop/hostinger-upload/
 !src/alive-ux.test.ts
 !src/memory/relationship.test.ts
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
+!src/screen/grid-overlay.test.ts
 !src/tools/send-ledger.test.ts
 !convex/stt.test.ts
 !src/agent.reliability.test.ts

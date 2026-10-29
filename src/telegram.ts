@@ -5,8 +5,9 @@
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename as nodeBasename } from "node:path";
-import { Bot, GrammyError, InlineKeyboard } from "grammy";
+import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import {
+    type AgentResponse,
     type ChannelContext,
     clearConversation,
     getConversationCount,
@@ -169,11 +170,31 @@ async function attachStuckKeyboard(
     );
 }
 
+/**
+ * Done comes with the receipt: the screenshot taken after the last action, right after
+ * the reply and threaded like it. No caption: the photo never claims more than the reply.
+ */
+async function sendReceipt(
+    api: Bot["api"],
+    chatId: number,
+    receipt: AgentResponse["receipt"],
+    opts: { reply_parameters?: { message_id: number } } = {},
+): Promise<void> {
+    if (!receipt) return;
+    const photo = new InputFile(
+        Buffer.from(receipt.imageBase64, "base64"),
+        `receipt.${receipt.mimeType.split("/")[1] || "png"}`,
+    );
+    await withTelegramRetry(() => api.sendPhoto(chatId, photo, opts)).catch((err: Error) =>
+        console.warn("[TELEGRAM] Failed to send receipt:", err.message),
+    );
+}
+
 /** Send a media or voice turn's reply as bubbles; a stuck report gets the handoff buttons or the reply line. */
 async function replyInBubbles(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctx: any,
-    result: { text: string; stuck?: boolean },
+    result: Pick<AgentResponse, "text" | "stuck" | "receipt">,
     senderIsOwner: boolean,
 ): Promise<void> {
     const buttons = wantsStuckButtons(result, senderIsOwner, ctx.chat?.type);
@@ -190,6 +211,7 @@ async function replyInBubbles(
         lastId = sent.messageId ?? lastId;
     }
     if (buttons) await attachStuckKeyboard(ctx.api, ctx.chat.id, lastId);
+    await sendReceipt(ctx.api, ctx.chat.id, result.receipt);
 }
 
 // ── Inline Keyboards ─────────────────────────
@@ -1233,6 +1255,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     }
                 }
                 if (stuckButtons) await attachStuckKeyboard(ctx.api, chatId, lastSentId, lastEditAt);
+                await sendReceipt(ctx.api, chatId, response.receipt, replyOpts);
             } catch (err) {
                 if (!controller.signal.aborted) {
                     console.error("❌ Agent error:", err);

@@ -28,6 +28,8 @@
  * Kill-switch: ATLAS_NO_VERIFY_GATE=true disables the gate entirely.
  */
 
+import { isPhotoFile } from "../tools/send-file.js";
+
 const MUTATOR_TOOLS = new Set<string>([
     // Cross-OS smart click cascade
     "os_smart_click",
@@ -102,6 +104,27 @@ export function isMutator(fnName: string, fnArgs: Record<string, unknown>): bool
     return false;
 }
 
+/** Non-os_* tools that also drive the screen (os_* / win_os_* are matched by prefix). */
+const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut", "computer_use"]);
+
+/** Tools that hand the work to another agent, whose own calls this gate never sees. */
+const DELEGATES = new Set(["swarm_task", "start_long_task", "resume_long_task"]);
+
+/**
+ * Runs in the batch's in-order screen lane: it shares focus, mouse and keyboard,
+ * reads the screen (send_screenshot), or is something this gate tracks, so its
+ * place in call order is the order it ran in.
+ */
+export function drivesScreen(fnName: string, fnArgs: Record<string, unknown> = {}): boolean {
+    return (
+        /^(win_)?os_/.test(fnName) ||
+        SCREEN_TOOLS.has(fnName) ||
+        fnName === "send_screenshot" ||
+        isMutator(fnName, fnArgs) ||
+        isVerifier(fnName, fnArgs)
+    );
+}
+
 /**
  * Decide whether a given tool call counts as a programmatic verification.
  *
@@ -129,6 +152,14 @@ export interface VerifyGateState {
     lastMutator?: string;
     /** Set once we've nudged for this run, to prevent infinite re-prompt loops. */
     nudgedThisRun: boolean;
+    /** The latest screenshot (data URL) taken after the last mutator: the turn's receipt. */
+    receiptImage?: string;
+    /** The turn's last mutator failed: a receipt would show a result the reply may not claim. */
+    lastMutatorFailed?: boolean;
+    /** This turn touched the vault or had a screenshot withheld: no receipt for it. */
+    secretSeen?: boolean;
+    /** The agent sent the owner the screen since the last mutator: no receipt until the next one. */
+    screenSent?: boolean;
 }
 
 export function newVerifyGateState(): VerifyGateState {
@@ -145,15 +176,93 @@ export function recordToolCall(
     fnName: string,
     fnArgs: Record<string, unknown>,
     isError = false,
+    // imageUrl: what the model saw; receiptUrl: the same screen for the owner (no coordinate grid), if one could be made.
+    more: { imageUrl?: string; receiptUrl?: string; failed?: boolean; secret?: boolean } = {},
 ): void {
+    const failed = more.failed ?? isError;
+    if (more.secret) state.secretSeen = true;
     if (isMutator(fnName, fnArgs)) {
         state.osStateMutated = true;
         state.lastMutator = fnName;
+        state.lastMutatorFailed = failed;
         state.verifyCalled = false;
+        state.receiptImage = undefined; // a screenshot before this action no longer shows the result
+        state.screenSent = false;
+    } else if (!failed && sentTheScreen(fnName, fnArgs)) {
+        state.receiptImage = undefined; // the owner already has the screen; don't send it twice
+        state.screenSent = true; // nor a later look at the same screen
+    } else if (more.imageUrl && state.osStateMutated && !state.screenSent) {
+        state.receiptImage = more.receiptUrl;
+    } else if (SCREEN_TOOLS.has(fnName) || DELEGATES.has(fnName)) {
+        // Not an action this gate checks, but the screen may have moved on since that screenshot.
+        state.receiptImage = undefined;
     }
     if (isVerifier(fnName, fnArgs) && !isError) {
         state.verifyCalled = true;
     }
+}
+
+/** Tools that can send the owner a file: an image sent with one is the screen already delivered. */
+const FILE_SENDERS = new Set(["send_file", "send_message_on_channel", "whatsapp_send"]);
+
+/** The agent already sent the owner an image of the screen (a PDF or a song doesn't count). */
+const sentTheScreen = (fnName: string, fnArgs: Record<string, unknown>) =>
+    fnName === "send_screenshot" || (FILE_SENDERS.has(fnName) && isPhotoFile(String(fnArgs?.file_path ?? "")));
+
+/**
+ * Record one tool batch in the order it may have run. The parallel lane (calls
+ * that don't drive the screen) starts at once, so record it first: a file sent
+ * there predates any screen action in the batch. The browser lane runs alongside
+ * the in-order screen lane, so a browser call may predate a screen action:
+ * record browser calls last (they still need their own check), and when a
+ * screen action ran in the batch, a browser screenshot can't be its receipt.
+ */
+export function recordBatch(
+    state: VerifyGateState,
+    results: Array<{
+        fnName: string;
+        fnArgs?: Record<string, unknown>;
+        isError: boolean;
+        isBrowser: boolean;
+        reportedFailure?: boolean;
+        imageUrl?: string;
+        receiptUrl?: string;
+        secret?: boolean;
+    }>,
+): void {
+    const lane = (r: (typeof results)[number]) => (r.isBrowser ? 2 : drivesScreen(r.fnName, r.fnArgs) ? 1 : 0);
+    const screenActed = results.some((r) => !r.isBrowser && isMutator(r.fnName, r.fnArgs || {}));
+    for (const r of [...results].sort((a, b) => lane(a) - lane(b))) {
+        recordToolCall(state, r.fnName, r.fnArgs || {}, r.isError, {
+            imageUrl: r.isBrowser && screenActed ? undefined : r.imageUrl,
+            receiptUrl: r.isBrowser && screenActed ? undefined : r.receiptUrl,
+            failed: r.isError || r.reportedFailure === true,
+            secret: r.secret,
+        });
+    }
+}
+
+export interface Receipt {
+    imageBase64: string;
+    mimeType: string;
+}
+
+/**
+ * Done comes with the receipt: the screenshot taken after the turn's last action.
+ * Only for the owner in a private chat (a group or contact never sees the owner's
+ * screen), never on a stuck turn or after a failed last action (the photo would
+ * imply a success the reply doesn't claim), and never for a turn that touched the
+ * vault or had a screenshot withheld (the capture could show a secret). That last
+ * flag is per turn: the vault's own taint is global and a concurrent turn resets it.
+ */
+export function pickReceipt(
+    state: VerifyGateState,
+    turn: { stuck?: boolean; isOwner?: boolean; isPrivate?: boolean },
+): Receipt | undefined {
+    if (!state.receiptImage || state.lastMutatorFailed || state.secretSeen) return undefined;
+    if (turn.stuck || !turn.isOwner || !turn.isPrivate) return undefined;
+    const m = /^data:([^;,]+);base64,(.+)$/s.exec(state.receiptImage);
+    return m ? { mimeType: m[1], imageBase64: m[2] } : undefined;
 }
 
 /**

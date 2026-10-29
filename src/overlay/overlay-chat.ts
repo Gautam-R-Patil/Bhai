@@ -1023,6 +1023,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             links: interactive.links,
             widgets: interactive.widgets,
         });
+        if (result.receipt) sendOverlayImage(result.receipt.imageBase64, result.receipt.mimeType);
     } catch (err) {
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
         console.error("[OVERLAY] Agent error:", err);
@@ -1108,6 +1109,7 @@ async function handleFileAttachment(
             links: interactive.links,
             widgets: interactive.widgets,
         });
+        if (result.receipt) sendOverlayImage(result.receipt.imageBase64, result.receipt.mimeType);
     } catch (err) {
         console.error("[OVERLAY] File attachment error:", err);
         sendToClient(ws, { type: "error", text: "Could not process the file." });

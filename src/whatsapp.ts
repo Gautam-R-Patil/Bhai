@@ -1520,6 +1520,13 @@ async function handleOwnerMessage(
                 await sendMessage(jid, bubbles[i], i === 0 && shouldQuote ? message : undefined);
             }
         }
+        // Done comes with the receipt: the screenshot taken after the last action.
+        if (result.receipt) {
+            const { imageBase64, mimeType } = result.receipt;
+            await socket
+                ?.sendMessage(jid, { image: Buffer.from(imageBase64, "base64"), mimetype: mimeType })
+                .catch((err: Error) => console.warn("[WA] Failed to send receipt:", err.message));
+        }
 
         // Response sent — stop typing indicator
         await socket?.sendPresenceUpdate("paused", jid).catch(() => {});

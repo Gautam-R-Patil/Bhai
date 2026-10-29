@@ -52,13 +52,16 @@ import {
 } from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
+import { withoutGrid } from "./screen/grid-overlay.js";
 import { anySecretTyped, hasVaultToken, resetVaultTask, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
 import {
     buildVerifyReminder,
-    isMutator,
+    drivesScreen as gateDrivesScreen,
     isVerifier,
     newVerifyGateState,
-    recordToolCall as recordToolCallForVerifyGate,
+    pickReceipt,
+    type Receipt,
+    recordBatch as recordBatchForVerifyGate,
     shouldForceVerify,
 } from "./agents/verify-before-done.js";
 import { getDimensionValue } from "./harness/registry.js";
@@ -285,19 +288,6 @@ const isGuiOnly = (cats: string[]) =>
     cats.some((c) => c === "os_control" || c === "app_management") && cats.every((c) => GUI_LOOP_CATEGORIES.has(c));
 
 /**
- * Order for the verify-before-done gate. The browser lane runs alongside the
- * in-order screen lane, so a screenshot in the same batch may predate a browser
- * action: record browser calls last, so they still need their own check.
- */
-const gateOrder = <T extends { isBrowser: boolean }>(rs: T[]): T[] => [
-    ...rs.filter((r) => !r.isBrowser),
-    ...rs.filter((r) => r.isBrowser),
-];
-
-/** Non-os_* tools that also drive the screen (os_* / win_os_* are matched by prefix). */
-const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut", "computer_use"]);
-
-/**
  * Steering messages (memory nudge, verification, circuit breaker, retry hints)
  * matter only for the turn that raised them. They're tagged here and stripped
  * from history when the turn ends, so they aren't resent on every later turn.
@@ -511,6 +501,8 @@ export interface AgentResponse {
     toolCalls: number;
     /** The turn ended in a stuck report: Bhai needs the user to unblock it. */
     stuck?: boolean;
+    /** The screenshot taken after the turn's last action, for the owner's private chat (pickReceipt). */
+    receipt?: Receipt;
 }
 
 export interface ChannelContext {
@@ -682,6 +674,12 @@ interface ToolCallResult {
     isError: boolean;
     /** Ran, but its JSON result said `success: false` (not an error, so no self-heal / escalation). */
     reportedFailure?: boolean;
+    /** The screenshot lifted out of the result (data URL), unless it was withheld. */
+    imageUrl?: string;
+    /** The same screen without the model's coordinate grid, for a done-receipt (unset if it couldn't be made). */
+    receiptUrl?: string;
+    /** Touched the vault (a vault tool or a {{vault:…}} token) or had its screenshot withheld. */
+    secret?: boolean;
 }
 
 /** The tool call failed, judged from its own result flags, not from the word "error" in its output. */
@@ -880,7 +878,16 @@ async function executeAndProcessToolCall(
         });
         if ("error" in v) {
             const err = JSON.stringify({ error: v.error });
-            return { toolCallId: toolCall.id, fnName, fnArgs, result: err, finalContent: err, isBrowser: false, isError: true };
+            return {
+                toolCallId: toolCall.id,
+                fnName,
+                fnArgs,
+                result: err,
+                finalContent: err,
+                isBrowser: false,
+                isError: true,
+                secret: true,
+            };
         }
         execArgs = v.args;
         vault = { tool: fnName, rules: v.rules };
@@ -927,6 +934,8 @@ async function executeAndProcessToolCall(
     // Lift a screenshot out before offload/truncate/fencing, which would
     // otherwise turn it into a few KB of base64 text the model can't see.
     let imageUrl: string | undefined;
+    let receiptUrl: string | undefined;
+    let secret = fnName.startsWith("vault_") || hasVaultToken(fnArgs);
     try {
         const parsed = JSON.parse(rawResult);
         const b64 = parsed.screenshot_base64 || parsed.zoomed_base64;
@@ -944,6 +953,7 @@ async function executeAndProcessToolCall(
                 anySecretTyped() &&
                 (fnName.startsWith("browser_") ? await browserOriginTainted() : true);
             if (withhold) {
+                secret = true;
                 delete parsed.screenshot_base64;
                 delete parsed.zoomed_base64;
                 delete parsed.mime_type;
@@ -956,6 +966,13 @@ async function executeAndProcessToolCall(
                 const { downscaleForVision } = await import("./screen/ui-tars.js");
                 const img = await downscaleForVision(Buffer.from(b64, "base64"));
                 imageUrl = `data:${img.mime};base64,${img.buf.toString("base64")}`;
+                // The owner's receipt is the screen without the grid. Look the clean copy up by the
+                // tool's own bytes: once downscaled they no longer match the grid cache's key.
+                const clean = await withoutGrid(b64);
+                if (clean) {
+                    const c = clean === b64 ? img : await downscaleForVision(Buffer.from(clean, "base64"));
+                    receiptUrl = `data:${c.mime};base64,${c.buf.toString("base64")}`;
+                }
                 delete parsed.screenshot_base64;
                 delete parsed.zoomed_base64;
                 delete parsed.mime_type;
@@ -1019,7 +1036,19 @@ async function executeAndProcessToolCall(
           ]
         : result;
 
-    return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent, isBrowser, isError, reportedFailure };
+    return {
+        toolCallId: toolCall.id,
+        fnName,
+        fnArgs,
+        result,
+        finalContent,
+        isBrowser,
+        isError,
+        reportedFailure,
+        imageUrl,
+        receiptUrl,
+        secret,
+    };
 }
 
 /**
@@ -1102,11 +1131,15 @@ async function executeToolCallsBatch(
     };
     // Also anything the verify-before-done gate tracks (e.g. browser_click), so
     // its "a check after the action" reading matches what actually ran.
-    const drivesScreen = (tc: (typeof toolCalls)[number]) =>
-        /^(win_)?os_/.test(tc.function.name) ||
-        SCREEN_TOOLS.has(tc.function.name) ||
-        isMutator(tc.function.name, {}) ||
-        isVerifier(tc.function.name, {});
+    const drivesScreen = (tc: (typeof toolCalls)[number]) => {
+        let args: Record<string, unknown> = {};
+        try {
+            args = JSON.parse(tc.function.arguments || "{}");
+        } catch {
+            /* unparseable: judged by name alone */
+        }
+        return gateDrivesScreen(tc.function.name, args);
+    };
     const screenCalls = nonBrowserCalls.filter(drivesScreen);
     // Each call already has its own timeout in executeTool, so the in-order
     // lane gets room for every step. Once the batch is given up on, no further
@@ -1515,6 +1548,14 @@ async function _runAgentBody(
     let lastUsedModel: string | undefined; // Track model for credit deduction
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
+    const receiptFor = async (text: string): Promise<Receipt | undefined> => {
+        const receipt = pickReceipt(verifyGate, {
+            stuck: takeStuckMarker(text).stuck,
+            isOwner: channelContext?.isOwner === true,
+            isPrivate: channelContext?.isPrivate === true,
+        });
+        return receipt; // already the clean (ungridded) screen: see receiptUrl
+    };
     let verificationNagged = false;
     // The done-criterion from this turn's ack, fed back to the verify nudges.
     let turnContract: string | undefined;
@@ -3672,9 +3713,7 @@ PLAN:`,
                         );
                         totalToolCalls += batchResults.length;
                         // Verify-before-done gate — same recording as the main loop site.
-                        for (const r of gateOrder(batchResults)) {
-                            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {}, r.isError);
-                        }
+                        recordBatchForVerifyGate(verifyGate, batchResults);
                         for (const r of batchResults) {
                             const errorMsg = getErrorMessage(r.fnName, r.result);
                             if (errorMsg) await sendProgress(errorMsg);
@@ -3733,7 +3772,7 @@ PLAN:`,
                     if (usedBrowserTools) autoSaveSession();
                     // Credits deducted per-API-call in llm.ts
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
-                    return { text, toolCalls: totalToolCalls };
+                    return { text, toolCalls: totalToolCalls, receipt: await receiptFor(text) };
                 }
             }
 
@@ -3828,7 +3867,7 @@ PLAN:`,
                     .then(({ consumeOnePending }) => consumeOnePending())
                     .catch((e: Error) => console.warn("[forge] pending consume failed:", e.message));
             }
-            return { text, toolCalls: totalToolCalls };
+            return { text, toolCalls: totalToolCalls, receipt: await receiptFor(text) };
         }
 
         // Append assistant message with tool calls
@@ -3876,9 +3915,7 @@ PLAN:`,
         // bookkeeper. Only successful (or even attempted) mutators flip
         // osStateMutated; that's the right semantics because a *failed* click
         // can still leave the UI in a half-changed state we need to verify.
-        for (const r of gateOrder(batchResults)) {
-            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {}, r.isError);
-        }
+        recordBatchForVerifyGate(verifyGate, batchResults);
 
         // Circuit breaker: tool calls completed = progress
         const batchHasSuccess = batchResults.some((r) => !r.isError);

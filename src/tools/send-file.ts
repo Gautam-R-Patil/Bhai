@@ -37,6 +37,9 @@ const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "webm"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "ogg", "flac", "aac", "m4a"]);
 const GIF_EXTS = new Set(["gif"]);
 
+/** A file send_file delivers as a photo. */
+export const isPhotoFile = (filePath: string): boolean => PHOTO_EXTS.has(path.extname(filePath).slice(1).toLowerCase());
+
 function getFileCategory(ext: string): "photo" | "video" | "audio" | "gif" | "document" {
     const e = ext.toLowerCase();
     if (PHOTO_EXTS.has(e)) return "photo";
