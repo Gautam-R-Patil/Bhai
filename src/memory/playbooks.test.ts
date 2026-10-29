@@ -274,6 +274,7 @@ describe("playbook store", () => {
 
     it("a verified win replaces the steps; a failed replay demotes; recall skips weak ones", () => {
         tl.upsertLearning("browser", "send an email on gmail", "gmail.com", ["old step"], [], [], 1);
+        expect(tl.getTaskLearningsContext("send an email on gmail")).toContain("success: 100%, used 1x");
         const steps = Array.from({ length: 12 }, (_, i) => `browser_click_at(s${i})`);
         const l = tl.upsertLearning(
             "browser",
@@ -289,9 +290,11 @@ describe("playbook store", () => {
         expect(l.lastVerifiedAt).toBe("2026-10-29T00:00:00.000Z");
 
         const injected = new Set<string>();
-        expect(tl.getTaskLearningsContext("send an email on gmail", undefined, injected)).toContain(
-            "send an email on gmail",
-        );
+        const ctx = tl.getTaskLearningsContext("send an email on gmail", undefined, injected);
+        expect(ctx).toContain("send an email on gmail");
+        // A playbook reads as plain facts, never a percentage.
+        expect(ctx).toContain("playbook: verified on this machine, last 2026-10-29, used 2x");
+        expect(ctx).not.toContain("success:");
         expect(injected).toEqual(new Set([l.id]));
 
         tl.demoteLearnings(injected, new Date("2026-10-29T12:00:00Z"));

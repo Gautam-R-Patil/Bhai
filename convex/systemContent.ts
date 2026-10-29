@@ -11,9 +11,9 @@ import { internalQuery, internalMutation } from "./_generated/server";
 // ══════════════════════════════════════════════════════════════════════════
 
 // ── Get all system prompts ───────────────────────
-// Bounded: system_prompts currently has ~7 seeded slugs (identity, rules,
-// rules-mac, rules-windows, browsing, coding, spec). Cap at 100 so a
-// misconfigured table never OOMs the admin panel.
+// Bounded: system_prompts holds the slugs seeded by
+// scripts/seed-system-content.ts. Cap at 100 so a misconfigured table never
+// OOMs the admin panel.
 export const getAllPrompts = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -131,9 +131,9 @@ export const assembleSystemPrompt = internalQuery({
   handler: async (ctx, { platform, skillSlugs, userId, inSpecMode, guest }) => {
     // 1. Fetch all system prompts.
     //    THIS RUNS ON EVERY LLM REQUEST — it's the hottest Convex path in
-    //    the proxy. The 100-row cap is safe given the known seeded set of
-    //    ~7 slugs. TODO: convert to per-slug index lookups for the ~5-6
-    //    slugs actually read below to avoid the full-table scan entirely;
+    //    the proxy. The 100-row cap is safe given the slugs seeded by
+    //    scripts/seed-system-content.ts. TODO: convert to per-slug index
+    //    lookups for the slugs actually read below to avoid the full-table scan entirely;
     //    would cut proxy latency by 5-20% depending on table size.
     const allPrompts = await ctx.db.query("system_prompts").take(100);
     const promptMap: Record<string, string> = {};
