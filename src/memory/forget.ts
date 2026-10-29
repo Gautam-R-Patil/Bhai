@@ -430,6 +430,19 @@ export function undoMemoryTap(data: string, now = Date.now()): string | undefine
     return "Forgotten.";
 }
 
+const DIGEST_TTL_MS = 7 * 86_400_000;
+
+/** Button data for "Forget #n" under the weekly digest sent at `at` (ms): memory `id`. */
+export const digestPruneAction = (id: number, at: number) => `mem:digest:${id}:${Math.floor(at / 1000)}`;
+
+/** The owner tapped a digest prune button: the short answer, or undefined when `data` is not one. */
+export function pruneDigestTap(data: string, now = Date.now()): string | undefined {
+    const m = /^mem:digest:(\d+):(\d+)$/.exec(data);
+    if (!m) return undefined;
+    if (now - Number(m[2]) * 1000 > DIGEST_TTL_MS) return "Too late for the button, ask me to forget it.";
+    return forgetMemoryById(Number(m[1]), "digest") ? "Forgotten." : "Already gone.";
+}
+
 /** @internal — tests only. */
 export function _resetForget(): void {
     pending.clear();

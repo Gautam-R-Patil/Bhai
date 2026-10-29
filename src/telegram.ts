@@ -50,10 +50,11 @@ import { encryptedFetch } from "./crypto-transport.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
 import { classifyQuery } from "./memory/classifier.js";
-import { memoryUndoAction, undoMemoryTap } from "./memory/forget.js";
+import { memoryUndoAction, pruneDigestTap, undoMemoryTap } from "./memory/forget.js";
 import { getSessionToken } from "./session.js";
 import { mapStepStatus, parseStepLine, STEP_HEARTBEAT_MS } from "./step-status.js";
 import { batchKey } from "./telegram-batch.js";
+import type { ProactiveButton } from "./tools/channel-send.js";
 import {
     clearDeepResearchProgress,
     clearLongTaskProgress,
@@ -1426,10 +1427,11 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             return;
         }
 
-        // ── "Forget that" under a reply that noted something: mem:forget:<id>:<storedAt> ──
-        if (data.startsWith("mem:forget:")) {
+        // ── "Forget that" under a reply that noted something (mem:forget:<id>:<storedAt>), or a
+        //    weekly digest's "Forget #n" (mem:digest:<id>:<sentAt>) ──
+        if (data.startsWith("mem:forget:") || data.startsWith("mem:digest:")) {
             const owner = !!ctx.from?.id && telegramOwners.has(ctx.from.id) && ctx.chat?.type === "private";
-            const text = owner ? undoMemoryTap(data) : "Only the owner can do that.";
+            const text = owner ? (undoMemoryTap(data) ?? pruneDigestTap(data)) : "Only the owner can do that.";
             await ctx.answerCallbackQuery({ text }).catch(() => {});
             return;
         }
@@ -2205,10 +2207,11 @@ export async function sendProactiveMessage(
     config: Config,
     message: string,
     filePath?: string,
-): Promise<void> {
+    buttons?: ProactiveButton[],
+): Promise<boolean> {
     if (config.allowedUserIds.size === 0) {
         console.warn("⚠️ No allowed Telegram users to send proactive message to.");
-        return;
+        return false;
     }
 
     // File attachment path — send document/photo/video based on extension
@@ -2242,7 +2245,7 @@ export async function sendProactiveMessage(
                 if (caption === undefined && message) {
                     // fall through to also send the message as a regular text below
                 } else {
-                    return;
+                    return true;
                 }
             }
         } catch (fileErr) {
@@ -2255,7 +2258,7 @@ export async function sendProactiveMessage(
         const { isOffline } = await import("./network-health.js");
         if (isOffline()) {
             console.log("📵 Skipping proactive Telegram message — internet offline");
-            return;
+            return false;
         }
     } catch {
         /* network monitor not loaded */
@@ -2267,7 +2270,7 @@ export async function sendProactiveMessage(
         const suppress = await shouldSuppressMessage(message);
         if (suppress) {
             console.log("🔕 Proactive Telegram message suppressed by DND");
-            return;
+            return false;
         }
     } catch {
         /* DND check failed — deliver anyway */
@@ -2289,13 +2292,23 @@ export async function sendProactiveMessage(
     }
 
     const chunks = chunkMarkdownForTelegram(sanitizeReply(message));
+    // Buttons act on the owner's memory: they (and the message) go to the owners' private chats only.
+    const keyboard = buttons?.length ? new InlineKeyboard() : undefined;
+    for (const [i, b] of (buttons ?? []).entries()) {
+        keyboard?.text(b.text, b.data);
+        if (i % 4 === 3) keyboard?.row();
+    }
+    const recipients = keyboard ? parseTelegramOwners(config) : config.allowedUserIds;
 
-    for (const userId of config.allowedUserIds) {
-        for (const chunk of chunks) {
+    for (const userId of recipients) {
+        for (const [ci, chunk] of chunks.entries()) {
+            const reply_markup = ci === chunks.length - 1 ? keyboard : undefined;
             let sent = false;
             for (let attempt = 1; attempt <= 3 && !sent; attempt++) {
                 try {
-                    await withTelegramRetry(() => bot.api.sendMessage(userId, chunk.html, { parse_mode: "HTML" }));
+                    await withTelegramRetry(() =>
+                        bot.api.sendMessage(userId, chunk.html, { parse_mode: "HTML", reply_markup }),
+                    );
                     sent = true;
                 } catch (err) {
                     const errMsg = (err as Error)?.message || String(err);
@@ -2314,7 +2327,7 @@ export async function sendProactiveMessage(
                     // Fallback to plain text if HTML parsing fails (non-transient)
                     if (!isTransient) {
                         try {
-                            await bot.api.sendMessage(userId, markdownToPlainText(chunk.md));
+                            await bot.api.sendMessage(userId, markdownToPlainText(chunk.md), { reply_markup });
                             sent = true;
                         } catch {
                             /* ignore fallback error */
@@ -2332,6 +2345,7 @@ export async function sendProactiveMessage(
     } catch {
         /* non-fatal */
     }
+    return true;
 }
 
 // ── Read Receipt Helpers ──────────────────────

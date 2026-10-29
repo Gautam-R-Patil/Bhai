@@ -28,7 +28,7 @@ import {
 } from "./kill-switches.js";
 import * as native from "../../native/index.js";
 import { getToneReminder } from "../setup/personality-sync.js";
-import { getChannelSender } from "../tools/channel-send.js";
+import { getChannelSender, type ProactiveButton } from "../tools/channel-send.js";
 import { SourceRegistry } from "./sources/registry.js";
 import type { IntentSourceModule } from "./sources/source.js";
 import { getInboxManager } from "./inbox/manager.js";
@@ -60,6 +60,7 @@ const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     // hold them when anything else competes for the same channel slot.
     onboarding_graduation: 0.4,
     commitment_due: 1.3,
+    memory_digest: 1.0,
 };
 
 const BOUNDARY_WINDOW_MS = 120_000;          // 2-minute window after a boundary
@@ -406,7 +407,8 @@ export class Observer {
                     debugProactive("observer_inbox_absent_fallback", { id: intent.id });
                 }
 
-                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag)) {
+                const buttons = intent.payload.buttons as ProactiveButton[] | undefined;
+                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag, buttons)) {
                     this.registry.dispatched(intent);
                 }
                 this.telemetry().log({

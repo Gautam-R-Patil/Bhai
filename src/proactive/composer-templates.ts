@@ -14,10 +14,30 @@ const commitmentDue: TemplateFn = (i) => {
     return `you said you'd do this: ${content.replace(/\s+/g, " ").slice(0, 200)} (due ${when}). done, or still on it?`;
 };
 
+// The weekly "what I picked up about you" digest: the owner's own words, numbered for pruning.
+const memoryDigest =
+    (buttons: boolean): TemplateFn =>
+    (i) => {
+        const items = i.payload.items as Array<{ content: string }> | undefined;
+        if (!items?.length) return null;
+        const lines = items.map((it, n) => `${n + 1}. ${it.content.replace(/\s+/g, " ").slice(0, 160)}`);
+        const prune = buttons ? "tap one to drop it." : 'anything off? say "forget #2" (any number) and I\'ll drop it.';
+        return `what I picked up about you this week:\n${lines.join("\n")}\n${prune}`;
+    };
+
 // Templates return null when required payload fields are missing.
 // This falls through to the LLM path; for deterministic intents that
 // missed required fields, the caller sees "null" and suppresses the send.
 export const TEMPLATES: Record<string, Partial<Record<Channel, TemplateFn>>> = {
+    memory_digest: {
+        telegram: memoryDigest(true),
+        whatsapp: memoryDigest(false),
+        discord: memoryDigest(false),
+        slack: memoryDigest(false),
+        matrix: memoryDigest(false),
+        email: memoryDigest(false),
+        overlay: memoryDigest(false),
+    },
     commitment_due: {
         whatsapp: commitmentDue,
         telegram: commitmentDue,

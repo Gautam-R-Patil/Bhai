@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import { normalizeTags } from "../memory/cards.js";
-import { executeForget, forgetTerms, previewForget } from "../memory/forget.js";
+import { executeForget, forgetMemoryById, forgetTerms, previewForget } from "../memory/forget.js";
 import {
     addGoal,
     addProject,
@@ -15,6 +15,7 @@ import {
     getMemoryStats,
     listMemories,
     markCommitmentDone,
+    markOwnerStated,
     recall,
     remember,
     setCommitmentDue,
@@ -22,6 +23,7 @@ import {
     supersedeMemory,
 } from "../memory/sqlite.js";
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
+import { digestItemId } from "../proactive/sources/memory-digest.js";
 import {
     canPinMemory,
     claimCommitmentDone,
@@ -84,6 +86,14 @@ export function commitmentDue(message: string, dueAt: unknown, now = Date.now())
         return { error: "Not stored: due_at must be an ISO UTC time in the coming year, read from the owner's words." };
     }
     return { dueAt: new Date(ms).toISOString() };
+}
+
+/** The owner's message asks to forget digest item #n ("forget #2", "#2 hata do"). */
+export function hasDigestForgetCue(text: string, n: number): boolean {
+    return (
+        new RegExp(`#\\s*${n}(?!\\d)`).test(text) &&
+        /\b(?:forget|drop|remove|delete|prune|bhool\w*|bhul\w*|hata\w*)\b|भूल|हटा/i.test(text)
+    );
 }
 
 /** The owner's message says a commitment is done or off. */
@@ -163,6 +173,7 @@ export const memoryStore: ToolDefinition = {
             if (!hasPinCue(ownerTurnMessage()) || !claimPin(pinId) || !setMemoryPinned(pinId, pin)) {
                 return JSON.stringify({ success: false, error: `Can't ${pin ? "pin" : "unpin"} #${pinId}.` });
             }
+            if (pin) markOwnerStated(pinId);
             return JSON.stringify({ success: true, id: pinId, pinned: pin });
         }
         const pin = input.pin === true && hasPinCue(ownerTurnMessage()) && canPinMemory();
@@ -190,6 +201,7 @@ export const memoryStore: ToolDefinition = {
         }
         if (pin) setMemoryPinned(id, true);
         if (dueAt) setCommitmentDue(id, dueAt);
+        if (canPinMemory()) markOwnerStated(id);
         const retired = supersede && id !== oldId && supersedeMemory(oldId, id);
         // Smart write may merge or drop this row moments later, so its id can't back an undo.
         if (!useSmartWrite) noteStoredMemory(id, retired);
@@ -277,7 +289,7 @@ export const memoryForget: ToolDefinition = {
         function: {
             name: "memory_forget",
             description:
-                "Forget something everywhere Bhai keeps it: memories, traits, identity, episodes, task learnings, chat transcripts and session summaries. Owner only. Two steps: (1) call with `query`, a short distinctive phrase of the fact (every word must appear, e.g. 'Priya' or 'blood pressure'); show the owner the numbered preview and ask them to confirm. (2) After the owner says yes in a new message, call with the same `query`, the preview's `token`, `user_quote` (their exact confirming words) and `reason` (why, in their words if they gave one). Afterwards never repeat what was forgotten.",
+                "Forget something everywhere Bhai keeps it: memories, traits, identity, episodes, task learnings, chat transcripts and session summaries. Owner only. Two steps: (1) call with `query`, a short distinctive phrase of the fact (every word must appear, e.g. 'Priya' or 'blood pressure'); show the owner the numbered preview and ask them to confirm. (2) After the owner says yes in a new message, call with the same `query`, the preview's `token`, `user_quote` (their exact confirming words) and `reason` (why, in their words if they gave one). Afterwards never repeat what was forgotten. When the owner says 'forget #N' about Bhai's weekly 'what I picked up about you' digest, pass only `digest_item: N`: that one item is deleted right away.",
             parameters: {
                 type: "object",
                 properties: {
@@ -285,13 +297,27 @@ export const memoryForget: ToolDefinition = {
                     token: { type: "string", description: "Step 2: the token the preview returned" },
                     user_quote: { type: "string", description: "Step 2: the owner's own confirming words" },
                     reason: { type: "string", description: "Step 2: why the owner wants it forgotten" },
+                    digest_item: {
+                        type: "number",
+                        description: 'N from the owner\'s "forget #N" about the weekly digest',
+                    },
                 },
-                required: ["query"],
+                required: [],
             },
         },
     },
     async handler(input) {
         if (!isOwnerCaller()) return JSON.stringify({ success: false, error: "Only the owner can make Bhai forget." });
+        if (input.digest_item != null) {
+            const n = Number(String(input.digest_item).replace(/^#/, ""));
+            const id = Number.isInteger(n) && n > 0 ? digestItemId(n) : undefined;
+            // The owner's own "forget #N" this turn, so text riding their turn can't prune the digest.
+            if (!id || !hasDigestForgetCue(ownerTurnMessage(), n)) {
+                return JSON.stringify({ success: false, error: `No digest item #${n} to forget.` });
+            }
+            if (!forgetMemoryById(id, "digest")) return JSON.stringify({ success: false, error: "Already gone." });
+            return JSON.stringify({ success: true, forgotten: 1, hint: "Tell the owner it is forgotten." });
+        }
         const query = typeof input.query === "string" ? input.query.trim() : "";
         // Whole words match, so a query of only short words ("my ex") would sweep up far too much.
         if (!forgetTerms(query).some((t) => t.length >= 3)) {

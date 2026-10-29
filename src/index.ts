@@ -535,9 +535,9 @@ async function boot() {
 
     // ── Register cross-channel senders (for send_message_on_channel tool) ──
     if (bot) {
-        registerChannelSender("telegram", async (message, filePath) => {
-            await sendProactiveMessage(bot, config, message, filePath);
-        });
+        registerChannelSender("telegram", (message, filePath, buttons) =>
+            sendProactiveMessage(bot, config, message, filePath, buttons),
+        );
     }
     registerChannelSender("whatsapp", async (message, filePath) => {
         await sendWhatsAppProactiveMessage(message, filePath);
@@ -847,6 +847,14 @@ async function boot() {
                 console.log("💓 Registered source: commitment_due");
             } catch (err) {
                 console.log("[BOOT] commitment_due registration failed (non-fatal):", (err as Error).message);
+            }
+
+            try {
+                const { MEMORY_DIGEST } = await import("./proactive/sources/memory-digest.js");
+                obs.registerSource(MEMORY_DIGEST);
+                console.log("💓 Registered source: memory_digest");
+            } catch (err) {
+                console.log("[BOOT] memory_digest registration failed (non-fatal):", (err as Error).message);
             }
 
             // ── V3 sources (default ON; set ATLAS_PROACTIVE_V3_SOURCES=false to disable) ──

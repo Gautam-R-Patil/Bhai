@@ -249,6 +249,12 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     } catch {
         /* exists */
     }
+    // When the owner last told Bhai this themselves (memory_store or pin on their own turn): the weekly digest.
+    try {
+        db.run("ALTER TABLE memories ADD COLUMN stated_at TEXT DEFAULT NULL");
+    } catch {
+        /* exists */
+    }
     // The old surprise gate stored decay_score up to 1.5, so routine
     // importance-5 rows outranked importance-7 ones. 1.0 is the cap.
     try {
@@ -2495,6 +2501,11 @@ export function setMemoryPinned(id: number, pinned: boolean): boolean {
         .run(pinned ? 1 : 0, id);
     getTemporalCache().clearCache();
     return res.changes > 0;
+}
+
+/** The owner told Bhai memory `id` themselves just now. */
+export function markOwnerStated(id: number): void {
+    rawDb?.prepare("UPDATE memories SET stated_at = datetime('now') WHERE id = ?").run(id);
 }
 
 /** Memory `id` is the owner's commitment, due at `dueIso`; a new due time re-arms its one nudge. */

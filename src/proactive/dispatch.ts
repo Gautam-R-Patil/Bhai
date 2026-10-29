@@ -4,7 +4,7 @@
 
 import type { Channel, ProactiveMode } from "./intent.js";
 import { getToneReminder } from "../setup/personality-sync.js";
-import { getChannelSender } from "../tools/channel-send.js";
+import { getChannelSender, type ProactiveButton } from "../tools/channel-send.js";
 import { isProactiveDisabled, isChannelDisabled, isShadowMode, debugProactive } from "./kill-switches.js";
 
 // Fatigue-check hook. Returns true when the user shows signs of
@@ -44,6 +44,7 @@ export async function dispatchProactiveMessage(
     channel: Channel,
     text: string,
     mode: ProactiveMode,
+    buttons?: ProactiveButton[],
 ): Promise<boolean> {
     if (isProactiveDisabled()) {
         debugProactive("suppressed_global", { channel, mode });
@@ -74,7 +75,10 @@ export async function dispatchProactiveMessage(
         debugProactive("shadow_dispatch", { channel, mode, preview: prefixed.slice(0, 80) });
         return false;
     }
-    await sender(prefixed);
+    if ((await sender(prefixed, undefined, buttons)) === false) {
+        debugProactive("suppressed_sender", { channel, mode });
+        return false;
+    }
     debugProactive("dispatched", { channel, mode, preview: prefixed.slice(0, 80) });
     return true;
 }
