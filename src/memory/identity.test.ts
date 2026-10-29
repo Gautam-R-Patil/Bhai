@@ -44,4 +44,15 @@ describe("identity snippet", () => {
         expect(confirmed).not.toContain("creator");
         expect(inferred).toContain("Bhai's creator");
     });
+
+    it("core_memory_replace corrects a name stored as {value, verified}", async () => {
+        const { coreMemoryReplace } = await import("../tools/memory-tools-advanced.js");
+        const { runWithCallerContext } = await import("../tools/cron-tool.js");
+        identity.updateIdentityProfile({ name: identity.statedField("name", "Dheeraj") });
+        const out = await runWithCallerContext({ isOwner: true }, () =>
+            coreMemoryReplace.handler({ section: "identity", old_content: "Dheeraj", new_content: "Dheeraj S" }),
+        );
+        expect(JSON.parse(out).success).toBe(true);
+        expect(identity.getIdentityProfile().name).toEqual({ value: "Dheeraj S", verified: true });
+    });
 });

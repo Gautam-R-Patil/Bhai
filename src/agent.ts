@@ -1527,7 +1527,7 @@ export async function runAgent(
         if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") {
             noteOwnerReply(res.text, userMessage);
             noteSignaturePhrase(res.text);
-            noteEpisodeCallbacks(res.text);
+            noteEpisodeCallbacks(res.text, userMessage);
         }
         // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
         if (caller.storedMemory && channelContext?.isPrivate === true && res) res.memoryUndo = caller.storedMemory;

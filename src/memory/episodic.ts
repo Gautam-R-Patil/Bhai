@@ -120,19 +120,25 @@ export function getEpisodicSnippet(userId = "default"): string {
 }
 
 /**
- * Counts a callback for each offered episode the reply brings up; after
- * MAX_CALLBACKS the episode stops being offered.
+ * Counts a callback for each offered episode the reply brings up on its own
+ * (not one the owner's message was already about); after MAX_CALLBACKS the
+ * episode stops being offered. The offered set is scored once, by the reply
+ * to the turn that offered it.
  * ponytail: word overlap (two shared words of 5+ letters, or the only one);
  * use embeddings if it misfires.
  */
-export function noteEpisodeCallbacks(replyText: string): void {
+export function noteEpisodeCallbacks(replyText: string, ownerText = ""): void {
     if (!_db || _offered.length === 0) return;
+    const offered = _offered;
+    _offered = [];
+    const mentions = (text: Set<string>, words: string[]) =>
+        words.length > 0 && words.filter((w) => text.has(w)).length >= Math.min(2, words.length);
     const reply = new Set(contentWords(replyText));
+    const owner = new Set(contentWords(ownerText));
     try {
-        for (const e of _offered) {
+        for (const e of offered) {
             const words = contentWords(e.description);
-            const hits = words.filter((w) => reply.has(w)).length;
-            if (words.length > 0 && hits >= Math.min(2, words.length)) {
+            if (mentions(reply, words) && !mentions(owner, words)) {
                 _db.run("UPDATE episodic_memory SET callback_count = callback_count + 1 WHERE id = ?", [e.id]);
             }
         }

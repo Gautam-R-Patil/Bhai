@@ -67,4 +67,20 @@ describe("episodic memory", () => {
         const row = raw.prepare("SELECT callback_count FROM episodic_memory WHERE description = ?").get(description);
         expect(row).toEqual({ callback_count: 0 });
     });
+
+    it("counts only callbacks Bhai brings up, once per offer", () => {
+        const description = "Struggling with the desktop build";
+        episodic.recordEpisode("struggle", description, 0.9999);
+        const row = raw.prepare("SELECT callback_count FROM episodic_memory WHERE description = ?");
+        const count = () => (row.get(description) as { callback_count: number }).callback_count;
+        expect(episodic.getEpisodicSnippet()).toContain(description);
+        // The owner asked about the build: the reply answers it, it isn't a callback.
+        episodic.noteEpisodeCallbacks("The desktop build passed.", "did the desktop build pass?");
+        // A second reply without a fresh offer scores nothing.
+        episodic.noteEpisodeCallbacks("Remember that desktop build fight? Long gone.");
+        expect(count()).toBe(0);
+        episodic.getEpisodicSnippet();
+        episodic.noteEpisodeCallbacks("Remember that desktop build fight? Long gone.", "what's new?");
+        expect(count()).toBe(1);
+    });
 });

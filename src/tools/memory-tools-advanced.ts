@@ -152,8 +152,10 @@ export const coreMemoryReplace: ToolDefinition = {
                     let found = false;
 
                     for (const [key, val] of Object.entries(profile)) {
-                        if (typeof val === "string" && val === oldContent) {
-                            fields[key] = newContent;
+                        // Name, email and location may be stored as {value, verified}.
+                        const text = typeof val === "string" ? val : (val as { value?: unknown } | null)?.value;
+                        if (text === oldContent) {
+                            fields[key] = statedField(key, newContent);
                             found = true;
                         } else if (Array.isArray(val)) {
                             const idx = val.indexOf(oldContent);
