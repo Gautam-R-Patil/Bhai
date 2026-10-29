@@ -92,4 +92,11 @@ describe("asksLeaveToLook", () => {
         expect(asksLeaveToLook("Done — Downloads has a.pdf, b.png and c.zip. Want me to open one?")).toBe(false);
         expect(asksLeaveToLook("I haven't found it yet. Want me to check again?\n[[STUCK]]")).toBe(false);
     });
+    it("catches handing the looking to the owner, but only when Bhai can see the screen itself", () => {
+        const reply =
+            "I still can't name the network: the SSID is redacted. If you can see it in the Wi-Fi menu, tell me and I'll take it from there.";
+        expect(asksLeaveToLook(reply, true)).toBe(true);
+        expect(asksLeaveToLook(reply, false)).toBe(false);
+        expect(asksLeaveToLook("Done. If you can see any typo, tell me.", true)).toBe(false);
+    });
 });
