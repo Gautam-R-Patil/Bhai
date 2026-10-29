@@ -173,13 +173,30 @@ export interface VaultListing {
 }
 
 /** Labels and tokens only, never a value. `query` filters by label, id or domain. */
+/** Query words for vault_list: a URL becomes its host ("https://www.zomato.com/login" → "zomato.com"); filler words drop. */
+export function vaultQueryWords(query: string): string[] {
+    const words = query
+        .toLowerCase()
+        .split(/\s+/)
+        .map((w) =>
+            w
+                .replace(/^[a-z]+:\/\//, "")
+                .replace(/^www\./, "")
+                .replace(/[/?#:].*$/, ""),
+        )
+        .filter(Boolean);
+    const meaningful = words.filter((w) => w.length >= 3 && !VAULT_QUERY_FILLER.has(w));
+    return meaningful.length ? meaningful : words;
+}
+const VAULT_QUERY_FILLER = new Set("log login sign the and for with account into my on to in".split(" "));
+
 export function listVault(query = ""): VaultListing[] {
-    const q = query.trim().toLowerCase();
+    const q = vaultQueryWords(query);
     const out: VaultListing[] = [];
     for (const e of entries.values()) {
         const domains = "domains" in e ? e.domains : [];
         const hay = [e.id, e.label, ...domains].join(" ").toLowerCase();
-        if (q && !q.split(/\s+/).some((w) => hay.includes(w.replace(/^www\./, "")))) continue;
+        if (q.length && !q.some((w) => hay.includes(w))) continue;
         const row: VaultListing = { id: e.id, label: e.label, kind: e.kind, domains, tokens: [] };
         if (e.kind === "login") {
             row.username_masked = maskName(e.username);
