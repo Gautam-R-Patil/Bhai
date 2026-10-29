@@ -179,8 +179,12 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // elapsed as a side effect so telemetry reflects every attempt; a tie or a
     // disabled-only match is noted on `miss` (and ends the cascade: vision would
     // just pick one of the tied elements blindly).
-    const matchAx = (dump: AxDump): ClickTarget | null => {
+    // `forApp`: the app the instruction is about when `dump` is another one (the Dock
+    // searched as a fallback). Its name is a container word there too: "Downloads in the
+    // Finder sidebar" must not land on the Dock's "Finder" icon.
+    const matchAx = (dump: AxDump, forApp?: string): ClickTarget | null => {
         const els = flattenInteractive(dump);
+        const appWords = [dump.app, forApp].filter(Boolean).join(" ");
         miss.app = dump.app;
         miss.axElementCount = els.length;
         const toTarget = (m: LabelMatch, tier: "ax_exact" | "ax_fuzzy", confidence: number): ClickTarget | null => {
@@ -215,7 +219,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             tried.push("ax_exact");
             const t = Date.now();
             const hit = toTarget(
-                matchElementByLabel(els, instruction, thresholds.ax_exact, dump.app),
+                matchElementByLabel(els, instruction, thresholds.ax_exact, appWords),
                 "ax_exact",
                 thresholds.ax_exact,
             );
@@ -226,7 +230,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             tried.push("ax_fuzzy");
             const t = Date.now();
             const hit = toTarget(
-                matchElementByLabel(els, instruction, thresholds.ax_fuzzy, dump.app),
+                matchElementByLabel(els, instruction, thresholds.ax_fuzzy, appWords),
                 "ax_fuzzy",
                 0.85,
             );
@@ -241,11 +245,11 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // only once every other tier has missed (a page link "Mail" must not launch
     // the Mail app just because AX couldn't see the link).
     const dockFirst = opts.dockFirst || /\bdock\b/i.test(instruction);
-    const tryDock = async (): Promise<ClickTarget | null> => {
+    const tryDock = async (forApp?: string): Promise<ClickTarget | null> => {
         const dock = await dumpDock();
         if (!dock) return null;
         const keep = { ...miss };
-        const hit = matchAx(dock);
+        const hit = matchAx(dock, forApp);
         if (!hit) Object.assign(miss, keep); // report the front app's near-misses, not the Dock's
         return hit;
     };
@@ -302,7 +306,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     const dockOrMissed = async (): Promise<ClickTarget | null> => {
         const axOn = !skip.has("ax_exact") || !skip.has("ax_fuzzy");
         if (axOn && axDump && !axDump.error && !dockFirst) {
-            const hit = await tryDock();
+            const hit = await tryDock(axDump.app);
             if (hit) return hit;
         }
         return missed();
