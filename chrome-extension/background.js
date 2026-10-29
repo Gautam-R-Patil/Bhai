@@ -563,6 +563,9 @@ async function getActiveTab() {
     url: tab.url || "",
     active: true,
     windowId: tab.windowId,
+    // A click that starts a navigation: Bhai waits for it instead of reporting the old page.
+    status: tab.status || "",
+    pendingUrl: tab.pendingUrl || "",
   };
 }
 
@@ -621,121 +624,123 @@ async function scanElements(payload) {
   return { elements: labeled };
 }
 
-function detectSpecialEditors() {
-  const editors = [];
-  const ts = Date.now();
-
-  // ── Code Editors ──
-
-  // Monaco Editor (VS Code, Scaler, GitHub editor, etc.)
-  document.querySelectorAll('.monaco-editor').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-monaco-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, atlasId, editorType: 'monaco' });
-  });
-
-  // CodeMirror 6
-  document.querySelectorAll('.cm-editor').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-cm6-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror6' });
-  });
-
-  // CodeMirror 5 (skip if already detected as CM6)
-  document.querySelectorAll('.CodeMirror').forEach((el, i) => {
-    if (el.closest('.cm-editor')) return;
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-cm5-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror5' });
-  });
-
-  // Ace Editor
-  document.querySelectorAll('.ace_editor').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-ace-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, atlasId, editorType: 'ace' });
-  });
-
-  // ── Rich Text Editors ──
-
-  // Quill
-  document.querySelectorAll('.ql-editor[contenteditable]').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-quill-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, atlasId, editorType: 'quill' });
-  });
-
-  // TinyMCE
-  document.querySelectorAll('.tox-tinymce').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-tinymce-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, atlasId, editorType: 'tinymce' });
-  });
-
-  // ProseMirror (also covers Tiptap which extends it)
-  document.querySelectorAll('.ProseMirror[contenteditable]').forEach((el, i) => {
-    const isTiptap = !!el.closest('.tiptap') || el.classList.contains('tiptap');
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const type = isTiptap ? 'tiptap' : 'prosemirror';
-    const label = isTiptap ? 'Tiptap' : 'ProseMirror';
-    const atlasId = `atlas-editor-${type}-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: `Rich Text Editor (${label})`, score: 25, atlasId, editorType: type });
-  });
-
-  // Slate
-  document.querySelectorAll('[data-slate-editor]').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-slate-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, atlasId, editorType: 'slate' });
-  });
-
-  // Draft.js
-  document.querySelectorAll('.DraftEditor-root').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-draftjs-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, atlasId, editorType: 'draftjs' });
-  });
-
-  return editors;
-}
-
 function scanPageElements() {
+  // Runs inside the page (executeScript serializes only this function), so its
+  // helpers must live in here too: an outside helper is a ReferenceError there.
+  function detectSpecialEditors() {
+    const editors = [];
+    const ts = Date.now();
+
+    // ── Code Editors ──
+
+    // Monaco Editor (VS Code, Scaler, GitHub editor, etc.)
+    document.querySelectorAll('.monaco-editor').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-monaco-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, atlasId, editorType: 'monaco' });
+    });
+
+    // CodeMirror 6
+    document.querySelectorAll('.cm-editor').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-cm6-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror6' });
+    });
+
+    // CodeMirror 5 (skip if already detected as CM6)
+    document.querySelectorAll('.CodeMirror').forEach((el, i) => {
+      if (el.closest('.cm-editor')) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-cm5-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror5' });
+    });
+
+    // Ace Editor
+    document.querySelectorAll('.ace_editor').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-ace-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, atlasId, editorType: 'ace' });
+    });
+
+    // ── Rich Text Editors ──
+
+    // Quill
+    document.querySelectorAll('.ql-editor[contenteditable]').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-quill-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, atlasId, editorType: 'quill' });
+    });
+
+    // TinyMCE
+    document.querySelectorAll('.tox-tinymce').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-tinymce-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, atlasId, editorType: 'tinymce' });
+    });
+
+    // ProseMirror (also covers Tiptap which extends it)
+    document.querySelectorAll('.ProseMirror[contenteditable]').forEach((el, i) => {
+      const isTiptap = !!el.closest('.tiptap') || el.classList.contains('tiptap');
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const type = isTiptap ? 'tiptap' : 'prosemirror';
+      const label = isTiptap ? 'Tiptap' : 'ProseMirror';
+      const atlasId = `atlas-editor-${type}-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: `Rich Text Editor (${label})`, score: 25, atlasId, editorType: type });
+    });
+
+    // Slate
+    document.querySelectorAll('[data-slate-editor]').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-slate-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, atlasId, editorType: 'slate' });
+    });
+
+    // Draft.js
+    document.querySelectorAll('.DraftEditor-root').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-draftjs-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, atlasId, editorType: 'draftjs' });
+    });
+
+    return editors;
+  }
+
   const els = Array.from(document.querySelectorAll("*"));
 
   const activeModals = els.filter((el) => {
@@ -941,11 +946,52 @@ function showAtlasHUD(tabId, label, done = false) {
   }).catch(() => {});
 }
 
+// A real click through CDP: trusted input the page can't tell from a person's,
+// that lands in iframes too, and that page scripts can't break (the synthetic
+// path below runs in the page and dies with whatever the page or another
+// extension has patched). False when the debugger can't attach (chrome:// pages).
+async function cdpClick(tabId, payload) {
+  try {
+    await holdCDP(tabId);
+  } catch {
+    return false;
+  }
+  const x = Number(payload.x) || 0, y = Number(payload.y) || 0;
+  const button = payload.button === "right" ? "right" : payload.button === "middle" ? "middle" : "left";
+  const buttons = button === "left" ? 1 : button === "right" ? 2 : 4;
+  const modifiers = (payload.modifiers || []).reduce((m, k) => m | ({ Alt: 1, Control: 2, Meta: 4, Shift: 8 }[k] || 0), 0);
+  const send = (type, extra) => chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", { type, x, y, modifiers, ...extra });
+  await send("mouseMoved", { button: "none", buttons: 0 });
+  for (let c = 1; c <= (payload.doubleClick ? 2 : 1); c++) {
+    await send("mousePressed", { button, buttons, clickCount: c });
+    await send("mouseReleased", { button, buttons: 0, clickCount: c });
+  }
+  return true;
+}
+
 async function clickAt(payload) {
   return withActiveTab(async (tabId) => {
     injectAtlasVisuals(tabId);
     const elementLabel = payload.elementLabel || '';
     if (elementLabel) showAtlasHUD(tabId, `🖱 Clicking "${elementLabel.substring(0, 30)}"`);
+
+    if (await cdpClick(tabId, payload)) {
+      // The click indicator only; the click itself already happened.
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: (x, y) => {
+          const ring = document.createElement('div');
+          ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid rgba(59,130,246,.9);pointer-events:none;z-index:2147483646;animation:atlasRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
+          const dot = document.createElement('div');
+          dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:#3b82f6;pointer-events:none;z-index:2147483647;animation:atlasDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
+          [ring, dot].forEach(e => document.body.appendChild(e));
+          setTimeout(() => [ring, dot].forEach(e => e.remove()), 650);
+        },
+        args: [payload.x, payload.y],
+      }).catch(() => {});
+      if (elementLabel) showAtlasHUD(tabId, '', true);
+      return { success: true, method: "cdp" };
+    }
 
     const results = await chrome.scripting.executeScript({
       target: { tabId },
@@ -1508,8 +1554,45 @@ async function closeTab(payload) {
   return { success: true };
 }
 
+// Real key presses through CDP: a synthetic KeyboardEvent never submits a form on
+// Enter, moves focus on Tab or types into fields, because browsers ignore untrusted
+// key events for those. False when the debugger can't attach or the key is unknown.
+const CDP_KEYS = {
+  Enter: [13, "\r"], Tab: [9], Escape: [27], Backspace: [8], Delete: [46], Insert: [45],
+  ArrowUp: [38], ArrowDown: [40], ArrowLeft: [37], ArrowRight: [39],
+  Home: [36], End: [35], PageUp: [33], PageDown: [34], " ": [32, " "], Space: [32, " "],
+  Control: [17], Shift: [16], Alt: [18], Meta: [91],
+};
+async function cdpKey(tabId, key, mods, action) {
+  let code = key, keyCode, text = "";
+  const modifiers = (mods || []).reduce((m, k) => m | ({ Alt: 1, Control: 2, Meta: 4, Shift: 8 }[k] || 0), 0);
+  if (CDP_KEYS[key]) {
+    [keyCode, text = ""] = CDP_KEYS[key];
+    if (key === " " || key === "Space") code = "Space";
+  } else if (typeof key === "string" && key.length === 1) {
+    keyCode = key.toUpperCase().charCodeAt(0);
+    code = /[a-z]/i.test(key) ? `Key${key.toUpperCase()}` : /\d/.test(key) ? `Digit${key}` : "";
+    text = modifiers & 6 ? "" : key; // Ctrl/Cmd shortcuts don't type their letter
+  } else {
+    return false;
+  }
+  try {
+    await holdCDP(tabId);
+  } catch {
+    return false;
+  }
+  const base = { key: key === "Space" ? " " : key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers };
+  const send = (type, extra) => chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", { type, ...base, ...extra });
+  if (action !== "up") await send(text ? "keyDown" : "rawKeyDown", text ? { text, unmodifiedText: text } : {});
+  if (action !== "down") await send("keyUp", {});
+  return true;
+}
+
 async function keyboard(payload) {
   return withActiveTab(async (tabId) => {
+    if (await cdpKey(tabId, payload.key, payload.modifiers || [], payload.action || "press")) {
+      return { success: true, method: "cdp" };
+    }
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (key, modifiers, keyAction) => {

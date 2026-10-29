@@ -669,9 +669,8 @@ export async function sendBridgeCommand(
     }
 
     // Rate limit check (native or skip)
-    if (native && !native.checkBridgeRateLimit(type)) {
-        throw new Error(`Rate limit exceeded for command: ${type}`);
-    }
+    // The rate limit (30/s per command type) is checked once, inside native.validateBridgeCommand
+    // below; checking here too counted every command twice (an effective 15/s).
 
     const effectiveTimeout = timeoutMs || OPERATION_TIMEOUTS[type] || DEFAULT_COMMAND_TIMEOUT_MS;
 

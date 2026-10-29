@@ -339,6 +339,8 @@ export const browserClick: ToolDefinition = {
 
             if (input.text) {
                 const el = page.getByText(input.text as string, { exact: false }).first();
+                // A box below the fold can't be clicked: bring it into view, then measure.
+                await el.scrollIntoViewIfNeeded().catch(() => {});
                 const box = await el.boundingBox().catch(() => null);
                 if (box) {
                     const cx = box.x + box.width / 2;
@@ -352,6 +354,8 @@ export const browserClick: ToolDefinition = {
                 }
             } else if (input.selector) {
                 const el = page.locator(input.selector as string).first();
+                // A box below the fold can't be clicked: bring it into view, then measure.
+                await el.scrollIntoViewIfNeeded().catch(() => {});
                 const box = await el.boundingBox().catch(() => null);
                 if (box) {
                     const cx = box.x + box.width / 2;

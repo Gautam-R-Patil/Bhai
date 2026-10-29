@@ -1123,9 +1123,13 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
         if (url) cacheElements(url, elements);
         console.log(`  🔍 Chrome extension: scanned ${elements.length} interactive elements`);
 
-        // OCR fallback when very few DOM elements found
-        if (elements.length < 3) {
-            const ocrElements = await ocrFallbackScan(page);
+        // OCR fallback only when the DOM gives nothing at all (a canvas app); a plain page with
+        // one link doesn't need it. Capped so a slow OCR never stalls the scan.
+        if (elements.length === 0) {
+            const ocrElements = await Promise.race([
+                ocrFallbackScan(page),
+                new Promise<InteractiveElement[]>((r) => setTimeout(() => r([]), 4000)),
+            ]);
             if (ocrElements.length > 0) {
                 for (const ocr of ocrElements) {
                     ocr.label = elements.length + ocrElements.indexOf(ocr) + 1;
