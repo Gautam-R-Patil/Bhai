@@ -36,6 +36,34 @@ export function isShadowMode(): boolean {
     return isTrue(process.env.ATLAS_PROACTIVE_SHADOW);
 }
 
+// ── Timed quiet ──
+// "shut up" is permanent; "not now" or a serious moment holds non-urgent sends
+// for a while. Read by the observer's DND and dnd.ts, so urgent still passes.
+// ponytail: in-memory, so a restart clears it; persist next to cfg.quiet if that matters.
+let quietUntil = 0;
+
+/** Hold non-urgent proactive sends until `ms` (the later deadline wins). */
+export function setQuietUntil(ms: number): void {
+    quietUntil = Math.max(quietUntil, ms);
+}
+
+export function isQuietNow(now = Date.now()): boolean {
+    return now < quietUntil;
+}
+
+// The owner brushing Bhai off in their own words. Short messages only, so
+// "later today remind me to file the GST return" isn't one.
+const BUSY_RE = /^\s*(not now|busy|later|in a meeting|can'?t talk|abhi nahi|baad me(in)?)\b/i;
+
+/** An owner message like "not now" or "busy" quiets proactive sends for 2h. */
+export function noteOwnerBusy(text: string, now = Date.now()): void {
+    if (text.length < 40 && BUSY_RE.test(text)) setQuietUntil(now + 2 * 3_600_000);
+}
+
+export function _resetQuietForTests(): void {
+    quietUntil = 0;
+}
+
 // ── Log rotation state ────────────────────────────────
 
 const LOG_DIR = (): string =>

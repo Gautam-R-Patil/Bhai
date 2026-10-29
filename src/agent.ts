@@ -129,6 +129,9 @@ import {
 import { detectTaskType } from "./prompts/dynamic-assembler.js";
 import { buildDynamicContextReminder } from "./prompts/dynamic-context.js";
 import { lateNightNote, noteOwnerReply } from "./late-night-nudge.js";
+import { noteOwnerBusy } from "./proactive/kill-switches.js";
+import { isSerious, noteOwnerMood, SHADES_OFF_NOTE } from "./serious-mode.js";
+import { noteSignaturePhrase, signaturePhraseNote } from "./setup/personality-sync.js";
 import { noteOwnerMessage } from "./security/consent.js";
 import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
 import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
@@ -1523,6 +1526,7 @@ export async function runAgent(
         }
         if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") {
             noteOwnerReply(res.text, userMessage);
+            noteSignaturePhrase(res.text);
             noteEpisodeCallbacks(res.text);
         }
         // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
@@ -1648,6 +1652,8 @@ async function _runAgentBody(
     // Only a message the owner actually sent can answer a consent question.
     if (channelContext?.isOwner && !channelContext.autonomous) {
         noteOwnerMessage(userIntentText);
+        noteOwnerBusy(userIntentText); // "not now" → proactive holds for 2h
+        noteOwnerMood(userIntentText); // grief, health, lost money, crisis → shades off
         // Any channel: the owner talking back is engagement (proactive fatigue gate).
         import("./proactive/notification-tracker.js")
             .then((m) => m.recordOwnerEngagement())
@@ -2986,7 +2992,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // Owner turns only; 1 credit a call.
         if (iterations === 1 && (!channelContext || channelContext.isOwner) && turnTier !== "complex") {
             const { getActivePreset } = await import("./setup/personality-sync.js");
-            unhingedTurn = getActivePreset() === "unhinged";
+            unhingedTurn = getActivePreset() === "unhinged" && !isSerious();
         }
 
         // ── Simple desktop tasks stay on Haiku ──
@@ -3089,7 +3095,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // (never for contacts, groups or widget visitors).
         if (!channelContext || channelContext.isOwner) {
             const { getToneReminder } = await import("./setup/personality-sync.js");
-            const tone = getToneReminder();
+            const tone = isSerious() ? SHADES_OFF_NOTE : getToneReminder();
             if (tone) iterationMessages.push({ role: "system", content: tone });
         }
         // identity.md allows one late-hour remark per night; the model can't
@@ -3098,6 +3104,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         if (channelContext?.isOwner === true) {
             const lateNote = lateNightNote();
             if (lateNote) iterationMessages.push({ role: "system", content: lateNote });
+            const sigNote = signaturePhraseNote();
+            if (sigNote) iterationMessages.push({ role: "system", content: sigNote });
         }
 
         // ── Orchestrator Planning: Sonnet 4.6 generates execution plan for interactive tasks ──

@@ -7,9 +7,8 @@ import { getToneReminder } from "../setup/personality-sync.js";
 import { getChannelSender, type ProactiveButton } from "../tools/channel-send.js";
 import { isProactiveDisabled, isChannelDisabled, isShadowMode, debugProactive } from "./kill-switches.js";
 
-// Fatigue-check hook. Returns true when the user shows signs of
-// notification fatigue (e.g. low engagement rate over recent sends).
-// Default = null (no check), set by notification-tracker at boot.
+// Fatigue-check hook: true after two unanswered sends (notification-tracker's
+// isFatigued). Default = null (no check), registered at boot.
 type FatigueCheck = () => boolean;
 let _fatigueCheck: FatigueCheck | null = null;
 
@@ -40,6 +39,7 @@ const PREFIXED_CHANNELS: Channel[] = ["whatsapp", "telegram", "discord", "slack"
  * No separate registry — reuses what is already wired at boot.
  * Resolves true only when the message was actually sent. An `ownerOnly` message
  * quotes the owner's memory: owners' private chats only, and no preview in the logs.
+ * While the owner leaves sends unanswered, only FYIs and `urgent` ones go out.
  */
 export async function dispatchProactiveMessage(
     channel: Channel,
@@ -47,6 +47,7 @@ export async function dispatchProactiveMessage(
     mode: ProactiveMode,
     buttons?: ProactiveButton[],
     ownerOnly = false,
+    urgent = false,
 ): Promise<boolean> {
     if (isProactiveDisabled()) {
         debugProactive("suppressed_global", { channel, mode });
@@ -56,7 +57,7 @@ export async function dispatchProactiveMessage(
         debugProactive("suppressed_channel", { channel, mode });
         return false;
     }
-    if (_fatigueCheck !== null) {
+    if (_fatigueCheck !== null && mode !== "fyi" && !urgent) {
         try {
             if (_fatigueCheck()) {
                 debugProactive("suppressed_fatigue", { channel, mode });

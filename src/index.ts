@@ -670,7 +670,14 @@ async function boot() {
                 const sendOne = async (channel: (typeof channelOrder)[number]): Promise<void> => {
                     const composed = await compose(intent, channel, { tone: getToneReminder() ?? "warm" }, [], { llm });
                     if (!composed) return;
-                    await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                    await dispatchProactiveMessage(
+                        channel,
+                        composed.text,
+                        composed.modeTag,
+                        undefined,
+                        false,
+                        intent.urgency === "urgent",
+                    );
                 };
                 if (primary) {
                     try {

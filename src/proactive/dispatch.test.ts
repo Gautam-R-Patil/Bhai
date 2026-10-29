@@ -42,8 +42,15 @@ describe("proactive push", () => {
         await dispatchProactiveMessage("overlay", "x", "fyi");
         delete process.env.ATLAS_PROACTIVE_SHADOW;
         _setFatigueCheckForTests(() => true);
-        await dispatchProactiveMessage("overlay", "x", "fyi");
+        await dispatchProactiveMessage("overlay", "x", "question");
         await flush();
         expect(push).not.toHaveBeenCalled();
+    });
+
+    it("while fatigued only FYIs and urgent sends go out", async () => {
+        _setFatigueCheckForTests(() => true);
+        expect(await dispatchProactiveMessage("telegram", "how'd it go?", "question")).toBe(false);
+        expect(await dispatchProactiveMessage("telegram", "your 5pm moved", "fyi")).toBe(true);
+        expect(await dispatchProactiveMessage("telegram", "server down?", "question", undefined, false, true)).toBe(true);
     });
 });

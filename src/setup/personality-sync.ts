@@ -17,6 +17,7 @@ import * as path from "node:path";
 import { getSessionToken, handleAuthError } from "../session.js";
 import { getConvexSiteUrl } from "../config/keys.js";
 import { encryptedFetch } from "../crypto-transport.js";
+import { getCurrentLanguage } from "../language.js";
 
 const FILENAME = ".user-personality.json";
 const SYNCED_MARKER = ".user-personality.synced.json";
@@ -243,3 +244,26 @@ export function getToneReminder(): string | null {
     return activePreset ? (TONE_REMINDERS[activePreset] ?? null) : null;
 }
 
+
+// ── Signature-phrase cadence ──
+// identity.md: a signature phrase in roughly one reply in four, never the same
+// one twice in a row. The model can't see its own habit, so name the last one.
+// ponytail: this enforces never-twice-in-a-row (at most 1 in 2), not 1 in 4;
+// add a counter if replies still read over-seasoned.
+const SIG_RE = /\b(ho jayega|chalo|ho gaya|shabash|arre)\b/i;
+let lastSig: string | null = null;
+
+/** Call with each reply sent to the owner. */
+export function noteSignaturePhrase(reply: string): void {
+    lastSig = reply.match(SIG_RE)?.[1].toLowerCase() ?? null;
+}
+
+/** A per-turn note after a reply used a signature phrase, or null. */
+export function signaturePhraseNote(): string | null {
+    if (!lastSig) return null;
+    // These presets turn the phrases off already.
+    if (["professional_concise", "direct_terse", "unhinged"].includes(activePreset ?? "")) return null;
+    // Mirroring Hinglish: there the words are just the language.
+    if (getCurrentLanguage().startsWith("Hindi")) return null;
+    return `[Your last reply used "${lastSig}". No signature phrase in this one.]`;
+}

@@ -21,7 +21,15 @@ vi.mock("../crypto-transport.js", () => ({
     },
 }));
 
-const { syncPersonalityIfPresent, watchPersonalityFile, loadActivePreset, getToneReminder, RETRY_MS } = await import("./personality-sync.js");
+const {
+    syncPersonalityIfPresent,
+    watchPersonalityFile,
+    loadActivePreset,
+    getToneReminder,
+    RETRY_MS,
+    noteSignaturePhrase,
+    signaturePhraseNote,
+} = await import("./personality-sync.js");
 
 describe("personality-sync", () => {
     let dir: string;
@@ -92,5 +100,18 @@ describe("personality-sync", () => {
         write("professional_concise");
         await vi.waitFor(() => expect(pushed.length).toBe(1), { timeout: 10000 });
         stop();
+    });
+
+    it("a signature phrase isn't used twice in a row, and the note stays off where phrases are off", () => {
+        write("casual_playful");
+        loadActivePreset({ userDataDir: dir });
+        noteSignaturePhrase("Chalo, pushed the fix.");
+        expect(signaturePhraseNote()).toBe('[Your last reply used "chalo". No signature phrase in this one.]');
+        noteSignaturePhrase("Pushed the fix.");
+        expect(signaturePhraseNote()).toBeNull();
+        noteSignaturePhrase("ho gaya ✅");
+        write("direct_terse");
+        loadActivePreset({ userDataDir: dir });
+        expect(signaturePhraseNote()).toBeNull();
     });
 });
