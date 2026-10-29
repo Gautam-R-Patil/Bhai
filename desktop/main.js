@@ -141,6 +141,24 @@ const OVERLAY_MAX_HEIGHT = 600;
 const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
+// The overlay page embeds the owner token only for a request that proves it holds it
+// (src/overlay/overlay-chat.ts): this app's own requests add it, read from the 0600 file
+// the bot writes, so another local process or a browser tab opening the page gets none.
+let overlayTokenHooked = false;
+function hookOverlayToken(ses) {
+    if (overlayTokenHooked) return;
+    overlayTokenHooked = true;
+    const tokenFile = path.join(require("node:os").homedir(), ".atlas", "overlay-local-token");
+    ses.webRequest.onBeforeSendHeaders({ urls: [`${OVERLAY_URL}/*`] }, (details, cb) => {
+        try {
+            const tok = fs.readFileSync(tokenFile, "utf8").trim();
+            if (tok) details.requestHeaders["X-Bhai-Overlay"] = tok;
+        } catch {
+            /* bot hasn't written it yet: the page loads token-less and is reloaded on ##ATLAS_READY## */
+        }
+        cb({ requestHeaders: details.requestHeaders });
+    });
+}
 const OVERLAY_RESIZE_MS = 500;
 const OVERLAY_HIDE_DELAY_MS = 260;
 // macOS 26 Spotlight-style corners; keep in sync with --panel-radius in src/overlay/overlay.html.
@@ -1981,6 +1999,7 @@ function createOverlayWindow() {
         overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     }
 
+    hookOverlayToken(overlayWindow.webContents.session);
     overlayWindow.loadURL(OVERLAY_URL);
 
     // Retry loading if the bot server isn't ready yet (race condition on first show)

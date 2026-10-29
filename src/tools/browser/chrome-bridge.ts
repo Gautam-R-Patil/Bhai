@@ -17,7 +17,7 @@ import { type WebSocket, WebSocketServer } from "ws";
 import { getDataDir, getScriptsDir } from "../../config/paths.js";
 import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
 import { isForeignExtensionOrigin } from "../../security/extension-origin.js";
-import { isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
+import { isBrowserPageLoad, isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
 import { resetBackend } from "./browser-backend.js";
 import type { ChromeBridgeCommand, ChromeBridgeEvent, ChromeBridgeResponse, ChromeTabInfo } from "./types.js";
 
@@ -406,8 +406,10 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             // the web-origin block is the protection that matters.)
             const origin = (req.headers.origin as string | undefined) || "";
             const isWebOrigin = origin.startsWith("http://") || origin.startsWith("https://");
-            // ...and so does another extension: only Bhai's own may read the token.
-            if (isWebOrigin || isForeignExtensionOrigin(origin)) {
+            // ...and so does another extension: only Bhai's own may read the token. A browser
+            // page load (top-level navigation sends no Origin) would show it as page text the
+            // agent's own browser tools can read — e.g. a web page sending Bhai here.
+            if (isWebOrigin || isForeignExtensionOrigin(origin) || isBrowserPageLoad(req.headers)) {
                 res.writeHead(403, { "Content-Type": "application/json" });
                 res.end(
                     JSON.stringify({

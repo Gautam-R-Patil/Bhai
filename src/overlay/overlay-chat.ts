@@ -87,6 +87,11 @@ export function getOverlayLocalToken(): string {
     return _localToken;
 }
 
+/** The token the overlay page may carry: the owner's, only for a request that already holds it. */
+export function overlayPageToken(header: string | string[] | undefined): string {
+    return typeof header === "string" && safeEqualStr(header, getOverlayLocalToken()) ? getOverlayLocalToken() : "";
+}
+
 function safeEqualStr(a: string, b: string): boolean {
     if (a.length !== b.length) return false;
     try {
@@ -227,7 +232,11 @@ export function initOverlayChat(llm: LLMClient): void {
                     // Token only travels over 127.0.0.1 to a 0o600-gated client.
                     // overlay.html reads it via both %%ATLAS_LOCAL_TOKEN%% (primary,
                     // window.__ATLAS_LOCAL_TOKEN__) and window.__atlasLocalToken.
-                    const token = getOverlayLocalToken();
+                    // Only the desktop app's own overlay window gets the owner token: it sends
+                    // it back in X-Bhai-Overlay (desktop/main.js). Any other load — the agent's
+                    // browser sent here by a web page, another local process or account —
+                    // gets the page without it, so it can't be read off this page.
+                    const token = overlayPageToken(req.headers["x-bhai-overlay"]);
                     html = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, token);
                     const injection = `<script>window.__atlasLocalToken=${JSON.stringify(token)};</script>`;
                     if (html.includes("</head>")) {
