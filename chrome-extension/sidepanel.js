@@ -11,6 +11,9 @@ const chips = [$('btnSummary'), $('btnExplain'), $('btnDraw')];
 
 let canChat = false;
 
+// Lets the background worker know when the panel closes (it removes any drawing).
+chrome.runtime.connect({ name: 'sidepanel' });
+
 function send(message) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(message, (resp) => {
@@ -91,12 +94,96 @@ async function refresh() {
 
 // ── Sending ──────────────────────────────────
 
+// ── @-mention a tab ──────────────────────────
+// Typing "@" lists the open tabs; picking one puts "@Title" in the message and
+// sends that tab's text along.
+
+const mentionMenu = $('mentionMenu');
+const mentioned = new Map(); // label -> tab id
+let menuItems = [];
+let menuIndex = 0;
+
+function mentionQuery() {
+  const upto = input.value.slice(0, input.selectionStart);
+  const m = /(^|\s)@([^\s@]*)$/.exec(upto);
+  return m ? { query: m[2].toLowerCase(), start: upto.length - m[2].length - 1 } : null;
+}
+
+function closeMenu() {
+  mentionMenu.classList.add('hidden');
+  menuItems = [];
+}
+
+async function updateMenu() {
+  const q = mentionQuery();
+  if (!q) return closeMenu();
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+  menuItems = tabs
+    .filter((t) => !q.query || (t.title || '').toLowerCase().includes(q.query) || host(t.url).includes(q.query))
+    .slice(0, 8);
+  menuIndex = 0;
+  mentionMenu.replaceChildren();
+  if (!menuItems.length) {
+    const empty = document.createElement('div');
+    empty.className = 'mention-empty';
+    empty.textContent = 'No open tab matches';
+    mentionMenu.append(empty);
+  }
+  menuItems.forEach((t, i) => {
+    const row = document.createElement('div');
+    row.className = 'mention-item';
+    row.setAttribute('role', 'option');
+    if (/^https?:/.test(t.favIconUrl || '')) {
+      const icon = document.createElement('img');
+      icon.src = t.favIconUrl;
+      icon.alt = '';
+      row.append(icon);
+    }
+    const title = document.createElement('span');
+    title.className = 'mention-title';
+    title.textContent = t.title || 'Untitled';
+    const site = document.createElement('span');
+    site.className = 'mention-host';
+    site.textContent = host(t.url);
+    row.append(title, site);
+    row.addEventListener('mousedown', (e) => { e.preventDefault(); pickMention(i); });
+    mentionMenu.append(row);
+  });
+  highlightMenu();
+  mentionMenu.classList.remove('hidden');
+}
+
+function highlightMenu() {
+  [...mentionMenu.querySelectorAll('.mention-item')].forEach((el, i) => el.classList.toggle('active', i === menuIndex));
+}
+
+function pickMention(i) {
+  const tab = menuItems[i];
+  const q = mentionQuery();
+  if (!tab || !q) return closeMenu();
+  const label = `@${(tab.title || 'tab').replace(/\s+/g, ' ').slice(0, 40).trim()}`;
+  mentioned.set(label, tab.id);
+  input.value = `${input.value.slice(0, q.start)}${label} ${input.value.slice(input.selectionStart)}`;
+  const caret = q.start + label.length + 1;
+  input.setSelectionRange(caret, caret);
+  closeMenu();
+  autosize();
+  input.focus();
+}
+
+input.addEventListener('input', updateMenu);
+input.addEventListener('click', updateMenu);
+input.addEventListener('blur', () => setTimeout(closeMenu, 150));
+
 async function sendText() {
   const text = input.value.trim();
   if (!text || !canChat) return;
+  const mentions = [...mentioned].filter(([label]) => text.includes(label)).map(([, id]) => id);
+  mentioned.clear();
   input.value = '';
   autosize();
-  const resp = await send({ type: 'send_message', text });
+  const resp = await send({ type: 'send_message', text, mentions });
   if (resp?.ok) {
     setBusy(true, resp.drawing ? 'Looking at your drawing…' : 'Thinking…');
     if (resp.drawing) $('drawNote').classList.add('hidden');
@@ -110,6 +197,15 @@ function autosize() {
 
 input.addEventListener('input', autosize);
 input.addEventListener('keydown', (e) => {
+  if (!mentionMenu.classList.contains('hidden') && menuItems.length) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      menuIndex = (menuIndex + (e.key === 'ArrowDown' ? 1 : menuItems.length - 1)) % menuItems.length;
+      return highlightMenu();
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); return pickMention(menuIndex); }
+  }
+  if (e.key === 'Escape') return closeMenu();
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendText(); }
 });
 sendBtn.addEventListener('click', sendText);

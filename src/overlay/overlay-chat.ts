@@ -632,7 +632,16 @@ export function initOverlayChat(llm: LLMClient): void {
                         console.log(`🌐 [Chrome Extension] Browser context injected: ${browserUrl}`);
                     }
 
-                    await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim());
+                    // The extension may attach a screenshot of the tab (with the user's drawing).
+                    const image = msg.meta?.source === "chrome-extension" ? msg.image : undefined;
+                    const tabShot =
+                        image &&
+                        typeof image.base64 === "string" &&
+                        image.base64.length < 8_000_000 &&
+                        /^image\/(jpeg|png|webp)$/.test(image.mimeType)
+                            ? ({ type: "image", base64: image.base64, mimeType: image.mimeType } as MediaAttachment)
+                            : undefined;
+                    await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim(), tabShot);
                 } else if (msg.type === "quick_action" && msg.text) {
                     const actionText = msg.text.trim();
                     if (actionText.startsWith("mem:forget:")) {
@@ -886,7 +895,13 @@ function ownerClients(): WebSocket[] {
 
 // `logText` is what the transcript shows as the user's words (without injected
 // context such as the browser prefix or the voice-analysis prompt).
-async function handleOverlayMessage(ws: WebSocket, userMessage: string, source = "overlay", logText = userMessage): Promise<void> {
+async function handleOverlayMessage(
+    ws: WebSocket,
+    userMessage: string,
+    source = "overlay",
+    logText = userMessage,
+    tabShot?: MediaAttachment,
+): Promise<void> {
     if (!llmClient) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
         return;
@@ -959,8 +974,17 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
 
     let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep your response SHORT and concise — this is a compact overlay, not a full chat. Use 1-3 sentences when possible.]${chromeCtxNote}`;
 
-    // Only the owner's own chat bar may look at the screen — never a web-widget visitor.
-    if (wsIsOwner(ws) && isScreenQuery(userMessage)) {
+    if (tabShot) {
+        // The Chrome side panel sends what the user sees in the tab (never the panel itself,
+        // never the rest of the screen), drawing included.
+        media = [tabShot];
+        taggedMessage = `${userMessage}
+
+[SOURCE: Bhai's side panel in the user's Chrome — respond there, NOT on Telegram. Keep it short.
+Attached: a screenshot of the Chrome tab the user is looking at (the page only). Orange strokes or boxes on it are the user's own drawing: focus on what they marked. Answer as if you can see the page, without "based on the screenshot". To act on the page, use the browser tools on this tab; to point something out to them, use browser_mark.]${chromeCtxNote}`;
+    } else if (wsIsOwner(ws) && source !== "chrome-extension" && isScreenQuery(userMessage)) {
+        // Only the owner's own chat bar may look at the screen — never a web-widget visitor,
+        // and not the Chrome panel, which sends its tab instead.
         console.log("  📸 [Overlay] Screen query detected — capturing screenshot...");
         sendToClient(ws, { type: "progress", text: "📸 Looking at your screen…" });
 
