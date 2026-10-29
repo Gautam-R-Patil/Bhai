@@ -18,6 +18,7 @@ vi.mock("../../native/index.js", () => ({
     schedulerReleaseGrouped: vi.fn().mockReturnValue({ morningBatch: [], singles: [], dropped: [] }),
     schedulerDrainScheduled: vi.fn().mockReturnValue([]),
     schedulerDebugState: vi.fn().mockReturnValue(""),
+    schedulerRefund: vi.fn(),
 }));
 
 const validIntent = (): ProactiveIntent => ({
@@ -196,3 +197,34 @@ describe("quiet hours", () => {
     });
 });
 
+describe("owner-memory nudges", () => {
+    it("go to the owners only and give the slot back when the sender refuses", async () => {
+        const native = await import("../../native/index.js");
+        const { registerChannelSender } = await import("../tools/channel-send.js");
+        const dir = mkdtempSync(join(tmpdir(), "atlas-obs-own-"));
+        const calls: unknown[][] = [];
+        registerChannelSender("telegram", async (...args) => {
+            calls.push(args);
+            return false; // Smart DND
+        });
+        const obs = new Observer({ llm: null as never, configPath: join(dir, "c.json") });
+        const intent: ProactiveIntent = {
+            ...validIntent(),
+            id: "c1",
+            source: "commitment_due",
+            mode: "question",
+            payload: { kind: "commitment_due", memoryId: 1, content: "Send the deck", dueMs: Date.now(), ownerOnly: true },
+        };
+        expect(obs.enqueue(intent)).toBe(true);
+        const none = { morningBatch: [], singles: [], dropped: [] };
+        vi.mocked(native.schedulerReleaseGrouped).mockImplementation((ch) =>
+            ch === "telegram" ? { ...none, singles: ["c1"] } : none,
+        );
+        await obs.tickAll();
+        expect(calls).toHaveLength(1);
+        expect(calls[0][3]).toBe(true); // ownerOnly
+        expect(native.schedulerRefund).toHaveBeenCalledWith("telegram");
+        obs.stop();
+        rmSync(dir, { recursive: true, force: true });
+    });
+});

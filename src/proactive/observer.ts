@@ -91,6 +91,15 @@ export function resolveChannel(pref: Channel | "any"): Channel {
     return pref === "any" ? "telegram" : pref;
 }
 
+/** Nothing went out (sender refused, compose failed): the scheduler gives the channel its slot back. */
+function refund(channel: Channel): void {
+    try {
+        native.schedulerRefund?.(channel); // an older native binary lacks it
+    } catch {
+        /* native scheduler unavailable */
+    }
+}
+
 export class Observer {
     private cfg: ProactiveConfig;
     private registry = new SourceRegistry();
@@ -321,10 +330,12 @@ export class Observer {
                 if (intent) intents.push(intent);
             }
             if (intents.length > 0) {
+                let sent = false;
                 try {
                     const composed = await composeMorningBatch(intents, channel, recent, { llm: this.deps.llm });
                     if (composed) {
                         if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag)) {
+                            sent = true;
                             for (const intent of intents) this.registry.dispatched(intent);
                         }
                         this.telemetry().log({
@@ -351,7 +362,10 @@ export class Observer {
                 } catch (err) {
                     debugProactive("observer_morning_batch_failed", { channel, err: (err as Error).message });
                 } finally {
-                    for (const intent of intents) this.intentsById.delete(intent.id);
+                    for (const intent of intents) {
+                        this.intentsById.delete(intent.id);
+                        if (!sent) refund(channel);
+                    }
                 }
             }
         }
@@ -367,6 +381,7 @@ export class Observer {
                 decision: "released",
             });
             const intentRecent = this.recentSendsByChannel.get(channel) ?? [];
+            let sent = false;
             try {
                 const composed = await compose(intent, channel, { tone: getToneReminder() ?? "warm" }, intentRecent, {
                     llm: this.deps.llm,
@@ -388,6 +403,7 @@ export class Observer {
                     const inbox = getInboxManager();
                     if (inbox) {
                         inbox.enqueue(intent, composed.text);
+                        sent = true;
                         debugProactive("observer_routed_to_inbox", { id: intent.id });
                         // Inbox-routed dispatch: log under "overlay" as the
                         // effective channel where the user sees the prompt.
@@ -408,7 +424,9 @@ export class Observer {
                 }
 
                 const buttons = intent.payload.buttons as ProactiveButton[] | undefined;
-                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag, buttons)) {
+                const ownerOnly = intent.payload.ownerOnly === true;
+                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag, buttons, ownerOnly)) {
+                    sent = true;
                     this.registry.dispatched(intent);
                 }
                 this.telemetry().log({
@@ -431,6 +449,7 @@ export class Observer {
                 });
             } finally {
                 this.intentsById.delete(id);
+                if (!sent) refund(channel);
             }
         }
     }

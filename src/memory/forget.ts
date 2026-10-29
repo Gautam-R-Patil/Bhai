@@ -3,7 +3,8 @@
 // See LICENSE.md for details.
 
 // "Forget that" across every tier that can hold a fact: memories, traits,
-// identity, episodes, feelings, task learnings, chat transcripts and sessions.
+// identity, episodes, feelings, task learnings, chat transcripts (the overlay's
+// too), sessions and working memory.
 // A preview lists the matches and hands out a token; only the owner's own yes
 // (security/consent.ts ownerApproved) turns the token into deletion. Nothing
 // of the content is kept: the log says "forgot N items (reason)".
@@ -13,6 +14,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../config/paths.js";
 import { clearCache as clearResponseCache } from "../llm-cache.js";
+import { readChatLog, redactChatLog } from "../overlay/chat-log.js";
 import { ownerApproved } from "../security/consent.js";
 import { clearCache as clearToolCache } from "../tools/tool-intelligence.js";
 import { getFieldValue, getIdentityProfile, type UserProfile } from "./identity.js";
@@ -22,6 +24,7 @@ import { deleteLearnings, getAllLearnings } from "./task-learnings.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { deleteTrait, getAllTraits } from "./traits.js";
 import { getHNSWIndex } from "./vector-index.js";
+import { dropMatching } from "./working-memory.js";
 
 export interface ForgetItem {
     tier: string;
@@ -232,6 +235,9 @@ export function findForgettable(query: string): ForgetItem[] {
             .find(hit);
         if (text) add("session", r.session_id, r.last_activity, text);
     }
+    for (const e of readChatLog()) {
+        if (hit(e.text)) add("overlay chat", e.ts, new Date(e.ts).toISOString(), e.text);
+    }
     return items;
 }
 
@@ -328,6 +334,8 @@ function forgetItems(query: string, items: ForgetItem[]): void {
 
     deleteLearnings(new Set(of("task learning") as string[]));
     redactCurrentSession(hit);
+    redactChatLog(hit, FORGOTTEN); // restored into context at boot, shown on the desktop Chats page
+    dropMatching(hit);
     try {
         const index = getHNSWIndex();
         for (const id of memoryIds) index.removeVector(id);
@@ -398,12 +406,18 @@ export function executeForget(
     const items = findForgettable(p.query);
     forgetItems(p.query, items);
     for (const h of live) redactMessages(h, forgetMatcher(p.query));
-    logForget(items.length, reason);
+    logForget(items.length, reason, p.query);
     return { forgotten: items.length };
 }
 
-function logForget(n: number, reason: string): void {
-    const why = reason.trim() || "unspecified";
+function logForget(n: number, reason: string, query: string): void {
+    // A reason that names the fact would keep it: then only that one was given.
+    const said = words(reason);
+    const why = !reason.trim()
+        ? "unspecified"
+        : forgetTerms(query).some((t) => said.includes(` ${t} `))
+          ? "given"
+          : reason.trim();
     getRawDb()
         ?.prepare("INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES ('forget', ?, ?, 'user')")
         .run(`${n} items`, why);

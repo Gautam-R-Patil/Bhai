@@ -16,6 +16,8 @@ type Op = "schedule" | "list" | "cancel" | "trigger";
 export interface CronCallerContext {
     isOwner: boolean;
     autonomous?: boolean;
+    /** A private chat with Bhai (not a group or shared channel): owner memories may be shown. */
+    isPrivate?: boolean;
     /** The owner's words this turn: memory_store supersedes only when they read like a correction. */
     message?: string;
     /** The last memory memory_store saved in this owner turn, for the reply's "Forget that" button. */
@@ -48,6 +50,9 @@ export function isOwnerCaller(): boolean {
     const ctx = _callerStorage.getStore();
     return ctx?.isOwner === true && !ctx.autonomous;
 }
+
+/** The owner, in a private chat with Bhai. */
+export const isPrivateOwnerCaller = (): boolean => isOwnerCaller() && _callerStorage.getStore()?.isPrivate === true;
 
 /** The owner's own message this turn, or "" for contacts and autonomous runs. */
 export function ownerTurnMessage(): string {

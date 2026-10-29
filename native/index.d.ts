@@ -1847,6 +1847,16 @@ export declare function shouldSpeculate(db: PatternDatabase, recentTools: Array<
 export declare function updateDependency(db: PatternDatabase, sequence: Array<string>, nextTool: string, wasDependent: boolean): void
 /** Get the top-N most common patterns for debugging/visualization. */
 export declare function getTopPatterns(db: PatternDatabase, n: number): Array<ToolCallPattern>
+/** `maskCredentials` (credential-mask.ts), byte-identical, linear time. */
+export declare function nativeMaskCredentials(text: string): string
+export interface PiiSpan {
+  kind: string
+  /** UTF-16 code-unit offsets, as `PiiMatch.start` / `end`. */
+  start: number
+  end: number
+}
+/** `findPii` (pii-redactor.ts), same spans in the same order. */
+export declare function nativeFindPii(text: string): Array<PiiSpan>
 export interface CalendarEvent {
   id: string
   title: string
@@ -1972,6 +1982,11 @@ export interface GroupedReleaseResult {
   dropped: Array<DropEntry>
 }
 export declare function schedulerReleaseGrouped(channel: string): GroupedReleaseResult
+/**
+ * The sender refused a released intent (Smart DND, nobody connected): give back its
+ * daily slot, the gap and its topic. Two refused from one release keep the gap (conservative).
+ */
+export declare function schedulerRefund(channel: string): void
 export declare function schedulerDebugState(channel: string): string
 export interface GateResult {
   mayRun: boolean
@@ -2214,16 +2229,6 @@ export declare function rateLimiterOnSuccess(): number
 export declare function rateLimiterOnRateLimit(): number
 export declare function rateLimiterGetDelay(): number
 export declare function rateLimiterReset(): void
-/** `maskCredentials` (credential-mask.ts), byte-identical, linear time. */
-export declare function nativeMaskCredentials(text: string): string
-export interface PiiSpan {
-  kind: string
-  /** UTF-16 code-unit offsets, as `PiiMatch.start` / `end`. */
-  start: number
-  end: number
-}
-/** `findPii` (pii-redactor.ts), same spans in the same order. */
-export declare function nativeFindPii(text: string): Array<PiiSpan>
 export interface SanitizeResultNapi {
   sanitized: string
   /**

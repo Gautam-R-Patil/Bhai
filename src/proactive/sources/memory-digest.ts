@@ -85,6 +85,7 @@ export const MEMORY_DIGEST: IntentSourceModule = {
             evidence: [{ label: "items", value: String(items.length) }],
             payload: {
                 kind: "memory_digest",
+                ownerOnly: true,
                 items,
                 buttons: items.map((it, i) => ({ text: `Forget #${i + 1}`, data: digestPruneAction(it.id, ctx.now) })),
             },

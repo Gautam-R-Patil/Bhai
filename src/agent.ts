@@ -151,6 +151,7 @@ import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/br
 import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
 import { sendFailed, withSendLedger } from "./tools/send-ledger.js";
+import { ownerMemoryTool } from "./tools/tool-intelligence.js";
 
 // ── Music fast-path helpers ──────────────────────
 // Short-circuits the Sonnet orchestrator + memory injection when the LLM
@@ -943,7 +944,7 @@ async function executeAndProcessToolCall(
             reason: (fnArgs.reason as string) || "",
         });
         console.log(`  🔧 Tool call: ${fnName}`, JSON.stringify(fnArgs));
-        console.log(`  ✅ Tool result: ${result.substring(0, 500)}`);
+        console.log(`  ✅ Tool result: ${ownerMemoryTool(fnName) ? `(${result.length} chars)` : result.substring(0, 500)}`);
         return {
             toolCallId: toolCall.id,
             fnName,
@@ -955,7 +956,7 @@ async function executeAndProcessToolCall(
         };
     }
 
-    console.log(`  🔧 Tool call: ${fnName}`, JSON.stringify(fnArgs));
+    console.log(`  🔧 Tool call: ${fnName}`, JSON.stringify(ownerMemoryTool(fnName) ? Object.keys(fnArgs) : fnArgs));
 
     // ── Pre-flight: catch obvious precondition failures before wasting
     // an actual tool round-trip. Fails open on any error; only short-circuits
@@ -1147,7 +1148,7 @@ async function executeAndProcessToolCall(
     }
 
     let result = truncateToolResult(fnName, workingResult);
-    console.log(`  ✅ Tool result: ${result.substring(0, 500)}`);
+    console.log(`  ✅ Tool result: ${ownerMemoryTool(fnName) ? `(${result.length} chars)` : result.substring(0, 500)}`);
 
     // Fence attacker-influenceable tool output (web/browser/MCP/research) so the
     // model treats it as data, not instructions (indirect prompt-injection
@@ -1431,6 +1432,7 @@ export async function runAgent(
         const caller: import("./tools/cron-tool.js").CronCallerContext = {
             isOwner: callerIsOwner,
             autonomous: channelContext?.autonomous === true,
+            isPrivate: channelContext?.isPrivate === true,
             message: stripChannelTags(userMessage),
         };
         try {

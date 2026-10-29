@@ -38,13 +38,15 @@ const PREFIXED_CHANNELS: Channel[] = ["whatsapp", "telegram", "discord", "slack"
  * registered in the existing getChannelSender registry (tools/channel-send.ts).
  *
  * No separate registry — reuses what is already wired at boot.
- * Resolves true only when the message was actually sent.
+ * Resolves true only when the message was actually sent. An `ownerOnly` message
+ * quotes the owner's memory: owners' private chats only, and no preview in the logs.
  */
 export async function dispatchProactiveMessage(
     channel: Channel,
     text: string,
     mode: ProactiveMode,
     buttons?: ProactiveButton[],
+    ownerOnly = false,
 ): Promise<boolean> {
     if (isProactiveDisabled()) {
         debugProactive("suppressed_global", { channel, mode });
@@ -71,14 +73,15 @@ export async function dispatchProactiveMessage(
     // Professional and Direct presets say "no emoji"; the prefix is one too.
     const plain = /PROFESSIONAL|DIRECT/.test(getToneReminder() ?? "");
     const prefixed = PREFIXED_CHANNELS.includes(channel) && !plain ? `${EMOJI[mode]} ${text}` : text;
+    const preview = ownerOnly ? {} : { preview: prefixed.slice(0, 80) };
     if (isShadowMode()) {
-        debugProactive("shadow_dispatch", { channel, mode, preview: prefixed.slice(0, 80) });
+        debugProactive("shadow_dispatch", { channel, mode, ...preview });
         return false;
     }
-    if ((await sender(prefixed, undefined, buttons)) === false) {
+    if ((await sender(prefixed, undefined, buttons, ownerOnly)) === false) {
         debugProactive("suppressed_sender", { channel, mode });
         return false;
     }
-    debugProactive("dispatched", { channel, mode, preview: prefixed.slice(0, 80) });
+    debugProactive("dispatched", { channel, mode, ...preview });
     return true;
 }

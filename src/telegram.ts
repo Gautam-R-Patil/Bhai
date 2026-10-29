@@ -2208,6 +2208,7 @@ export async function sendProactiveMessage(
     message: string,
     filePath?: string,
     buttons?: ProactiveButton[],
+    ownerOnly = false,
 ): Promise<boolean> {
     if (config.allowedUserIds.size === 0) {
         console.warn("⚠️ No allowed Telegram users to send proactive message to.");
@@ -2292,14 +2293,15 @@ export async function sendProactiveMessage(
     }
 
     const chunks = chunkMarkdownForTelegram(sanitizeReply(message));
-    // Buttons act on the owner's memory: they (and the message) go to the owners' private chats only.
+    // Buttons act on the owner's memory, and ownerOnly messages quote it: the owners' private chats only.
     const keyboard = buttons?.length ? new InlineKeyboard() : undefined;
     for (const [i, b] of (buttons ?? []).entries()) {
         keyboard?.text(b.text, b.data);
         if (i % 4 === 3) keyboard?.row();
     }
-    const recipients = keyboard ? parseTelegramOwners(config) : config.allowedUserIds;
+    const recipients = keyboard || ownerOnly ? parseTelegramOwners(config) : config.allowedUserIds;
 
+    let delivered = false;
     for (const userId of recipients) {
         for (const [ci, chunk] of chunks.entries()) {
             const reply_markup = ci === chunks.length - 1 ? keyboard : undefined;
@@ -2309,7 +2311,7 @@ export async function sendProactiveMessage(
                     await withTelegramRetry(() =>
                         bot.api.sendMessage(userId, chunk.html, { parse_mode: "HTML", reply_markup }),
                     );
-                    sent = true;
+                    sent = delivered = true;
                 } catch (err) {
                     const errMsg = (err as Error)?.message || String(err);
                     const isTransient =
@@ -2328,7 +2330,7 @@ export async function sendProactiveMessage(
                     if (!isTransient) {
                         try {
                             await bot.api.sendMessage(userId, markdownToPlainText(chunk.md), { reply_markup });
-                            sent = true;
+                            sent = delivered = true;
                         } catch {
                             /* ignore fallback error */
                         }
@@ -2337,6 +2339,8 @@ export async function sendProactiveMessage(
             }
         }
     }
+
+    if (!delivered) return false;
 
     // Record notification for engagement tracking
     try {

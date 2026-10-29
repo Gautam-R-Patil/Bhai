@@ -2,7 +2,9 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { looksSensitive } from "../../memory/playbooks.js";
 import { getRawDb } from "../../memory/sqlite.js";
+import { getChannelSender } from "../../tools/channel-send.js";
 import { makeIntentId, type ProactiveIntent } from "../intent.js";
 import type { IntentSourceModule } from "./source.js";
 
@@ -31,16 +33,19 @@ export const COMMITMENT_DUE: IntentSourceModule = {
             .map((r): ProactiveIntent => {
                 queued.set(r.id, ctx.now);
                 const dueMs = Date.parse(r.due_at);
+                // A number, address or secret stays out of the chat: the owner can ask for the #id.
+                const content = looksSensitive(r.content) ? `commitment #${r.id}` : r.content;
                 return {
                     id: makeIntentId("commitment_due"),
                     source: "commitment_due",
                     mode: "question",
                     urgency: "normal", // held by quiet hours and posture like any nudge
-                    channelPreference: "any",
-                    topic: r.content.slice(0, 80),
+                    // It quotes the owner's memory: a private surface only, like the digest.
+                    channelPreference: getChannelSender("telegram") ? "telegram" : "overlay",
+                    topic: content.slice(0, 80),
                     topicEmbedding: new Array(384).fill(0), // never dedup one commitment against another
                     evidence: [{ label: "due", value: r.due_at }],
-                    payload: { kind: "commitment_due", memoryId: r.id, content: r.content, dueMs },
+                    payload: { kind: "commitment_due", memoryId: r.id, content, dueMs, ownerOnly: true },
                     createdAt: ctx.now,
                     // Expired before the retry, so a held or dropped nudge never has a live twin.
                     expiresAt: Math.min(ctx.now + RETRY_MS, dueMs + GRACE_MS),

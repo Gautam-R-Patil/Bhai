@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CronCallerContext } from "../../tools/cron-tool.js";
 
 process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-forget-"));
@@ -180,17 +180,42 @@ describe("memory_forget across tiers", () => {
         expect(count("SELECT COUNT(*) n FROM memory_forget_log WHERE content_snapshot IS NOT NULL")).toBe(0);
     });
 
-    it("memory_forget refuses anyone but the owner in a live turn", async () => {
+    it("memory_forget refuses anyone but the owner in a live private turn", async () => {
         const { memoryForget } = await import("../../tools/memory-tools.js");
         const { runWithCallerContext } = await import("../../tools/cron-tool.js");
-        for (const ctx of [{ isOwner: false }, { isOwner: true, autonomous: true }]) {
+        // A group would read the preview too.
+        for (const ctx of [{ isOwner: false, isPrivate: true }, { isOwner: true, autonomous: true, isPrivate: true }, { isOwner: true }]) {
             const out = JSON.parse(await runWithCallerContext(ctx, () => memoryForget.handler({ query: "zebra" })));
             expect(out.success).toBe(false);
         }
         const out = JSON.parse(
-            await runWithCallerContext({ isOwner: true }, () => memoryForget.handler({ query: "zebra" })),
+            await runWithCallerContext({ isOwner: true, isPrivate: true }, () => memoryForget.handler({ query: "zebra" })),
         );
         expect(out).toMatchObject({ success: true, count: 0 });
+    });
+
+    it("reaches the overlay transcript and working memory, and never logs a reason that names the fact", async () => {
+        consent._resetConsent();
+        const chatLog = await import("../../overlay/chat-log.js");
+        const wm = await import("../working-memory.js");
+        wm.initWorkingMemory();
+        // The JS path: a native shouldRetain rejects working-memory.ts's snake_case state.
+        const cwd = vi.spyOn(process, "cwd").mockReturnValue(os.tmpdir());
+        wm.retain("tool_1", "tool_result", '[memory_search] {"content":"Owner\'s locker code is with Kabir"}', 0.9);
+        wm.retain("tool_2", "tool_result", "[weather] sunny", 0.9);
+        cwd.mockRestore();
+        chatLog.logChatMessage("overlay", "user", "Kabir has my locker code");
+        chatLog.logChatMessage("overlay", "assistant", "Noted.");
+        const p = forget.previewForget("kabir");
+        expect(p.preview).toContain("1 overlay chat");
+        consent.noteOwnerMessage("yes");
+        expect(forget.executeForget(p.token as string, "yes", "Kabir is none of your business")).toEqual({ forgotten: 1 });
+
+        expect(chatLog.recentChatContext(60_000, 10).map((m) => m.content)).toEqual(["[forgotten]", "Noted."]);
+        expect(wm.getWMSnippet()).not.toMatch(/kabir/i);
+        expect(wm.getWMSnippet()).toContain("sunny");
+        const log = raw.prepare("SELECT reason FROM memory_forget_log ORDER BY id DESC LIMIT 1").get() as { reason: string };
+        expect(log.reason).toBe("given");
     });
 });
 
@@ -225,5 +250,26 @@ describe("Forget that button", () => {
         expect(forget.undoMemoryTap(late, now)).toMatch(/too late/i);
         expect(count(`SELECT COUNT(*) n FROM memories WHERE id = ${old}`)).toBe(1);
         expect(new TextEncoder().encode(tap).length).toBeLessThanOrEqual(64); // Telegram's callback_data cap
+    });
+});
+
+describe("core_memory_delete / core_memory_replace", () => {
+    it("are owner only and leave pinned memories and commitments to memory_store", async () => {
+        const { coreMemoryDelete, coreMemoryReplace } = await import("../../tools/memory-tools-advanced.js");
+        const { runWithCallerContext } = await import("../../tools/cron-tool.js");
+        raw.prepare("INSERT INTO memories (content, category, pinned) VALUES ('Mom''s birthday is 4 May', 'family', 1)").run();
+        raw.prepare("INSERT INTO memories (content, category) VALUES ('Likes jazz', 'family')").run();
+        const del = async (ctx: CronCallerContext, content: string) =>
+            JSON.parse(await runWithCallerContext(ctx, () => coreMemoryDelete.handler({ section: "family", content })));
+        expect((await del({ isOwner: false }, "jazz")).success).toBe(false);
+        expect((await del({ isOwner: true }, "birthday")).error).toMatch(/pinned/);
+        const replace = JSON.parse(
+            await runWithCallerContext({ isOwner: true }, () =>
+                coreMemoryReplace.handler({ section: "family", old_content: "4 May", new_content: "5 May" }),
+            ),
+        );
+        expect(replace.error).toMatch(/pinned/);
+        expect((await del({ isOwner: true }, "jazz")).success).toBe(true);
+        expect(count("SELECT COUNT(*) n FROM memories WHERE category = 'family' AND consolidated_into IS NULL")).toBe(1);
     });
 });

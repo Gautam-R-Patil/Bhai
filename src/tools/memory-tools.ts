@@ -33,6 +33,7 @@ import {
     claimSupersede,
     isMainLoopCall,
     isOwnerCaller,
+    isPrivateOwnerCaller,
     noteShownMemories,
     noteStoredMemory,
     ownerTurnMessage,
@@ -311,6 +312,10 @@ export const memoryForget: ToolDefinition = {
     },
     async handler(input) {
         if (!isOwnerCaller()) return JSON.stringify({ success: false, error: "Only the owner can make Bhai forget." });
+        // The preview and the digest item quote what Bhai knows; a group would read them too.
+        if (!isPrivateOwnerCaller()) {
+            return JSON.stringify({ success: false, error: "Ask me in our private chat: forgetting shows what I know." });
+        }
         if (input.digest_item != null) {
             const n = Number(String(input.digest_item).replace(/^#/, ""));
             const id = Number.isInteger(n) && n > 0 ? digestItemId(n) : undefined;

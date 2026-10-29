@@ -42,7 +42,9 @@ const collect = (now: number) => src.MEMORY_DIGEST.collectIntents({ now } as nev
 const writeState = (s: object) =>
     fs.writeFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "memory-digest.json"), JSON.stringify(s));
 const forgetItem = async (ctx: CronCallerContext, n: number) =>
-    JSON.parse(await cron.runWithCallerContext(ctx, () => tools.memoryForget.handler({ digest_item: n })));
+    JSON.parse(
+        await cron.runWithCallerContext({ isPrivate: true, ...ctx }, () => tools.memoryForget.handler({ digest_item: n })),
+    );
 
 let digest: ProactiveIntent;
 

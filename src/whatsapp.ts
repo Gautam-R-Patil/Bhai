@@ -2407,14 +2407,16 @@ export { getOwners } from "./whatsapp-users.js";
  * Send a proactive message to all registered owners (and legacy allowed JIDs).
  * Respects rate limits and typing simulation.
  */
-export async function sendWhatsAppProactiveMessage(message: string, filePath?: string): Promise<void> {
-    if (!socket) return;
+/** Resolves whether anyone got it. */
+export async function sendWhatsAppProactiveMessage(message: string, filePath?: string): Promise<boolean> {
+    if (!socket) return false;
 
     // Collect all owner JIDs + legacy allowed JIDs
     const targetJids = new Set<string>();
     for (const owner of getOwners()) targetJids.add(owner.jid);
     for (const jid of allowedJids) targetJids.add(jid);
 
+    let delivered = false;
     for (const jid of targetJids) {
         try {
             await socket.sendPresenceUpdate("composing", jid);
@@ -2453,12 +2455,14 @@ export async function sendWhatsAppProactiveMessage(message: string, filePath?: s
             } else {
                 await sendMessage(jid, message);
             }
+            delivered = true;
 
             await socket.sendPresenceUpdate("paused", jid);
         } catch (err) {
             console.error(`[WHATSAPP] Failed to send proactive message to ${jid}:`, (err as Error).message);
         }
     }
+    return delivered;
 }
 
 /**

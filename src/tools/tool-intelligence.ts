@@ -229,6 +229,9 @@ function ensureAuditLog(): string {
     return auditLogPath;
 }
 
+/** Memory tools carry the owner's facts; those live in the memory DB, where forget can reach them, never in logs. */
+export const ownerMemoryTool = (name: string): boolean => /^(core_memory|memory|identity|trait)_/.test(name);
+
 /**
  * Log a tool call to the audit log.
  */
@@ -246,8 +249,7 @@ export function auditLog(entry: {
             ts: new Date().toISOString(),
             ...entry,
             // Truncate large args/errors
-            // Memory tools carry the owner's facts; those live in the memory DB, where forget can reach them.
-            args: /^(memory|identity|trait)_/.test(entry.tool) ? Object.keys(entry.args) : truncateObj(entry.args, 200),
+            args: ownerMemoryTool(entry.tool) ? Object.keys(entry.args) : truncateObj(entry.args, 200),
             error: entry.error?.substring(0, 200),
         });
         // Typing tools log revealed values (an OTP, a saved password): mask them.

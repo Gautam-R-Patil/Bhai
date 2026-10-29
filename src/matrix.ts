@@ -429,19 +429,23 @@ export async function initMatrix(llm: LLMClient): Promise<void> {
  * Send a proactive message to all allowed rooms.
  * Used by heartbeat, notifications, and research completion.
  */
-export async function sendMatrixProactiveMessage(message: string): Promise<void> {
-    if (!accessToken || !homeserverUrl || !running) return;
+/** Resolves whether any room got it. */
+export async function sendMatrixProactiveMessage(message: string): Promise<boolean> {
+    if (!accessToken || !homeserverUrl || !running) return false;
 
     // If no allowed rooms configured, skip
-    if (!allowedRooms || allowedRooms.size === 0) return;
+    if (!allowedRooms || allowedRooms.size === 0) return false;
 
+    let delivered = false;
     for (const roomId of allowedRooms) {
         try {
             await sendReply(roomId, message);
+            delivered = true;
         } catch (err) {
             console.warn(`[MATRIX] Failed to send proactive message to ${roomId}:`, (err as Error).message);
         }
     }
+    return delivered;
 }
 
 /**

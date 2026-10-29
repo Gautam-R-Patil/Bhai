@@ -10,9 +10,15 @@ import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Channel send function registry (populated at boot by each channel) ──
 // Resolves false when it had nowhere to send (e.g. Discord with no notifications channel set).
-// Buttons are one-tap actions on the owner's data: Telegram sends them to its owners only; others ignore them.
+// Buttons are one-tap actions on the owner's data, and ownerOnly messages quote it: Telegram sends both
+// to its owners only; others ignore them.
 export type ProactiveButton = { text: string; data: string };
-type ChannelSendFn = (message: string, filePath?: string, buttons?: ProactiveButton[]) => Promise<void | boolean>;
+type ChannelSendFn = (
+    message: string,
+    filePath?: string,
+    buttons?: ProactiveButton[],
+    ownerOnly?: boolean,
+) => Promise<void | boolean>;
 const channelSenders = new Map<string, ChannelSendFn>();
 
 /**

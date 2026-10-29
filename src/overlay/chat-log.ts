@@ -75,6 +75,29 @@ export function readChatLog(): ChatLogEntry[] {
     return readLines().filter(isMessage);
 }
 
+/** Replace the text of matching messages with `with` (memory/forget.ts). */
+export function redactChatLog(hit: (text: unknown) => boolean, with_: string): void {
+    let raw: string;
+    try {
+        raw = fs.readFileSync(chatLogPath(), "utf8");
+    } catch {
+        return;
+    }
+    let changed = false;
+    const lines = raw.split("\n").map((line) => {
+        try {
+            const e = JSON.parse(line);
+            if (!hit(e?.text)) return line;
+            changed = true;
+            return JSON.stringify({ ...e, text: with_ });
+        } catch {
+            return line;
+        }
+    });
+    // ponytail: read-then-rewrite can drop a message appended in between; forget is rare.
+    if (changed) fs.writeFileSync(chatLogPath(), lines.join("\n"));
+}
+
 /**
  * The last `limit` owner messages from the past `maxAgeMs` (and since the last
  * /new), as agent context. Web-widget visitors aren't the owner, and restored

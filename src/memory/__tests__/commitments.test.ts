@@ -167,5 +167,11 @@ describe("commitment_due source", () => {
 
         const { tryTemplate } = await import("../../proactive/composer-templates.js");
         expect(tryTemplate(first[0], "discord")).toContain("Send Riya the deck");
+        // It quotes the owner's memory: a private surface, owners only, never a phone number.
+        expect(first[0]).toMatchObject({ channelPreference: "overlay", payload: { ownerOnly: true } });
+        const call = commitment("Call Riya on +91 98765 43210", new Date(now + 10 * 60_000).toISOString());
+        const [nudge] = (await src.COMMITMENT_DUE.collectIntents({ now })).filter((i) => i.payload.memoryId === call);
+        expect(tryTemplate(nudge, "telegram")).toContain(`commitment #${call}`);
+        expect(JSON.stringify(nudge)).not.toContain("98765");
     });
 });

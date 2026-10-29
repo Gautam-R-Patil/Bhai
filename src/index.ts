@@ -535,18 +535,14 @@ async function boot() {
 
     // ── Register cross-channel senders (for send_message_on_channel tool) ──
     if (bot) {
-        registerChannelSender("telegram", (message, filePath, buttons) =>
-            sendProactiveMessage(bot, config, message, filePath, buttons),
+        registerChannelSender("telegram", (message, filePath, buttons, ownerOnly) =>
+            sendProactiveMessage(bot, config, message, filePath, buttons, ownerOnly),
         );
     }
-    registerChannelSender("whatsapp", async (message, filePath) => {
-        await sendWhatsAppProactiveMessage(message, filePath);
-    });
+    registerChannelSender("whatsapp", (message, filePath) => sendWhatsAppProactiveMessage(message, filePath));
     registerChannelSender("discord", (message, filePath) => sendDiscordProactiveMessage(message, filePath));
     registerChannelSender("slack", (message) => sendSlackProactiveMessage(message));
-    registerChannelSender("matrix", async (message) => {
-        await sendMatrixProactiveMessage(message);
-    });
+    registerChannelSender("matrix", (message) => sendMatrixProactiveMessage(message));
     registerChannelSender("overlay", (message) => sendOverlayNotification(message));
 
     // Wire deep research proactive notifier (background research sends progress here)
