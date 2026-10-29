@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 //
 // Parity + timing for scripts/dump_ax_bin: per-attribute walk (default) vs the
-// batched walk (ATLAS_AX_BATCH=true). Compares every node and field of both modes
+// batched walk (the default; ATLAS_NO_AX_BATCH=true turns it off). Compares every node and field of both modes
 // (rule: compareRuns in src/screen/ax-batch-parity.ts)
 // and prints the median wall time of 5 interleaved runs each.
 //

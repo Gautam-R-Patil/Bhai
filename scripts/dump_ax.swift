@@ -27,9 +27,10 @@
 //   An optional top-level "partial": true means some of the tree is missing: an AX read
 //   hit the messaging timeout, or the walk ran out of its total time budget.
 //
-// Environment switches (both opt-in; unset = the old per-attribute walk, system timeout):
-//   ATLAS_AX_BATCH=true            one AXUIElementCopyMultipleAttributeValues per node
-//                                  instead of one IPC per attribute
+// Environment switches:
+//   ATLAS_NO_AX_BATCH=true         the old per-attribute walk (one IPC per attribute)
+//                                  instead of one AXUIElementCopyMultipleAttributeValues
+//                                  per node, the default since parity passed on the owner's Mac
 //   ATLAS_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (clamped 100-5000). Two
 //                                  timeouts in a row count as a hung app and end the walk.
 //   ATLAS_AX_BUDGET_MS=N           whole-walk budget (default 3000, min 500)
@@ -105,7 +106,7 @@ if pid == 0 {
 // ── AX helpers ───────────────────────────────────
 
 let env = ProcessInfo.processInfo.environment
-let useBatch = env["ATLAS_AX_BATCH"] == "true"
+let useBatch = env["ATLAS_NO_AX_BATCH"] != "true"
 /// nil = timeout off: the system default (~6s) applies and no hang tracking runs,
 /// exactly the walk this helper had before the timeout existed.
 let msgTimeoutMs: Int? = Int(env["ATLAS_AX_MSG_TIMEOUT_MS"] ?? "").flatMap { $0 > 0 ? max(100, min(5000, $0)) : nil }

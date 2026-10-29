@@ -646,7 +646,7 @@ Cross-OS accessibility-tree dump:
 - **Windows:** UIA `IUIAutomation` via `dump_uia.ps1`
 - **Linux:** AT-SPI helper (`dump_atspi.py`)
 
-Helper scripts resolve through the bundle-aware `getScriptsDir()` / `resolveScript()` in `src/config/paths.ts`, because the packaged app is a single esbuild bundle (`bot-bundle.mjs`) whose `__dirname` is flat; the old resolver missed them and silently forced every click onto the slow vision path. Rows with empty labels (text lives in a child `AXStaticText`) get a label from `deriveLabelFromDescendants`, and `scoreText` is token-aware. A dump that was cut short (slow or hung app) sets `"partial": true` and is treated as an AX miss. Opt-in knobs: `ATLAS_AX_BATCH=true` (batched attribute reads, ~2–3.5× faster dumps; AXValue stays a per-node read so a secure field's value is never requested), `ATLAS_AX_MSG_TIMEOUT_MS=N`, and `ATLAS_NATIVE_AX=true` (Rust flatten/find, only worth it for very large trees — the TS default wins below ~200 nodes).
+Helper scripts resolve through the bundle-aware `getScriptsDir()` / `resolveScript()` in `src/config/paths.ts`, because the packaged app is a single esbuild bundle (`bot-bundle.mjs`) whose `__dirname` is flat; the old resolver missed them and silently forced every click onto the slow vision path. Rows with empty labels (text lives in a child `AXStaticText`) get a label from `deriveLabelFromDescendants`, and `scoreText` is token-aware. A dump that was cut short (slow or hung app) sets `"partial": true` and is treated as an AX miss. Attributes are read in one batched call per node by default (~2–3.5× faster dumps, and a busy Finder no longer runs the walk out of time; `ATLAS_NO_AX_BATCH=true` goes back to one read per attribute; AXValue stays a per-node read so a secure field's value is never requested). Opt-in knobs: `ATLAS_AX_MSG_TIMEOUT_MS=N`, and `ATLAS_NATIVE_AX=true` (Rust flatten/find, only worth it for very large trees — the TS default wins below ~200 nodes).
 
 #### Primary GUI tool
 
@@ -1453,7 +1453,7 @@ All configuration is via `.env` (copy from `.env.example`).
 | `ATLAS_SMARTCLICK_USE_CALLER_SCREENSHOT=true` | Trust a caller-passed `screenshot_base64` instead of re-capturing at click time |
 | `ATLAS_NO_AX_RETRY=true` / `ATLAS_AX_RETRY_DELAY_MS=<ms>` | Disable cold-window AX re-dump / tune its settle delay (default 250) |
 | `ATLAS_NO_WINDOW_SCOPED_CAPTURE=true` | Force `os_smart_click` to full-screen capture instead of window-region |
-| `ATLAS_AX_BATCH=true` / `ATLAS_AX_MSG_TIMEOUT_MS=<ms>` | Opt-in batched AX attribute reads / per-call AX messaging timeout (100–5000) |
+| `ATLAS_NO_AX_BATCH=true` / `ATLAS_AX_MSG_TIMEOUT_MS=<ms>` | Per-attribute AX reads instead of the default batched ones / opt-in per-call AX messaging timeout (100–5000) |
 | `ATLAS_NATIVE_AX=true` | Opt-in: route AX tree flatten/find through `native/src/ax_walker.rs` (TS is faster for trees <200 nodes) |
 | `ATLAS_NO_AGENT_CURSOR=true` | No ghost cursor / "Bhai is in control" glow |
 
