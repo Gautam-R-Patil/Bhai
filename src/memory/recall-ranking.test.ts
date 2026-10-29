@@ -111,3 +111,15 @@ describe("parseDateWindow", () => {
         expect([daysBefore(w.since), daysBefore(w.until)]).toEqual([21, 7]);
     });
 });
+
+describe("recallConversation", () => {
+    it("ranks the summary matching the most terms first, newest only as tiebreak", async () => {
+        const raw = sqlite.getRawDb();
+        if (!raw) throw new Error("raw DB unavailable");
+        const ins = raw.prepare("INSERT INTO conversations (session_id, messages_json, summary, created_at) VALUES (?, '[]', ?, ?)");
+        ins.run("s1", "quokkatesla stock earnings call notes", "2026-01-01 00:00:00");
+        ins.run("s2", "quokkatesla road trip", "2026-06-01 00:00:00");
+        const hits = await sqlite.recallConversation("quokkatesla stock earnings", 5);
+        expect(hits.map((h) => h.session_id)).toEqual(["s1", "s2"]);
+    });
+});

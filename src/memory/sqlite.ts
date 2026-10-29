@@ -2629,7 +2629,7 @@ export async function recallConversation(query: string, limit = 5): Promise<Conv
     const whereClause = likeConditions.length > 0 ? `WHERE ${likeConditions.join(" OR ")}` : "";
 
     // Most matching terms first, so one shared word doesn't outrank an exact topic match.
-    const matchOrder = likeConditions.length > 0 ? `(${likeConditions.join(" + ")}) DESC, ` : "";
+    const matchOrder = likeConditions.length > 0 ? `(${likeConditions.map((c) => `(${c})`).join(" + ")}) DESC, ` : "";
     const likeRes = db.exec(
         `SELECT id, session_id, summary, created_at
      FROM conversations
