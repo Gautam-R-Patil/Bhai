@@ -36,8 +36,8 @@ export async function compose(
     deps: { llm: LLMClient | null },
 ): Promise<ComposerResult | null> {
     // 1. Template fast path. Templates are casual English, so a Professional/Direct or non-English
-    // owner gets the LLM instead. The digest (their own words) and commitment nudges stay fixed.
-    const fixed = intent.payload.kind === "memory_digest" || intent.payload.kind === "commitment_due";
+    // owner gets the LLM instead. The digest (their own words) and time-critical nudges stay fixed.
+    const fixed = ["memory_digest", "commitment_due", "deadline_imminent"].includes(intent.payload.kind);
     const casualEnglish = !/PROFESSIONAL|DIRECT/.test(persona.tone) && getCurrentLanguage() === "English";
     const tpl = fixed || casualEnglish || !deps.llm ? tryTemplate(intent, channel) : null;
     if (tpl !== null) {

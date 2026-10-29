@@ -109,5 +109,10 @@ describe("compose — template fast path follows the tone", () => {
             /send the deck/,
         );
         expect(pro.chat).not.toHaveBeenCalled();
+        const deadline = mk("deadline_imminent", "deadline", { title: "ship PR", dueMs: Date.now() + 30 * 60_000 });
+        expect(
+            (await compose(deadline, "telegram", { tone: "Tone right now: PROFESSIONAL" }, [], { llm: pro }))?.text,
+        ).toMatch(/left on 'ship PR'/);
+        expect(pro.chat).not.toHaveBeenCalled();
     });
 });

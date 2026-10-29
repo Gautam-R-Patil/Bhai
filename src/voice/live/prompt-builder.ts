@@ -11,7 +11,7 @@
 // and include things like tool-output formatting that don't apply to audio.
 
 import { fetchSystemPrompts } from "../../config/system-prompts.js";
-import { getToneReminder } from "../../setup/personality-sync.js";
+import { getActivePreset, getToneReminder } from "../../setup/personality-sync.js";
 import { getFullMemoryContext } from "./memory-bridge.js";
 
 // Voice-specific overlay on top of the canonical Bhai identity. Keep this
@@ -107,7 +107,8 @@ export async function buildVoiceSystemPrompt(): Promise<string> {
     // 2. Voice-specific "feel alive" rules
     parts.push(VOICE_MODE_RULES);
     // The Settings preset: this endpoint serves identity alone, without the server's personality addendum.
-    const tone = getToneReminder();
+    // Unhinged stays text-only: text routes it to Grok, but voice runs on Gemini/OpenAI, which won't take it.
+    const tone = getActivePreset() === "unhinged" ? null : getToneReminder();
     if (tone) parts.push(tone);
 
     // 3. Compact memory context about this specific user
