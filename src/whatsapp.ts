@@ -342,12 +342,14 @@ function splitMessage(text: string, maxLength: number): string[] {
 
 // ── Send Message with Rate Limiting ──────────
 
-async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Promise<void> {
+/** Sends `text` (split into chunks); resolves to the key of the last chunk sent, so a caller can edit it later. */
+async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Promise<WAMessage["key"] | undefined> {
     if (!socket) return;
     if (!checkRateLimit(jid)) {
         console.warn("[WHATSAPP] Dropping message due to rate limit");
         return;
     }
+    let lastKey: WAMessage["key"] | undefined;
 
     await enforceMinInterval();
 
@@ -357,7 +359,7 @@ async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Pr
         // Only quote the original message on the FIRST chunk (not on splits)
         const opts = i === 0 && quotedMsg ? { quoted: quotedMsg } : undefined;
         try {
-            await socket.sendMessage(jid, { text: formatted }, opts);
+            lastKey = (await socket.sendMessage(jid, { text: formatted }, opts))?.key ?? lastKey;
         } catch (err) {
             console.error("[WHATSAPP] Failed to send message:", (err as Error).message);
             // Fallback: send without formatting or quoting
@@ -368,12 +370,13 @@ async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Pr
                     .replace(/__(.+?)__/g, "$1")
                     .replace(/`([^`]+)`/g, "$1")
                     .replace(/```[\s\S]*?```/g, (m: string) => m.replace(/```\w*\n?/g, "").trim());
-                await socket.sendMessage(jid, { text: sanitizeReply(plain) });
+                lastKey = (await socket.sendMessage(jid, { text: sanitizeReply(plain) }))?.key ?? lastKey;
             } catch {
                 /* give up */
             }
         }
     }
+    return lastKey;
 }
 
 // ── Extract message text ─────────────────────
@@ -1379,9 +1382,11 @@ async function handleOwnerMessage(
                                     : null; // null = not a clear task, no acknowledgment
 
     // Send task acknowledgment IMMEDIATELY (not after a delay), then resume typing indicator
+    let preAck: Promise<WAMessage["key"] | undefined> | undefined; // later edited into the agent's contract line
     if (taskMsg) {
         progressSent = true;
-        sendMessage(jid, taskMsg)
+        preAck = sendMessage(jid, taskMsg).catch(() => undefined);
+        preAck
             .then(() => {
                 // Resume typing indicator after acknowledgment so user still sees "typing..."
                 socket?.sendPresenceUpdate("composing", jid).catch(() => {});
@@ -1409,6 +1414,17 @@ async function handleOwnerMessage(
 
         const progressCallback = async (msg: string) => {
             console.log(`  [WA] [progress] ${msg}`);
+            // The turn's contract line: edit the quick ack into it (one ack, not two), else send it.
+            if (!msg.startsWith("[ACK] ")) return;
+            const contract = msg.slice(6);
+            const ackKey = await preAck;
+            try {
+                if (ackKey && socket)
+                    await socket.sendMessage(jid, { text: markdownToWhatsApp(contract), edit: ackKey });
+                else await sendMessage(jid, contract);
+            } catch {
+                /* non-fatal: the reply still arrives */
+            }
         };
 
         // Extract media from the original message if present
@@ -2085,7 +2101,9 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
     initWhatsAppUsers();
 
     // Register the relay sender so ask_owner tool can forward questions to owners
-    registerOwnerRelaySender((jid, text) => sendMessage(jid, text));
+    registerOwnerRelaySender(async (jid, text) => {
+        await sendMessage(jid, text);
+    });
 
     // Parse allowed JIDs from environment
     const jidsRaw = process.env.WHATSAPP_ALLOWED_JIDS;

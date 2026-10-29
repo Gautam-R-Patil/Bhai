@@ -351,7 +351,7 @@ function handleOverlayMessage(msg) {
     return;
   }
 
-  if (msg.type === "progress" || msg.type === "thinking" || msg.type === "thinking_content") {
+  if (msg.type === "progress" || msg.type === "contract" || msg.type === "thinking" || msg.type === "thinking_content") {
     chrome.runtime.sendMessage({
       type: "atlas_progress",
       text: msg.text || "",

@@ -171,6 +171,17 @@ async function handleSlackMessage(
             // Skip internal thinking progress
             if (msg.startsWith("[THINKING] ")) return;
 
+            // The turn's contract line gets its own thread message: the status
+            // message below is truncated and overwritten, which would lose "done = …".
+            if (msg.startsWith("[ACK] ")) {
+                try {
+                    await say({ text: msg.slice(6), thread_ts: threadTs });
+                } catch {
+                    /* non-fatal */
+                }
+                return;
+            }
+
             const progressText = msg.replace(/<[^>]+>/g, "").substring(0, 100);
             if (!progressText) return;
 

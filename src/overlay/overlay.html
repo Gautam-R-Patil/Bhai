@@ -2157,6 +2157,8 @@
       padding: 14px 20px 16px;
     }
     #progress:not(:empty) { padding: 10px 20px; border-top: 1px solid var(--glass-line); }
+    /* The turn's contract line ("on it — …; done = …"): stays put while progress churns below it. */
+    #contract:not(:empty) { padding: 10px 20px 0; font-size: 12px; line-height: 1.45; color: var(--text-secondary); border-top: 1px solid var(--glass-line); }
     #notification-label { color: var(--accent); }
     #reply-box::after { display: none; }
     #task-drawer-toggle { margin: 8px auto 0; border: 1px solid var(--glass-line) !important; border-radius: 999px !important; }
@@ -2759,6 +2761,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         </div>
       </div>
     </div>
+    <div id="contract" role="status" aria-live="polite" aria-label="What Bhai is doing"></div>
     <div id="progress" role="status" aria-live="polite" aria-label="Agent progress"></div>
     <div id="notification-box" role="alert" aria-live="assertive">
       <div id="notification-label">✦ Bhai</div>
@@ -2791,6 +2794,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       const icon = document.getElementById('icon');
       if (window.BhaiMascot) window.BhaiMascot.mount(icon, 'idle');
       const progress = document.getElementById('progress');
+      const contract = document.getElementById('contract');
       const replyBox = document.getElementById('reply-box');
       const replyText = document.getElementById('reply-text');
       const notifBox = document.getElementById('notification-box');
@@ -2826,6 +2830,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         replyText.innerHTML = '';
         progress.classList.remove('visible');
         progress.innerHTML = '';
+        contract.textContent = '';
         clearInteractive();
         input.value = '';
         input.disabled = false;
@@ -3156,6 +3161,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           replyBox.classList.remove('visible');
           progress.classList.remove('visible');
           progress.innerHTML = '';
+          contract.textContent = ''; // a new turn: the last turn's contract no longer applies
           clearInteractive();
         }
         else if (msg.type === 'thinking_content') {
@@ -3166,6 +3172,10 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             progress.innerHTML = `<div class="thinking-block"><div class="thinking-label">💭 thinking</div>${esc(truncated)}</div>`;
             progress.classList.add('visible');
           }
+        }
+        else if (msg.type === 'contract') {
+          // Kept for the whole turn (cleared when the next one starts), unlike the progress card.
+          contract.textContent = msg.text || '';
         }
         else if (msg.type === 'progress') {
           if (waiting || icon.classList.contains('thinking')) setMood(moodFromProgress(msg.text));

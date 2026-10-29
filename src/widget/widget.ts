@@ -316,6 +316,10 @@ export function getWidgetScript(wsUrl: string): string {
             currentAgentMsg.innerHTML = renderMarkdown(msg.text);
             msgContainer.scrollTop = msgContainer.scrollHeight;
           }
+        } else if (msg.type === "contract" && msg.text) {
+          // The turn's contract line ("on it — …; done = …") stays in the thread, above the reply.
+          var contractMsg = addMessage(msg.text, "agent");
+          if (currentAgentMsg) msgContainer.insertBefore(contractMsg, currentAgentMsg);
         } else if (msg.type === "progress" && msg.text) {
           statusEl.textContent = msg.text.substring(0, 40);
         } else if (msg.type === "response" && msg.text) {

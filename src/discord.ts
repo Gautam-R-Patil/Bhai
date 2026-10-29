@@ -183,6 +183,7 @@ async function sendResponse(
 async function sendFollowUps(
     interaction: ChatInputCommandInteraction,
     text: string,
+    keepReply = false, // the deferred reply already holds the contract line: don't overwrite it
 ): Promise<void> {
     const sanitized = sanitizeReply(text);
     if (!sanitized) return;
@@ -191,10 +192,10 @@ async function sendFollowUps(
     if (chunks.length === 0) return;
 
     // First chunk goes to editReply
-    await interaction.editReply(chunks[0]);
+    if (!keepReply) await interaction.editReply(chunks[0]);
 
     // Remaining chunks as follow-ups
-    for (let i = 1; i < chunks.length; i++) {
+    for (let i = keepReply ? 0 : 1; i < chunks.length; i++) {
         try {
             await interaction.followUp(chunks[i]);
         } catch (err) {
@@ -212,8 +213,17 @@ async function runAndReply(
     media?: MediaAttachment[],
     modelHint?: "simple" | "complex",
 ): Promise<void> {
+    // The turn's contract line replaces the deferred "thinking…" reply; the answer then follows it.
+    let contractShown = false;
     const progressCallback: ProgressCallback = async (msg: string) => {
         console.log(`  [DISCORD][progress] ${msg}`);
+        if (!msg.startsWith("[ACK] ")) return;
+        try {
+            await interaction.editReply(msg.slice(6));
+            contractShown = true;
+        } catch {
+            /* non-fatal */
+        }
     };
 
     setSwarmProgress(progressCallback);
@@ -225,11 +235,13 @@ async function runAndReply(
         const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
 
         if (result.text.trim() === "[NO_REPLY]") {
-            await interaction.editReply("Done -- no additional output.");
+            // Never end on the promise: the reply holds the contract line, so the close goes below it.
+            if (contractShown) await interaction.followUp("Done -- no additional output.");
+            else await interaction.editReply("Done -- no additional output.");
             return;
         }
 
-        await sendFollowUps(interaction, result.text);
+        await sendFollowUps(interaction, result.text, contractShown);
     } finally {
         clearSwarmProgress();
         clearDeepResearchProgress();
@@ -270,27 +282,32 @@ async function runInThread(
 
     await interaction.editReply(`Started in thread: <#${thread.id}>`);
 
-    // Send initial status in thread
-    await thread.send(`**${embedTitle}**\nWorking on it...`);
+    // Send initial status in thread; the agent's contract line is later edited into it.
+    const statusMsg = await thread.send(`**${embedTitle}**\nWorking on it...`);
 
     let lastProgressUpdate = 0;
     const PROGRESS_THROTTLE_MS = 3000;
 
     const progressCallback: ProgressCallback = async (msg: string) => {
         console.log(`  [DISCORD][thread-progress] ${msg}`);
+        // The turn's contract line always goes out, without its internal tag.
+        const isAck = msg.startsWith("[ACK] ");
+        const text = isAck ? msg.slice(6) : msg;
         const now = Date.now();
-        if (now - lastProgressUpdate < PROGRESS_THROTTLE_MS) return;
+        if (!isAck && now - lastProgressUpdate < PROGRESS_THROTTLE_MS) return;
         lastProgressUpdate = now;
 
         // Skip internal messages
-        const lower = msg.toLowerCase();
+        const lower = text.toLowerCase();
         if (lower.includes("still working") || lower.startsWith("error")) return;
 
         try {
-            const truncated = msg.length > DISCORD_MSG_LIMIT - 50
-                ? msg.substring(0, DISCORD_MSG_LIMIT - 53) + "..."
-                : msg;
-            await thread.send(`> ${truncated}`);
+            const truncated =
+                text.length > DISCORD_MSG_LIMIT - 50 ? `${text.substring(0, DISCORD_MSG_LIMIT - 53)}...` : text;
+            // One ack, not two: the contract line replaces "Working on it...".
+            if (isAck)
+                await statusMsg.edit(`**${embedTitle}**\n${truncated}`).catch(() => thread.send(`> ${truncated}`));
+            else await thread.send(`> ${truncated}`);
         } catch { /* thread may have been archived */ }
     };
 
@@ -675,8 +692,17 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
         }, 8000); // Discord typing indicator lasts ~10s
 
         try {
+            let contractShown = false;
             const progressCallback: ProgressCallback = async (msg: string) => {
                 console.log(`  [DISCORD][msg-progress] ${msg}`);
+                // The turn's contract line goes out as soon as the agent states it.
+                if (!msg.startsWith("[ACK] ")) return;
+                await message
+                    .reply(msg.slice(6))
+                    .then(() => {
+                        contractShown = true;
+                    })
+                    .catch(() => {});
             };
 
             setSwarmProgress(progressCallback);
@@ -690,7 +716,11 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             clearDeepResearchProgress();
             clearLongTaskProgress();
 
-            if (result.text.trim() === "[NO_REPLY]") return;
+            if (result.text.trim() === "[NO_REPLY]") {
+                // Never end on the promise: close the contract line.
+                if (contractShown) await message.reply("Done -- no additional output.").catch(() => {});
+                return;
+            }
 
             const sanitized = sanitizeReply(result.text);
             const chunks = splitForDiscord(sanitized);

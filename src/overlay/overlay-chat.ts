@@ -960,7 +960,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
                 }
                 return;
             }
-            sendToClient(ws, { type: "progress", text: humanizeForOverlay(msg) });
+            sendToClient(ws, overlayProgressMessage(msg));
         };
 
         // Use the SAME shared conversation history (no fork)
@@ -1068,7 +1068,7 @@ async function handleFileAttachment(
 
     try {
         const onProgress = async (msg: string) => {
-            sendToClient(ws, { type: "progress", text: humanizeForOverlay(msg) });
+            sendToClient(ws, overlayProgressMessage(msg));
         };
 
         const ac = new AbortController();
@@ -1286,6 +1286,16 @@ function inboxItemToWire(item: InboxItemLike): Record<string, unknown> {
         deferredUntil: item.deferredUntil,
         createdAt: item.createdAt,
     };
+}
+
+/**
+ * Wire message for a turn's progress update. The contract line ("[ACK] on it — …;
+ * done = …") gets its own type, which the overlay keeps on screen for the turn,
+ * so the next progress update can't overwrite the done-criterion.
+ */
+export function overlayProgressMessage(msg: string): { type: "contract" | "progress"; text: string } {
+    if (msg.startsWith("[ACK] ")) return { type: "contract", text: msg.slice(6) };
+    return { type: "progress", text: humanizeForOverlay(msg) };
 }
 
 function humanizeForOverlay(msg: string): string {

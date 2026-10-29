@@ -759,6 +759,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                 let agentMessage = combinedMessage;
                 let modelHint: "simple" | "complex" | undefined;
+                let quickAckId: number | undefined; // the quick ack, later edited into the agent's contract line
                 if (isAck) {
                     console.log(`  💬 Short ack detected — injecting context note to prevent task restart`);
                     agentMessage =
@@ -775,7 +776,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     modelHint = complexity;
                     if (ack) {
                         console.log(`  💬 LLM classified as task — ack: "${ack}"`);
-                        await ctx.reply(ack);
+                        quickAckId = (await ctx.reply(ack)).message_id;
                     }
                     console.log(`  🧠 Model routing: ${complexity}`);
                 }
@@ -883,6 +884,12 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         } catch (err) {
                             console.warn("[TELEGRAM] Failed to send task keyboard:", (err as Error).message);
                         }
+                        return;
+                    }
+
+                    // ── Ack: the turn's contract line replaces the quick ack ──
+                    if (msg.startsWith("[ACK] ")) {
+                        await sendContractLine(bot.api, chatId, quickAckId, msg.slice(6));
                         return;
                     }
 
@@ -1601,11 +1608,13 @@ async function handleMediaMessage(
 
         // ── Send one natural acknowledgement before work starts ──
         const { ack: mediaAck } = await classifyAndAck(llm, caption);
-        if (mediaAck) await ctx.reply(mediaAck);
+        const mediaAckId: number | undefined = mediaAck ? (await ctx.reply(mediaAck)).message_id : undefined;
 
-        // Progress is silent on Telegram — only logged to console.
+        // Progress is silent on Telegram — only logged to console — except the
+        // turn's contract line, which replaces the quick ack.
         const progressCallback = async (msg: string) => {
             console.log(`  📊 [progress] ${msg}`);
+            if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, mediaAckId, msg.slice(6));
         };
 
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config);
@@ -1760,6 +1769,7 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
 
         const progressCallback = async (msg: string) => {
             console.log(`  📊 [progress] ${msg}`);
+            if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, undefined, msg.slice(6));
         };
 
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config);
@@ -1809,6 +1819,24 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
 }
 
 // ── Helpers ───────────────────────────────────
+
+/**
+ * Delivers the agent's contract line ("on it — …; done = …"): edits the quick
+ * ack already sent into it, so the user sees one ack, or sends it if none was.
+ */
+async function sendContractLine(
+    api: Bot["api"],
+    chatId: number,
+    quickAckId: number | undefined,
+    text: string,
+): Promise<void> {
+    try {
+        if (quickAckId) await api.editMessageText(chatId, quickAckId, text);
+        else await api.sendMessage(chatId, text);
+    } catch {
+        /* non-fatal: the reply still arrives */
+    }
+}
 
 /**
  * Uses a fast LLM call to intelligently:

@@ -315,6 +315,53 @@ export function stripTurnNudges(msgs: ChatCompletionMessageParam[], owned: Reado
     for (let i = msgs.length - 1; i >= 0; i--) if (owned.has(msgs[i])) msgs.splice(i, 1);
 }
 
+/**
+ * The turn's contract: the done-criterion Bhai stated in its ack ("on it — …;
+ * done = it shows in Sent"). The marker is "done =" at the start of the line or
+ * after a clause break (". ", ", ", "; ", ": ", —, – or " - "), so "All done!",
+ * "done: …", "done when …" and `state.done = true` never count, nor does code.
+ */
+const DONE_RE = /(?:^|[.,;:]\s|[—–]|\s-\s)\s*done\s*=\s*(.+)/i;
+/** First prose line with the marker, `*` dropped, plus the criterion after it; code (fenced or `inline`) never counts. */
+function matchAck(text: string | null | undefined): { line: string; contract: string } | undefined {
+    let inFence = false;
+    for (const raw of sanitizeAgentResponse(text ?? "").split("\n")) {
+        if (/^\s*(```|~~~)/.test(raw)) {
+            inFence = !inFence;
+            continue;
+        }
+        const line = raw.replace(/\*/g, "");
+        // Mask `code` at the same length so the marker is found only in prose, then read the criterion from the real line.
+        const m = inFence ? null : DONE_RE.exec(line.replace(/`[^`]*`/g, (c) => "\0".repeat(c.length)));
+        if (!m) continue;
+        const contract = line.slice(m.index + m[0].length - m[1].length).replace(/`/g, "").trim().slice(0, 200);
+        return { line: line.replace(/`/g, "").trim(), contract };
+    }
+    return undefined;
+}
+/** The ack line, cleaned for the user: internal tags and `*`/`` ` `` markup dropped. */
+export function findAckLine(text: string | null | undefined): string | undefined {
+    return matchAck(text)?.line;
+}
+export function extractDoneContract(text: string | null | undefined): string | undefined {
+    return matchAck(text)?.contract || undefined;
+}
+
+/**
+ * The "[ACK] …" progress line channels show for a reply: only when it states a
+ * contract AND has tool calls, i.e. the work is actually starting. A reply with
+ * no tool calls is the final answer (maybe a confirm-first question), never an ack.
+ */
+export function contractProgressLine(content: string | null | undefined, hasToolCalls: boolean): string | undefined {
+    const ack = hasToolCalls && extractDoneContract(content) ? findAckLine(content) : undefined;
+    return ack && `[ACK] ${ack}`;
+}
+
+/** Steers the verify step to check the criterion the agent itself promised. */
+export function contractCheckNudge(contract: string): string {
+    return `Your own done-criterion was: "${contract}". Check exactly that and say what you saw.`;
+}
+
 /** The orchestrator's TOOLS block, built from the tools this turn actually offers. */
 export function planToolsBlock(tools: Array<{ function?: { name: string; description?: string } }>): string {
     return tools
@@ -1461,6 +1508,8 @@ async function _runAgentBody(
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
     let verificationNagged = false;
+    // The done-criterion from this turn's ack, fed back to the verify nudges.
+    let turnContract: string | undefined;
     // A non-complex desktop-only turn (set on iteration 1) stays on Haiku and
     // skips the memory nudge while it's short and nothing has gone wrong.
     let guiTurn = false;
@@ -3235,6 +3284,22 @@ PLAN:`,
         }
 
         const assistantMessage = choice.message;
+        const hasToolCalls = !!assistantMessage.tool_calls?.length;
+        // The contract comes only from the ack, before any tool output is in
+        // context, so quoted page/email text can't become the done-criterion.
+        // Owner (or internal) turns only: a contact's text must never come back
+        // as a system-role "your own done-criterion".
+        if (totalToolCalls === 0 && !turnContract && (!channelContext || channelContext.isOwner)) {
+            turnContract = extractDoneContract(assistantMessage.content);
+            const ackLine = contractProgressLine(assistantMessage.content, hasToolCalls);
+            if (ackLine && onProgress) {
+                try {
+                    await onProgress(ackLine);
+                } catch {
+                    /* non-fatal */
+                }
+            }
+        }
 
         if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
             const responseText = assistantMessage.content || "";
@@ -3491,6 +3556,7 @@ PLAN:`,
                 verifyGate.nudgedThisRun = true;
                 messages.push({ role: "assistant", content: responseText });
                 messages.push({ role: "user", content: buildVerifyReminder(verifyGate) });
+                if (turnContract) pushNudge(messages, contractCheckNudge(turnContract));
                 lastToolCalls = undefined; // bump model selection to PRO for the verify-and-respond turn
                 continue;
             }
@@ -4028,7 +4094,7 @@ PLAN:`,
 1. VERIFY the result (e.g., spotify action='now_playing', os_nav to confirm state, os_visual_verify)
 2. If verification shows the task isn't done, keep working — try alternative approaches
 3. Only tell the user "done" after you have CONFIRMED the task succeeded
-Do NOT assume success from a single click or tool call.`,
+Do NOT assume success from a single click or tool call.${turnContract ? `\n${contractCheckNudge(turnContract)}` : ""}`,
             );
         }
         if (musicFastPathActive && !hasToolFailure) {
