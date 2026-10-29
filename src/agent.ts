@@ -2247,9 +2247,21 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                         /* persona injection is best-effort — skip on read failure */
                     }
                 }
+                let _relationshipDepth: number | undefined;
+                let _preferredLength: "terse" | "normal" | "detailed" | undefined;
+                try {
+                    const relMod = await import("./memory/relationship.js");
+                    _relationshipDepth = relMod.getRelationshipState().depth_score;
+                    const persMod = await import("./setup/personality-sync.js");
+                    _preferredLength = persMod.getPreferredLength();
+                } catch {
+                    /* best-effort — the tone/relationship modules just stay off */
+                }
                 const dynCtx = buildDynamicContextReminder(rawUserMessage, {
                     hour: localHour,
                     persona: _personaForCtx,
+                    relationshipDepth: _relationshipDepth,
+                    preferredLength: _preferredLength,
                 });
                 if (dynCtx) parts.push(dynCtx);
             } catch {

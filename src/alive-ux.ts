@@ -447,28 +447,26 @@ export function smartChunkMessage(text: string, maxLength: number): string[] {
 
         // Find the best split point
         let splitAt = -1;
-        let inCodeBlock = false;
-        let codeBlockStart = -1;
 
-        // Track code blocks — scan the ENTIRE remaining text to find matching pairs
-        {
-            let scanPos = 0;
-            while (scanPos < remaining.length) {
-                const idx = remaining.indexOf("```", scanPos);
-                if (idx === -1) break;
-                if (!inCodeBlock) {
-                    inCodeBlock = true;
-                    codeBlockStart = idx;
-                } else {
-                    inCodeBlock = false;
-                    codeBlockStart = -1;
-                }
-                scanPos = idx + 3;
-            }
+        // Collect every fence position, then check whether the maxLength
+        // boundary lands inside a code block. Parity alone missed this: a
+        // fully-closed block has an EVEN fence count, so the old scan reported
+        // "not in a block" and split straight through it, leaving an unclosed
+        // ``` in the chunk. Fences alternate open/close; an odd trailing fence
+        // is an unclosed block running to the end.
+        const fences: number[] = [];
+        for (let p = remaining.indexOf("```"); p !== -1; p = remaining.indexOf("```", p + 3)) {
+            fences.push(p);
+        }
+        let codeBlockStart = -1;
+        for (let i = 0; i < fences.length; i += 2) {
+            const open = fences[i];
+            const close = i + 1 < fences.length ? fences[i + 1] + 3 : remaining.length;
+            if (open < maxLength && close > maxLength) { codeBlockStart = open; break; }
         }
 
         // If a code block spans across the maxLength boundary, split BEFORE it opens
-        if (inCodeBlock && codeBlockStart >= 0 && codeBlockStart < maxLength) {
+        if (codeBlockStart >= 0) {
             splitAt = codeBlockStart > 0 ? codeBlockStart : maxLength;
         } else {
             // Find best split: double newline (paragraph) > single newline > sentence end > space

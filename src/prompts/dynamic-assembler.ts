@@ -195,25 +195,26 @@ export function assembleDynamicPrompt(
  */
 export function detectTaskType(message: string): PromptContext["taskType"] {
     const lower = message.toLowerCase();
+    // Word-boundary match, not substring: `.includes("error")` fired on "an
+    // error in judgment" and `.includes("open")` on "I'm open to ideas",
+    // injecting coding/browsing rules into plain chat. Bare "error"/"open"
+    // are dropped entirely — they're over-broad even at a word boundary.
+    const has = (...words: string[]) =>
+        words.some((w) => new RegExp(`\\b${w}\\b`).test(lower));
 
-    if (lower.includes("code") || lower.includes("fix") || lower.includes("implement") ||
-        lower.includes("function") || lower.includes("bug") || lower.includes("error")) {
+    if (has("code", "coding", "fix", "implement", "function", "bug", "debug")) {
         return "coding";
     }
-    if (lower.includes("research") || lower.includes("find out") || lower.includes("search") ||
-        lower.includes("paper") || lower.includes("study")) {
+    if (has("research", "find out", "search", "paper", "study")) {
         return "research";
     }
-    if (lower.includes("browse") || lower.includes("website") || lower.includes("click") ||
-        lower.includes("open") || lower.includes("navigate")) {
+    if (has("browse", "website", "click", "navigate")) {
         return "browsing";
     }
-    if (lower.includes("plan") || lower.includes("design") || lower.includes("architect") ||
-        lower.includes("strategy")) {
+    if (has("plan", "design", "architect", "strategy")) {
         return "planning";
     }
-    if (lower.includes("install") || lower.includes("configure") || lower.includes("system") ||
-        lower.includes("setup")) {
+    if (has("install", "configure", "system", "setup")) {
         return "system";
     }
 

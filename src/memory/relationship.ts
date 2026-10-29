@@ -64,6 +64,25 @@ export function getRelationshipState(userId = DEFAULT_USER): RelationshipState {
     return _cache;
 }
 
+// ── Engagement Streak ─────────────────────────
+
+/**
+ * Consecutive-active-DAY streak. Counts calendar days, not sessions:
+ * +1 only on the next calendar day, unchanged for same-day sessions (so ten
+ * chats in one hour don't inflate it), reset to 1 after a gap of ≥ 2 days.
+ * The old `< 2 / > 2` form left a dead-zone at exactly 2.0 days and counted
+ * every session, contradicting "consecutive active days".
+ */
+export function nextEngagementStreak(current: number, lastInteraction: string, now: Date = new Date()): number {
+    const last = new Date(lastInteraction);
+    if (Number.isNaN(last.getTime())) return 1;
+    const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const dayDiff = Math.round((dayStart(now) - dayStart(last)) / (1000 * 60 * 60 * 24));
+    if (dayDiff === 1) return current + 1; // consecutive day
+    if (dayDiff >= 2) return 1;            // gap — reset
+    return current;                        // same day, or clock skew
+}
+
 // ── Update After Session ──────────────────────
 
 /**
@@ -79,16 +98,8 @@ export function updateRelationshipAfterSession(
 
     const current = getRelationshipState(userId);
     const now = new Date();
-    const lastDate = new Date(current.last_interaction);
 
-    // Engagement streak: increment if same or next day, reset if gap > 1 day
-    const daysSinceLast = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
-    let streak = current.engagement_streak;
-    if (daysSinceLast < 2) {
-        streak++;
-    } else if (daysSinceLast > 2) {
-        streak = 1; // Reset
-    }
+    const streak = nextEngagementStreak(current.engagement_streak, current.last_interaction, now);
 
     // Trust grows slowly with consistent usage
     const trustDelta = 0.005 * Math.min(streak, 10) + (sessionTurnCount > 10 ? 0.01 : 0.005);
@@ -136,7 +147,7 @@ export function getRelationshipSnippet(userId = DEFAULT_USER): string {
     }
 
     if (state.engagement_streak > 5) {
-        parts.push(`- Active streak: ${state.engagement_streak} sessions`);
+        parts.push(`- Active streak: ${state.engagement_streak} days`);
     }
 
     if (state.depth_score > 0.5) {

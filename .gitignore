@@ -83,6 +83,10 @@ desktop/hostinger-upload/
 # Individual test files that should ship with the repo go here so
 # they survive the broad ignore. Add a new entry when you commit a
 # test you want to keep.
+# Session 2026-10-29: personalization/soul pure-logic fixes
+!src/prompts/dynamic-assembler.test.ts
+!src/alive-ux.test.ts
+!src/memory/relationship.test.ts
 # Session 2026-10-28: security, consent, Site Skills, computer use, proactive, memory
 !src/security/loopback.test.ts
 !src/security/tool-access.test.ts
