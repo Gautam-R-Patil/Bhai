@@ -178,7 +178,8 @@ export const memoryStore: ToolDefinition = {
         const useSmartWrite = imp >= 7 && !supersede && !pin && !dueAt;
         const id = await remember(
             input.content as string,
-            dueAt ? "commitment" : (input.category as string) || "general",
+            // bhai_did rows come only from actions that went through (bhai-did.ts), never from the model.
+            dueAt ? "commitment" : input.category === "bhai_did" ? "general" : (input.category as string) || "general",
             normalizeTags(typeof input.tags === "string" ? input.tags : ""),
             imp,
             "user",

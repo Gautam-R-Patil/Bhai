@@ -77,6 +77,7 @@ import type { ChatCompletionMessageParam, LLMClient, ThinkingLevel } from "./llm
 import { MODEL_DISPLAY, MODELS } from "./llm.js";
 import { getLocationSnippet, getTimezone } from "./location/index.js";
 import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
+import { bhaiDidMemory, didLine } from "./memory/bhai-did.js";
 import { buildMemoryCards } from "./memory/cards.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
@@ -98,7 +99,7 @@ import {
     updateSessionGoal,
 } from "./memory/session.js";
 // ── Dynamic Context Injections ────────────────
-import { ageLabel, getCoreMemory, parseDateWindow, recall, recallConversation } from "./memory/sqlite.js";
+import { ageLabel, getCoreMemory, parseDateWindow, recall, recallConversation, remember } from "./memory/sqlite.js";
 import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
 import {
     buildPlaybook,
@@ -149,7 +150,7 @@ import {
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
-import { withSendLedger } from "./tools/send-ledger.js";
+import { sendFailed, withSendLedger } from "./tools/send-ledger.js";
 
 // ── Music fast-path helpers ──────────────────────
 // Short-circuits the Sonnet orchestrator + memory injection when the LLM
@@ -1717,17 +1718,34 @@ async function _runAgentBody(
     // Playbooks: every tool call this turn, and the learnings shown to it.
     const turnCalls: PlaybookCall[] = [];
     const injectedLearnings = new Set<string>();
+    // What went out this turn (sends, files, calendar events), for its 'bhai_did' memory.
+    const didLines: string[] = [];
     const recordBatch = (batch: ToolCallResult[]) => {
         recordBatchForVerifyGate(verifyGate, batch);
         // Lane order, like the gate: a screen check batched with a browser action may have run before it.
         for (const r of inLaneOrder(batch)) {
             turnCalls.push({ fnName: r.fnName, fnArgs: r.fnArgs, failed: toolFailed(r) });
+            const did =
+                !toolFailed(r) && !sendFailed(r.fnName, r.result) && didLine(r.fnName, r.fnArgs, userIntentText);
+            if (did) didLines.push(did);
         }
     };
     // A verified win teaches a playbook; a failed replay demotes what it was shown.
     // A Retry/Skip handoff turn is keyed by the report it replies to, or learns nothing.
     const playbookTask = playbookTaskText(rawUserMessage, userIntentText);
     const settleLearnings = (reply: string, stuck = takeStuckMarker(reply).stuck) => {
+        const did = bhaiDidMemory(didLines.splice(0), {
+            isOwner: channelContext?.isOwner === true,
+            autonomous: channelContext?.autonomous === true,
+            stuck,
+            secret: verifyGate.secretSeen === true,
+            failed: verifyGate.lastMutatorFailed === true,
+        });
+        if (did) {
+            remember(did, "bhai_did", "", 3, "tool").catch((err) =>
+                console.warn("[MEMORY] bhai_did skipped:", (err as Error).message),
+            );
+        }
         if (channelContext?.isOwner !== true || playbookTask === undefined) return;
         try {
             const pb = buildPlaybook(playbookTask, turnCalls, reply, stuck);
