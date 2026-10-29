@@ -198,8 +198,8 @@ describe("Forget that button", () => {
     it("memory_store notes the stored id only on the owner's live turn", async () => {
         const { memoryStore } = await import("../../tools/memory-tools.js");
         const { runWithCallerContext } = await import("../../tools/cron-tool.js");
-        const store = async (ctx: CronCallerContext, content: string) => {
-            const out = JSON.parse(await runWithCallerContext(ctx, () => memoryStore.handler({ content })));
+        const store = async (ctx: CronCallerContext, content: string, importance?: number) => {
+            const out = JSON.parse(await runWithCallerContext(ctx, () => memoryStore.handler({ content, importance })));
             return { out, noted: ctx.storedMemory };
         };
         expect((await store({ isOwner: false }, "Contact likes tea")).noted).toBeUndefined();
@@ -208,6 +208,8 @@ describe("Forget that button", () => {
         await store(owner, "Owner's gym is on 5th street");
         const { out } = await store(owner, "Owner's dentist is Dr. Rao");
         expect(owner.storedMemory?.id).toBe(out.id);
+        // Smart write (importance >= 7) may merge the row away: no button that could say "Already gone." falsely.
+        expect((await store({ isOwner: true }, "Owner's passport expires in May", 8)).noted).toBeUndefined();
     });
 
     it("forgets on a tap within 10 minutes and says too late after", () => {

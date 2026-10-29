@@ -54,7 +54,8 @@ export const memoryStore: ToolDefinition = {
         if (id === null) {
             return JSON.stringify({ success: false, reason: "rejected_by_value_gate" });
         }
-        noteStoredMemory(id);
+        // Smart write may merge or drop this row moments later, so its id can't back an undo.
+        if (!useSmartWrite) noteStoredMemory(id);
         return JSON.stringify({ success: true, id, message: "Memory stored." });
     },
 };
