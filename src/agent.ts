@@ -93,7 +93,8 @@ import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./me
 // ── Dynamic Context Injections ────────────────
 import { getCoreMemory, recall, recallConversation } from "./memory/sqlite.js";
 import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
-import { getTaskLearningsContext } from "./memory/task-learnings.js";
+import { buildPlaybook, type PlaybookCall, verificationFailed } from "./memory/playbooks.js";
+import { demoteLearnings, getTaskLearningsContext, upsertLearning } from "./memory/task-learnings.js";
 import { getTraitsForInjection, resetSessionTraitCaps } from "./memory/traits.js";
 import { getUserModelSnippet } from "./memory/user-model.js";
 import { getWMSnippet, reflect as wmReflect, retain as wmRetain } from "./memory/working-memory.js";
@@ -1559,6 +1560,27 @@ async function _runAgentBody(
         });
         return receipt; // already the clean (ungridded) screen: see receiptUrl
     };
+    // Playbooks: every tool call this turn, and the learnings shown to it.
+    const turnCalls: PlaybookCall[] = [];
+    const injectedLearnings = new Set<string>();
+    const recordBatch = (batch: ToolCallResult[]) => {
+        recordBatchForVerifyGate(verifyGate, batch);
+        for (const r of batch) turnCalls.push({ fnName: r.fnName, fnArgs: r.fnArgs, failed: toolFailed(r) });
+    };
+    // A verified win teaches a playbook; a failed replay demotes what it was shown.
+    const settleLearnings = (reply: string, stuck = takeStuckMarker(reply).stuck) => {
+        if (channelContext?.isOwner !== true) return;
+        try {
+            const pb = buildPlaybook(userIntentText, turnCalls, reply, stuck);
+            if (pb) {
+                upsertLearning(pb.category, pb.taskPattern, pb.context, pb.steps, [], [], 1, new Date().toISOString());
+            } else if (injectedLearnings.size > 0 && (stuck || verificationFailed(turnCalls))) {
+                demoteLearnings(injectedLearnings);
+            }
+        } catch (err) {
+            console.warn("[LEARNINGS] playbook update skipped:", (err as Error).message);
+        }
+    };
     let verificationNagged = false;
     // The done-criterion from this turn's ack, fed back to the verify nudges.
     let turnContract: string | undefined;
@@ -1726,6 +1748,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         if (iterations >= MAX_AGENT_ITERATIONS) {
             console.log(`  🛑 Iteration cap (${MAX_AGENT_ITERATIONS}) reached`);
             if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+            settleLearnings("", true);
             return {
                 text: `I stopped after ${MAX_AGENT_ITERATIONS} steps without finishing. Tell me what to focus on and I'll pick it up from here.`,
                 toolCalls: totalToolCalls,
@@ -1853,6 +1876,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                         /* best-effort */
                     }
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+                    settleLearnings("", true);
                     return {
                         text:
                             partialText ||
@@ -2139,8 +2163,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // For coding tasks, surface the code-category task-learnings ahead
                 // of the general recall so previously-validated patterns aren't
                 // crowded out by browser/os/app entries when the top-3 is shared.
+                // Owner-only: playbooks quote the owner's own task messages.
                 try {
-                    const codingLearnings = getTaskLearningsContext(rawUserMessage, "code");
+                    const codingLearnings =
+                        channelContext?.isOwner === false
+                            ? ""
+                            : getTaskLearningsContext(rawUserMessage, "code", injectedLearnings);
                     if (codingLearnings) parts.push(codingLearnings);
                 } catch {
                     /* task-learnings not initialized */
@@ -2326,8 +2354,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                             }
                         }),
                         Promise.resolve().then(() => {
+                            // Owner-only: playbooks quote the owner's own task messages.
+                            if (channelContext?.isOwner === false) return null;
                             try {
-                                return getTaskLearningsContext(rawUserMessage);
+                                return getTaskLearningsContext(rawUserMessage, undefined, injectedLearnings);
                             } catch {
                                 return null;
                             }
@@ -3751,7 +3781,7 @@ PLAN:`,
                         );
                         totalToolCalls += batchResults.length;
                         // Verify-before-done gate — same recording as the main loop site.
-                        recordBatchForVerifyGate(verifyGate, batchResults);
+                        recordBatch(batchResults);
                         for (const r of batchResults) {
                             const errorMsg = getErrorMessage(r.fnName, r.result);
                             if (errorMsg) await sendProgress(errorMsg);
@@ -3810,6 +3840,7 @@ PLAN:`,
                     if (usedBrowserTools) autoSaveSession();
                     // Credits deducted per-API-call in llm.ts
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
+                    settleLearnings(text);
                     return { text, toolCalls: totalToolCalls, receipt: await receiptFor(text) };
                 }
             }
@@ -3905,6 +3936,7 @@ PLAN:`,
                     .then(({ consumeOnePending }) => consumeOnePending())
                     .catch((e: Error) => console.warn("[forge] pending consume failed:", e.message));
             }
+            settleLearnings(text);
             return { text, toolCalls: totalToolCalls, receipt: await receiptFor(text) };
         }
 
@@ -3952,7 +3984,7 @@ PLAN:`,
         // bookkeeper. Only successful (or even attempted) mutators flip
         // osStateMutated; that's the right semantics because a *failed* click
         // can still leave the UI in a half-changed state we need to verify.
-        recordBatchForVerifyGate(verifyGate, batchResults);
+        recordBatch(batchResults);
 
         // Circuit breaker: tool calls completed = progress
         const batchHasSuccess = batchResults.some((r) => !r.isError);
@@ -4109,6 +4141,7 @@ PLAN:`,
                     /* best-effort */
                 }
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+                settleLearnings(stuckMsg, true);
                 return { text: stuckMsg, toolCalls: totalToolCalls, stuck: true };
             }
         }
