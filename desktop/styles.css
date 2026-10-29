@@ -2984,6 +2984,7 @@ body.theme-dark .installed-item {
 .advanced-toggle { font-size: 12px; color: rgba(255,255,255,0.4); cursor: pointer; display: flex; align-items: center; gap: 4px; margin: 8px 0; user-select: none; }
 .advanced-toggle:hover { color: rgba(255,255,255,0.6); }
 .ch-advanced { margin-top: 12px; }
+.ch-always-on { font-size: 11px; font-weight: 500; color: var(--text-secondary); padding: 3px 10px; border-radius: 999px; background: rgba(52,199,89,0.12); }
 .ch-hint { font-size: 11px; color: var(--text-muted); font-weight: 400; margin-left: 8px; }
 .copy-inline-btn { font-size: 11px; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; }
 .copy-inline-btn:hover { color: var(--text-primary); }

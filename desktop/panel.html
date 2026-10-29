@@ -1067,10 +1067,7 @@
                                 <span class="channel-status-dot connected" id="chStatusOverlay"></span>
                                 <span>🖥️ Desktop Overlay</span>
                             </div>
-                            <label class="pref-toggle" style="margin:0;">
-                                <input type="checkbox" id="chToggleOverlay" checked disabled>
-                                <span class="pref-toggle-switch"></span>
-                            </label>
+                            <span class="ch-always-on">Always on</span>
                         </div>
                         <div class="settings-fields">
                             <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
@@ -1086,10 +1083,7 @@
                                 <span class="channel-status-dot connected" id="chStatusWebWidget"></span>
                                 <span>🌐 Web Widget</span>
                             </div>
-                            <label class="pref-toggle" style="margin:0;">
-                                <input type="checkbox" id="chToggleWebWidget" checked disabled>
-                                <span class="pref-toggle-switch"></span>
-                            </label>
+                            <span class="ch-always-on">Always on</span>
                         </div>
                         <div class="settings-fields">
                             <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
@@ -2651,6 +2645,21 @@
             });
         }
 
+        // Channels that are on first (yours, then the always-on ones), off ones after.
+        // Runs on load and after an apply, never mid-toggle, so a card doesn't jump away.
+        function sortChannelCards() {
+            const list = document.querySelector('#tab-channels .settings-scroll');
+            const note = list.querySelector('.settings-note');
+            const cards = [...list.querySelectorAll(':scope > .settings-section')];
+            const rank = (card) => {
+                const toggle = card.querySelector('.settings-section-header input[type=checkbox]');
+                return toggle ? (toggle.checked ? 0 : 2) : 1;
+            };
+            cards.map((card, i) => ({ card, key: rank(card) * 100 + i }))
+                .sort((a, b) => a.key - b.key)
+                .forEach(({ card }) => list.insertBefore(card, note));
+        }
+
         async function loadChannelConfig() {
             try {
                 const config = await atlas.getChannelConfig();
@@ -2769,6 +2778,7 @@
                 if (mx.userId || mx.username) document.getElementById('chMatrixUsername').value = mx.userId || mx.username;
                 if (mx.allowedRooms || mx.rooms) document.getElementById('chMatrixRooms').value = mx.allowedRooms || mx.rooms;
 
+                sortChannelCards();
             } catch (err) {
                 console.error('Failed to load channel config:', err);
             }
