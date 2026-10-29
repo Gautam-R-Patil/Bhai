@@ -459,7 +459,7 @@ export async function executeMesh(
                 completedCount++;
                 const stepDesc = step.description.substring(0, 80);
                 const stepDuration = (result.durationMs / 1000).toFixed(1);
-                console.log(`  ✅ Mesh step ${step.id} (${step.role}): ${result.success ? "success" : "FAILED"} (${result.toolCalls} tools, ${stepDuration}s)`);
+                console.log(`  ${result.success ? "✅" : "❌"} Mesh step ${step.id} (${step.role}): ${result.success ? "success" : "FAILED"} (${result.toolCalls} tools, ${stepDuration}s)`);
 
                 if (onProgress) {
                     const statusIcon = result.needsApproval ? "✋" : result.success ? "✅" : "❌";
