@@ -1647,7 +1647,8 @@ async function _runAgentBody(
         workingHistory.push({ role: "user", content: content as unknown as string });
 
         // ── Multimodal Memory: store image embeddings for cross-modal retrieval ──
-        try {
+        // The owner's images only: a contact's photo isn't the owner's memory.
+        if (ownerTurn) try {
             const { storeImageEmbedding } = await import("./memory/multimodal-embedding.js");
             const { embedText } = await import("./memory/embeddings.js");
             for (const m of media) {
@@ -2580,7 +2581,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── Working memory (active context from recent tool results & facts) ──
             try {
-                await wmReflect(rawUserMessage);
+                if (ownerTurn) await wmReflect(rawUserMessage); // working memory is the owner's
                 const wmSnippet = getWMSnippet();
                 if (wmSnippet) parts.push(wmSnippet);
             } catch {
@@ -4144,7 +4145,7 @@ PLAN:`,
                 const resultText = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
                 const importance = r.isError ? 0.3 : resultText.length > 200 ? 0.7 : 0.5;
                 const summary = resultText.length > 150 ? `${resultText.substring(0, 150)}...` : resultText;
-                wmRetain(`tool_${r.toolCallId}`, "tool_result", `[${r.fnName}] ${summary}`, importance);
+                if (ownerTurn) wmRetain(`tool_${r.toolCallId}`, "tool_result", `[${r.fnName}] ${summary}`, importance);
             } catch {
                 /* working memory not initialized */
             }
