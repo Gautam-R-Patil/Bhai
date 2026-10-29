@@ -213,6 +213,17 @@ async function boot() {
     try {
         // Memory
         const memDb = await initMemoryDB();
+        // Once per install: mask secrets in conversation text saved before at-rest masking.
+        setImmediate(() => {
+            import("./memory/at-rest-scrub.js")
+                .then(async ({ scrubSecretsAtRest }) => {
+                    const { getRawDb } = await import("./memory/sqlite.js");
+                    const raw = getRawDb();
+                    const n = raw ? scrubSecretsAtRest(raw) : null;
+                    if (n) console.log(`🔐 Masked secrets saved before at-rest masking: ${JSON.stringify(n)}`);
+                })
+                .catch((err) => console.warn("[memory] at-rest scrub skipped:", (err as Error).message));
+        });
         initKnowledgeGraph(memDb);
         initCredibilityModel(memDb);
         initIdentityDB(memDb);
