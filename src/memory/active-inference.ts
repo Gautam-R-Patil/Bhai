@@ -40,7 +40,7 @@ export function makeInferenceDecision(
         const nativeBeliefs = {
             hypotheses: beliefs.hypotheses,
             probabilities: beliefs.probabilities,
-            evidence_counts: beliefs.evidenceCounts,
+            evidenceCounts: beliefs.evidenceCounts,
         };
 
         const fe = native.computeFreeEnergy(nativeBeliefs);
@@ -49,7 +49,7 @@ export function makeInferenceDecision(
         if (queryRelevances.length > 0) {
             const rankings = native.rankQueriesByInfoGain(nativeBeliefs, queryRelevances);
             if (rankings.length > 0) {
-                bestQuery = rankings[0].query_index;
+                bestQuery = rankings[0].queryIndex;
             }
         }
 
@@ -61,8 +61,8 @@ export function makeInferenceDecision(
         );
 
         return {
-            shouldExplore: fe.should_explore,
-            freeEnergy: fe.free_energy,
+            shouldExplore: fe.shouldExplore,
+            freeEnergy: fe.freeEnergy,
             entropy: fe.entropy,
             bestQueryIndex: bestQuery,
             explorationScore,
@@ -99,13 +99,13 @@ export function updateBeliefs(
         const nativeBeliefs = {
             hypotheses: beliefs.hypotheses,
             probabilities: beliefs.probabilities,
-            evidence_counts: beliefs.evidenceCounts,
+            evidenceCounts: beliefs.evidenceCounts,
         };
         const updated = native.updateBeliefs(nativeBeliefs, evidenceForHypothesis, strength);
         return {
             hypotheses: updated.hypotheses,
             probabilities: updated.probabilities,
-            evidenceCounts: updated.evidence_counts,
+            evidenceCounts: updated.evidenceCounts,
         };
     }
 
