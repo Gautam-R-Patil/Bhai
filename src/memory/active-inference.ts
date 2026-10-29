@@ -36,7 +36,9 @@ export function makeInferenceDecision(
 ): InferenceDecision {
     const native = loadNative();
 
-    if (native) {
+    // The fail-open loader returns {} when no binary exists for this platform, so
+    // check the functions, not just truthiness, before taking the native path.
+    if (native && typeof native.computeFreeEnergy === "function") {
         const nativeBeliefs = {
             hypotheses: beliefs.hypotheses,
             probabilities: beliefs.probabilities,
@@ -95,7 +97,7 @@ export function updateBeliefs(
     strength: number,
 ): BeliefState {
     const native = loadNative();
-    if (native) {
+    if (native && typeof native.updateBeliefs === "function") {
         const nativeBeliefs = {
             hypotheses: beliefs.hypotheses,
             probabilities: beliefs.probabilities,
@@ -135,4 +137,10 @@ function loadNative(): any {
         _native = r(path.join(process.cwd(), "native", "index.js"));
         return _native;
     } catch { return null; }
+}
+
+/** Test-only: inject a fake native module ({} = fail-open/no binary) or undefined to restore. */
+export function _setNativeForTests(mod: unknown): void {
+    if (mod === undefined) { _native = null; _nativeLoaded = false; return; }
+    _native = mod; _nativeLoaded = true;
 }
