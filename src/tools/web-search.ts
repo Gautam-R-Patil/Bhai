@@ -233,48 +233,6 @@ export function parseBraveHtml(html: string): SearchResult[] {
     return results;
 }
 
-// ── Google via fetch (no JS rendering, works for simple queries) ──
-
-async function searchGoogleLite(query: string): Promise<SearchResult[]> {
-    try {
-        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10&hl=en`;
-        const response = await fetch(url, {
-            headers: {
-                "User-Agent": randomUA(),
-                Accept: "text/html,application/xhtml+xml",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-            redirect: "follow",
-            // Covers the body read too: a cleared timer let one stalled engine hang the whole search.
-            signal: AbortSignal.timeout(8000),
-        });
-
-        if (response.status !== 200) return [];
-
-        const html = await response.text();
-        if (html.includes("detected unusual traffic") || html.includes("sorry/index")) return [];
-
-        const results: SearchResult[] = [];
-        const seenUrls = new Set<string>();
-
-        // Match Google result links with h3 titles
-        const resultPattern = /<a\s+href="\/url\?q=(https?:\/\/[^&"]+)[^"]*"[^>]*>[\s\S]*?<h3[^>]*>([\s\S]*?)<\/h3>/gi;
-        let match;
-        while ((match = resultPattern.exec(html)) !== null && results.length < 15) {
-            const resultUrl = decodeURIComponent(match[1]);
-            const title = htmlText(match[2]);
-            if (!seenUrls.has(resultUrl) && !resultUrl.includes("google.com")) {
-                seenUrls.add(resultUrl);
-                results.push({ url: resultUrl, title, snippet: "" });
-            }
-        }
-
-        return results;
-    } catch {
-        return [];
-    }
-}
-
 // ── Tavily Search (proxied via Convex) ──────
 
 async function searchTavilyLite(query: string): Promise<SearchResult[]> {
@@ -471,14 +429,15 @@ export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResu
 // ── Lightweight multi-engine (fetch-only, parallel) ───────────
 
 async function lightweightSearch(query: string): Promise<{ results: SearchResult[]; engine: string; empty: string[] }> {
-    const names = ["claude", "tavily", "exa", "brave", "duckduckgo", "google", "bing"];
+    // No Google scraper: google.com/search now serves a JavaScript-only page, so it never
+    // returned a result — it only sent Google a scraping request from the owner's IP.
+    const names = ["claude", "tavily", "exa", "brave", "duckduckgo", "bing"];
     const lists = await Promise.all([
         searchClaudeLite(query),
         searchTavilyLite(query),
         searchExaLite(query),
         searchBraveLite(query),
         searchDDGLite(query),
-        searchGoogleLite(query),
         searchBingLite(query),
     ]);
     const used = names.filter((_, i) => lists[i].length > 0);
@@ -497,7 +456,7 @@ export const webSearch: ToolDefinition = {
         function: {
             name: "web_search",
             description:
-                "Search the web for information. Uses multiple search engines (Google, Brave, DuckDuckGo) with automatic fallback. Returns top results with titles, snippets, and URLs. This is a FAST, lightweight search — no browser is launched.",
+                "Search the web for information. Uses multiple search engines with automatic fallback. Returns top results with titles, snippets, and URLs. This is a FAST, lightweight search — no browser is launched.",
             parameters: {
                 type: "object",
                 properties: {
