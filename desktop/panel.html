@@ -946,7 +946,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('email')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusEmail"></span>
-                                <span>📧 Email</span><span class="ch-hint">Needs an app password · 2 min</span>
+                                <span>📧 Email</span><span class="ch-hint">One click</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleEmail" onchange="onChannelToggle('email')">
@@ -956,6 +956,23 @@
                         <div class="settings-fields" id="chFieldsEmail" style="display:none;">
                             <div class="channel-wizard" id="wizardEmail">
                                 <div class="channel-wizard-step active" id="wizStepEmail1">
+                                    <h4>Bhai's own email</h4>
+                                    <div id="bhaiMailSetup">
+                                        <p>Bhai gets its own address like <code>you.bhai@xagilab.com</code>. Email it from your address and it replies. It only reads mail from you.</p>
+                                        <div class="input-group">
+                                            <label class="input-label">Your email</label>
+                                            <input class="clean-input" type="email" id="chBhaiMailOwner" placeholder="you@example.com" autocomplete="off">
+                                        </div>
+                                        <button class="wizard-btn wizard-btn-success" id="bhaiMailBtn" onclick="claimBhaiMail()">Get Bhai's email</button>
+                                    </div>
+                                    <div id="bhaiMailReady" style="display:none;">
+                                        <p>Bhai's address: <code id="bhaiMailAddress"></code> <button class="copy-inline-btn" onclick="copyText(document.getElementById('bhaiMailAddress').textContent)">Copy</button></p>
+                                        <p>It answers mail from <strong id="bhaiMailOwnerShown"></strong>.</p>
+                                        <a class="wizard-link" id="bhaiMailWrite" target="_blank">Write to Bhai</a>
+                                    </div>
+                                    <div class="channel-test-result" id="bhaiMailStatus"></div>
+                                    <details class="ch-advanced" id="emailOwnMailbox">
+                                        <summary class="advanced-toggle">Or use a mailbox you already have</summary>
                                     <p>Bhai reads and sends mail from this account. Server settings fill in by themselves for Gmail, Outlook, iCloud, Yahoo and Zoho.</p>
                                     <div class="input-group">
                                         <label class="input-label">Email Address</label>
@@ -991,6 +1008,7 @@
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-success" onclick="connectChannel('email')">Connect</button>
                                     </div>
+                                    </details>
                                 </div>
                             </div>
                             <div class="channel-test-result" id="testResultEmail"></div>
@@ -2123,6 +2141,12 @@
             }
             // WhatsApp needs no credentials: turning it on starts the bot so the QR shows.
             // Turning off a saved channel applies straight away; there's no Save button.
+            if (!enabled && channel === 'email') {
+                bhaiMail.address = '';
+                bhaiMail.owner = '';
+                document.getElementById('bhaiMailSetup').style.display = 'block';
+                document.getElementById('bhaiMailReady').style.display = 'none';
+            }
             const saved = channelConfig && channelConfig[channel] && channelConfig[channel].enabled;
             if ((enabled && channel === 'whatsapp' && !saved) || (!enabled && saved)) {
                 saveChannelConfig();
@@ -2332,6 +2356,39 @@
             document.getElementById('tgStep2Title').textContent = 'Your bot is ready';
             document.getElementById('tgStep2Text').textContent = 'Message it in Telegram anytime; Bhai answers there.';
             setStatus(document.getElementById('tgOwnerStatus'), status, 'success');
+        }
+
+        const bhaiMail = { address: '', owner: '' };
+        function showBhaiMail(address, owner) {
+            bhaiMail.address = address;
+            bhaiMail.owner = owner;
+            document.getElementById('bhaiMailSetup').style.display = 'none';
+            document.getElementById('bhaiMailReady').style.display = 'block';
+            document.getElementById('bhaiMailAddress').textContent = address;
+            document.getElementById('bhaiMailOwnerShown').textContent = owner;
+            document.getElementById('bhaiMailWrite').href = 'mailto:' + address;
+        }
+
+        async function claimBhaiMail() {
+            const owner = fieldVal('chBhaiMailOwner').toLowerCase();
+            const st = document.getElementById('bhaiMailStatus');
+            if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(owner)) return setStatus(st, 'Enter the email you write from.', 'error');
+            const btn = document.getElementById('bhaiMailBtn');
+            btn.disabled = true;
+            setStatus(st, 'Getting an address…', 'loading');
+            try {
+                const r = await atlas.bhaiMailClaim(owner);
+                if (!r || !r.success) {
+                    document.getElementById('emailOwnMailbox').open = true;
+                    return setStatus(st, (r && r.notConfigured ? "Bhai's email isn't switched on yet" : "Couldn't reach Bhai's servers") + '. You can use your own mailbox below.', 'error');
+                }
+                showBhaiMail(r.address, owner);
+                document.getElementById('chToggleEmail').checked = true;
+                setStatus(st, '✓ Done. Send Bhai an email to start.', 'success');
+                await saveChannelConfig();
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         async function createTelegramBot() {
@@ -2696,6 +2753,8 @@
                     onEmailDomainDetect(em.user);
                 }
                 if (em.whitelist) document.getElementById('chEmailWhitelist').value = em.whitelist;
+                if (em.bhaiAddress) showBhaiMail(em.bhaiAddress, em.bhaiOwner);
+                else if (!fieldVal('chBhaiMailOwner')) atlas.getAccountInfo().then(a => { if (a && a.email && !fieldVal('chBhaiMailOwner')) document.getElementById('chBhaiMailOwner').value = a.email; }).catch(() => {});
                 if (em.smtpHost) document.getElementById('chEmailSmtpHost').value = em.smtpHost;
                 if (em.smtpPort) document.getElementById('chEmailSmtpPort').value = em.smtpPort;
                 if (em.imapHost) document.getElementById('chEmailImapHost').value = em.imapHost;
@@ -2748,6 +2807,8 @@
                     smtpPort: fieldVal('chEmailSmtpPort'),
                     imapHost: fieldVal('chEmailImapHost'),
                     imapPort: fieldVal('chEmailImapPort'),
+                    bhaiAddress: bhaiMail.address,
+                    bhaiOwner: bhaiMail.owner,
                 },
                 matrix: {
                     enabled: document.getElementById('chToggleMatrix').checked,

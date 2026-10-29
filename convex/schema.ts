@@ -438,4 +438,32 @@ export default defineSchema({
   })
     .index("by_username", ["username"])
     .index("by_otplessUserId", ["otplessUserId"]),
+
+  // Bhai's own email (convex/bhaiMail.ts): one row per user's .bhai address.
+  bhai_mail_addresses: defineTable({
+    otplessUserId: v.string(),
+    address: v.string(), // <name>.bhai@<domain>, lower-case
+    ownerEmail: v.string(), // the only address Bhai reads from and writes to
+    lastInboundAt: v.number(), // last mail from the owner; gates Bhai writing
+  })
+    .index("by_address", ["address"])
+    .index("by_otplessUserId", ["otplessUserId"]),
+
+  // Owner mail waiting for their Bhai; deleted when the Bhai acks it.
+  bhai_mail_inbox: defineTable({
+    otplessUserId: v.string(),
+    messageId: v.string(),
+    subject: v.string(),
+    text: v.string(),
+    receivedAt: v.number(),
+  })
+    .index("by_otplessUserId", ["otplessUserId"])
+    .index("by_messageId", ["messageId"]),
+
+  // Where the catch-all mailbox poll got to (one row, name "inbox").
+  bhai_mail_cursor: defineTable({
+    name: v.string(),
+    uidValidity: v.number(),
+    lastUid: v.number(),
+  }).index("by_name", ["name"]),
 });

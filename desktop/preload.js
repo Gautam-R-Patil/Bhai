@@ -182,6 +182,7 @@ contextBridge.exposeInMainWorld("atlas", {
     testChannel: (channel, params) => ipcRenderer.invoke(`channel:test-${channel}`, params),
     telegramWaitOwner: (token) => ipcRenderer.invoke("channel:telegram-wait-owner", { token }),
     clipboardToken: (kind) => ipcRenderer.invoke("channel:clipboard-token", kind),
+    bhaiMailClaim: (ownerEmail) => ipcRenderer.invoke("channel:bhai-mail-claim", { ownerEmail }),
     telegramManagedStart: () => ipcRenderer.invoke("channel:telegram-managed-start"),
     telegramManagedWait: (username) => ipcRenderer.invoke("channel:telegram-managed-wait", { username }),
     getChannelStatuses: () => ipcRenderer.invoke("channel:status-all"),

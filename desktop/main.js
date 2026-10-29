@@ -5538,7 +5538,9 @@ ${body}`;
                     userIds: env.SLACK_ALLOWED_USER_IDS || "",
                 },
                 email: {
-                    enabled: !!env.EMAIL_USER,
+                    enabled: !!env.EMAIL_USER || !!env.BHAI_MAIL_ADDRESS,
+                    bhaiAddress: env.BHAI_MAIL_ADDRESS || "",
+                    bhaiOwner: env.BHAI_MAIL_OWNER || "",
                     user: env.EMAIL_USER || "",
                     whitelist: env.EMAIL_WHITELIST || "",
                     smtpHost: env.EMAIL_SMTP_HOST || "",
@@ -5586,6 +5588,7 @@ ${body}`;
                         "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USER_IDS",
                         "EMAIL_USER", "EMAIL_PASSWORD", "EMAIL_WHITELIST",
                         "EMAIL_SMTP_HOST", "EMAIL_SMTP_PORT", "EMAIL_IMAP_HOST", "EMAIL_IMAP_PORT",
+                        "BHAI_MAIL_ADDRESS", "BHAI_MAIL_OWNER",
                         "MATRIX_HOMESERVER", "MATRIX_USER_ID", "MATRIX_PASSWORD", "MATRIX_ALLOWED_ROOMS",
                     ];
                     if (channelKeys.includes(key)) {
@@ -5668,6 +5671,11 @@ ${body}`;
                 if (config.email.smtpPort) envLines.push(`EMAIL_SMTP_PORT=${config.email.smtpPort}`);
                 if (config.email.imapHost) envLines.push(`EMAIL_IMAP_HOST=${config.email.imapHost}`);
                 if (config.email.imapPort) envLines.push(`EMAIL_IMAP_PORT=${config.email.imapPort}`);
+                // Bhai's own address (server-issued, see channel:bhai-mail-claim)
+                if (/^[a-z0-9]+\.bhai@[a-z0-9.-]+$/.test(config.email.bhaiAddress || "") && config.email.bhaiOwner && !/[\s=]/.test(config.email.bhaiOwner)) {
+                    envLines.push(`BHAI_MAIL_ADDRESS=${config.email.bhaiAddress}`);
+                    envLines.push(`BHAI_MAIL_OWNER=${config.email.bhaiOwner}`);
+                }
             }
 
             // Matrix (UI sends username/rooms, map to userId/allowedRooms)
@@ -5839,6 +5847,16 @@ ${body}`;
             if (r && r.error && !/rate limit/i.test(r.error)) return { success: false, message: r.error };
         }
         return { success: false, message: "Telegram didn't confirm in 10 minutes" };
+    });
+
+    // Bhai's own email: the server hands out <name>.bhai@xagilab.com for this
+    // account; it only takes mail from ownerEmail and only writes to it.
+    ipcMain.handle("channel:bhai-mail-claim", async (_, { ownerEmail }) => {
+        try {
+            const r = await convexSiteRequest("POST", "/api/mail/claim", { ownerEmail });
+            if (r && r.address) return { success: true, address: r.address };
+            return { success: false, notConfigured: !!r && r.error === "not_configured", message: (r && r.error) || "No reply" };
+        } catch (err) { return { success: false, message: err.message }; }
     });
 
     // Coming back from BotFather / the Discord or Slack portal with a token

@@ -10,6 +10,9 @@
 
 import type * as accounts from "../accounts.js";
 import type * as appRuntime from "../appRuntime.js";
+import type * as bhaiMail from "../bhaiMail.js";
+import type * as bhaiMailHelpers from "../bhaiMailHelpers.js";
+import type * as bhaiMailNode from "../bhaiMailNode.js";
 import type * as claude from "../claude.js";
 import type * as contact from "../contact.js";
 import type * as credit_cost from "../credit_cost.js";
@@ -46,6 +49,9 @@ import type {
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   appRuntime: typeof appRuntime;
+  bhaiMail: typeof bhaiMail;
+  bhaiMailHelpers: typeof bhaiMailHelpers;
+  bhaiMailNode: typeof bhaiMailNode;
   claude: typeof claude;
   contact: typeof contact;
   credit_cost: typeof credit_cost;

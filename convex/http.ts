@@ -168,6 +168,7 @@ async function buildResponse(
 import { getCreditCost } from "./credit_cost.js";
 import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
 import { isBotUsername, managedBotLink } from "./telegramManaged.js";
+import { isEmail, SEND_WINDOW_MS } from "./bhaiMailHelpers.js";
 
 // ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
 // Isolated subsystem — no coupling to session/credit machinery. Lives next
@@ -3915,6 +3916,84 @@ http.route({
       });
     }
     return new Response("ok");
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Bhai's own email (convex/bhaiMail.ts)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Desktop: give this account its <name>.bhai@ address (idempotent).
+http.route({
+  path: "/api/mail/claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    if (!process.env.BHAI_MAIL_USER || !process.env.BHAI_MAIL_PASS) return jsonReply({ error: "not_configured" }, 503);
+    const body = await request.json().catch(() => ({}));
+    if (!isEmail(body.ownerEmail)) return jsonReply({ error: "bad_email" }, 400);
+    const address = await ctx.runMutation(internal.bhaiMail.claimAddress, {
+      otplessUserId: validation.account.otplessUserId,
+      ownerEmail: body.ownerEmail,
+    });
+    return jsonReply({ address });
+  }),
+});
+
+// Bot: the owner's waiting mail.
+http.route({
+  path: "/api/mail/inbox",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    let encrypted = false;
+    try { encrypted = (await parseRequestBody(request, account.sharedKey)).encrypted; } catch { /* empty body */ }
+    const messages = await ctx.runQuery(internal.bhaiMail.inboxFor, { otplessUserId: account.otplessUserId });
+    return await buildResponse({ messages }, 200, encrypted, account.sharedKey, request);
+  }),
+});
+
+// Bot: done with these messages.
+http.route({
+  path: "/api/mail/ack",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const ids = Array.isArray(body?.ids) ? body.ids.filter((x: unknown) => typeof x === "string") : [];
+    await ctx.runMutation(internal.bhaiMail.ack, { otplessUserId: account.otplessUserId, ids });
+    return await buildResponse({ ok: true }, 200, encrypted, account.sharedKey, request);
+  }),
+});
+
+// Bot: email the owner (and only the owner, and only if they wrote recently).
+http.route({
+  path: "/api/mail/send",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const reply = (data: unknown, status = 200) => buildResponse(data, status, encrypted, account.sharedKey, request);
+    const mine = await ctx.runQuery(internal.bhaiMail.addressFor, { otplessUserId: account.otplessUserId });
+    if (!mine) return await reply({ ok: false, error: "no_address" }, 404);
+    if (Date.now() - mine.lastInboundAt > SEND_WINDOW_MS) return await reply({ ok: false, error: "owner_has_not_written_recently" }, 403);
+    const text = typeof body?.text === "string" ? body.text.slice(0, 50_000) : "";
+    if (!text.trim()) return await reply({ ok: false, error: "empty" }, 400);
+    const result = await ctx.runAction(internal.bhaiMailNode.deliver, {
+      replyTo: mine.address,
+      to: mine.ownerEmail,
+      subject: typeof body?.subject === "string" && body.subject.trim() ? body.subject.slice(0, 300) : "From Bhai",
+      text,
+      ...(typeof body?.inReplyTo === "string" ? { inReplyTo: body.inReplyTo.slice(0, 500) } : {}),
+    });
+    return await reply(result, result.ok ? 200 : 502);
   }),
 });
 

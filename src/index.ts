@@ -20,6 +20,7 @@ import { createLLMClient } from "./llm.js";
 import { initLocationService, onLocationChange, refreshLocation } from "./location/index.js";
 import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
 import { closeMatrix, initMatrix, sendMatrixProactiveMessage } from "./matrix.js";
+import { closeBhaiMail, initBhaiMail } from "./bhai-mail.js";
 import { closeMCPServers, initMCPServers } from "./mcp/client.js";
 import { initCounterfactualMemory } from "./memory/counterfactual.js";
 import { embedText, isReady as isEmbeddingsReady, warmup as warmupEmbeddings } from "./memory/embeddings.js";
@@ -441,6 +442,8 @@ async function boot() {
             .catch((e) => console.warn("[BOOT] Overlay:", (e as Error).message)),
         // Email channel (IMAP listener + SMTP sender)
         initEmail(llm, config).catch((e) => console.warn("[BOOT] Email:", (e as Error).message)),
+        // Bhai's own email (<name>.bhai@xagilab.com) — only if BHAI_MAIL_ADDRESS is set
+        Promise.resolve().then(() => initBhaiMail(llm)),
         // Slack bot (Socket Mode — only if SLACK_BOT_TOKEN is set)
         initSlack(llm).catch((e) => console.warn("[BOOT] Slack:", (e as Error).message)),
         // WhatsApp channel (Baileys QR pairing — only if WHATSAPP_ALLOWED_JIDS is set)
@@ -1256,6 +1259,7 @@ async function boot() {
         closeOverlayChat();
         closeSlack();
         closeMatrix();
+        closeBhaiMail();
         await closeDiscord();
         await closeWhatsApp();
         await closeEmail();
