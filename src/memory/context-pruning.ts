@@ -37,6 +37,21 @@ export function estimateMessagesTokens(messages: ChatCompletionMessageParam[]): 
     }, 0);
 }
 
+/**
+ * Nudge a split index off an orphaned tool response. When the `recent` half
+ * (messages.slice(split)) begins with `tool` messages whose assistant
+ * `tool_calls` are in the old half, the API rejects the request (a tool result
+ * with no preceding tool_calls). The no-user fallbacks in pruneContext and
+ * compactConversation can land the split exactly there. Advancing past the
+ * leading tool responses keeps them with their assistant in the old (summarized)
+ * half, so `recent` always starts on a non-tool message.
+ */
+export function avoidToolOrphan(messages: ChatCompletionMessageParam[], split: number): number {
+    let s = split;
+    while (s < messages.length && messages[s].role === "tool") s++;
+    return s;
+}
+
 // ── Auto-Flush: Save Key Facts Before Pruning ─
 
 /**
@@ -182,6 +197,8 @@ export async function pruneContext(messages: ChatCompletionMessageParam[], llm: 
             break;
         }
     }
+    // The no-user fallback above can leave the split on an orphaned tool response.
+    safeSplit = avoidToolOrphan(messages, safeSplit);
 
     // Split into old messages (to summarize) and recent (to keep)
     const oldMessages = messages.slice(0, safeSplit);
@@ -271,6 +288,7 @@ export async function compactConversation(
     let safeSplit = messages.length - Math.min(6, Math.floor(messages.length / 2));
     while (safeSplit > 0 && messages[safeSplit].role !== "user") safeSplit--;
     if (safeSplit === 0) safeSplit = 1; // At least keep 1
+    safeSplit = avoidToolOrphan(messages, safeSplit); // never start `recent` on an orphaned tool response
 
     const oldMessages = messages.slice(0, safeSplit);
     let recentMessages = messages.slice(safeSplit);
