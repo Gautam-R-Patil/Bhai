@@ -1287,9 +1287,10 @@ async function startBot() {
         return { status: "error", error: errMsg };
     }
 
-    // Validate env content
-    if (!envContent || !envContent.includes("TELEGRAM_BOT_TOKEN")) {
-        sendLog("⚠️ Warning: No credentials found. Configure settings first.");
+    // Only an empty/unreadable settings file is worth a warning; no Telegram
+    // token is normal (other channels, or just the overlay).
+    if (!envContent) {
+        sendLog("⚠️ Warning: settings are empty or couldn't be decrypted.");
     }
 
     sendLog(`Starting bot from: ${entryPoint}`);
