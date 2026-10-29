@@ -152,6 +152,15 @@ export function getFieldValue(field: string | VerifiedField | undefined): string
     return field.value;
 }
 
+/**
+ * What the owner said about themselves in chat. Name, email and location are
+ * stored as confirmed; role and company stay raw (unverified), because only
+ * identity_update gates ownership claims on them.
+ */
+export function statedField(field: string, value: string): string | VerifiedField {
+    return field === "name" || field === "email" || field === "location" ? { value, verified: true } : value;
+}
+
 // ── Prompt Snippet ────────────────────────────
 
 export function getIdentityPromptSnippet(userId = DEFAULT_USER_ID): string {
@@ -167,8 +176,11 @@ export function getIdentityPromptSnippet(userId = DEFAULT_USER_ID): string {
         // written by an older identity_update that didn't gate ownership claims.
         // Forcing them into the unverified bucket breaks the self-poisoning loop
         // where pre-existing data ("Company: XAGI Labs") would re-surface as
-        // confirmed truth on every iteration.
-        if (verified === true) confirmed.push(`- ${label}: ${value}`);
+        // confirmed truth on every iteration. A legacy raw name is the
+        // exception: it came from the owner's own chats and isn't an
+        // ownership field.
+        if (verified === true || (label === "Name" && typeof field === "string"))
+            confirmed.push(`- ${label}: ${value}`);
         else unverified.push(`- ${label}: ${value}`);
     };
 
@@ -182,6 +194,9 @@ export function getIdentityPromptSnippet(userId = DEFAULT_USER_ID): string {
         confirmed.push(`- Projects: ${profile.projects.join(", ")}`);
     }
     if (profile.preferences) {
+        if (typeof profile.preferences.address_as === "string" && profile.preferences.address_as) {
+            confirmed.push(`- Call them: ${profile.preferences.address_as}`);
+        }
         if (profile.preferences.communication_style) {
             confirmed.push(`- Communication style: ${profile.preferences.communication_style}`);
         }

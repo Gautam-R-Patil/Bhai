@@ -47,4 +47,15 @@ describe("episodic memory", () => {
             .all() as { importance_score: number; fresh: number }[];
         expect(rows).toEqual([{ importance_score: 0.95, fresh: 1 }]);
     });
+
+    it("retires an episode after three callbacks", () => {
+        episodic.recordEpisode("achievement", "Closed seed round", 0.99);
+        expect(episodic.getEpisodicSnippet()).toContain("Closed seed round");
+        episodic.noteEpisodeCallbacks("Unrelated reply about the weather.");
+        for (let i = 0; i < 3; i++) {
+            expect(episodic.getEpisodicSnippet()).toContain("Closed seed round");
+            episodic.noteEpisodeCallbacks("Like when you closed that seed round, nice.");
+        }
+        expect(episodic.getEpisodicSnippet()).not.toContain("Closed seed round");
+    });
 });

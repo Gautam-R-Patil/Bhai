@@ -137,4 +137,13 @@ describe("identity_update verification", () => {
         await call({ location: "Pune", verification_level: "observed" });
         expect(upd.mock.calls[1][0]).toMatchObject({ location: { value: "Pune", verified: false } });
     });
+
+    it("stores an explicit 'call me' as preferences.address_as, never an ownership claim", async () => {
+        const { updateIdentityProfile } = await import("../memory/identity.js");
+        const upd = vi.mocked(updateIdentityProfile);
+        upd.mockClear();
+        await call({ address_as: "DJ" });
+        expect(upd.mock.calls[0][0]).toMatchObject({ preferences: { address_as: "DJ" } });
+        expect((await call({ address_as: "founder of XAGI Labs" })).success).toBe(false);
+    });
 });

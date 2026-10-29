@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { getIdentityProfile, updateIdentityProfile } from "../memory/identity.js";
+import { getIdentityProfile, statedField, updateIdentityProfile } from "../memory/identity.js";
 import {
     addEntity,
     addRelationship,
@@ -361,7 +361,7 @@ export const coreMemoryAppend: ToolDefinition = {
                     };
 
                     if (fieldMap[field]) {
-                        updateIdentityProfile({ [fieldMap[field]]: value });
+                        updateIdentityProfile({ [fieldMap[field]]: statedField(fieldMap[field], value) });
                     } else if (field === "project") {
                         const { addProject } = await import("../memory/identity.js");
                         addProject(value);

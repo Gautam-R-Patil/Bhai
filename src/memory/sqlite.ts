@@ -478,6 +478,17 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
       depth_score REAL DEFAULT 0.1,
       last_interaction TEXT DEFAULT (datetime('now'))
     )`);
+    // Callback discipline: an episode retires after 3 callbacks; milestones fire once ever.
+    try {
+        db.run("ALTER TABLE episodic_memory ADD COLUMN callback_count INTEGER DEFAULT 0");
+    } catch {
+        /* exists */
+    }
+    try {
+        db.run("ALTER TABLE relationship_state ADD COLUMN milestones_said TEXT DEFAULT ''");
+    } catch {
+        /* exists */
+    }
 
     db.run(`
     CREATE TABLE IF NOT EXISTS trait_edges (

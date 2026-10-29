@@ -83,7 +83,7 @@ import { buildMemoryCards } from "./memory/cards.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
-import { getEpisodicSnippet } from "./memory/episodic.js";
+import { getEpisodicSnippet, noteEpisodeCallbacks } from "./memory/episodic.js";
 import { createGoal, detectGoalFromMessage, getGoalsSnippet } from "./memory/goals.js";
 import { getIdentityPromptSnippet } from "./memory/identity.js";
 import { getProjectMemorySnippet } from "./memory/project-memory.js";
@@ -1521,7 +1521,10 @@ export async function runAgent(
         ) {
             res.text = reveal(res.text);
         }
-        if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") noteOwnerReply(res.text, userMessage);
+        if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") {
+            noteOwnerReply(res.text, userMessage);
+            noteEpisodeCallbacks(res.text);
+        }
         // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
         if (caller.storedMemory && channelContext?.isPrivate === true && res) res.memoryUndo = caller.storedMemory;
         return res;
@@ -2521,7 +2524,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── 8. Relationship tone modulation ──
             try {
-                const relationshipSnippet = getRelationshipSnippet();
+                // A contact or autonomous turn would spend a once-ever milestone.
+                const relationshipSnippet =
+                    isContactAgent || channelContext?.autonomous ? "" : getRelationshipSnippet();
                 if (relationshipSnippet) parts.push(relationshipSnippet);
             } catch {
                 /* */

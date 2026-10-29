@@ -24,6 +24,7 @@ export interface EpisodicMemory {
 
 const MAX_INJECTION_ITEMS = 3;
 const MAX_EPISODES_PER_USER = 500;
+const MAX_CALLBACKS = 3;
 
 // ── Singleton ─────────────────────────────────
 
@@ -78,15 +79,20 @@ export function recordEpisode(
 // ── Get Recent Episodes ───────────────────────
 
 /** Importance with a 14-day hyperbolic decay, so a 0.9 milestone from months ago yields to fresh ones. */
-export function getRecentEpisodes(userId = "default", limit = 10, minImportance = 0): EpisodicMemory[] {
+export function getRecentEpisodes(
+    userId = "default",
+    limit = 10,
+    minImportance = 0,
+    maxCallbacks = Number.MAX_SAFE_INTEGER,
+): EpisodicMemory[] {
     if (!_db) return [];
 
     const results = _db.exec(
         `SELECT id, user_id, type, description, importance_score, timestamp
-         FROM episodic_memory WHERE user_id = ? AND importance_score >= ?
+         FROM episodic_memory WHERE user_id = ? AND importance_score >= ? AND callback_count < ?
          ORDER BY importance_score / (1 + (julianday('now') - julianday(timestamp)) / 14.0) DESC, timestamp DESC
          LIMIT ?`,
-        [userId, minImportance, limit]
+        [userId, minImportance, maxCallbacks, limit]
     );
 
     if (results.length === 0) return [];
@@ -95,8 +101,12 @@ export function getRecentEpisodes(userId = "default", limit = 10, minImportance 
 
 // ── Prompt Snippet ────────────────────────────
 
+// The episodes last offered as callbacks, so the owner's reply can count them.
+let _offered: EpisodicMemory[] = [];
+
 export function getEpisodicSnippet(userId = "default"): string {
-    const episodes = getRecentEpisodes(userId, MAX_INJECTION_ITEMS, 0.4);
+    const episodes = getRecentEpisodes(userId, MAX_INJECTION_ITEMS, 0.4, MAX_CALLBACKS);
+    _offered = episodes;
 
     if (episodes.length === 0) return "";
 
@@ -109,7 +119,33 @@ export function getEpisodicSnippet(userId = "default"): string {
     return "📌 KEY MILESTONES (use naturally for callbacks):\n" + lines.join("\n");
 }
 
+/**
+ * Counts a callback for each offered episode the reply brings up; after
+ * MAX_CALLBACKS the episode stops being offered.
+ * ponytail: word overlap (two shared words of 4+ letters, or the only one);
+ * use embeddings if it misfires.
+ */
+export function noteEpisodeCallbacks(replyText: string): void {
+    if (!_db || _offered.length === 0) return;
+    const reply = new Set(contentWords(replyText));
+    try {
+        for (const e of _offered) {
+            const words = contentWords(e.description);
+            const hits = words.filter((w) => reply.has(w)).length;
+            if (words.length > 0 && hits >= Math.min(2, words.length)) {
+                _db.run("UPDATE episodic_memory SET callback_count = callback_count + 1 WHERE id = ?", [e.id]);
+            }
+        }
+    } catch {
+        /* never cost the reply */
+    }
+}
+
 // ── Helpers ───────────────────────────────────
+
+function contentWords(text: string): string[] {
+    return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? [])];
+}
 
 function rowToEpisode(row: unknown[]): EpisodicMemory {
     return {

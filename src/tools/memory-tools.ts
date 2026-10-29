@@ -554,6 +554,10 @@ export const identityUpdate: ToolDefinition = {
                     company: { type: "string", description: "User's company or organization" },
                     project: { type: "string", description: "A project name to ADD to the user's project list" },
                     goal: { type: "string", description: "An important goal to ADD to the user's goals" },
+                    address_as: {
+                        type: "string",
+                        description: "What to call the user — only when they explicitly say 'call me X'",
+                    },
                     communication_style: { type: "string", description: "direct, detailed, casual, formal, etc." },
                     detail_level: {
                         type: "string",
@@ -582,6 +586,7 @@ export const identityUpdate: ToolDefinition = {
         const emailStr = typeof input.email === "string" ? input.email : "";
         const commStyleStr = typeof input.communication_style === "string" ? input.communication_style : "";
         const detailLevelStr = typeof input.detail_level === "string" ? input.detail_level : "";
+        const addressAsStr = typeof input.address_as === "string" ? input.address_as : "";
 
         const companyIsGuardedOrg = !!companyStr && isGuardedOrg(companyStr);
         const roleClaimsOwnership = !!roleStr && isGuardedRole(roleStr);
@@ -598,7 +603,8 @@ export const identityUpdate: ToolDefinition = {
         const aliasEmbedsOwnership =
             (!!emailStr && fieldEmbedsOwnershipClaim(emailStr)) ||
             (!!commStyleStr && fieldEmbedsOwnershipClaim(commStyleStr)) ||
-            (!!detailLevelStr && fieldEmbedsOwnershipClaim(detailLevelStr));
+            (!!detailLevelStr && fieldEmbedsOwnershipClaim(detailLevelStr)) ||
+            (!!addressAsStr && fieldEmbedsOwnershipClaim(addressAsStr));
 
         if (structuredOwnership || nameEmbedsOwnership || projectIsBot || goalIsBot || aliasEmbedsOwnership) {
             // Internal detail goes to server logs only; client gets a generic
@@ -644,6 +650,7 @@ export const identityUpdate: ToolDefinition = {
         const preferences: Record<string, string> = {};
         if (input.communication_style) preferences.communication_style = input.communication_style as string;
         if (input.detail_level) preferences.detail_level = input.detail_level as string;
+        if (addressAsStr) preferences.address_as = addressAsStr;
         if (Object.keys(preferences).length > 0) fields.preferences = preferences;
 
         if (Object.keys(fields).length > 0) {
