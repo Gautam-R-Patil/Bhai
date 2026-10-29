@@ -25,6 +25,7 @@ import {
     type MediaAttachment,
     type ChannelContext,
 } from "../agent.js";
+import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
 import { formatStepStatus, parseStepLine } from "../step-status.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
@@ -486,7 +487,8 @@ export function initOverlayChat(llm: LLMClient): void {
             const origin = req.headers.origin;
             const ownPage =
                 origin === `http://127.0.0.1:${OVERLAY_PORT}` || origin === `http://localhost:${OVERLAY_PORT}`;
-            if (isWebOrigin(origin) && !ownPage) {
+            // Nor another installed extension: an extension socket always carries its own origin.
+            if ((isWebOrigin(origin) && !ownPage) || isForeignExtensionOrigin(origin)) {
                 ws.close(4003, "Origin not allowed");
                 return;
             }

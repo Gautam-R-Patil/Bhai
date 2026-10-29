@@ -219,6 +219,7 @@ desktop/hostinger-upload/
 !src/config/system-prompts.test.ts
 !src/security/oauth-state.test.ts
 !src/guest-history.test.ts
+!src/security/extension-origin.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts

@@ -16,6 +16,7 @@ import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
 import { getDataDir, getScriptsDir } from "../../config/paths.js";
 import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
+import { isForeignExtensionOrigin } from "../../security/extension-origin.js";
 import { isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
 import { resetBackend } from "./browser-backend.js";
 import type { ChromeBridgeCommand, ChromeBridgeEvent, ChromeBridgeResponse, ChromeTabInfo } from "./types.js";
@@ -405,7 +406,8 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             // the web-origin block is the protection that matters.)
             const origin = (req.headers.origin as string | undefined) || "";
             const isWebOrigin = origin.startsWith("http://") || origin.startsWith("https://");
-            if (isWebOrigin) {
+            // ...and so does another extension: only Bhai's own may read the token.
+            if (isWebOrigin || isForeignExtensionOrigin(origin)) {
                 res.writeHead(403, { "Content-Type": "application/json" });
                 res.end(
                     JSON.stringify({
@@ -471,7 +473,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
         // CORS preflight for /discover — only echo the requesting extension origin.
         if (req.method === "OPTIONS") {
             const origin = (req.headers.origin as string | undefined) || "";
-            const isExtension = origin.startsWith("chrome-extension://");
+            const isExtension = origin.startsWith("chrome-extension://") && !isForeignExtensionOrigin(origin);
             const allowOrigin = isExtension ? origin : "null";
             const headers: Record<string, string> = {
                 "Access-Control-Allow-Origin": allowOrigin,
@@ -508,9 +510,13 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     wss = new WebSocketServer({ noServer: true });
 
     httpServer.on("upgrade", (req, socket, head) => {
-        // Only the extension (chrome-extension:// origin) or a local CLI (no
-        // Origin) may connect — never a web page, rebound hostname or not.
-        if (!isLoopbackHost(req.headers.host, port) || isWebOrigin(req.headers.origin)) {
+        // Only Bhai's extension (its chrome-extension:// origin) or a local CLI (no
+        // Origin) may connect — never a web page or another extension.
+        if (
+            !isLoopbackHost(req.headers.host, port) ||
+            isWebOrigin(req.headers.origin) ||
+            isForeignExtensionOrigin(req.headers.origin)
+        ) {
             socket.destroy();
             return;
         }
