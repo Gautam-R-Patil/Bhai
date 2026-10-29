@@ -46,4 +46,15 @@ describe("proactive push", () => {
         await flush();
         expect(push).not.toHaveBeenCalled();
     });
+
+describe("fatigue gate", () => {
+    afterEach(() => _setFatigueCheckForTests(null));
+    it("holds an ordinary nudge, but never a deadline or a reminder the owner asked for", async () => {
+        _setFatigueCheckForTests(() => true); // three unanswered nudges in a row
+        expect(await dispatchProactiveMessage("telegram", "saw this article", "fyi")).toBe(false);
+        expect(await dispatchProactiveMessage("telegram", "30m left on the report", "question", undefined, false, true)).toBe(
+            true,
+        );
+    });
+});
 });

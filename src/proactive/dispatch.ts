@@ -47,6 +47,8 @@ export async function dispatchProactiveMessage(
     mode: ProactiveMode,
     buttons?: ProactiveButton[],
     ownerOnly = false,
+    /** A deadline or a reminder the owner asked for: never held back for "too many unanswered nudges". */
+    bypassFatigue = false,
 ): Promise<boolean> {
     if (isProactiveDisabled()) {
         debugProactive("suppressed_global", { channel, mode });
@@ -56,7 +58,7 @@ export async function dispatchProactiveMessage(
         debugProactive("suppressed_channel", { channel, mode });
         return false;
     }
-    if (_fatigueCheck !== null) {
+    if (_fatigueCheck !== null && !bypassFatigue) {
         try {
             if (_fatigueCheck()) {
                 debugProactive("suppressed_fatigue", { channel, mode });
