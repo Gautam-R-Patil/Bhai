@@ -23,6 +23,7 @@ export interface CronCallerContext {
     /** Memory ids the main loop showed the model this turn: the only ones memory_store may supersede. */
     shownMemories?: Set<number>;
     superseded?: boolean;
+    pinChanged?: boolean;
     /** storedMemory is a supersede's new row: its undo is the only way back to the old one. */
     undoPinned?: boolean;
 }
@@ -79,6 +80,14 @@ export function claimSupersede(id: number): boolean {
     const ctx = _callerStorage.getStore();
     if (!ctx || !canPinMemory(id) || ctx.superseded) return false;
     ctx.superseded = true;
+    return true;
+}
+
+/** Like claimSupersede, for pin_id: one pin/unpin of a shown memory per turn. */
+export function claimPin(id: number): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !canPinMemory(id) || ctx.pinChanged) return false;
+    ctx.pinChanged = true;
     return true;
 }
 

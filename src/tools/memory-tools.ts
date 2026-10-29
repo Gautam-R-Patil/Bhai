@@ -14,6 +14,7 @@ import { getMemoryStats, listMemories, recall, remember, setMemoryPinned, supers
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
 import {
     canPinMemory,
+    claimPin,
     claimSupersede,
     isMainLoopCall,
     isOwnerCaller,
@@ -31,6 +32,15 @@ export function hasCorrectionCue(text: string): boolean {
         /\b(actually|no longer|not any ?more|anymore|chang(?:e|ed|es)|moved|shifted|switched|instead|now (?:it'?s|is|i'?m|we'?re|my)|wrong|correction|i meant|scratch that|not true|nahi|nahin|nhi|ab|badal|badla|badli|galat|ghalat)\b|^\s*(?:no|nope)\b/i.test(
             text,
         ) || /नहीं|अब|बदल|ग़?लत/.test(text)
+    );
+}
+
+/** The owner's message asks to keep (or stop keeping) something as mattering: the only turns that may pin/unpin. */
+export function hasPinCue(text: string): boolean {
+    return (
+        /\b(remember|matters?|important|never forget|don'?t forget|pin|pinned|unpin|yaad|bhool(?:na|o)?|zaroori|zaruri|jaruri)\b/i.test(
+            text,
+        ) || /याद|ज़?रूरी|भूल/.test(text)
     );
 }
 
@@ -69,14 +79,15 @@ export const memoryStore: ToolDefinition = {
     async handler(input) {
         const pinId = input.pin_id == null ? 0 : Number(String(input.pin_id).replace(/^#/, ""));
         if (pinId > 0) {
-            // Owner only, on a memory shown this turn: contacts never pin or unpin the owner's memories.
+            // Owner only, on their own ask, once per turn, on a memory shown this turn: contacts and
+            // injected text never pin or unpin the owner's memories.
             const pin = input.pin !== false;
-            if (!canPinMemory(pinId) || !setMemoryPinned(pinId, pin)) {
+            if (!hasPinCue(ownerTurnMessage()) || !claimPin(pinId) || !setMemoryPinned(pinId, pin)) {
                 return JSON.stringify({ success: false, error: `Can't ${pin ? "pin" : "unpin"} #${pinId}.` });
             }
             return JSON.stringify({ success: true, id: pinId, pinned: pin });
         }
-        const pin = input.pin === true && canPinMemory();
+        const pin = input.pin === true && hasPinCue(ownerTurnMessage()) && canPinMemory();
         const imp = (input.importance as number) || 5;
         const oldId = input.supersedes == null ? 0 : Number(String(input.supersedes).replace(/^#/, ""));
         // Owner only, and only when their message says something changed and the id was shown
@@ -103,7 +114,15 @@ export const memoryStore: ToolDefinition = {
         // Smart write may merge or drop this row moments later, so its id can't back an undo.
         if (!useSmartWrite) noteStoredMemory(id, retired);
         if (input.supersedes == null || id === oldId)
-            return JSON.stringify({ success: true, id, message: pin ? "Memory stored and pinned." : "Memory stored." });
+            return JSON.stringify({
+                success: true,
+                id,
+                message: pin
+                    ? "Memory stored and pinned."
+                    : input.pin === true
+                      ? "Memory stored; not pinned: only the owner's own ask can pin."
+                      : "Memory stored.",
+            });
         if (retired) {
             return JSON.stringify({
                 success: true,
