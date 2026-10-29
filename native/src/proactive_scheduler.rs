@@ -439,6 +439,61 @@ pub fn scheduler_release_grouped(channel: String) -> GroupedReleaseResult {
     }
 }
 
+/// What must survive a restart: how many were sent today, when the last went, and the
+/// topics recently sent (dedup). In memory only, a relaunch (every app update) reset the
+/// daily cap and let the same nudge repeat.
+#[napi(object)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ChannelSnapshot {
+    pub channel: String,
+    pub sent_today: u32,
+    pub day_bucket: f64,
+    pub last_sent_ms: f64,
+    pub recent_ts: Vec<f64>,
+    pub recent_embeddings: Vec<Vec<f64>>,
+}
+
+#[napi]
+pub fn scheduler_snapshot(channel: String) -> Option<ChannelSnapshot> {
+    let st = STATE.lock();
+    let cs = st.get(&channel)?;
+    Some(ChannelSnapshot {
+        channel,
+        sent_today: cs.sent_today,
+        day_bucket: cs.day_bucket as f64,
+        last_sent_ms: cs.last_sent_ms,
+        recent_ts: cs.recent_topic_embeddings.iter().map(|(t, _)| *t).collect(),
+        recent_embeddings: cs
+            .recent_topic_embeddings
+            .iter()
+            .map(|(_, e)| e.clone())
+            .collect(),
+    })
+}
+
+/// Restore a snapshot onto a configured channel. Today's count only carries over on the same
+/// local day; topics older than the 6h dedup window are dropped.
+#[napi]
+pub fn scheduler_restore(snap: ChannelSnapshot) -> bool {
+    let mut st = STATE.lock();
+    let Some(cs) = st.get_mut(&snap.channel) else {
+        return false;
+    };
+    let now = now_ms();
+    if snap.day_bucket as i64 == day_index(now) {
+        cs.day_bucket = snap.day_bucket as i64;
+        cs.sent_today = cs.sent_today.max(snap.sent_today);
+    }
+    cs.last_sent_ms = cs.last_sent_ms.max(snap.last_sent_ms.min(now));
+    let six_h_ago = now - 6.0 * 3600.0 * 1000.0;
+    for (t, e) in snap.recent_ts.into_iter().zip(snap.recent_embeddings) {
+        if t >= six_h_ago {
+            cs.recent_topic_embeddings.push_back((t, e));
+        }
+    }
+    true
+}
+
 #[napi]
 pub fn scheduler_debug_state(channel: String) -> String {
     let st = STATE.lock();
@@ -633,6 +688,26 @@ mod tests {
             "the single waits for the next gap, not right behind the batch"
         );
         assert!(scheduler_debug_state("mb".into()).contains("sent_today=1"));
+    }
+
+    #[test]
+    fn a_restart_keeps_the_cap_and_the_sent_topics() {
+        let _serial = fresh();
+        configure("rs", 1, 0, false, true);
+        scheduler_enqueue(mk("a", "rs", "normal", vec![1.0, 0.0]));
+        assert_eq!(scheduler_try_release("rs".into()).released.len(), 1);
+        let snap = scheduler_snapshot("rs".into()).unwrap();
+
+        STATE.lock().clear(); // the process restarts
+        configure("rs", 1, 0, false, true);
+        assert!(scheduler_restore(snap));
+        // The same topic is still a duplicate, and today's cap of 1 is still used up.
+        assert_eq!(
+            scheduler_enqueue(mk("a2", "rs", "normal", vec![1.0, 0.0])),
+            "dedup"
+        );
+        scheduler_enqueue(mk("b", "rs", "normal", vec![0.0, 1.0]));
+        assert!(scheduler_try_release("rs".into()).released.is_empty());
     }
 
     #[test]

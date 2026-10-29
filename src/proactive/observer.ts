@@ -7,7 +7,8 @@
 //   Composer → dispatch → channel.
 // Task 2.3. Phase 3 will register source adapters.
 
-import { statSync } from "node:fs";
+import { readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { LLMClient } from "../llm.js";
 import { validateIntent, type ProactiveIntent, type Channel, type IntentSource } from "./intent.js";
 import {
@@ -115,6 +116,32 @@ export class Observer {
         if (this.cfg.quiet) process.env.ATLAS_PROACTIVE_DISABLE = "true";
         this.configureAllPostures();
         this.cfgMtime = this.configMtime();
+        this.restoreSchedulerState();
+    }
+
+    /** Daily counts, last-send times and recently sent topics, kept across restarts. */
+    private get statePath(): string {
+        return join(dirname(this.deps.configPath), "proactive-state.json");
+    }
+
+    private restoreSchedulerState(): void {
+        try {
+            const snaps = JSON.parse(readFileSync(this.statePath, "utf8")) as native.ChannelSnapshot[];
+            for (const snap of snaps) native.schedulerRestore?.(snap);
+        } catch {
+            /* first run, or unreadable: start fresh */
+        }
+    }
+
+    private saveSchedulerState(): void {
+        try {
+            const snaps = ALL_CHANNELS.map((ch) => native.schedulerSnapshot?.(ch)).filter(Boolean);
+            const tmp = `${this.statePath}.tmp`;
+            writeFileSync(tmp, JSON.stringify(snaps));
+            renameSync(tmp, this.statePath);
+        } catch (err) {
+            debugProactive("observer_state_save_err", { err: (err as Error).message });
+        }
     }
 
     private configMtime(): number {
@@ -339,6 +366,7 @@ export class Observer {
     private async releaseChannel(channel: Channel): Promise<void> {
         const r = native.schedulerReleaseGrouped(channel);
         if (!r) return;
+        if (r.morningBatch.length > 0 || r.singles.length > 0) this.saveSchedulerState();
 
         for (const d of r.dropped) {
             debugProactive("observer_dropped", { id: d.id, reason: d.reason });

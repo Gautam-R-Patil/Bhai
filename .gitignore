@@ -227,6 +227,7 @@ desktop/hostinger-upload/
 !src/proactive/dispatch.test.ts
 !src/proactive/notification-fatigue.test.ts
 !src/proactive/observer-config-reload.test.ts
+!src/proactive/observer-state-persist.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts
