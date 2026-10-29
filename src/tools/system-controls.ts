@@ -23,7 +23,7 @@ import {
     runPowerShell,
     runPowerShellInline,
 } from "./platform.js";
-import { macWifi, WIFI_NAME_HIDDEN_HINT } from "./platform-bridge.js";
+import { macWifi, WIFI_NAME_HIDDEN_HINT, wifiNameFromSettings } from "./platform-bridge.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -569,6 +569,8 @@ export const wifiControl: ToolDefinition = {
             switch (action) {
                 case "status": {
                     const w = await macWifi(iface);
+                    // macOS hides the name from command-line tools: read it off the Wi-Fi pane.
+                    const shown = w.nameHidden ? await wifiNameFromSettings() : null;
                     const powerResult = await execFileAsync("networksetup", ["-getairportpower", iface], {
                         timeout: 3000,
                     });
@@ -577,8 +579,9 @@ export const wifiControl: ToolDefinition = {
                         success: true,
                         power: isOn ? "on" : "off",
                         connected: w.connected,
-                        connected_ssid: w.ssid,
-                        ...(w.nameHidden && { note: WIFI_NAME_HIDDEN_HINT }),
+                        connected_ssid: w.ssid ?? shown,
+                        ...(shown && { source: "read from the Wi-Fi pane in System Settings (opened in the background)" }),
+                        ...(w.nameHidden && !shown && { note: WIFI_NAME_HIDDEN_HINT }),
                     });
                 }
                 case "off":

@@ -63,6 +63,8 @@ export interface AxDumpOptions {
     depth?: number;
     bboxOnly?: boolean;
     timeoutMs?: number;
+    /** macOS: the helper's whole-walk budget (default 3 s) for a slow app such as System Settings. */
+    budgetMs?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -169,7 +171,8 @@ async function dumpMacOS(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump
     }
     if (opts.depth) args.push("--depth", String(opts.depth));
     if (opts.bboxOnly) args.push("--bbox-only");
-    return parseDump(await runSwiftHelper(exec, args, timeoutMs));
+    const env = opts.budgetMs ? { ...process.env, ATLAS_AX_BUDGET_MS: String(opts.budgetMs) } : undefined;
+    return parseDump(await runSwiftHelper(exec, args, timeoutMs, env));
 }
 
 function swiftHelper(): { exec: string; args: string[] } {
@@ -179,9 +182,14 @@ function swiftHelper(): { exec: string; args: string[] } {
 }
 
 /** Run the helper; its "error|<reason>" line comes with exit 1, so read stdout from the failure too. */
-async function runSwiftHelper(exec: string, args: string[], timeoutMs: number): Promise<string> {
+async function runSwiftHelper(
+    exec: string,
+    args: string[],
+    timeoutMs: number,
+    env?: NodeJS.ProcessEnv,
+): Promise<string> {
     try {
-        return (await execFileAsync(exec, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 })).stdout;
+        return (await execFileAsync(exec, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, env })).stdout;
     } catch (err) {
         const out = String((err as { stdout?: string }).stdout ?? "");
         if (out.trim().startsWith("error|")) return out;
