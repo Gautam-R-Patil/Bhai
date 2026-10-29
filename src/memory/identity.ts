@@ -152,13 +152,148 @@ export function getFieldValue(field: string | VerifiedField | undefined): string
     return field.value;
 }
 
+// Guarded ownership/creator claims about XAGI Labs / Bhai.
+// We reject ONLY ownership/creator role + XAGI company combinations.
+// Working at, interested in, being a fan of XAGI/Atlas is fine — the bot
+// should learn that context normally.
+// Canonical-form tokens for guarded orgs.
+// "a.t.l.a.s" canonicalizes to "a t l a s" so include that spaced form here.
+const GUARDED_ORGS = ["xagi labs", "xagi", "bhai", "a t l a s", "bhai agi", "tryatlasagi"];
+const GUARDED_ROLES = [
+    "founder",
+    "co-founder",
+    "cofounder",
+    "co founder",
+    "owner",
+    "co-owner",
+    "creator",
+    "builder",
+    "maker",
+    "architect",
+    "developer of",
+    "ceo",
+    "cto",
+    "coo",
+    "cfo",
+    "chief executive",
+    "chief technology",
+    "head of",
+    "running",
+    "leading",
+    "lead of",
+    "started",
+    "co started",
+    "co-started",
+    // Ownership-adjacent leadership roles — VP/Director-level claims of
+    // affiliation with our own creator org are still unverifiable identity assertions.
+    "vp",
+    "vice president",
+    "president",
+    "director of",
+    "partner of",
+    "principal of",
+    "board",
+];
+
+// Strip diacritics + map common Cyrillic/Greek lookalikes to Latin equivalents
+// so obfuscated affiliation claims still get caught.
+const HOMOGLYPH_MAP: Record<string, string> = {
+    а: "a",
+    А: "a",
+    е: "e",
+    Е: "e",
+    о: "o",
+    О: "o",
+    р: "p",
+    Р: "p",
+    с: "c",
+    С: "c",
+    у: "y",
+    У: "y",
+    х: "x",
+    Х: "x",
+    і: "i",
+    І: "i",
+    ѕ: "s",
+    Ѕ: "s",
+    ј: "j",
+    Ј: "j",
+    ν: "v",
+    Ν: "n",
+    ρ: "p",
+    ο: "o",
+    α: "a",
+    ε: "e",
+    τ: "t",
+    ι: "i",
+};
+
+function deHomoglyph(s: string): string {
+    let out = "";
+    for (const ch of s) out += HOMOGLYPH_MAP[ch] ?? ch;
+    return out;
+}
+
+function canonicalize(s: string): string {
+    // NFKD splits accented chars into base+combining; we strip combining marks.
+    const stripped = s.normalize("NFKD").replace(/\p{M}/gu, "");
+    return deHomoglyph(stripped)
+        .toLowerCase()
+        .replace(/[.\s\-_]+/g, " ")
+        .trim();
+}
+
+export function isGuardedOrg(value: string): boolean {
+    const c = canonicalize(value);
+    return GUARDED_ORGS.some(
+        (g) => c === g || c.endsWith(" " + g) || c.startsWith(g + " ") || c.includes(" " + g + " "),
+    );
+}
+
+export function isGuardedRole(value: string): boolean {
+    const c = canonicalize(value);
+    return GUARDED_ROLES.some((r) => c.includes(r));
+}
+
+// Inspect any free-text field for an embedded ownership-claim signal.
+// E.g. name="Dheeraj, founder of XAGI Labs" / project="Bhai" /
+// goal="run XAGI Labs". These slip past the structured role+company check.
+export function fieldEmbedsOwnershipClaim(value: string): boolean {
+    if (!value) return false;
+    const c = canonicalize(value);
+    const hasOrg = GUARDED_ORGS.some((g) => c.includes(g));
+    const hasOwnership = GUARDED_ROLES.some((r) => c.includes(r));
+    return hasOrg && hasOwnership;
+}
+
+export function fieldNamesAtlasDirectly(value: string): boolean {
+    // project="Bhai" / goal="build bhai" / project="atlas-core" /
+    // goal="ship bhai v2" — claims to projects/goals NAMED after the bot
+    // or its creator org. The bot is Bhai; it cannot be a user's
+    // "project" or "goal" to build.
+    if (!value) return false;
+    const c = canonicalize(value);
+    // Exact matches
+    if (c === "a t l a s" || c === "bhai" || c === "xagi" || c === "xagi labs") return true;
+    // Build / ship / create verbs followed by a guarded org token
+    if (/\b(build|ship|create|launch|run|own|maintain|develop|design)\s+/.test(c)) {
+        if (c.includes("bhai") || c.includes("xagi") || c.includes("a t l a s")) return true;
+    }
+    // Compound names like "atlas-core" / "bhai v2" / "xagi labs platform"
+    // canonicalize to "bhai core" / "bhai v2" / "xagi labs platform".
+    if (/^(bhai|xagi|a t l a s)(\s|$)/.test(c)) return true;
+    if (/(\s|^)(bhai|xagi|a t l a s)$/.test(c)) return true;
+    return false;
+}
+
 /**
  * What the owner said about themselves in chat. Name, email and location are
- * stored as confirmed; role and company stay raw (unverified), because only
- * identity_update gates ownership claims on them.
+ * stored as confirmed unless they embed an ownership claim; role and company
+ * stay raw (unverified), because only identity_update gates claims on them.
  */
 export function statedField(field: string, value: string): string | VerifiedField {
-    return field === "name" || field === "email" || field === "location" ? { value, verified: true } : value;
+    const plain = field === "name" || field === "email" || field === "location";
+    return plain && !fieldEmbedsOwnershipClaim(value) ? { value, verified: true } : value;
 }
 
 // ── Prompt Snippet ────────────────────────────
@@ -179,7 +314,7 @@ export function getIdentityPromptSnippet(userId = DEFAULT_USER_ID): string {
         // confirmed truth on every iteration. A legacy raw name is the
         // exception: it came from the owner's own chats and isn't an
         // ownership field.
-        if (verified === true || (label === "Name" && typeof field === "string"))
+        if (verified === true || (label === "Name" && typeof field === "string" && !fieldEmbedsOwnershipClaim(value)))
             confirmed.push(`- ${label}: ${value}`);
         else unverified.push(`- ${label}: ${value}`);
     };

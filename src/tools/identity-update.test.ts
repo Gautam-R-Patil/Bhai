@@ -8,8 +8,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock the memory module so the tool's calls to updateIdentityProfile and
-// addProject/addGoal don't require a SQLite DB at test time.
-vi.mock("../memory/identity.js", () => ({
+// addProject/addGoal don't require a SQLite DB at test time; the claim
+// guards themselves stay real.
+vi.mock("../memory/identity.js", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../memory/identity.js")>()),
     updateIdentityProfile: vi.fn().mockReturnValue({ user_id: "default" }),
     getIdentityProfile: vi.fn().mockReturnValue({ user_id: "default" }),
     addProject: vi.fn(),

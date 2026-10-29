@@ -58,4 +58,13 @@ describe("episodic memory", () => {
         }
         expect(episodic.getEpisodicSnippet()).not.toContain("Closed seed round");
     });
+
+    it("doesn't count a reply that only shares short function words", () => {
+        const description = "Decided to move from Delhi to Bangalore with family";
+        episodic.recordEpisode("decision", description, 0.999);
+        expect(episodic.getEpisodicSnippet()).toContain(description);
+        episodic.noteEpisodeCallbacks("Done — I sent that file from your Downloads folder, along with the notes.");
+        const row = raw.prepare("SELECT callback_count FROM episodic_memory WHERE description = ?").get(description);
+        expect(row).toEqual({ callback_count: 0 });
+    });
 });

@@ -122,7 +122,7 @@ export function getEpisodicSnippet(userId = "default"): string {
 /**
  * Counts a callback for each offered episode the reply brings up; after
  * MAX_CALLBACKS the episode stops being offered.
- * ponytail: word overlap (two shared words of 4+ letters, or the only one);
+ * ponytail: word overlap (two shared words of 5+ letters, or the only one);
  * use embeddings if it misfires.
  */
 export function noteEpisodeCallbacks(replyText: string): void {
@@ -144,7 +144,7 @@ export function noteEpisodeCallbacks(replyText: string): void {
 // ── Helpers ───────────────────────────────────
 
 function contentWords(text: string): string[] {
-    return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? [])];
+    return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]{5,}/gu) ?? [])];
 }
 
 function rowToEpisode(row: unknown[]): EpisodicMemory {

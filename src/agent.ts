@@ -2524,9 +2524,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── 8. Relationship tone modulation ──
             try {
-                // A contact or autonomous turn would spend a once-ever milestone.
+                // Owner's private chat only: a group, contact or autonomous turn would spend a once-ever milestone.
                 const relationshipSnippet =
-                    isContactAgent || channelContext?.autonomous ? "" : getRelationshipSnippet();
+                    channelContext?.isOwner !== false &&
+                    channelContext?.isPrivate === true &&
+                    !channelContext?.autonomous
+                        ? getRelationshipSnippet()
+                        : "";
                 if (relationshipSnippet) parts.push(relationshipSnippet);
             } catch {
                 /* */
