@@ -17,6 +17,14 @@ export interface DynamicContextOpts {
     persona?: Persona;          // W2: piped through to PromptContext.persona
 }
 
+const ASKS =
+    /\?|\b(can you|could you|would you|please|pls|help|fix|check|look into|how (do|can|to)|what (should|do|can)|why|should i|tell me|find|make|open|send|show|remind|draft|write|book|order)\b/i;
+
+/** Unhappy, and not asking for anything: heard, not helped. */
+export function isVenting(message: string, valence: number): boolean {
+    return valence <= -0.3 && !ASKS.test(message);
+}
+
 export function buildDynamicContextReminder(
     userMessage: string,
     opts: DynamicContextOpts = {},
@@ -26,6 +34,7 @@ export function buildDynamicContextReminder(
     const ctx: PromptContext = {
         taskType: detectTaskType(userMessage ?? ""),
         userEmotionalState: emotion?.primary ?? "neutral",
+        venting: !!emotion && isVenting(userMessage, emotion.valence),
         hour,
         isProactive: opts.isProactive,
         activeSkills: opts.activeSkills,

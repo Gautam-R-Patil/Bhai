@@ -16,6 +16,8 @@ import { getPersonaIdentityLine } from "./persona-bias.js";
 export interface PromptContext {
     taskType: "chat" | "coding" | "research" | "browsing" | "system" | "planning" | "tool_use";
     userEmotionalState?: string;
+    /** A negative feeling with no request in it: they want to be heard, not helped. */
+    venting?: boolean;
     activeSkills?: string[];
     hour?: number;
     isProactive?: boolean;
@@ -34,9 +36,20 @@ interface PromptModule {
 
 const MODULES: PromptModule[] = [
     {
+        name: "tone_venting",
+        condition: (ctx) => ctx.venting === true,
+        // Live: "the demo crashed twice in front of the client" got "Want to get the demo
+        // stable? Tell me what's crashing" — identity.md: no unsolicited advice, no forced questions.
+        content:
+            "They're venting, not asking for help: one or two warm lines that show you get it. No fix, no advice, no question — let them lead.",
+        priority: 9,
+        tokenEstimate: 30,
+    },
+    {
         name: "tone_empathetic",
         // Confused gets no steer: "shorter, fix first" is the opposite of what it needs.
-        condition: (ctx) => ["stressed", "frustrated", "angry"].includes(ctx.userEmotionalState ?? ""),
+        condition: (ctx) =>
+            !ctx.venting && ["stressed", "frustrated", "angry"].includes(ctx.userEmotionalState ?? ""),
         // identity.md: "Calm, then fix … get SHORTER". Sympathy paragraphs read as stalling.
         content: "They're under pressure: be shorter and steadier, fix first, at most one line of acknowledgement.",
         priority: 9,
