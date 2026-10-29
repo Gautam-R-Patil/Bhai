@@ -148,7 +148,7 @@ browser_multi_action(actions: [
 - `js_eval`: run arbitrary JavaScript, e.g. `code: "return document.title"`
 - `wait_for_opacity`: wait until element CSS opacity ≥ threshold
 
-For complex reasoning + dynamic pages — use sequential tool calls with intermediate `browser_scan` to verify state.
+For complex reasoning + dynamic pages — use sequential tool calls and read each result's element list to verify state (`browser_scan` only for a fresh look or `visual=true`).
 
 ## Direct JavaScript Execution
 
@@ -214,8 +214,8 @@ browser_run_js(code: "document.querySelector('#onetrust-accept-btn-handler')?.cl
 - `browser_navigate("https://google.com")` → `browser_type` on search box → Enter
 
 **Forms:**
-- `browser_multi_action` with navigate → type → select → keyboard Enter
+- `browser_multi_action` with navigate → type → select, then submit with `browser_click_at` (or `browser_type` with `press_enter=true`)
 
-**Login flows:**
-- `browser_scan` → identify username/password labels → `browser_type` for each → click submit
+**Login / OTP walls:**
+- Never type passwords or one-time codes yourself. Send the stuck report asking the owner to sign in in the browser window (ending with [[STUCK]]); once they're in, `browser_scan` and continue
 - Never guess coordinates — always use labels from `browser_scan`

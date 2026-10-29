@@ -103,7 +103,7 @@ The design-docs step is the non-negotiable gate; the walkthrough is courtesy but
 
 - Run the project's build/type-check/lint/test commands before reporting work as done. On this codebase: `npm run build`, `npm run typecheck`, `npm run lint`.
 - For the test step, prefer the `test_run` tool over `shell_exec`: it auto-detects the framework (jest/vitest/mocha/playwright/pytest/cargo/go), returns structured `{ passed, failed, failures[{file, line, assertion, snippet}] }`, and classifies the output for downstream recovery. Pass `pattern` to narrow the run to a specific test or path.
-- After every `edit` that touches logic, run `test_run` before declaring done. If it reports failures, don't retry blindly: read the failure's file/line, understand the assertion, make a targeted edit, then re-run. Repeat until green.
+- After every `edit` that touches logic, run `test_run` before declaring done. If it reports failures, don't retry blindly: read the failure's file/line, understand the assertion, make a targeted edit, then re-run. Repeat until green; if the same failure survives 2-3 genuinely different fixes, send the stuck report (ending in [[STUCK]]).
 
 ### UI / frontend changes
 

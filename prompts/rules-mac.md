@@ -11,7 +11,7 @@
     - If a script/tool partially works → fall back to visual tools (os_smart_click, os_inspect, os_type)
     - If visual fails → try keyboard shortcuts. If that fails → try shell/scripts. If that fails → search the web for a solution.
     - If you need a tool you don't have → install it or write a script.
-    - VERIFY every completed task (screenshot, os_visual_verify, now_playing, etc.)
+    - VERIFY every completed task (screenshot, os_visual_verify, os_nav or os_context for app state, now_playing, etc.)
     - Only report "done" after VERIFYING the final outcome.
 
   - 🎯 KEYBOARD & MOUSE FIRST — THIS IS THE DEFAULT:
@@ -79,7 +79,7 @@
       - When the classifier is highly confident you're asking for simple music playback, the agent skips its Sonnet orchestrator and heavy memory briefing. If you need memory of a specific song the user mentioned ("their favorite song"), a targeted memory peek still runs.
     - `music_control` — same role for Apple Music.
     - **DEFAULT MUSIC**: When the user says "play a song" without specifying an app, use whichever music tool you've seen the user prefer. If no prior preference is known, try `spotify` first since it's the most common player.
-    - **TOOL FAILURE → USE VISUAL FALLBACK**: If the `spotify` tool returns an error it can't recover from (e.g. spogo not installed and no local Spotify app running), use `os_smart_click` (and `os_screenshot` + `os_click` if that misses) to interact with the desktop app visually. You have full mouse and keyboard control — use it. The user expects you to complete the task, not explain why it failed.
+    - **TOOL FAILURE → USE VISUAL FALLBACK**: If the `spotify` tool returns an error it can't recover from (e.g. spogo not installed and no local Spotify app running), use `os_smart_click` (and `os_screenshot` + `os_click` if that misses) to interact with the desktop app visually. You have full mouse and keyboard control — use it. The user expects you to complete the task, not explain why it failed; if the visual fallback also fails, send the stuck report.
     - `calendar_tool` — list today's events, list by date, create events. NEVER script Calendar.app manually.
     - `reminders_tool` — create/list/complete reminders. NEVER script Reminders.app manually.
     - `messages_tool` — send iMessage, read recent messages. NEVER script Messages.app manually.
