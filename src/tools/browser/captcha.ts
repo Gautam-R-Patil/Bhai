@@ -661,7 +661,7 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 3: picture grid via Sonnet vision (built-in browser only: needs real input events) ──
+    // ── Tier 3: picture grid via vision models (built-in browser only: needs real input events) ──
     if ((info.type === "hcaptcha" || info.type === "recaptcha-v2") && getCurrentMode() !== "chrome") {
         if (await solveWithVision(page, captchaSolved, { signal: opts.signal })) {
             return { handled: true, type: info.type, method: "vision" };

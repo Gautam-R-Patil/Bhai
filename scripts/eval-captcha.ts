@@ -8,19 +8,22 @@
 //
 // Usage:
 //   npx tsx scripts/eval-captcha.ts [--type recaptcha|hcaptcha|turnstile|all] [--runs 20] [--tier waterfall|vision]
-// Model for the vision solver: ATLAS_CAPTCHA_MODEL (default Sonnet). Needs a
+// Models for the vision solver: ATLAS_CAPTCHA_MODELS (default: Astra + Terra, GPT-5.4 breaks ties). Needs a
 // Bhai session (ATLAS_OTPLESS_USER_ID). Writes data/captcha-eval/<time>.json.
 
+// Load the tool registry first, in the app's order: captcha.ts sits inside an import cycle.
+import "../src/tools/index.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../src/config/paths.js";
 import { loadConfig } from "../src/config.js";
 import { createLLMClient } from "../src/llm.js";
 import { initSession } from "../src/session.js";
-import { switchToPlaywright } from "../src/tools/browser/browser-backend.js";
+import { registerPlaywrightBackend, switchToPlaywright } from "../src/tools/browser/browser-backend.js";
 import { captchaSolved, detectCaptcha, handleCaptchaIfPresent } from "../src/tools/browser/captcha.js";
 import { setCaptchaLLM, solveWithVision } from "../src/tools/browser/captcha-vision.js";
 import { getBrowser } from "../src/tools/browser/core.js";
+import { PlaywrightPassthroughBackend } from "../src/tools/browser/playwright-backend.js";
 
 const DEMOS = {
     recaptcha: "https://www.google.com/recaptcha/api2/demo",
@@ -46,8 +49,9 @@ async function main() {
     const llm = createLLMClient(loadConfig());
     let calls = 0;
     setCaptchaLLM({ ...llm, chat: (...a: Parameters<typeof llm.chat>) => (calls++, llm.chat(...a)) });
+    registerPlaywrightBackend(() => new PlaywrightPassthroughBackend());
     switchToPlaywright();
-    const ctx = await getBrowser();
+    const ctx = await getBrowser(); // Bhai's own headed, persistent browser: Google distrusts a bare headless one
 
     const results: Run[] = [];
     for (const kind of kinds) {
@@ -103,7 +107,7 @@ async function main() {
     const dir = path.join(getDataDir(), "captcha-eval");
     mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
-    writeFileSync(file, JSON.stringify({ model: process.env.ATLAS_CAPTCHA_MODEL ?? "sonnet", tier, results }, null, 2));
+    writeFileSync(file, JSON.stringify({ models: process.env.ATLAS_CAPTCHA_MODELS ?? "default", tier, results }, null, 2));
     console.log(`\nSaved ${file}`);
     await ctx.close().catch(() => {});
     process.exit(0);

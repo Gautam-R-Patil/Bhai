@@ -1,7 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
 import { getCreditCost } from "./credit_cost";
-import { isGrokModel, toGrokRequest } from "./grok";
+import { azureDeployment, isAzureModel, isGrokModel, toGrokRequest } from "./grok";
 
 describe("grok passthrough (unhinged mode)", () => {
     it("only the xai/grok id goes to Grok; billing and fallback are Sonnet's", () => {
@@ -11,10 +11,19 @@ describe("grok passthrough (unhinged mode)", () => {
     });
 
     it("keeps messages and tools, drops Claude-only fields, leaves room for reasoning", () => {
-        const body = { model: "xai/grok-4.7", max_tokens: 512, reasoning: { effort: "none" }, tools: [{ type: "function", function: { name: "request_tools" } }] };
+        const body = {
+            model: "xai/grok-4.7",
+            max_tokens: 512,
+            reasoning: { effort: "none" },
+            tools: [{ type: "function", function: { name: "request_tools" } }],
+        };
         const msgs = [
             { role: "system", content: [{ type: "text", text: "sys", cache_control: { type: "ephemeral" } }] },
-            { role: "assistant", content: "", tool_calls: [{ id: "1", type: "function", function: { name: "x", arguments: "{}" } }] },
+            {
+                role: "assistant",
+                content: "",
+                tool_calls: [{ id: "1", type: "function", function: { name: "x", arguments: "{}" } }],
+            },
             { role: "tool", tool_call_id: "1", content: "ok" },
         ];
         const r = toGrokRequest(body, msgs, "grok-4.7") as any;
@@ -24,5 +33,21 @@ describe("grok passthrough (unhinged mode)", () => {
         expect(r.messages[0].content).toEqual([{ type: "text", text: "sys" }]);
         expect(r.messages[1].tool_calls).toHaveLength(1);
         expect(r.messages[2].tool_call_id).toBe("1");
+    });
+
+    it("sends azure/<deployment> to Azure with GPT's token field and no sampling knobs", () => {
+        expect(isAzureModel("azure/gpt-6-luna")).toBe(true);
+        expect(isAzureModel("openai/gpt-5-mini")).toBe(false);
+        expect(azureDeployment("azure/gpt-6-luna")).toBe("gpt-6-luna");
+        expect(getCreditCost("azure/gpt-6-luna")).toBe(1);
+        const r = toGrokRequest(
+            { model: "azure/gpt-6-luna", temperature: 0.2, max_tokens: 300 },
+            [],
+            "gpt-6-luna",
+        ) as any;
+        expect(r).toMatchObject({ model: "gpt-6-luna", max_completion_tokens: 4000, reasoning_effort: "low" });
+        expect(r.max_tokens).toBeUndefined();
+        expect(r.temperature).toBeUndefined();
+        expect((toGrokRequest({}, [], "gpt-4.1") as any).reasoning_effort).toBeUndefined();
     });
 });
