@@ -16,6 +16,22 @@ function escapeHtml(text: string): string {
 }
 
 /**
+ * Replace fenced code (```lang\ncode```) via `render`. An unclosed fence runs to
+ * the end only when its opener sits on its own line (what the chunker emits when
+ * it splits a block); a stray ``` in prose ("wrap it in ``` fences") stays literal.
+ */
+function replaceFences(text: string, render: (code: string, lang?: string) => string): string {
+    return text.replace(
+        /```(?:([\w+#.-]+)[^\S\n]*(\n)|[^\S\n]*(\n)?)([\s\S]*?)(```|$)/g,
+        (m, lang: string | undefined, nl1, nl2, code: string, close: string, offset: number, str: string) => {
+            const ownLine = (nl1 || nl2) && /(?:^|\n)[^\S\n]*$/.test(str.slice(0, offset));
+            if (!close && !ownLine) return m;
+            return render(code.replace(/\n$/, ""), lang);
+        },
+    );
+}
+
+/**
  * Convert the model's Markdown into the HTML subset Telegram accepts.
  * Code (fenced and inline) is pulled out into placeholders first so the inline
  * rules (bold, underline, headings, bullets…) never touch it, then restored
@@ -28,14 +44,10 @@ export function markdownToTelegramHtml(text: string): string {
     // A private-use char never appears in real replies; dropping it keeps placeholders unforgeable.
     let html = text.replace(/\uE000/g, "");
 
-    // Fenced code: ```lang\ncode``` (an unclosed fence runs to the end).
-    html = html.replace(
-        /```(?:([\w+#.-]+)[^\S\n]*\n|[^\S\n]*\n?)([\s\S]*?)(?:```|$)/g,
-        (_m, lang: string | undefined, code: string) => {
-            const body = escapeHtml(code.replace(/\n$/, ""));
-            return stash(lang ? `<pre><code class="language-${lang}">${body}</code></pre>` : `<pre>${body}</pre>`);
-        },
-    );
+    html = replaceFences(html, (code, lang) => {
+        const body = escapeHtml(code);
+        return stash(lang ? `<pre><code class="language-${lang}">${body}</code></pre>` : `<pre>${body}</pre>`);
+    });
 
     // Inline code: `code`
     html = html.replace(/`([^`\n]+)`/g, (_m, code: string) => stash(`<code>${escapeHtml(code)}</code>`));
@@ -91,10 +103,7 @@ export function markdownToTelegramHtml(text: string): string {
 
 /** Strip Markdown markers for the plain-text fallback when Telegram rejects the HTML. */
 export function markdownToPlainText(text: string): string {
-    return text
-        .replace(/```(?:[\w+#.-]+[^\S\n]*\n|[^\S\n]*\n?)([\s\S]*?)(?:```|$)/g, (_m, code: string) =>
-            code.replace(/\n$/, ""),
-        )
+    return replaceFences(text, (code) => code)
         .replace(/`([^`\n]+)`/g, "$1")
         .replace(/\*\*(.+?)\*\*/g, "$1")
         .replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, "$1")
@@ -164,9 +173,15 @@ const STOP_COMMANDS = new Set([
     "rehne do",
 ]);
 
+// Dropped from short messages before the lookup: "stop bhai", "leave it yaar".
+const STOP_ADDRESS = new Set(["bhai", "bot", "bro", "please", "pls", "plz", "yaar"]);
+// Also dropped on a second pass: "cancel it", "stop the task".
+const STOP_FILLER = new Set([...STOP_ADDRESS, "it", "that", "this", "everything", "all", "the", "task", "tasks"]);
+
 /**
  * True when the whole message IS a stop command ("stop", "/stop", "Stop!!",
- * "ruk jao") — not when it merely contains one ("can't stop laughing", "quite").
+ * "ruk jao", or a short "stop bhai" / "cancel it") — not when it merely contains
+ * one ("can't stop laughing", "quite", "don't stop").
  */
 export function isStopCommand(text: string): boolean {
     const normalized = text
@@ -177,5 +192,8 @@ export function isStopCommand(text: string): boolean {
         .replace(/[^\p{L}\p{N}\s]/gu, " ")
         .replace(/\s+/g, " ")
         .trim();
-    return STOP_COMMANDS.has(normalized);
+    if (STOP_COMMANDS.has(normalized)) return true;
+    const words = normalized.split(" ");
+    if (words.length > 4) return false;
+    return [STOP_ADDRESS, STOP_FILLER].some((drop) => STOP_COMMANDS.has(words.filter((w) => !drop.has(w)).join(" ")));
 }

@@ -1392,6 +1392,15 @@ async function handleOwnerMessage(
     const typingKeepAlive = setInterval(() => {
         socket?.sendPresenceUpdate("composing", jid).catch(() => {});
     }, 8000);
+    // A "stop" aborts before runAgent returns (a running tool isn't interrupted); drop "typing" now
+    controller.signal.addEventListener(
+        "abort",
+        () => {
+            clearInterval(typingKeepAlive);
+            socket?.sendPresenceUpdate("paused", jid).catch(() => {});
+        },
+        { once: true },
+    );
 
     try {
         // Subscribe + show typing indicator

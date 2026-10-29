@@ -441,7 +441,8 @@ function findFenceAround(
     for (const line of text.split("\n")) {
         if (!open && offset >= pos) return null;
         const lineEnd = offset + line.length;
-        if (line.trimStart().startsWith("```")) {
+        // "```npm i foo``` then …" opens and closes on one line — an even count isn't a fence toggle
+        if (line.trimStart().startsWith("```") && line.split("```").length % 2 === 0) {
             if (!open) {
                 open = { start: offset, openLine: line.trim(), openLineEnd: lineEnd };
             } else {
