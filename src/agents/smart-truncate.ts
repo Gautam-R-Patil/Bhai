@@ -41,26 +41,49 @@ const TOOL_STRATEGIES: Record<string, TruncationStrategy> = {
 
 // ── Strategy Implementations ─────────────────
 
+/**
+ * Drop a dangling half of a UTF-16 surrogate pair left behind by a substring
+ * cut. A naive `.substring()` can slice between the two code units of an
+ * astral char (emoji, some CJK), leaving a lone surrogate that becomes U+FFFD
+ * when UTF-8-encoded on transport. Every cut below routes through this.
+ */
+function trimLoneSurrogates(s: string): string {
+    if (s.length === 0) return s;
+    let start = 0;
+    let end = s.length;
+    const first = s.charCodeAt(0);
+    if (first >= 0xdc00 && first <= 0xdfff) start = 1; // leading low surrogate
+    const last = s.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1; // trailing high surrogate
+    return start === 0 && end === s.length ? s : s.substring(start, end);
+}
+
+/** Surrogate-safe substring cut. */
+function cut(s: string, start: number, end?: number): string {
+    return trimLoneSurrogates(s.substring(start, end));
+}
+
+/** Build a head/tail truncation at the given head ratio, honoring maxChars. */
+function truncateSplit(output: string, maxChars: number, headRatio: number): string {
+    if (output.length <= maxChars) return output;
+    const headSize = Math.floor(maxChars * headRatio);
+    const tailSize = maxChars - headSize - 60; // room for separator
+    // Too small to fit head + tail + marker: plain head cut within the cap.
+    if (tailSize < 1) return cut(output, 0, maxChars);
+    const head = cut(output, 0, headSize);
+    const tail = cut(output, output.length - tailSize);
+    const omitted = output.length - head.length - tail.length;
+    return `${head}\n\n...[truncated ${omitted} chars]...\n\n${tail}`;
+}
+
 /** Keep head + tail of output (head-heavy). Good for files. */
 function truncateHeadTail(output: string, maxChars: number): string {
-    if (output.length <= maxChars) return output;
-    const headSize = Math.floor(maxChars * 0.6);
-    const tailSize = maxChars - headSize - 60; // room for separator
-    const head = output.substring(0, headSize);
-    const tail = output.substring(output.length - tailSize);
-    const omitted = output.length - headSize - tailSize;
-    return `${head}\n\n...[truncated ${omitted} chars]...\n\n${tail}`;
+    return truncateSplit(output, maxChars, 0.6);
 }
 
 /** Keep more of the tail (errors are at the bottom). Good for shell output. */
 function truncateTailHeavy(output: string, maxChars: number): string {
-    if (output.length <= maxChars) return output;
-    const headSize = Math.floor(maxChars * 0.25);
-    const tailSize = maxChars - headSize - 60;
-    const head = output.substring(0, headSize);
-    const tail = output.substring(output.length - tailSize);
-    const omitted = output.length - headSize - tailSize;
-    return `${head}\n\n...[truncated ${omitted} chars]...\n\n${tail}`;
+    return truncateSplit(output, maxChars, 0.25);
 }
 
 /** Parse JSON, keep structure but truncate long string values. */
@@ -91,7 +114,7 @@ function truncateJsonPrune(output: string, maxChars: number): string {
 export function pruneJsonValues(obj: unknown, maxValueLen: number): unknown {
     if (typeof obj === "string") {
         if (obj.length > maxValueLen) {
-            return obj.substring(0, maxValueLen) + "...";
+            return cut(obj, 0, maxValueLen) + "...";
         }
         return obj;
     }
@@ -120,10 +143,16 @@ function truncateKeepIds(output: string, maxChars: number): string {
     // Try to parse as JSON and keep id/type/tag fields, truncate text/description
     try {
         const parsed = JSON.parse(output);
-        const pruned = pruneKeepingIds(parsed);
-        const result = JSON.stringify(pruned, null, 1);
-        if (result.length <= maxChars) return result;
-        return truncateHeadTail(result, maxChars);
+        // Progressively prune fewer items / shorter values so the result stays
+        // valid JSON. Never head_tail a JSON string — that cuts it mid-structure
+        // into unparseable JSON (mirrors json_prune's valid-summary fallback).
+        for (const [maxItems, maxVal] of [[20, 100], [10, 60], [5, 40]] as const) {
+            const result = JSON.stringify(pruneKeepingIds(parsed, maxItems, maxVal), null, 1);
+            if (result.length <= maxChars) return result;
+        }
+        const compact = JSON.stringify(pruneKeepingIds(parsed, 3, 20));
+        if (compact.length <= maxChars) return compact;
+        return JSON.stringify({ _truncated: true, _originalSize: output.length, _message: "Browser output too large to include" });
     } catch {
         // Not JSON, try to keep lines with IDs
         const lines = output.split("\n");
@@ -141,37 +170,50 @@ function truncateKeepIds(output: string, maxChars: number): string {
 
         const importantText = important.join("\n");
         if (importantText.length >= maxChars) {
-            return truncateHeadTail(importantText, maxChars);
+            // Keep whole ID-bearing lines head-first so complete IDs survive —
+            // head_tail would cut the middle out of the very lines we must keep.
+            return headCapLines(important, maxChars);
         }
 
         const remaining = maxChars - importantText.length - 40;
-        const restText = rest.join("\n").substring(0, remaining);
+        // No budget left for descriptive lines: return the ID lines alone rather
+        // than overflowing the cap with a separator + a negative-length substring.
+        if (remaining <= 0) return importantText;
+        const restText = cut(rest.join("\n"), 0, remaining);
         return `${importantText}\n\n...[${rest.length} descriptive lines truncated]...\n${restText}`;
     }
 }
 
-/** Keep id/type/tag fields in JSON objects, truncate text and description fields. */
-function pruneKeepingIds(obj: unknown): unknown {
+/**
+ * Keep id/type/tag fields in JSON objects, truncate text and description fields.
+ * `maxItems`/`maxValueLen` let callers prune progressively harder so the result
+ * stays within a char budget while remaining valid JSON. Identifying keys are
+ * kept but still bounded by `maxValueLen` so harder passes actually shrink.
+ */
+function pruneKeepingIds(obj: unknown, maxItems = 20, maxValueLen = 80): unknown {
     if (typeof obj === "string") {
-        return obj.length > 100 ? obj.substring(0, 100) + "..." : obj;
+        return obj.length > maxValueLen ? cut(obj, 0, maxValueLen) + "..." : obj;
     }
     if (Array.isArray(obj)) {
-        const items = obj.slice(0, 20).map(item => pruneKeepingIds(item));
-        if (obj.length > 20) {
-            items.push(`...(${obj.length - 20} more elements)`);
+        const items = obj.slice(0, maxItems).map(item => pruneKeepingIds(item, maxItems, maxValueLen));
+        if (obj.length > maxItems) {
+            items.push(`...(${obj.length - maxItems} more elements)`);
         }
         return items;
     }
     if (obj !== null && typeof obj === "object") {
         const result: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(obj)) {
-            // Keep id, type, tag, role, name, href fields intact
+            // Keep id, type, tag, role, name, href fields — but bound long string
+            // values so progressive prune passes can still shrink the output.
             if (/^(id|type|tag|role|name|href|action|value|checked|selected)$/i.test(key)) {
-                result[key] = value;
-            } else if (typeof value === "string" && value.length > 80) {
-                result[key] = value.substring(0, 80) + "...";
+                result[key] = typeof value === "string" && value.length > maxValueLen
+                    ? cut(value, 0, maxValueLen) + "..."
+                    : value;
+            } else if (typeof value === "string" && value.length > maxValueLen) {
+                result[key] = cut(value, 0, maxValueLen) + "...";
             } else {
-                result[key] = pruneKeepingIds(value);
+                result[key] = pruneKeepingIds(value, maxItems, maxValueLen);
             }
         }
         return result;
@@ -179,10 +221,24 @@ function pruneKeepingIds(obj: unknown): unknown {
     return obj;
 }
 
+/** Accumulate whole lines head-first until the char budget is hit (keeps complete IDs). */
+function headCapLines(lines: string[], maxChars: number): string {
+    const kept: string[] = [];
+    let len = 0;
+    for (const line of lines) {
+        const add = (kept.length ? 1 : 0) + line.length; // +1 for the joining newline
+        if (len + add > maxChars) break;
+        kept.push(line);
+        len += add;
+    }
+    // A single line longer than the whole budget: fall back to a plain cut.
+    return kept.length ? kept.join("\n") : cut(lines.join("\n"), 0, maxChars);
+}
+
 /** Default truncation: simple head cut (current behavior). */
 function truncateDefault(output: string, maxChars: number): string {
     if (output.length <= maxChars) return output;
-    return output.substring(0, maxChars);
+    return cut(output, 0, maxChars);
 }
 
 // ── Public API ───────────────────────────────

@@ -16,6 +16,8 @@ import { shouldOverrideRole } from "./role-analyzer.js";
 import { shouldSpeculate, executeSpeculatively } from "./speculative.js";
 import { Blackboard } from "./blackboard.js";
 import { requestHumanApproval } from "./human-interrupt.js";
+import { getActiveChannel } from "../tools/channel-send.js";
+import { currentSwarmRun, isPaymentHold, runWideGrant, withSwarmStep } from "./swarm-context.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -25,6 +27,7 @@ export interface MeshStep {
     description: string;
     depends_on: string[];       // IDs of steps that must complete first
     priority?: "critical" | "normal" | "low"; // Set by critical path analysis
+    replaces?: string[]; // Replan: earlier step ids this one takes over under a new id
 }
 
 export interface MeshResult {
@@ -120,21 +123,44 @@ function computeMeshId(steps: MeshStep[]): string {
     return `mesh_${Math.abs(hash).toString(36)}`;
 }
 
-// ── Dangerous Step Detection (for human-in-the-loop) ──
+// ── Telegram early ask (not the safety boundary) ──
 
-const DANGEROUS_KEYWORDS = [
-    "delete", "remove", "erase", "destroy", "drop",
-    "send email", "send mail", "email to",
-    "purchase", "buy", "payment", "checkout", "order",
-    "deploy", "publish", "release", "push to prod",
-    "format", "wipe", "reset",
-    "transfer", "wire", "pay",
-    "uninstall", "rm -rf", "rm -r",
-];
+// The boundary is the tool gate (swarm-context.ts): inside a swarm, external
+// side effects run only with the owner's consent for the run or this step.
+// On Telegram only, a step whose text mentions an irreversible verb also gets
+// Approve/Skip buttons BEFORE it runs, so the owner can OK it up front.
+// Recall-first: a false positive costs one tap. Off Telegram this is never consulted.
+const ASK_FIRST_RE =
+    /\b(?:delet\w*|remov\w*|eras\w*|wip(?:e|es|ed|ing)|destroy\w*|purg\w*|trash\w*|shred\w*|rm|drop\w*|uninstall\w*|reset\w*|format\w*|send\w*|sent|e-?mail\w*|messag\w*|text\w*|dm|whatsapp\w*|repl(?:y|ies|ied|ying)|forward\w*|post\w*|publish\w*|tweet\w*|buy\w*|bought|purchas\w*|order\w*|checkout|check\s+out|pay|pays|paid|paying|payments?|transfer\w*|wir(?:e|es|ed|ing)|deploy\w*|push\w*|prod)\b|\bbranch\s+-D\b/i;
 
-function isDangerousStep(description: string): boolean {
-    const lower = description.toLowerCase();
-    return DANGEROUS_KEYWORDS.some(kw => lower.includes(kw));
+export function shouldAskFirst(description: string): boolean {
+    return ASK_FIRST_RE.test(description);
+}
+
+/** Only Telegram renders approval buttons (resolveInterrupt). */
+function canAskOwner(): boolean {
+    return getActiveChannel() === "telegram";
+}
+
+function needsApprovalResult(step: MeshStep, tried: string[], why?: string): SubAgentResult {
+    const msg =
+        `NOT done: this step needs the owner's OK${why ? ` (${why})` : ""}. ` +
+        (tried.length
+            ? `It tried: ${[...new Set(tried)].join("; ")}. That was NOT run. `
+            : `Nothing was run for it. It would have: ${step.description}. `) +
+        "If the owner says yes, call swarm_task again with the SAME task text and confirmed: true " +
+        "(that runs only the held steps, with the owner's OK; finished steps are not repeated).";
+    return {
+        id: step.id,
+        role: step.role,
+        success: false,
+        output: msg,
+        toolCalls: 0,
+        durationMs: 0,
+        estimatedCost: 0,
+        error: msg,
+        needsApproval: true,
+    };
 }
 
 // ── Mesh Executor ─────────────────────────────
@@ -149,6 +175,8 @@ export async function executeMesh(
     steps: MeshStep[],
     onProgress?: (msg: string) => Promise<void>,
     stepTimeoutMs = 300000, // 5 minutes per step
+    /** Earlier waves (swarm replan): their successful steps satisfy deps here. */
+    prior?: { results: Map<string, SubAgentResult>; steps: MeshStep[] },
 ): Promise<MeshResult> {
     const startTime = Date.now();
     const meshId = computeMeshId(steps);
@@ -156,6 +184,23 @@ export async function executeMesh(
 
     // ── Per-execution shared blackboard for cross-agent discovery sharing ──
     const blackboard = new Blackboard();
+
+    // Deps outside this plan: a prior wave's successful step satisfies them;
+    // a removed, failed or hallucinated step is dropped instead of throwing.
+    const ids = new Set(steps.map((s) => s.id));
+    const externalDeps = new Map<string, string[]>();
+    for (const s of steps) {
+        const external = s.depends_on.filter((d) => !ids.has(d));
+        if (external.length === 0) continue;
+        const satisfied = external.filter((d) => prior?.results.get(d)?.success);
+        const dropped = external.filter((d) => !satisfied.includes(d));
+        if (dropped.length > 0) {
+            console.warn(`[MESH] Step ${s.id}: dropping deps on unknown/failed steps [${dropped.join(", ")}]`);
+        }
+        externalDeps.set(s.id, satisfied);
+        s.depends_on = s.depends_on.filter((d) => ids.has(d));
+    }
+    const priorStepMap = new Map((prior?.steps ?? []).map((s) => [s.id, s]));
 
     // ── Validate: detect cycles ──
     validateDAG(steps);
@@ -200,6 +245,7 @@ export async function executeMesh(
 
         // Restore completed steps and their results
         for (const stepId of existingCheckpoint.completedSteps) {
+            if (!stepMap.has(stepId)) continue;
             completed.add(stepId);
             completedCount++;
             const cachedOutput = existingCheckpoint.stepResults[stepId] || "(restored from checkpoint)";
@@ -274,8 +320,23 @@ export async function executeMesh(
         // Run all ready steps in parallel
         const waveResults = await Promise.all(
             ready.map(async (step) => {
-                // ── Human-in-the-loop check for dangerous steps ──
-                if (isDangerousStep(step.description) && onProgress) {
+                // Dynamic role assignment (#5)
+                let effectiveRole = step.role;
+                const roleOverride = shouldOverrideRole(step.role, step.description);
+                if (roleOverride.override && roleOverride.newRole) {
+                    console.log(`    🔀 Role override: ${step.id} ${step.role} → ${roleOverride.newRole} (${roleOverride.reason})`);
+                    effectiveRole = roleOverride.newRole;
+                }
+
+                // ── Telegram: ask before a step that sounds irreversible ──
+                // Approve lets this step's side effects through the tool gate;
+                // Skip marks it declined. Everywhere else the gate alone decides.
+                // A step the owner already approved (a confirmed re-run) isn't asked again.
+                const run = currentSwarmRun();
+                // The grant is used up as the step runs: a replanned step that
+                // reuses this id is gated again.
+                let stepApproved = !!run?.approvedSteps?.delete(step.id) || runWideGrant(run);
+                if (!stepApproved && onProgress && canAskOwner() && shouldAskFirst(step.description)) {
                     try {
                         const approval = await requestHumanApproval(
                             {
@@ -286,44 +347,44 @@ export async function executeMesh(
                             },
                             onProgress,
                         );
-                        if (approval.answer === "Skip" || (approval.timedOut && approval.answer === "Skip")) {
-                            console.log(`  ⏭️ Step ${step.id} skipped by user (timedOut=${approval.timedOut})`);
+                        if (approval.timedOut) {
+                            return needsApprovalResult(step, [], "you didn't answer within 5 minutes");
+                        }
+                        if (approval.answer !== "Approve") {
+                            console.log(`  ⏭️ Step ${step.id} skipped by user`);
+                            const msg = `NOT run: you declined "${step.description}".`;
                             return {
                                 id: step.id,
                                 role: step.role,
                                 success: false,
-                                output: `Skipped by user: ${step.description}`,
+                                output: msg,
                                 toolCalls: 0,
                                 durationMs: 0,
                                 estimatedCost: 0,
-                                error: "Skipped by user approval",
+                                error: msg,
+                                declined: true,
                             } as SubAgentResult;
                         }
+                        stepApproved = true;
                     } catch {
-                        // Approval mechanism failed — proceed anyway (fail-open)
-                        console.warn(`  ⚠️ Human approval check failed for ${step.id}, proceeding`);
+                        return needsApprovalResult(step, [], "the approval request failed");
                     }
                 }
+                const inStep = <T>(fn: () => Promise<T>): Promise<T> =>
+                    withSwarmStep({ stepId: step.id, stepApproved }, fn);
+                const blockedBefore = run?.blocked.length ?? 0;
 
                 // Gather structured context from dependencies (#2)
-                const depContext = step.depends_on
-                    .map(depId => {
-                        const depResult = results.get(depId);
-                        const depStep = stepMap.get(depId);
+                const depContext = [...(externalDeps.get(step.id) ?? []), ...step.depends_on]
+                    .map((depId) => {
+                        const depResult = results.get(depId) ?? prior?.results.get(depId);
+                        const depStep = stepMap.get(depId) ?? priorStepMap.get(depId);
                         if (!depResult || !depStep) return "";
                         const handoff = buildHandoff(depResult, depStep);
                         return serializeHandoff(handoff);
                     })
                     .filter(Boolean)
                     .join("\n\n");
-
-                // Dynamic role assignment (#5)
-                let effectiveRole = step.role;
-                const roleOverride = shouldOverrideRole(step.role, step.description);
-                if (roleOverride.override && roleOverride.newRole) {
-                    console.log(`    🔀 Role override: ${step.id} ${step.role} → ${roleOverride.newRole} (${roleOverride.reason})`);
-                    effectiveRole = roleOverride.newRole;
-                }
 
                 // ── Inject blackboard shared context ──
                 const bbSummary = blackboard.getSummary();
@@ -350,41 +411,49 @@ export async function executeMesh(
                 } else if (wantsSpeculation) {
                     console.log(`    🎯 Speculation suppressed for ${step.id} (wave cap reached)`);
                 }
+                const task = {
+                    id: step.id,
+                    role: effectiveRole,
+                    description: step.description,
+                    context: fullContext,
+                    timeoutMs: stepTimeoutMs,
+                    priority: step.priority,
+                    workingDirectory,
+                };
                 if (allowSpeculation) {
                     try {
                         console.log(`    🎯 Speculative execution for critical step ${step.id}`);
-                        const specResult = await executeSpeculatively(llm, {
-                            id: step.id,
-                            role: effectiveRole,
-                            description: step.description,
-                            context: fullContext,
-                            timeoutMs: stepTimeoutMs,
-                            priority: step.priority,
-                            workingDirectory,
-                        }, progressFn);
-                        result = specResult.result;
+                        result = (await inStep(() => executeSpeculatively(llm, task, progressFn))).result;
                     } catch (specErr) {
                         console.warn(`    ⚠️ Speculative execution failed for ${step.id}, falling back to normal:`, (specErr as Error).message);
-                        result = await executeWithRecovery(llm, {
-                            id: step.id,
-                            role: effectiveRole,
-                            description: step.description,
-                            context: fullContext,
-                            timeoutMs: stepTimeoutMs,
-                            priority: step.priority,
-                            workingDirectory,
-                        }, progressFn);
+                        result = await inStep(() => executeWithRecovery(llm, task, progressFn));
                     }
                 } else {
-                    result = await executeWithRecovery(llm, {
-                        id: step.id,
-                        role: effectiveRole,
-                        description: step.description,
-                        context: fullContext,
-                        timeoutMs: stepTimeoutMs,
-                        priority: step.priority,
-                        workingDirectory,
-                    }, progressFn);
+                    result = await inStep(() => executeWithRecovery(llm, task, progressFn));
+                }
+
+                // A side effect the gate held back: the step is NOT done, whatever its sub-agent said.
+                const stepBlocks = (run?.blocked.slice(blockedBefore) ?? []).filter((b) => b.step === step.id);
+                // A refused payment is not held for a confirmed re-run (that would refuse it
+                // again and loop): the step fails and swarm_task hands the payment to the main agent.
+                const blocked = stepBlocks.filter((b) => !isPaymentHold(b));
+                const payments = stepBlocks.filter(isPaymentHold);
+                if (payments.length > 0 && blocked.length === 0) {
+                    result = {
+                        ...result,
+                        success: false,
+                        output: `NOT done: the payment was NOT made (${[...new Set(payments.map((b) => b.summary))].join("; ")}). The main agent must make it itself after the owner's OK.`,
+                    };
+                }
+                if (blocked.length > 0) {
+                    const tried = blocked.map((b) => b.summary);
+                    result = {
+                        ...needsApprovalResult(step, tried),
+                        toolCalls: result.toolCalls,
+                        durationMs: result.durationMs,
+                        estimatedCost: result.estimatedCost,
+                        mutatorsRan: result.mutatorsRan,
+                    };
                 }
 
                 completedCount++;
@@ -393,7 +462,7 @@ export async function executeMesh(
                 console.log(`  ✅ Mesh step ${step.id} (${step.role}): ${result.success ? "success" : "FAILED"} (${result.toolCalls} tools, ${stepDuration}s)`);
 
                 if (onProgress) {
-                    const statusIcon = result.success ? "✅" : "❌";
+                    const statusIcon = result.needsApproval ? "✋" : result.success ? "✅" : "❌";
                     const eta = completedCount < totalSteps
                         ? ` (~${Math.round(((Date.now() - startTime) / completedCount) * (totalSteps - completedCount) / 1000)}s remaining)`
                         : "";
@@ -421,15 +490,17 @@ export async function executeMesh(
         }
 
         // ── Save checkpoint after each wave ──
+        // Only successful steps count as done: a resume must re-run failed ones.
+        const succeeded = [...completed].filter((id) => results.get(id)?.success);
         const stepResultsMap: Record<string, string> = {};
-        for (const [id, r] of results) {
-            stepResultsMap[id] = r.output.substring(0, 2000); // Cap stored output
+        for (const id of succeeded) {
+            stepResultsMap[id] = (results.get(id)?.output ?? "").substring(0, 2000); // Cap stored output
         }
-        const pending = steps.filter(s => !completed.has(s.id)).map(s => s.id);
+        const pending = steps.filter((s) => !succeeded.includes(s.id)).map((s) => s.id);
         saveMeshCheckpoint({
             meshId,
             taskDescription,
-            completedSteps: [...completed],
+            completedSteps: succeeded,
             stepResults: stepResultsMap,
             pendingSteps: pending,
             createdAt: existingCheckpoint?.createdAt || startTime,

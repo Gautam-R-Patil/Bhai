@@ -8,7 +8,8 @@
 // synthesis on completeness, accuracy, coherence, and actionability.
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
+import { type ChatCompletionMessageParam, type LLMClient, MODELS } from "../llm.js";
+import { claudeTier, selectForSynthesis } from "../model-router.js";
 import type { SubAgentResult } from "./sub-agent.js";
 import type { SwarmPlan } from "./swarm.js";
 import { extractJSON } from "../utils/json-extract.js";
@@ -100,8 +101,8 @@ Output ONLY valid JSON:
         const response = await llm.chat({
             messages: [{ role: "user", content: prompt }] as ChatCompletionMessageParam[],
             systemPrompt: "You are a strict quality evaluator. Output valid JSON only. Be honest — do not inflate scores.",
-            // Use a light/fast model for evaluation to avoid self-confirmation bias
-            // The selectForSubAgent with "simple" hint picks a cheaper model
+            // Judge on a different tier than the synthesizer to avoid self-confirmation bias
+            modelOverride: claudeTier(selectForSynthesis(userRequest).modelId) === "haiku" ? MODELS.SONNET : MODELS.HAIKU,
             responseFormat: "json_object",
         });
 
@@ -113,20 +114,30 @@ Output ONLY valid JSON:
 
         const parsed = JSON.parse(jsonStr);
 
+        // Coerce explicitly: `x || 70` turns a legitimate 0 into 70 and a
+        // non-numeric string (e.g. "excellent") into NaN. Default to 70 only
+        // when the value isn't a finite number.
         const rubric: EvaluationRubric = {
-            completeness: clamp(parsed.completeness || 70, 0, 100),
-            accuracy: clamp(parsed.accuracy || 70, 0, 100),
-            coherence: clamp(parsed.coherence || 70, 0, 100),
-            actionability: clamp(parsed.actionability || 70, 0, 100),
+            completeness: clampScore(parsed.completeness),
+            accuracy: clampScore(parsed.accuracy),
+            coherence: clampScore(parsed.coherence),
+            actionability: clampScore(parsed.actionability),
         };
 
         const score = Math.round(
             (rubric.completeness + rubric.accuracy + rubric.coherence + rubric.actionability) / 4
         );
 
-        const verdict = score >= ACCEPT_THRESHOLD ? "accept"
-            : score >= RETRY_THRESHOLD ? "retry"
-            : "replan" as const;
+        // The score sets a floor the model cannot soften (no self-confirming a low
+        // score), but the model may ESCALATE on a flaw the numbers miss. Take the
+        // more conservative of the two (accept < retry < replan).
+        const scoreVerdict: "accept" | "retry" | "replan" =
+            score >= ACCEPT_THRESHOLD ? "accept" : score >= RETRY_THRESHOLD ? "retry" : "replan";
+        const RANK = { accept: 0, retry: 1, replan: 2 } as const;
+        const modelVerdict = (["accept", "retry", "replan"] as const).includes(parsed.verdict)
+            ? (parsed.verdict as "accept" | "retry" | "replan")
+            : scoreVerdict;
+        const verdict = RANK[modelVerdict] > RANK[scoreVerdict] ? modelVerdict : scoreVerdict;
 
         // Record to harness trace store — uses per-async-context storage (safe for concurrent channels)
         const activeTrace = getActiveEvalTraceId();
@@ -134,8 +145,12 @@ Output ONLY valid JSON:
             try { recordEvaluationScore(activeTrace, score); } catch { /* non-fatal */ }
         }
 
+        // Derive the verdict from the computed score only — do NOT trust the
+        // model's self-reported `verdict` field. The whole point of a separate
+        // evaluator is to avoid self-confirmation; a model that scores 10/10/10/10
+        // but claims "accept" must still be sent back for retry/replan.
         return {
-            verdict: (["accept", "retry", "replan"] as const).includes(parsed.verdict) ? parsed.verdict : verdict,
+            verdict,
             score,
             rubric,
             feedback: parsed.feedback || "",
@@ -206,6 +221,15 @@ function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
 }
 
+/** Coerce a rubric dimension to a 0-100 score, defaulting to 70 only when it isn't a finite number. */
+export function clampScore(value: unknown): number {
+    // null / undefined / "" mean the model omitted the dimension → default 70;
+    // a numeric string still coerces; anything non-finite → 70.
+    if (value === null || value === undefined || value === "") return 70;
+    const n = Number(value);
+    return clamp(Number.isFinite(n) ? n : 70, 0, 100);
+}
+
 function defaultAccept(synthesis: string): EvaluationResult {
     return {
         verdict: "accept",
@@ -214,3 +238,6 @@ function defaultAccept(synthesis: string): EvaluationResult {
         feedback: "",
     };
 }
+
+/** Same as clampScore (the name an earlier change used). */
+export const rubricScore = clampScore;

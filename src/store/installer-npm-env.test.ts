@@ -6,6 +6,9 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+
+// Captured before any test sets a Windows TMP/TEMP, so mkdtemp never uses C:\\Tmp on Linux.
+const TMP_BASE = tmpdir();
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -52,7 +55,7 @@ describe("runNpmInstall", () => {
     it("passes --ignore-scripts and an env without the bot's secrets", async () => {
         Object.assign(process.env, SECRETS, NETWORK, { npm_config_registry: "https://r.example/" });
         spawnOk();
-        dir = mkdtempSync(join(tmpdir(), "npm-env-"));
+        dir = mkdtempSync(join(TMP_BASE, "npm-env-"));
 
         await runNpmInstall(dir);
 
@@ -71,7 +74,7 @@ describe("runNpmInstall", () => {
     it("pins the npm config a package's .npmrc could use to run code, and deletes that .npmrc", async () => {
         Object.assign(process.env, UNPINS);
         spawnOk();
-        dir = mkdtempSync(join(tmpdir(), "npm-env-"));
+        dir = mkdtempSync(join(TMP_BASE, "npm-env-"));
         writeFileSync(join(dir, ".npmrc"), "git=./evil.sh\nglobal=true\nignore-scripts=false\n");
 
         await runNpmInstall(dir);

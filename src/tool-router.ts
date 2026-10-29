@@ -114,7 +114,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "core_memory_append",
             "core_memory_delete",
         ],
-        alwaysInclude: true,
+        // Not alwaysInclude: it took 14 of 36 slots every turn. memory_store and
+        // memory_search are always on (ALWAYS_ON_TOOLS); the rest come with the category.
     },
     shell: {
         description:
@@ -259,10 +260,9 @@ const CATEGORIES: Record<string, CategoryDef> = {
         description:
             "Controlling the computer's operating system, taking screenshots of the desktop, clicking on screen elements by coordinates or OCR text or accessibility-tree id, typing into OS applications, interacting with native desktop apps, visual verification of UI elements, screen capture, mouse control, keyboard input automation, macOS Automator, AppleScript, PowerShell automation, accessibility tree inspection, fast cross-OS element lookup, structured single-action OS calls with percentage coords, GUI grounding by description with cloud vision, keyboard shortcuts for apps, hierarchical computer use for complex multi-step desktop automation tasks.",
         tools: [
-            // Order matters: the first tool gets a reserved slot, then only 12 more
-            // per category are offered (MAX_TOOLS_PER_CATEGORY), and the classifier
-            // sees the first 6 names. Keep what the rules-mac prompt and the
-            // verify-before-done gate rely on inside that window.
+            // Order matters: the first tool gets a reserved slot and at most 12
+            // per category are offered (MAX_TOOLS_PER_CATEGORY). Keep what the
+            // rules-mac prompt and the verify-before-done gate rely on near the top.
             "os_smart_click",
             "os_inspect",
             "os_click_id",
@@ -575,8 +575,10 @@ async function classifyWithLLM(
     const categoryList = Object.entries(CATEGORIES)
         .filter(([_, def]) => !def.alwaysInclude)
         .map(
+            // Every tool name (cheap), so the classifier can name a tool deep in a
+            // big category (browser_video_control) and its specific_tools rank it in.
             ([name, def]) =>
-                `${name}: ${def.description.substring(0, 120)} [tools: ${def.tools.slice(0, 6).join(", ")}${def.tools.length > 6 ? "..." : ""}]`,
+                `${name}: ${def.description.split(/(?<=\.)\s/)[0].slice(0, 200)} [tools: ${def.tools.join(", ")}]`,
         )
         .join("\n");
 
@@ -1440,14 +1442,71 @@ export function getLastClassification(): {
     return lastClassification;
 }
 
-// Tool selection caps. These must be large enough to hold the ~17 tools
-// from alwaysInclude categories (memory=13, core=1, tool_creation=3) PLUS
-// a meaningful contribution from whatever categories the query triggered —
-// especially `coding`, which has 21 candidate tools that need real room.
+// Tool selection caps. These must be large enough to hold the always-on tools
+// (core=1, tool_creation=3, memory_store/memory_search) PLUS a meaningful
+// contribution from whatever categories the query triggered — especially
+// `coding`, which has 21 candidate tools that need real room.
 const MAX_TOOLS_TOTAL_DEFAULT = 36;
 const MAX_TOOLS_PER_CATEGORY = 12;
+/** Every selected category gets at least this many of its best-ranked tools (within the total cap). */
+const CATEGORY_FLOOR = 4;
+/** Memory tools offered every turn; the rest of `memory` comes with its category or request_tools. */
+const ALWAYS_ON_TOOLS = ["memory_store", "memory_search"];
 function getMaxToolsTotal(): number {
     return getDimensionValue<number>("toolRouter.maxToolsTotal") ?? MAX_TOOLS_TOTAL_DEFAULT;
+}
+
+/**
+ * Stage 3 of selectTools: pick tool names from the ranked candidates.
+ * Always-on tools first, then a floor per selected category (its first-listed
+ * tool plus its best-ranked candidates), then the rest in rank order up to the
+ * per-category and total caps. The floors come before the fill, so a broad
+ * category ranked first (browser, os_control) can't starve a narrow one
+ * (communication's whatsapp_send) — the large categories give up the slots.
+ */
+export function assembleToolNames(
+    selectedCategories: string[],
+    candidateTools: string[],
+    allToolNames: Set<string>,
+    maxTotal: number,
+): Set<string> {
+    const selected = new Set<string>(ALWAYS_ON_TOOLS.filter((t) => allToolNames.has(t)));
+    for (const catName of selectedCategories) {
+        const catDef = CATEGORIES[catName];
+        if (catDef?.alwaysInclude) for (const t of catDef.tools) if (allToolNames.has(t)) selected.add(t);
+    }
+
+    const catOf = (tool: string) => Object.keys(CATEGORIES).find((c) => CATEGORIES[c].tools.includes(tool)) ?? "";
+    const catToolCounts = new Map<string, number>();
+    const take = (tool: string) => {
+        selected.add(tool);
+        const c = catOf(tool);
+        catToolCounts.set(c, (catToolCounts.get(c) ?? 0) + 1);
+    };
+
+    for (const catName of selectedCategories) {
+        const catDef = CATEGORIES[catName];
+        if (!catDef || catDef.alwaysInclude) continue;
+        // The first-listed tool (spotify, shell_exec, browser_navigate) even if
+        // preference reordering ranks a brand-new tool low.
+        const primary = catDef.tools.find((t) => allToolNames.has(t) && !selected.has(t));
+        if (primary) take(primary);
+        let have = catDef.tools.filter((t) => selected.has(t)).length;
+        for (const t of candidateTools) {
+            if (have >= CATEGORY_FLOOR || selected.size >= maxTotal) break;
+            if (!selected.has(t) && catDef.tools.includes(t)) {
+                take(t);
+                have++;
+            }
+        }
+    }
+
+    for (const tool of candidateTools) {
+        if (selected.size >= maxTotal) break;
+        if (selected.has(tool) || (catToolCounts.get(catOf(tool)) ?? 0) >= MAX_TOOLS_PER_CATEGORY) continue;
+        take(tool);
+    }
+    return selected;
 }
 
 export async function selectTools(opts: {
@@ -1700,51 +1759,7 @@ export async function selectTools(opts: {
     // Precision filter: only send what's needed
     // ══════════════════════════════════════════════
 
-    const selectedToolNames = new Set<string>();
-
-    // Always include tools from alwaysInclude categories (core, memory, tool_creation)
-    for (const catName of selectedCategories) {
-        const catDef = CATEGORIES[catName];
-        if (catDef?.alwaysInclude) {
-            for (const t of catDef.tools) {
-                if (allToolNames.has(t)) selectedToolNames.add(t);
-            }
-        }
-    }
-
-    // Reserve a slot for the primary (first-listed) tool of each selected
-    // non-alwaysInclude category. This guarantees that domain-specific tools
-    // (spotify for media, shell_exec for shell, browser_navigate for browser)
-    // always surface when the user's intent matches their category, even when
-    // alwaysInclude categories consume most of the budget or preference
-    // reordering deprioritizes a brand-new tool.
-    for (const catName of selectedCategories) {
-        const catDef = CATEGORIES[catName];
-        if (!catDef || catDef.alwaysInclude) continue;
-        const primary = catDef.tools.find((t) => allToolNames.has(t) && !selectedToolNames.has(t));
-        if (primary) selectedToolNames.add(primary);
-    }
-
-    // Add candidates up to the cap, respecting per-category limits
-    const catToolCounts = new Map<string, number>();
-    for (const tool of candidateTools) {
-        if (selectedToolNames.size >= getMaxToolsTotal()) break;
-        if (selectedToolNames.has(tool)) continue;
-
-        // Find which category this tool belongs to
-        let toolCat = "";
-        for (const [catName, catDef] of Object.entries(CATEGORIES)) {
-            if (catDef.tools.includes(tool)) {
-                toolCat = catName;
-                break;
-            }
-        }
-        const catCount = catToolCounts.get(toolCat) || 0;
-        if (catCount >= MAX_TOOLS_PER_CATEGORY) continue;
-
-        selectedToolNames.add(tool);
-        catToolCounts.set(toolCat, catCount + 1);
-    }
+    const selectedToolNames = assembleToolNames(selectedCategories, candidateTools, allToolNames, getMaxToolsTotal());
 
     // Build schema array
     const selectedSchemas: ChatCompletionTool[] = [];

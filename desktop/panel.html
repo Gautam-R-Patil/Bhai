@@ -1651,6 +1651,7 @@
 
     <script src="components/liquid-glass.js"></script>
     <script src="components/mascot.js"></script>
+    <script src="components/wa-owner-row.js"></script>
 
     <script>
         // Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
@@ -2379,6 +2380,7 @@
 
         // WhatsApp OTP listener
         if (atlas.onWhatsAppOTP) {
+            let waOTPInterval = null;
             atlas.onWhatsAppOTP((data) => {
                 if (data.verified) {
                     // Owner verified — refresh list and advance to step 4
@@ -2393,10 +2395,14 @@
                     let remaining = 300; // 5 minutes
                     const timerEl = document.getElementById('waOTPTimer');
                     if (timerEl) {
-                        const interval = setInterval(() => {
+                        // A new code supersedes any running countdown — clear it so
+                        // overlapping intervals don't fight over #waOTPTimer.
+                        if (waOTPInterval) clearInterval(waOTPInterval);
+                        waOTPInterval = setInterval(() => {
                             remaining--;
                             if (remaining <= 0) {
-                                clearInterval(interval);
+                                clearInterval(waOTPInterval);
+                                waOTPInterval = null;
                                 timerEl.textContent = 'Code expired. Generate a new one.';
                                 if (codeEl) codeEl.textContent = '------';
                                 return;
@@ -2409,6 +2415,30 @@
                 }
             });
         }
+
+        // Accessibility: the channel status dots convey state by color alone.
+        // Mirror the color class into an aria-label/title so colorblind and
+        // screen-reader users get the state too. One observer covers every
+        // className swap (there are ~15 sites) plus future ones.
+        const CHANNEL_DOT_LABELS = { connected: 'Connected', connecting: 'Connecting', disconnected: 'Disconnected', disabled: 'Off' };
+        function labelChannelDot(dot) {
+            if (!dot || !dot.classList || !dot.classList.contains('channel-status-dot')) return;
+            let state = 'disabled';
+            for (const s of ['connected', 'connecting', 'disconnected']) {
+                if (dot.classList.contains(s)) { state = s; break; }
+            }
+            const label = 'Status: ' + (CHANNEL_DOT_LABELS[state] || state);
+            dot.setAttribute('aria-label', label);
+            dot.setAttribute('title', label);
+        }
+        (function wireChannelDotLabels() {
+            const scope = document.getElementById('tab-channels') || document;
+            scope.querySelectorAll('.channel-status-dot').forEach(labelChannelDot);
+            try {
+                new MutationObserver(muts => { for (const m of muts) labelChannelDot(m.target); })
+                    .observe(scope, { attributes: true, attributeFilter: ['class'], subtree: true });
+            } catch {}
+        })();
 
         // Channel status update listener
         if (atlas.onChannelStatusUpdate) {
@@ -2649,15 +2679,10 @@
                     list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">No owners verified yet.</div>';
                     return;
                 }
-                list.innerHTML = owners.map(o => `
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-control);border:1px solid var(--separator);border-radius:8px;margin:4px 0;">
-                        <div>
-                            <span style="font-weight:600;font-size:13px;">${o.displayName || o.phoneNumber || o.jid}</span>
-                            <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${o.phoneNumber || ''}</span>
-                        </div>
-                        <button class="wizard-btn wizard-btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="removeWhatsAppOwner('${o.jid}')">Remove</button>
-                    </div>
-                `).join('');
+                list.innerHTML = window.WaOwnerRow.ownerRowsHtml(owners);
+                list.querySelectorAll('[data-wa-remove-jid]').forEach(btn => {
+                    btn.addEventListener('click', () => removeWhatsAppOwner(btn.getAttribute('data-wa-remove-jid')));
+                });
             } catch (err) { console.error('Failed to load owners:', err); }
         }
 
@@ -3912,13 +3937,21 @@
                     <span class="installed-item-icon">${typeIcons[item.type] || '📦'}</span>
                     <div class="installed-item-info">
                         <span class="installed-item-name">${escapeHtml(item.name || item.slug)}</span>
-                        <span class="installed-item-version">v${item.version || '1.0.0'}</span>
+                        <span class="installed-item-version">v${escapeHtml(item.version || '1.0.0')}</span>
                     </div>
-                    <button class="btn btn-sm btn-danger" onclick="quickUninstall('${item.slug}', '${item.type}')">
+                    <button class="btn btn-sm btn-danger" data-uninstall-slug="${escapeHtml(item.slug)}" data-uninstall-type="${escapeHtml(item.type)}">
                         Uninstall
                     </button>
                 </div>
             `).join('');
+            // Delegated, so slug/type never enter an inline handler string (XSS-safe).
+            if (!list.dataset.uninstallWired) {
+                list.dataset.uninstallWired = "1";
+                list.addEventListener("click", (e) => {
+                    const btn = e.target.closest("[data-uninstall-slug]");
+                    if (btn) quickUninstall(btn.dataset.uninstallSlug, btn.dataset.uninstallType);
+                });
+            }
         }
 
         function closeInstalledModal() {

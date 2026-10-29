@@ -399,3 +399,27 @@ describe("isToolError", () => {
         expect(isToolError("")).toBe(false);
     });
 });
+
+describe("classifyError — relative-import specifiers are ImportError, not DependencyMissing", () => {
+    it("'Cannot find module \"./utils\"' → ImportError (no install can fix a path typo)", () => {
+        const r = classifyError("Error: Cannot find module './utils'");
+        expect(r.category).toEqual(ErrorCategory.ImportError);
+    });
+
+    it("'Cannot find module \"express\"' (bare package) stays DependencyMissing", () => {
+        const r = classifyError("Error: Cannot find module 'express'");
+        expect(r.category).toEqual(ErrorCategory.DependencyMissing);
+    });
+});
+
+describe("classifyError — bare × is not a test failure", () => {
+    it("a resolution string with × does not classify as TestFailure", () => {
+        const r = classifyError("rendered 1920×1080 but write failed");
+        expect(r.category).not.toEqual(ErrorCategory.TestFailure);
+    });
+
+    it("a real ✗ failure bullet still classifies as TestFailure", () => {
+        const r = classifyError("✗ should return 200");
+        expect(r.category).toEqual(ErrorCategory.TestFailure);
+    });
+});

@@ -8,6 +8,7 @@ import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import { currentSwarmRun, currentSwarmStep, isPaymentCall, outsideSwarm, shellText, swarmGate } from "../agents/swarm-context.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { sideloadSkillTool } from "../store/sideload.js";
@@ -625,6 +626,11 @@ for (const tool of documentTools) {
     registry.set(tool.schema.function.name, tool);
 }
 
+// Built-in tools, as registered at load. A name registered later (Forge,
+// store, create_tool), or re-registered over a built-in, is unvetted: the swarm
+// gate treats it like an MCP tool (agents/swarm-context.ts).
+const BUILTIN_TOOLS: ReadonlyMap<string, ToolDefinition> = new Map(registry);
+
 // Warm the template registry so list_templates is instant.
 try {
     initDocumentTools();
@@ -772,6 +778,26 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
 
+    // Inside a swarm run, external side effects need the owner's OK for the
+    // step (agents/swarm-context.ts); the gate also stands in for the per-call
+    // consent below, since sub-agents can't ask the owner themselves (it holds
+    // everything requiresConfirmation flags, except a dangerous word in a
+    // grep/cat's arguments).
+    const { confirmed: _c, ...gateArgs } = input;
+    const unvetted = isMCPTool(name) || (registry.has(name) && registry.get(name) !== BUILTIN_TOOLS.get(name));
+    const swarm = await swarmGate(name, gateArgs, unvetted);
+    if (swarm && swarm !== "allow") {
+        auditLog({
+            tool: name,
+            args: gateArgs,
+            success: false,
+            cached: false,
+            durationMs: 0,
+            error: "needs_owner_approval",
+        });
+        return swarm;
+    }
+
     // Check MCP tools first (bypass intelligence layer)
     if (isMCPTool(name)) {
         try {
@@ -815,10 +841,19 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     // so a yes for site A can't let the card be typed on site B (the tab can't be
     // swapped between the ask and the confirm). Overwrites any model-supplied `site`.
     if (name === "vault_authorize_payment") actionArgs.site = await livePaymentHost();
-    const confirmCheck = requiresConfirmation(name, actionArgs);
+    // shell_exec runs `command` plus its `args` array: judge the whole line.
+    const confirmCheck = requiresConfirmation(
+        name,
+        name.startsWith("shell_exec") ? { ...actionArgs, command: shellText(name, actionArgs) } : actionArgs,
+    );
     if (
         confirmCheck.needsConfirmation &&
-        checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted"
+        // The swarm gate stands in for this inside a swarm. A payment is refused there
+        // outright, without checkConsent: recording an ask the owner never sees would let
+        // an unrelated "ok" mid-run grant a sub-agent's confirmed retry.
+        (currentSwarmRun()
+            ? isPaymentCall(name, actionArgs)
+            : checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted")
     ) {
         console.log(`  ⚠️  ${name} needs the owner's OK first`);
         auditLog({
@@ -829,6 +864,20 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             durationMs: 0,
             error: "needs_confirmation",
         });
+        // Only a payment or an order confirm gets here inside a swarm. A sub-agent can't ask the owner, so
+        // record it: swarm_task tells the main agent to make it itself (isPaymentHold).
+        const run = currentSwarmRun();
+        if (run) {
+            const where = String(actionArgs.site ?? actionArgs.skill ?? "unknown site");
+            const amount = actionArgs.amount !== undefined ? ` for ${String(actionArgs.amount)}` : "";
+            const summary = `${name} → ${where}${amount} (a payment or order can't be approved inside a swarm: do it yourself after the owner's OK)`;
+            run.blocked.push({ step: currentSwarmStep()?.stepId, tool: name, summary });
+            return JSON.stringify({
+                error: `needs_owner_approval: ${summary} was NOT run.`,
+                needs_owner_approval: true,
+                next_step: "Do not retry or work around this. Report that this payment needs the owner's OK.",
+            });
+        }
         return JSON.stringify({
             error: confirmCheck.warningMessage,
             needs_confirmation: true,
@@ -892,7 +941,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
     try {
         // Execute with timeout protection
-        const result = await executeWithTimeout(tool.handler(effectiveInput), timeout, name);
+        // An allowed side effect runs outside the swarm's stores: background work it
+        // starts (a long task's phases) must not inherit the step's grant.
+        const run = () => tool.handler(effectiveInput);
+        const result = await executeWithTimeout(swarm === "allow" ? outsideSwarm(run) : run(), timeout, name);
         const durationMs = Date.now() - startTime;
 
         // Cache the result if eligible

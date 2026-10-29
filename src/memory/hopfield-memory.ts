@@ -79,8 +79,11 @@ export async function associativeRecall(
     const cueEmbedding = await embedText(cue, "query");
 
     // Try native Hopfield
+    // Guard the exact export, not just truthiness: a stale/partial native build
+    // can load (native is truthy) yet lack hopfieldRetrieve, and there is no
+    // try/catch here — an unguarded call would throw instead of falling back.
     const native = loadNative();
-    if (native && storedPatterns.size > 0) {
+    if (native?.hopfieldRetrieve && storedPatterns.size > 0) {
         const patterns = [...storedPatterns.values()];
         const ids = [...storedPatterns.keys()];
 

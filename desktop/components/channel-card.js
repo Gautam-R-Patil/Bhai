@@ -329,16 +329,24 @@
             }
         }
 
+        // Publish this attempt's renderers so the single listener below always
+        // dispatches to the ACTIVE attempt. The listener is attached once per
+        // instance (preload's ipcRenderer.on accumulates), so it must not close
+        // over the first attempt's locals — on retry those are stale() and
+        // early-return, leaving the QR permanently blank.
+        self._waRenderers = { qr: renderQr, connected: renderConnected, err: renderErr };
+
         // Subscribe exactly once per ChannelCard instance (preload attaches
         // with ipcRenderer.on, which accumulates — so guard here).
         if (!self._waListenerAttached && window.atlas && typeof window.atlas.onWhatsAppQR === "function") {
             window.atlas.onWhatsAppQR(function (payload) {
-                // Use the latest renderers from the active attempt via closure on `self`.
-                if (payload === "connected") { renderConnected(); return; }
+                const r = self._waRenderers;
+                if (!r) return;
+                if (payload === "connected") { r.connected(); return; }
                 if (payload && typeof payload === "object" && payload.kind === "error") {
-                    renderErr(payload.message || "unknown"); return;
+                    r.err(payload.message || "unknown"); return;
                 }
-                if (typeof payload === "string") renderQr(payload);
+                if (typeof payload === "string") r.qr(payload);
             });
             self._waListenerAttached = true;
         }

@@ -1,7 +1,7 @@
 // Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 import { describe, expect, it } from "vitest";
-import { type AxDump, type AxNode, findElementByLabel, flattenInteractive } from "../ax-dump.js";
+import { type AxDump, type AxNode, findElementByLabel, flattenInteractive, matchElementByLabel } from "../ax-dump.js";
 
 // ── Test fixtures ─────────────────────────────────
 
@@ -151,9 +151,9 @@ describe("findElementByLabel", () => {
     });
 
     it("finds substring match", () => {
-        const el = findElementByLabel(sample, "save");
+        const el = findElementByLabel(sample, "save document");
         expect(el).not.toBeNull();
-        expect(el?.label).toMatch(/Save/i);
+        expect(el?.label).toBe("Save Document");
     });
 
     it("matches against value when label is missing", () => {
@@ -167,11 +167,59 @@ describe("findElementByLabel", () => {
         expect(el).toBeNull();
     });
 
-    it("picks the best match when multiple substrings match", () => {
-        // "Save" matches both "Save Document" and "Save As..." with score 0.85 (substring).
-        // Picker is deterministic: returns one of them with the higher score (or first if tied).
-        const el = findElementByLabel(sample, "Save");
-        expect(el?.label).toMatch(/Save/i);
+    it("reports a tie instead of clicking whichever came first", () => {
+        // "Save" scores 0.85 against both "Save Document" and "Save As...".
+        expect(findElementByLabel(sample, "Save")).toBeNull();
+        const m = matchElementByLabel(sample, "Save");
+        expect(m.ambiguous?.map((e) => e.label)).toEqual(["Save Document", "Save As..."]);
+    });
+
+    it("a positional word breaks the tie", () => {
+        expect(findElementByLabel(sample, "the bottom Save")?.label).toBe("Save As...");
+        expect(findElementByLabel(sample, "the top Save")?.label).toBe("Save Document");
+    });
+});
+
+describe("matchElementByLabel — disabled, nested, off-screen", () => {
+    const btn = (label: string, x: number, y: number, enabled = true) => ({
+        ...node("AXButton", label, x, y),
+        enabled,
+    });
+
+    it("never picks a disabled element, and says so", () => {
+        const els = flattenInteractive(dump(node("AXWindow", "w", 0, 0, 800, 600, [btn("Send", 10, 10, false)])));
+        const m = matchElementByLabel(els, "Send");
+        expect(m.el).toBeNull();
+        expect(m.disabled?.label).toBe("Send");
+    });
+
+    it("prefers the enabled one of two equal matches", () => {
+        const els = flattenInteractive(
+            dump(node("AXWindow", "w", 0, 0, 800, 600, [btn("Send", 10, 10, false), btn("Send", 10, 300)])),
+        );
+        expect(findElementByLabel(els, "Send")?.center.y).toBe(315);
+    });
+
+    it("a row and its own caption are one target, and the control wins over static text", () => {
+        const row = node("AXRow", null, 0, 100, 300, 30, [node("AXStaticText", "Downloads", 20, 105, 100, 20)]);
+        const caption = node("AXStaticText", "Downloads", 400, 10, 100, 20); // window title text elsewhere
+        const els = flattenInteractive(dump(node("AXWindow", "w", 0, 0, 800, 600, [row, caption])));
+        expect(findElementByLabel(els, "Downloads")?.role).toBe("AXRow");
+    });
+
+    it("flags elements scrolled outside their window", () => {
+        const els = flattenInteractive(
+            dump(node("AXWindow", "w", 0, 0, 800, 600, [btn("Visible", 10, 10), btn("Far", 10, 2000)])),
+        );
+        expect(els.find((e) => e.label === "Visible")?.offscreen).toBeUndefined();
+        expect(els.find((e) => e.label === "Far")?.offscreen).toBe(true);
+    });
+
+    it("treats Dock items as clickable", () => {
+        const els = flattenInteractive(
+            dump(node("AXApplication", "Dock", 0, 0, 0, 0, [node("AXDockItem", "Safari", 400, 900, 44, 56)])),
+        );
+        expect(findElementByLabel(els, "Safari in the Dock", 0.8)?.label).toBe("Safari");
     });
 });
 
@@ -209,17 +257,40 @@ describe("findElementByLabel — Calculator-style instructions", () => {
 
 describe("findElementByLabel — app-name stripping can't pick the wrong element", () => {
     const els = (labels: Array<[string, string?]>) =>
-        flattenInteractive(dump(node("AXWindow", "w", 0, 0, 800, 600, labels.map(([l, v], i) => node("AXButton", l, 10, 10 + i * 40, 100, 30, [], v)))));
+        flattenInteractive(
+            dump(
+                node(
+                    "AXWindow",
+                    "w",
+                    0,
+                    0,
+                    800,
+                    600,
+                    labels.map(([l, v], i) => node("AXButton", l, 10, 10 + i * 40, 100, 30, [], v)),
+                ),
+            ),
+        );
 
     it("'All Mail' in Mail is All Mail, not Install", () => {
         expect(findElementByLabel(els([["Install"], ["All Mail"]]), "All Mail", 0.8, "Mail")?.label).toBe("All Mail");
     });
 
     it("an instruction left with only stopwords still matches on its full words", () => {
-        expect(findElementByLabel(els([["General"], ["Settings"]]), "Settings button", 0.8, "System Settings")?.label).toBe("Settings");
+        expect(
+            findElementByLabel(els([["General"], ["Settings"]]), "Settings button", 0.8, "System Settings")?.label,
+        ).toBe("Settings");
     });
 
     it("label-less static text (macOS puts it in the value) still matches a description", () => {
-        expect(findElementByLabel(els([["", "Downloads"], ["", "Documents"]]), "Downloads folder in the sidebar", 0.8)?.value).toBe("Downloads");
+        expect(
+            findElementByLabel(
+                els([
+                    ["", "Downloads"],
+                    ["", "Documents"],
+                ]),
+                "Downloads folder in the sidebar",
+                0.8,
+            )?.value,
+        ).toBe("Downloads");
     });
 });

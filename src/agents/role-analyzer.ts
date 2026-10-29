@@ -52,7 +52,7 @@ const ROLE_KEYWORDS: Record<AgentRole, WeightedKeyword[]> = {
         { pattern: /\bclass\b/i, weight: 1 },
         { pattern: /\bfix\b.*\bbug\b/i, weight: 2 },
         { pattern: /\brefactor\b/i, weight: 2 },
-        { pattern: /\bimplment\b/i, weight: 2 },
+        { pattern: /\bimplement\b/i, weight: 2 },
     ],
     browser: [
         { pattern: /\bnavigate\b/i, weight: 2.5 },

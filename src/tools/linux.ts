@@ -16,6 +16,7 @@ import { promisify } from "node:util";
 import { gridScreenshot } from "../screen/grid-overlay.js";
 import { getScreenDimensions, percentageToScreen, scaleImageToScreen } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
+import { xdotoolCombo, ydotoolKeyArgs } from "./os-computer-action.js";
 import { captureScreenshot, getScreenResolution } from "./platform.js";
 import { getTelegramContext } from "./send-file.js";
 
@@ -418,110 +419,20 @@ export const linuxOsType: ToolDefinition = {
         if (tool === "ydotool") await ensureYdotoold();
 
         try {
-            if (input.combo) {
-                // Parse combo like "ctrl+shift+s"
-                const parts = (input.combo as string)
-                    .toLowerCase()
-                    .split("+")
-                    .map((s) => s.trim());
-
+            if (input.combo || input.key) {
+                // "ctrl+shift+s", "enter", "pageup": mapped to xdotool keysyms /
+                // ydotool key codes. An unknown name throws (→ success:false)
+                // rather than being sent as-is and silently doing nothing.
+                const combo = (input.combo || input.key) as string;
                 if (tool === "xdotool") {
-                    // xdotool key combos use modifier+key format
-                    const modMap: Record<string, string> = {
-                        ctrl: "ctrl",
-                        control: "ctrl",
-                        shift: "shift",
-                        alt: "alt",
-                        option: "alt",
-                        super: "super",
-                        win: "super",
-                        command: "super",
-                        cmd: "super",
-                        meta: "super",
-                    };
-
-                    const keyParts = parts.map((p) => modMap[p] || p);
-                    const combo = keyParts.join("+");
-                    await execFileAsync("xdotool", ["key", combo], { timeout: 5000 });
+                    await execFileAsync("xdotool", ["key", "--", xdotoolCombo(combo)], { timeout: 5000 });
                 } else {
-                    // ydotool key combos
-                    const modMap: Record<string, string> = {
-                        ctrl: "29:1",
-                        control: "29:1",
-                        shift: "42:1",
-                        alt: "56:1",
-                        super: "125:1",
-                        win: "125:1",
-                    };
-                    const releaseMap: Record<string, string> = {
-                        ctrl: "29:0",
-                        control: "29:0",
-                        shift: "42:0",
-                        alt: "56:0",
-                        super: "125:0",
-                        win: "125:0",
-                    };
-                    const key = parts.pop() || "";
-                    const presses = parts.map((p) => modMap[p]).filter(Boolean);
-                    const releases = parts
-                        .map((p) => releaseMap[p])
-                        .filter(Boolean)
-                        .reverse();
-                    // This is simplified; ydotool keycodes are complex
-                    await execFileAsync("ydotool", ["key", ...presses, key, ...releases], { timeout: 5000 });
+                    await execFileAsync("ydotool", ["key", ...ydotoolKeyArgs(combo)], { timeout: 5000 });
                 }
 
                 return JSON.stringify({
                     success: true,
-                    typed: input.combo,
-                    method: tool,
-                });
-            }
-
-            if (input.key) {
-                const key = input.key as string;
-                const keyMap: Record<string, string> = {
-                    return: "Return",
-                    enter: "Return",
-                    tab: "Tab",
-                    escape: "Escape",
-                    esc: "Escape",
-                    delete: "Delete",
-                    backspace: "BackSpace",
-                    space: "space",
-                    up: "Up",
-                    down: "Down",
-                    left: "Left",
-                    right: "Right",
-                    f1: "F1",
-                    f2: "F2",
-                    f3: "F3",
-                    f4: "F4",
-                    f5: "F5",
-                    f6: "F6",
-                    f7: "F7",
-                    f8: "F8",
-                    f9: "F9",
-                    f10: "F10",
-                    f11: "F11",
-                    f12: "F12",
-                    home: "Home",
-                    end: "End",
-                    pageup: "Prior",
-                    pagedown: "Next",
-                };
-
-                const mapped = keyMap[key.toLowerCase()] || key;
-
-                if (tool === "xdotool") {
-                    await execFileAsync("xdotool", ["key", mapped], { timeout: 5000 });
-                } else {
-                    await execFileAsync("ydotool", ["key", mapped], { timeout: 5000 });
-                }
-
-                return JSON.stringify({
-                    success: true,
-                    typed: key,
+                    typed: combo,
                     method: tool,
                 });
             }

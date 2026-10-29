@@ -74,6 +74,7 @@ const OPERATION_TIMEOUTS: Record<string, number> = {
     close_tab: 2000,
     switch_tab: 2000,
     get_tabs: 2000,
+    get_cookies: 5000,
 };
 const HEARTBEAT_INTERVAL_MS = 15000;
 
@@ -678,7 +679,7 @@ export async function sendBridgeCommand(
     const id = crypto.randomUUID();
     const command: ChromeBridgeCommand = { id, type, payload };
 
-    // Validate command via native module if available
+    // Validate command via native module if available.
     if (native) {
         try {
             native.validateBridgeCommand(JSON.stringify(command));
@@ -779,6 +780,15 @@ export async function getExtensionTabs(): Promise<ChromeTabInfo[]> {
 export async function getActiveExtensionTab(): Promise<ChromeTabInfo | null> {
     const result = await sendBridgeCommand("get_active_tab", {});
     return result as ChromeTabInfo | null;
+}
+
+/**
+ * The user's Chrome cookies that Chrome would send to this http(s) URL — one
+ * site, scoped by Chrome's own public-suffix rules. Never the whole jar.
+ */
+export async function getExtensionCookies(url: string): Promise<unknown[]> {
+    const result = await sendBridgeCommand("get_cookies", { url });
+    return Array.isArray(result) ? result : [];
 }
 
 /**

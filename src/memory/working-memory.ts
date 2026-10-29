@@ -82,7 +82,7 @@ export function retain(
 
     // Try native module for retain decision
     const native = loadNative();
-    if (native) {
+    if (native?.shouldRetain) {
         const nativeState = toNativeState();
         const decision = native.shouldRetain(nativeState, importance, tokenEstimate);
         if (!decision.should_retain) return false;
@@ -128,7 +128,7 @@ export function recall(maxTokens?: number): WMItem[] {
 
     // Try native selection
     const native = loadNative();
-    if (native) {
+    if (native?.selectForInjection) {
         const nativeState = toNativeState();
         const selectedIds = native.selectForInjection(nativeState, budget);
         return state.items

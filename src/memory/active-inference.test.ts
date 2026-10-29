@@ -31,3 +31,19 @@ describe("active inference (native or JS fallback)", () => {
         expect(u.evidenceCounts[0]).toBe(3); // was 2, +1 for hypothesis 0
     });
 });
+
+import { _setNativeForTests } from "./active-inference.js";
+
+describe("native absent (fail-open loader returns {})", () => {
+    it("falls back to JS when the native module has no functions — no crash", () => {
+        _setNativeForTests({}); // simulate a platform with no binary (loader returns {})
+        try {
+            const d = makeInferenceDecision(beliefs, [[0.9, 0.1, 0.0]]);
+            expect(Number.isFinite(d.freeEnergy)).toBe(true);
+            expect(typeof d.shouldExplore).toBe("boolean");
+            expect(updateBeliefs(beliefs, 0, 0.5).evidenceCounts).toHaveLength(3);
+        } finally {
+            _setNativeForTests(undefined); // restore real loader
+        }
+    });
+});

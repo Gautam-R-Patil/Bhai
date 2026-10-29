@@ -45,5 +45,39 @@ describe("popup guard", () => {
         expect(await page.evaluate("window.choice")).toBe("reject");
         await page.close();
     }, 30_000);
+
+    it("hides a real full-screen backdrop, never a Tailwind backdrop-blur header", async (ctx) => {
+        if (!browser) return ctx.skip();
+        const { dismissOverlayModals } = await import("./popup-guard.js");
+        const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+        await page.setContent(`<header id=h class="backdrop-blur-md" style="position:fixed;top:0;left:0;width:100%;height:64px;z-index:50">Nav</header>
+            <div id=o class="modal-backdrop" style="position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5)"></div>`);
+        await dismissOverlayModals(page);
+        expect(await page.isVisible("#h")).toBe(true);
+        expect(await page.isVisible("#o")).toBe(false);
+        await page.close();
+    }, 30_000);
+
+    it("reports dialogs: alert accepted, confirm dismissed unless armed", async (ctx) => {
+        if (!browser) return ctx.skip();
+        const { armDialogAccept, takePageEvents } = await import("./popup-guard.js");
+        const context = await browser.newContext();
+        attachPopupGuard(context);
+        const page = await context.newPage();
+        await page.setContent(`<p>x</p>`);
+        await page.evaluate(`alert("hi")`);
+        expect(await page.evaluate(`confirm("Delete?")`)).toBe(false);
+        armDialogAccept(true);
+        expect(await page.evaluate(`confirm("Delete?")`)).toBe(true);
+        const ev = takePageEvents() as { dialogs: Array<Record<string, string>> };
+        expect(ev.dialogs.map((d) => `${d.type}:${d.action}`)).toEqual([
+            "alert:accepted",
+            "confirm:dismissed",
+            "confirm:accepted",
+        ]);
+        expect(ev.dialogs[1].message).toBe("Delete?");
+        expect(takePageEvents()).toEqual({});
+        await context.close();
+    }, 30_000);
 });
 

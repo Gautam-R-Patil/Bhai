@@ -54,6 +54,8 @@ export interface AxFlatElement {
     enabled: boolean;
     path: number[]; // breadcrumb of child indices from root
     depth: number;
+    /** Center lies outside its window (scrolled out of view): a click there would miss. */
+    offscreen?: boolean;
 }
 
 export interface AxDumpOptions {
@@ -72,10 +74,10 @@ const DEFAULT_TIMEOUT_MS = 5_000;
  * every cascade call. Once we've seen a permission-shaped error, short-circuit
  * for `AX_NEGATIVE_CACHE_MS` and return the cached failure instantly.
  *
- * Cleared by `clearAxFailureCache()` or auto-expires after 5 minutes (gives the
- * user time to fix permission via System Preferences and try again).
+ * Cleared by `clearAxFailureCache()` or auto-expires after 10s: short, so a
+ * grant the user just made in System Settings takes effect on the next try.
  */
-const AX_NEGATIVE_CACHE_MS = 5 * 60 * 1000;
+const AX_NEGATIVE_CACHE_MS = 10_000;
 let _axNegativeUntil = 0;
 let _axNegativeReason = "";
 
@@ -83,6 +85,7 @@ function looksLikePermissionError(msg: string): boolean {
     const lower = msg.toLowerCase();
     return (
         lower.includes("not trusted") ||
+        lower.includes("not_trusted") ||
         lower.includes("accessibility") ||
         lower.includes("permission") ||
         lower.includes("-25204") ||
@@ -96,11 +99,22 @@ export function clearAxFailureCache(): void {
     _axNegativeReason = "";
 }
 
+/**
+ * The one error string for a missing Accessibility grant — the same on the
+ * first failure and on every cached one after it, so callers can tell it
+ * apart from "label not found".
+ */
+export const AX_PERMISSION_ERROR = "Accessibility permission missing";
+
+export function isAxPermissionError(error: string | undefined): boolean {
+    return !!error && error.startsWith(AX_PERMISSION_ERROR);
+}
+
 export async function dumpAccessibilityTree(opts: AxDumpOptions = {}): Promise<AxDump> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const start = Date.now();
     if (_axNegativeUntil > Date.now()) {
-        return failureResult(start, "unavailable", `ax_negative_cache:${_axNegativeReason}`);
+        return failureResult(start, "unavailable", `${AX_PERMISSION_ERROR} (${_axNegativeReason})`);
     }
     try {
         if (process.platform === "darwin") return appendMeta(await dumpMacOS(opts, timeoutMs), "swift", start);
@@ -111,6 +125,7 @@ export async function dumpAccessibilityTree(opts: AxDumpOptions = {}): Promise<A
         if (looksLikePermissionError(msg)) {
             _axNegativeUntil = Date.now() + AX_NEGATIVE_CACHE_MS;
             _axNegativeReason = msg.slice(0, 100);
+            return failureResult(start, "unavailable", `${AX_PERMISSION_ERROR} (${_axNegativeReason})`);
         }
         return failureResult(start, "unavailable", msg);
     }
@@ -146,18 +161,7 @@ function failureResult(start: number, source: AxDump["source"], message: string)
 }
 
 async function dumpMacOS(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump> {
-    const sdir = getScriptsDir();
-    const bin = join(sdir, "dump_ax_bin");
-    const script = join(sdir, "dump_ax.swift");
-    let exec: string;
-    let args: string[];
-    if (existsSync(bin)) {
-        exec = bin;
-        args = [];
-    } else {
-        exec = "swift";
-        args = [script];
-    }
+    const { exec, args } = swiftHelper();
     if (opts.pid && opts.pid > 0) {
         args.push("--pid", String(opts.pid));
     } else {
@@ -165,8 +169,80 @@ async function dumpMacOS(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump
     }
     if (opts.depth) args.push("--depth", String(opts.depth));
     if (opts.bboxOnly) args.push("--bbox-only");
-    const { stdout } = await execFileAsync(exec, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 });
-    return parseDump(stdout);
+    return parseDump(await runSwiftHelper(exec, args, timeoutMs));
+}
+
+function swiftHelper(): { exec: string; args: string[] } {
+    const sdir = getScriptsDir();
+    const bin = join(sdir, "dump_ax_bin");
+    return existsSync(bin) ? { exec: bin, args: [] } : { exec: "swift", args: [join(sdir, "dump_ax.swift")] };
+}
+
+/** Run the helper; its "error|<reason>" line comes with exit 1, so read stdout from the failure too. */
+async function runSwiftHelper(exec: string, args: string[], timeoutMs: number): Promise<string> {
+    try {
+        return (await execFileAsync(exec, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 })).stdout;
+    } catch (err) {
+        const out = String((err as { stdout?: string }).stdout ?? "");
+        if (out.trim().startsWith("error|")) return out;
+        throw err;
+    }
+}
+
+// Helper errors raised before it acted: the element was never pressed.
+const _AX_REFUSED = /^(element_gone|element_changed|unsupported|unknown_action|no_pid|not_trusted|pid_not_found)/;
+
+/**
+ * AXPress ("press") or AXScrollToVisible ("reveal") the element at `el.path`
+ * of app `pid` (macOS). The helper first checks the element there still has
+ * the dumped role + frame. Returns the element's frame afterwards on success.
+ * `unconfirmed`: the action may have run anyway (a timeout, or a press whose
+ * handler opened a menu/modal and returned an error) — don't repeat it.
+ */
+export async function axPerformAction(
+    pid: number,
+    el: Pick<AxFlatElement, "path" | "role" | "bbox">,
+    action: "press" | "reveal",
+): Promise<{
+    ok: boolean;
+    error?: string;
+    unconfirmed?: boolean;
+    frame?: { x: number; y: number; w: number; h: number };
+}> {
+    if (process.platform !== "darwin") return { ok: false, error: "unsupported_platform" };
+    if (!pid) return { ok: false, error: "no_pid" };
+    const h = swiftHelper();
+    const b = el.bbox;
+    const args = [...h.args, "--pid", String(pid), "--action", action, "--path", el.path.join(",")];
+    args.push("--expect-role", el.role, "--expect-frame", [b.x, b.y, b.w, b.h].join(","));
+    try {
+        // Longer than AppKit's ~6s AX messaging timeout, so a slow press reports back.
+        const out = (await runSwiftHelper(h.exec, args, 8000)).trim();
+        if (!out.startsWith("ok|")) {
+            const error = out.replace(/^error\|/, "") || "no_output";
+            return { ok: false, error, unconfirmed: !_AX_REFUSED.test(error) };
+        }
+        const [x, y, w, hh] = out.slice(3).split(",").map(Number);
+        return { ok: true, frame: { x, y, w, h: hh } };
+    } catch (err) {
+        const e = err as NodeJS.ErrnoException;
+        return { ok: false, error: e.message.slice(0, 200), unconfirmed: e.code !== "ENOENT" };
+    }
+}
+
+/** The Dock's AX tree (macOS): it isn't the frontmost app, so a normal dump never sees it. */
+export async function dumpDock(): Promise<AxDump | null> {
+    if (process.platform !== "darwin") return null;
+    try {
+        const { stdout } = await execFileAsync("pgrep", ["-x", "Dock"], { timeout: 2000 });
+        const pid = Number.parseInt(stdout.trim().split("\n")[0], 10);
+        if (!pid) return null;
+        const d = await dumpAccessibilityTree({ pid, depth: 6 });
+        // A partial dump (cut short) can match a look-alike label: treat it as no Dock.
+        return d.error || d.partial ? null : d;
+    } catch {
+        return null;
+    }
 }
 
 async function dumpWindows(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump> {
@@ -213,6 +289,7 @@ const INTERACTIVE_ROLES_MAC = new Set([
     "AXMenuButton",
     "AXMenuItem",
     "AXMenuBarItem",
+    "AXDockItem",
     "AXDisclosureTriangle",
     "AXSlider",
     "AXIncrementor",
@@ -310,9 +387,19 @@ const MAX_WALK_DEPTH = 64;
 // matches and the click falls through to the slow vision path. macOS + Windows
 // + Linux text roles.
 const _TEXT_ROLES = new Set([
-    "AXStaticText", "AXText", "AXTextField", "AXHeading",
-    "Text", "Edit", "Document", "Hyperlink",
-    "label", "text", "static", "heading", "push button",
+    "AXStaticText",
+    "AXText",
+    "AXTextField",
+    "AXHeading",
+    "Text",
+    "Edit",
+    "Document",
+    "Hyperlink",
+    "label",
+    "text",
+    "static",
+    "heading",
+    "push button",
 ]);
 
 /**
@@ -339,11 +426,23 @@ function deriveLabelFromDescendants(node: AxNode): string {
     return parts.join(" ").trim().slice(0, 200);
 }
 
+const WINDOW_ROLES = new Set(["AXWindow", "Window", "frame", "window", "dialog"]);
+// Open native menus and popovers sit inside a window in the tree but are drawn
+// past its edge: their items are visible inside their own rect too. Not under a
+// web area, where ARIA role=menu lists are laid out (and scrolled) with the page.
+const POPUP_ROLES = new Set(["AXMenu", "AXPopover"]);
+
 function flattenInteractiveJs(dump: AxDump): AxFlatElement[] {
     const out: AxFlatElement[] = [];
     let id = 1;
-    function walk(node: AxNode, path: number[], depth: number) {
+    // `win` = the nearest enclosing window's rect: an element whose center is
+    // outside it is scrolled out of view, and its coordinates can't be clicked.
+    function walk(node: AxNode, path: number[], depth: number, win?: AxNode, pop?: AxNode, inWeb = false) {
         if (depth > MAX_WALK_DEPTH) return;
+        const sized = node.w > 0 && node.h > 0;
+        if (WINDOW_ROLES.has(node.role || "") && sized) win = node;
+        if (node.role === "AXWebArea") inWeb = true;
+        else if (POPUP_ROLES.has(node.role || "") && sized && !inWeb) pop = node;
         if (isInteractiveRole(node.role) && node.w > 0 && node.h > 0) {
             const label = (node.label || "").trim();
             const value = (node.value || "").trim();
@@ -352,22 +451,25 @@ function flattenInteractiveJs(dump: AxDump): AxFlatElement[] {
             const derived = label || value ? "" : deriveLabelFromDescendants(node);
             const effLabel = label || derived;
             if (effLabel || value) {
-                out.push({
+                const center = { x: node.x + Math.floor(node.w / 2), y: node.y + Math.floor(node.h / 2) };
+                const el: AxFlatElement = {
                     id: id++,
                     role: node.role || "",
                     label: effLabel,
                     value,
                     bbox: { x: node.x, y: node.y, w: node.w, h: node.h },
-                    center: { x: node.x + Math.floor(node.w / 2), y: node.y + Math.floor(node.h / 2) },
+                    center,
                     focusable: node.focusable,
                     enabled: node.enabled,
                     path: [...path],
                     depth,
-                });
+                };
+                if (win && !inRect(center, win) && !(pop && inRect(center, pop))) el.offscreen = true;
+                out.push(el);
             }
         }
         for (let i = 0; i < node.children.length; i++) {
-            walk(node.children[i], [...path, i], depth + 1);
+            walk(node.children[i], [...path, i], depth + 1, win, pop, inWeb);
         }
     }
     walk(dump.root, [], 0);
@@ -415,42 +517,126 @@ export function findElementByLabel(
     minScore = 0.5,
     appName?: string,
 ): AxFlatElement | null {
-    if (!query) return null;
+    return matchElementByLabel(elements, query, minScore, appName).el;
+}
+
+export interface LabelMatch {
+    /** The single best enabled match, or null (no match, a tie, or only disabled matches). */
+    el: AxFlatElement | null;
+    score: number;
+    /** Distinct, equally good matches the query can't tell apart. */
+    ambiguous?: AxFlatElement[];
+    /** The best match reaching minScore is disabled (clicking it would do nothing). */
+    disabled?: AxFlatElement;
+    /** Highest-scoring candidates, for "what did you see instead" diagnostics. */
+    nearest: Array<{ el: AxFlatElement; score: number }>;
+}
+
+// Roles that show text rather than act; on a tie a control beats its caption.
+const _STATIC_ROLES = new Set(["AXStaticText", "AXImage", "AXHeading", "Text", "Image", "label", "image", "heading"]);
+
+/**
+ * Score every element against the instruction. Disabled elements never win.
+ * When several distinct elements tie for best, a positional word in the
+ * query (top/bottom/left/right/first/last) picks one; otherwise the tie is
+ * returned as `ambiguous` instead of clicking whichever came first.
+ */
+export function matchElementByLabel(
+    elements: AxFlatElement[],
+    query: string,
+    minScore = 0.5,
+    appName?: string,
+): LabelMatch {
+    if (!query) return { el: null, score: 0, nearest: [] };
     const raw = query.toLowerCase().trim();
+    let scored: Array<{ el: AxFlatElement; score: number }> = [];
 
     // A quoted target ("1", '×', “Save”) is what the agent means: try it exactly.
     const quoted = /["'“‘]([^"'”’]{1,40})["'”’]/.exec(query)?.[1]?.toLowerCase().trim();
     if (quoted) {
         const want = [quoted, _SYMBOL_ALIASES[quoted]].filter(Boolean);
-        const exact = elements.find((el) => want.includes((el.label || "").toLowerCase().trim()));
-        if (exact) return exact;
+        scored = elements
+            .filter((el) => want.includes((el.label || "").toLowerCase().trim()))
+            .map((el) => ({ el, score: 1 }));
     }
 
-    const appWords = new Set(_tokens((appName || "").toLowerCase()));
-    let q = raw
-        .split(/\s+/)
-        .map((w) => _SYMBOL_ALIASES[w] ?? w)
-        .filter((w) => !appWords.has(w.replace(/[^a-z0-9]/g, "")))
-        .join(" ")
-        .trim();
-    if (!q) q = raw;
-
-    let best: { el: AxFlatElement; score: number } | null = null;
-    for (const el of elements) {
-        const label = (el.label || "").toLowerCase();
-        const value = (el.value || "").toLowerCase();
-        if (!label && !value) continue;
-        // Score the raw instruction too: stripping the app name can leave a
-        // fragment ("All Mail" in Mail → "all") that only the full words pin down.
-        let score = Math.max(scoreText(q, label), q === raw ? 0 : scoreText(raw, label));
-        // Values are free text (a display showing "128 × 46", a document): an
-        // exact match counts; a fuzzy one only for short label-less text (macOS
-        // puts static text in the value), and never against the raw symbol.
-        if (value) score = Math.max(score, value === q || value === raw ? 0.9 : !label && value.length <= 40 ? scoreText(q, value) : 0);
-        if (!best || score > best.score) best = { el, score };
+    if (!scored.length) {
+        const appWords = new Set(_tokens((appName || "").toLowerCase()));
+        let q = raw
+            .split(/\s+/)
+            .map((w) => _SYMBOL_ALIASES[w] ?? w)
+            .filter((w) => !appWords.has(w.replace(/[^a-z0-9]/g, "")))
+            .join(" ")
+            .trim();
+        if (!q) q = raw;
+        for (const el of elements) {
+            const label = (el.label || "").toLowerCase();
+            const value = (el.value || "").toLowerCase();
+            if (!label && !value) continue;
+            // Score the raw instruction too: stripping the app name can leave a
+            // fragment ("All Mail" in Mail → "all") that only the full words pin down.
+            let score = Math.max(scoreText(q, label), q === raw ? 0 : scoreText(raw, label));
+            // Values are free text (a display showing "128 × 46", a document): an
+            // exact match counts; a fuzzy one only for short label-less text (macOS
+            // puts static text in the value), and never against the raw symbol.
+            if (value)
+                score = Math.max(
+                    score,
+                    value === q || value === raw ? 0.9 : !label && value.length <= 40 ? scoreText(q, value) : 0,
+                );
+            scored.push({ el, score });
+        }
     }
-    if (!best || best.score < minScore) return null;
-    return best.el;
+
+    const ranked = scored.sort((a, b) => b.score - a.score); // stable: ties keep tree order
+    const nearest = ranked.slice(0, 5);
+    const usable = ranked.filter((c) => c.score >= minScore);
+    const enabled = usable.filter((c) => c.el.enabled);
+    if (!enabled.length) return { el: null, score: ranked[0]?.score ?? 0, nearest, disabled: usable[0]?.el };
+
+    const top = enabled[0].score;
+    let tied = distinctTargets(enabled.filter((c) => top - c.score < 1e-6).map((c) => c.el));
+    const controls = tied.filter((el) => !_STATIC_ROLES.has(el.role));
+    if (controls.length) tied = controls;
+    const pick = tied.length === 1 ? tied[0] : pickByPosition(tied, raw);
+    return pick ? { el: pick, score: top, nearest } : { el: null, score: top, nearest, ambiguous: tied };
+}
+
+function inRect(p: { x: number; y: number }, r: { x: number; y: number; w: number; h: number }): boolean {
+    return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+}
+
+/** Drop matches nested in an earlier one (a row and its own text cell are one target). */
+function distinctTargets(els: AxFlatElement[]): AxFlatElement[] {
+    const kept: AxFlatElement[] = [];
+    for (const el of els) {
+        if (!kept.some((k) => inRect(el.center, k.bbox) || inRect(k.center, el.bbox))) kept.push(el);
+    }
+    return kept;
+}
+
+const _POSITIONS: Array<[RegExp, (el: AxFlatElement) => number]> = [
+    [/\b(top|upper|first|topmost)\b/, (el) => el.center.y],
+    [/\b(bottom|lower|last|bottommost)\b/, (el) => -el.center.y],
+    [/\b(left|leftmost)\b/, (el) => el.center.x],
+    [/\b(right|rightmost)\b/, (el) => -el.center.x],
+];
+
+/**
+ * The one candidate the query's first positional word singles out, or null.
+ * Words of the candidates' own labels don't count ("Last Name" is not "last").
+ */
+export function pickByPosition(els: AxFlatElement[], query: string): AxFlatElement | null {
+    const labelWords = new Set(els.flatMap((el) => _tokens(el.label || "")));
+    const q = _tokens(query)
+        .filter((w) => !labelWords.has(w))
+        .join(" ");
+    const words = _POSITIONS.map(([re, key]) => ({ at: q.search(re), key })).filter((p) => p.at >= 0);
+    if (!words.length) return null;
+    const key = words.sort((a, b) => a.at - b.at)[0].key;
+    const sorted = [...els].sort((a, b) => key(a) - key(b));
+    // A clear winner only: two at the same height aren't "the top one".
+    return key(sorted[1]) - key(sorted[0]) >= 4 ? sorted[0] : null;
 }
 
 const _STOPWORDS = new Set([

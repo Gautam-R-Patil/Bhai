@@ -5,6 +5,10 @@
 //
 // Usage:
 //   dump_ax_bin [--pid <pid>] [--frontmost] [--depth N] [--bbox-only]
+//   dump_ax_bin --pid <pid> --action press|reveal --path 0,2,1 [--expect-role R] [--expect-frame x,y,w,h]
+//     Performs AXPress / AXScrollToVisible on the element at that child-index
+//     path (as in the dump), after checking it is still the same element.
+//     Prints "ok|x,y,w,h" (its frame afterwards) or "error|<reason>".
 //
 // Output (stdout): JSON tree
 //   {
@@ -41,6 +45,10 @@ import AppKit
 var targetPid: pid_t = 0
 var maxDepth: Int = 20  // raised from 12 — Safari/VS Code can be 25-40 levels deep
 var bboxOnly: Bool = false
+var actionName: String? = nil
+var actionPath: [Int] = []
+var expectRole: String? = nil
+var expectFrame: [Int] = []
 
 let args = Array(CommandLine.arguments.dropFirst())
 var i = 0
@@ -55,6 +63,14 @@ while i < args.count {
         if i + 1 < args.count, let d = Int(args[i + 1]) { maxDepth = max(1, min(30, d)); i += 1 }
     case "--bbox-only":
         bboxOnly = true
+    case "--action":
+        if i + 1 < args.count { actionName = args[i + 1]; i += 1 }
+    case "--path":
+        if i + 1 < args.count { actionPath = args[i + 1].split(separator: ",").compactMap { Int($0) }; i += 1 }
+    case "--expect-role":
+        if i + 1 < args.count { expectRole = args[i + 1]; i += 1 }
+    case "--expect-frame":
+        if i + 1 < args.count { expectFrame = args[i + 1].split(separator: ",").compactMap { Int($0) }; i += 1 }
     default:
         break
     }
@@ -166,6 +182,8 @@ func axCopy(_ el: AXUIElement, _ attr: String) -> CFTypeRef? {
 func cfString(_ v: CFTypeRef?) -> String? { v as? String }
 func cfNumber(_ v: CFTypeRef?) -> NSNumber? { v as? NSNumber }
 func cfBool(_ v: CFTypeRef?) -> Bool { (v as? Bool) ?? false }
+/// Static text, rows and cells have no AXEnabled at all: absent (or unread) means enabled.
+func cfEnabled(_ v: CFTypeRef?) -> Bool { (v as? Bool) ?? true }
 func cfChildren(_ v: CFTypeRef?) -> [AXUIElement] { (v as? [AXUIElement]) ?? [] }
 
 func cfPoint(_ v: CFTypeRef?) -> CGPoint {
@@ -255,6 +273,12 @@ func makeNode(
     )
 }
 
+/// A minimized window is off screen: keep its slot (child indices are
+/// --action paths) but not its contents, which would otherwise win matches.
+func isMinimizedWindow(_ el: AXUIElement, role: String?) -> Bool {
+    role == "AXWindow" && cfBool(axCopy(el, "AXMinimized"))
+}
+
 /// Walks children until the app hangs; the child whose call timed out is kept, the rest are skipped.
 func walkKids(_ list: [AXUIElement], depth: Int, _ walker: (AXUIElement, Int) -> AXNode) -> [AXNode] {
     var kids: [AXNode] = []
@@ -277,12 +301,12 @@ func walkLegacy(_ el: AXUIElement, depth: Int) -> AXNode {
         title: { cfString(axCopy(el, kAXTitleAttribute)) },
         desc: { cfString(axCopy(el, kAXDescriptionAttribute)) },
         help: { cfString(axCopy(el, kAXHelpAttribute)) })
-    let kids = depth < maxDepth
+    let kids = depth < maxDepth && !isMinimizedWindow(el, role: role)
         ? walkKids(cfChildren(axCopy(el, kAXChildrenAttribute)), depth: depth, walkLegacy) : []
     return makeNode(
         role: role, subrole: subrole, labelValue: lv, pos: pos, size: sz,
         focused: cfBool(axCopy(el, kAXFocusedAttribute)),
-        enabled: cfBool(axCopy(el, kAXEnabledAttribute)),
+        enabled: cfEnabled(axCopy(el, kAXEnabledAttribute)),
         children: kids
     )
 }
@@ -342,11 +366,13 @@ func walkBatched(_ el: AXUIElement, depth: Int) -> AXNode {
     let lv = labelAndValue(
         el, subrole: subrole,
         title: { cfString(s[2]) }, desc: { cfString(s[3]) }, help: { cfString(s[4]) })
-    let kids = depth < maxDepth ? walkKids(cfChildren(s[9]), depth: depth, walkBatched) : []
+    let role = cfString(s[0])
+    let kids = depth < maxDepth && !isMinimizedWindow(el, role: role)
+        ? walkKids(cfChildren(s[9]), depth: depth, walkBatched) : []
     return makeNode(
-        role: cfString(s[0]), subrole: subrole, labelValue: lv,
+        role: role, subrole: subrole, labelValue: lv,
         pos: cfPoint(s[5]), size: cfSize(s[6]),
-        focused: cfBool(s[7]), enabled: cfBool(s[8]),
+        focused: cfBool(s[7]), enabled: cfEnabled(s[8]),
         children: kids
     )
 }
@@ -360,6 +386,44 @@ if let ms = msgTimeoutMs { setMessagingTimeout(UInt64(ms) * 1_000_000) }
 // hang on its own: the walk still runs.
 let manualT0 = now()
 if callAllowed() { note(AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue), since: manualT0, read: false) }
+
+// ── Act on one element (--action) ────────────────
+
+func fail(_ reason: String) -> Never {
+    FileHandle.standardOutput.write("error|\(reason)\n".data(using: .utf8)!)
+    exit(1)
+}
+
+if let act = actionName {
+    let axAction: String
+    switch act {
+    case "press": axAction = kAXPressAction as String
+    case "reveal": axAction = "AXScrollToVisible"
+    default: fail("unknown_action:\(act)")
+    }
+    var el = app
+    for idx in actionPath {
+        let kids = cfChildren(axCopy(el, kAXChildrenAttribute))
+        guard idx >= 0 && idx < kids.count else { fail("element_gone") }
+        el = kids[idx]
+    }
+    // The tree may have changed since the dump: act only on the same element.
+    if let r = expectRole, cfString(axCopy(el, kAXRoleAttribute)) != r { fail("element_changed") }
+    if expectFrame.count == 4 {
+        let p = cfPoint(axCopy(el, kAXPositionAttribute)), sz = cfSize(axCopy(el, kAXSizeAttribute))
+        let cur = [Int(p.x), Int(p.y), Int(sz.width), Int(sz.height)]
+        if zip(cur, expectFrame).contains(where: { abs($0 - $1) > 2 }) { fail("element_changed") }
+    }
+    var names: CFArray?
+    let actions = AXUIElementCopyActionNames(el, &names) == .success ? (names as? [String] ?? []) : []
+    guard actions.contains(axAction) else { fail("unsupported:\(axAction)") }
+    let res = AXUIElementPerformAction(el, axAction as CFString)
+    guard res == .success else { fail("failed:\(res.rawValue)") }
+    let p = cfPoint(axCopy(el, kAXPositionAttribute)), sz = cfSize(axCopy(el, kAXSizeAttribute))
+    FileHandle.standardOutput.write("ok|\(Int(p.x)),\(Int(p.y)),\(Int(sz.width)),\(Int(sz.height))\n".data(using: .utf8)!)
+    exit(0)
+}
+
 let root = useBatch ? walkBatched(app, depth: 0) : walkLegacy(app, depth: 0)
 
 struct Output: Encodable {

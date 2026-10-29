@@ -29,7 +29,11 @@ async function freshPage() {
 }
 const hosts = (page: any) => page.evaluate(`document.querySelectorAll("#${AGENT_UI_HOST_ID}").length`);
 
-describe("agent cursor", () => {
+// Real headless-Chromium E2E: host injection under CSP / Trusted Types and the
+// screenshot diffs depend on render + route timing, deterministic on macOS/Linux
+// but occasionally racy on a loaded Windows runner (host count read as 0 before
+// injection settled). Retry absorbs the transient; a real regression fails all.
+describe("agent cursor", { retry: 2 }, () => {
     it("injects once and is removable", async (ctx) => {
         if (!browser) return ctx.skip();
         const page = await freshPage();

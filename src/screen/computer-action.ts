@@ -5,6 +5,7 @@
 import {
     clampToMonitor,
     getScreenDimensions,
+    onSomeDisplay,
     percentageToScreen,
     type ScreenDimensions,
     scaleImageToScreen,
@@ -131,6 +132,7 @@ export function parseComputerAction(input: unknown): ValidationSuccess | Validat
             if (button !== "left" && button !== "right" && button !== "middle")
                 return { ok: false, error: `Invalid button: ${button}` };
             const modifiers = parseModifiers(raw.modifiers);
+            if (modifiers === null) return { ok: false, error: `Invalid modifiers: ${JSON.stringify(raw.modifiers)}` };
             return {
                 ok: true,
                 action: { action: "click", coord: coord as [number, number], button, modifiers, ...common },
@@ -230,25 +232,15 @@ export function parseComputerAction(input: unknown): ValidationSuccess | Validat
     }
 }
 
-function parseModifiers(input: unknown): ComputerModifier[] | undefined {
-    if (!Array.isArray(input)) return undefined;
-    const out: ComputerModifier[] = [];
-    for (const m of input) {
-        const s = String(m).toLowerCase();
-        if (
-            s === "command" ||
-            s === "control" ||
-            s === "shift" ||
-            s === "option" ||
-            s === "alt" ||
-            s === "ctrl" ||
-            s === "cmd" ||
-            s === "meta"
-        ) {
-            out.push(s as ComputerModifier);
-        }
-    }
-    return out.length > 0 ? out : undefined;
+const MODIFIERS = new Set(["command", "control", "shift", "option", "alt", "ctrl", "cmd", "meta"]);
+
+/** undefined = none given; null = an unknown modifier (dropping it would fake a plain click). */
+function parseModifiers(input: unknown): ComputerModifier[] | undefined | null {
+    if (input === undefined || input === null) return undefined;
+    if (!Array.isArray(input)) return null;
+    const out = input.map((m) => String(m).toLowerCase());
+    if (!out.every((m) => MODIFIERS.has(m))) return null;
+    return out.length > 0 ? (out as ComputerModifier[]) : undefined;
 }
 
 /** Resolve coord (image-px, percent, or screen) to a concrete screen point. */
@@ -268,9 +260,20 @@ export async function resolveCoord(
         const { x, y, scaleFactor } = scaleImageToScreen({ rawX: coord[0], rawY: coord[1], imageWidth, dims });
         return { x, y, monitorId: dims.monitorId, scaleFactor };
     }
-    // screen — global CG/display coords, NOT monitor-relative. We clamp to the picked
-    // monitor for defence-in-depth (a Number.MAX_SAFE_INTEGER from a malicious LLM
-    // should not reach CGEventCreateMouseEvent / SetCursorPos).
+    // screen — global CG/display coords, NOT monitor-relative. A point on any
+    // known display is used as-is; anything else is clamped to the picked monitor
+    // (a Number.MAX_SAFE_INTEGER from a malicious LLM must not reach
+    // CGEventCreateMouseEvent / SetCursorPos). A clamp that MOVES the point means
+    // the target is off screen (e.g. a scrolled-away AX element): clicking the
+    // monitor edge instead would be a fake success, so refuse.
+    const x = Math.round(coord[0]);
+    const y = Math.round(coord[1]);
+    if (onSomeDisplay(x, y, dims)) return { x, y, monitorId: dims.monitorId, scaleFactor: 1 };
     const clamped = clampToMonitor(coord[0], coord[1], dims);
+    if (Math.hypot(clamped.x - coord[0], clamped.y - coord[1]) > 2) {
+        throw new Error(
+            `point (${x},${y}) is off screen (monitor ${dims.originX},${dims.originY} ${dims.width}x${dims.height}); scroll the target into view first`,
+        );
+    }
     return { x: clamped.x, y: clamped.y, monitorId: dims.monitorId, scaleFactor: 1 };
 }

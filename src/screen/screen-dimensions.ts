@@ -3,7 +3,12 @@
 // See LICENSE.md for details.
 
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { withCursorHidden } from "./agent-cursor.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -15,7 +20,11 @@ export interface ScreenDimensions {
     originX: number;
     originY: number;
     focusedWindow?: { x: number; y: number; w: number; h: number };
+    /** Every display in global screen points (macOS), so a point on another monitor isn't clamped away. */
+    displays?: Rect[];
 }
+
+export type Rect = { x: number; y: number; w: number; h: number };
 
 export interface ScreenDimensionsOptions {
     focusedWindow?: boolean;
@@ -129,7 +138,7 @@ if (focus) {
         }
     }
 }
-JSON.stringify({ picked: picked, focus: focus });
+JSON.stringify({ picked: picked, focus: focus, all: allScreens });
 `.trim()
         : `
 ObjC.import("AppKit");
@@ -147,9 +156,16 @@ JSON.stringify({
     const parsed = JSON.parse(stdout.trim()) as {
         picked: { id: string; x: number; y: number; w: number; h: number; scale: number };
         focus: { x: number; y: number; w: number; h: number } | null;
+        all?: Rect[];
     };
     if (!parsed?.picked) return { ...DEFAULTS };
     return {
+        displays: parsed.all?.map((d) => ({
+            x: Math.round(d.x),
+            y: Math.round(d.y),
+            w: Math.round(d.w),
+            h: Math.round(d.h),
+        })),
         width: Math.round(parsed.picked.w),
         height: Math.round(parsed.picked.h),
         scale: parsed.picked.scale || 1,
@@ -314,6 +330,66 @@ async function probeLinux(wantFocused: boolean): Promise<ScreenDimensions> {
         originY: picked.y,
         focusedWindow: focus || undefined,
     };
+}
+
+/**
+ * Screenshot one screen rect (global points) to `out` — the focused monitor or
+ * window, so the pixels match what clicks are scaled against (Bhai's own cursor
+ * and glow hidden). macOS + Windows;
+ * false elsewhere or on failure (callers fall back to a full-screen capture).
+ */
+export async function captureRegionToFile(r: Rect, out: string, type: "png" | "jpg" = "png"): Promise<boolean> {
+    if (r.w <= 0 || r.h <= 0) return false;
+    const [x, y, w, h] = [r.x, r.y, r.w, r.h].map(Math.round);
+    try {
+        if (process.platform === "darwin") {
+            await withCursorHidden(() =>
+                execFileAsync("screencapture", ["-x", "-t", type, `-R${x},${y},${w},${h}`, out], { timeout: 8000 }),
+            );
+            return true;
+        }
+        if (process.platform === "win32") {
+            const ps =
+                `Add-Type -AssemblyName System.Drawing,System.Windows.Forms;` +
+                `$b = New-Object System.Drawing.Bitmap(${w}, ${h});` +
+                `$g = [System.Drawing.Graphics]::FromImage($b);` +
+                `$g.CopyFromScreen(${x}, ${y}, 0, 0, $b.Size);` +
+                `$b.Save('${out.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png);` +
+                `$g.Dispose(); $b.Dispose()`;
+            await withCursorHidden(() =>
+                execFileAsync("powershell", ["-NoProfile", "-Command", ps], { timeout: 8000 }),
+            );
+            return true;
+        }
+    } catch {
+        /* fall through */
+    }
+    return false;
+}
+
+/** captureRegionToFile into memory. */
+export async function captureRegion(r: Rect): Promise<Buffer | null> {
+    const out = join(tmpdir(), `atlas_region_${randomBytes(6).toString("hex")}.png`);
+    try {
+        return (await captureRegionToFile(r, out)) ? await fs.readFile(out) : null;
+    } catch {
+        return null;
+    } finally {
+        await fs.unlink(out).catch(() => {});
+    }
+}
+
+/** The monitor `dims` describes, as a capture rect (null for the made-up fallback). */
+export function monitorRect(dims: ScreenDimensions): Rect | null {
+    return isFallbackDims(dims) ? null : { x: dims.originX, y: dims.originY, w: dims.width, h: dims.height };
+}
+
+/** True when (x, y) lies on one of the displays `dims` knows about (or on its monitor). */
+export function onSomeDisplay(x: number, y: number, dims: ScreenDimensions): boolean {
+    const rects = dims.displays?.length
+        ? dims.displays
+        : [{ x: dims.originX, y: dims.originY, w: dims.width, h: dims.height }];
+    return rects.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
 }
 
 export function clampToMonitor(x: number, y: number, dims: ScreenDimensions): { x: number; y: number } {

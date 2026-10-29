@@ -135,7 +135,10 @@ const DEPENDENCY_MISSING_PATTERNS = [
     /Install.*brightness/i,
     /Install.*blueutil/i,
     /module.*not found/i,
-    /Cannot find module/i,
+    // Only bare package specifiers belong here (a missing dependency self-heal
+    // can install). A relative/absolute specifier like './utils' is an import
+    // path typo — leave it to IMPORT_ERROR below (which no install can fix).
+    /Cannot find module ['"][@\w]/i,
     /MODULE_NOT_FOUND/i,
 ];
 
@@ -160,13 +163,13 @@ const SYNTAX_ERROR_PATTERNS = [
 ];
 
 const TEST_FAILURE_PATTERNS = [
-    /\d+ failing/i, // mocha
-    /Tests:\s+\d+ failed/i, // jest
-    /FAIL\s+.*\.test\.[a-z]+/, // jest/vitest file header
-    /✗|×|❌/, // bullet-style failure (narrow fallback)
-    /\bAssertionError\b/, // python unittest / pytest
-    /expected.*to (?:equal|be|contain)/i, // chai/jest-style
-    /test result: FAILED/, // cargo test
+    /\d+ failing/i,                         // mocha
+    /Tests:\s+\d+ failed/i,                 // jest
+    /FAIL\s+.*\.test\.[a-z]+/,              // jest/vitest file header
+    /✗|❌/,                                  // test-runner failure bullet (dropped bare × — it matches dimensions like 1920×1080)
+    /\bAssertionError\b/,                   // python unittest / pytest
+    /expected.*to (?:equal|be|contain)/i,   // chai/jest-style
+    /test result: FAILED/,                  // cargo test
 ];
 
 const LINT_ERROR_PATTERNS = [
@@ -300,6 +303,14 @@ export function classifyError(message: string, tool?: string, durationMs?: numbe
         if (pattern.test(message)) {
             return { category: ErrorCategory.ParseError, message, tool, retryable: true, context };
         }
+    }
+
+    // A relative/absolute module specifier ("./x", "../x", "/abs/x.js") that is
+    // not found is a path typo no install can fix — classify it as ImportError
+    // even inside an ESM "ERR_MODULE_NOT_FOUND: Cannot find module '/app/x.js'",
+    // before the (installable) dependency check below.
+    if (/Cannot find module ['"](?:\.{0,2}\/|[a-zA-Z]:[\\/])/.test(message)) {
+        return { category: ErrorCategory.ImportError, message, tool, retryable: true, context, codeLocation: extractCodeLocation(message) };
     }
 
     // Dependency missing — check before user_caused since ENOENT+spawn overlaps

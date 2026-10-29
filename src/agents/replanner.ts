@@ -83,7 +83,7 @@ Based on the completed results, decide:
 3. "abort" — the task cannot be completed or is already done
 
 If you choose "replan", provide revised remaining steps as JSON (same format: id, role, description, depends_on).
-Only revise steps that need changing. Keep IDs consistent with the original plan.
+Only revise steps that need changing. Keep IDs consistent with the original plan; a step that takes over remaining steps under a new id lists their ids in "replaces".
 
 Output ONLY valid JSON:
 {"action": "continue"|"replan"|"abort", "reason": "...", "revisedSteps": [...]}`;
@@ -114,6 +114,9 @@ Output ONLY valid JSON:
                     role: validRoles.includes(s.role) ? s.role : "general",
                     description: s.description,
                     depends_on: Array.isArray(s.depends_on) ? s.depends_on : [],
+                    replaces: Array.isArray(s.replaces)
+                        ? s.replaces.filter((x: unknown) => typeof x === "string")
+                        : undefined,
                 }));
 
             return {

@@ -105,9 +105,25 @@ export function resetBrowserContext(): void {
 
 // ── Active page tracker ───────────────────────
 let activePageIndex = 0;
+// A tab followed after a click (target=_blank, OAuth/payment popup) and the tab
+// that opened it: once it closes (itself, or via close_active) the opener is active
+// again — not whichever tab is now last.
+let followedTab: { page: Page; opener: Page } | null = null;
 
-export function setActivePageIndex(idx: number): void {
+/** Any explicit switch forgets a followed tab; pass `followed` when following one. */
+export function setActivePageIndex(idx: number, followed?: { page: Page; opener: Page }): void {
     activePageIndex = idx;
+    followedTab = followed ?? null;
+}
+
+/** The tracked active tab among the context's open `pages` (non-empty). */
+export function pickActivePage(pages: Page[]): Page {
+    if (followedTab?.page.isClosed()) {
+        const i = pages.indexOf(followedTab.opener);
+        if (i >= 0) activePageIndex = i;
+        followedTab = null;
+    }
+    return pages[Math.min(activePageIndex, pages.length - 1)];
 }
 
 export function getActivePageIndex(): number {
@@ -162,7 +178,8 @@ export function buildElementsText(): string {
                 isOcr: e.isOCRElement ?? false,
                 editorType: e.editorType ?? null,
             }));
-            return _nativeCompressElements(input, 40, 80);
+            // The scan sorts on-screen elements first, so the cap trims off-screen ones.
+            return _nativeCompressElements(input, 40, 150);
         } catch {
             /* fall through */
         }
@@ -358,8 +375,7 @@ export async function getActivePage(): Promise<Page> {
     _scheduleIdleClose();
     const pages = context.pages();
     if (pages.length === 0) return await context.newPage();
-    const idx = Math.min(activePageIndex, pages.length - 1);
-    return pages[idx];
+    return pickActivePage(pages);
 }
 
 // ── Form State Snapshot (OpenCLI getFormStateJs) ─────────────────────────────
@@ -563,6 +579,7 @@ export async function waitForPageReady(page: Page, timeoutMs = 2500): Promise<vo
     if (getCurrentMode() === "chrome") {
         const { waitBridgeReady } = await import("./chrome-backend.js");
         await waitBridgeReady(timeoutMs);
+        await page.refresh?.(); // ChromePageProxy: pick up a URL/title change the wait let land
         return;
     }
 
@@ -1158,61 +1175,46 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     const oldElements = [...lastElementMap];
 
     // ═══════════════════════════════════════════════
-    // PRIMARY: ariaSnapshot — no JS injection, works on minified SPAs
-    // (Next.js, React, Vue) where SCAN_FRAME_JS returned 0 elements.
-    // Uses Playwright's internal incrementalAriaSnapshot via the browser's
-    // native accessibility engine — bypasses eval scope entirely.
+    // PRIMARY: Playwright's AI snapshot — no JS injection, works on minified SPAs
+    // (Next.js, React, Vue) where SCAN_FRAME_JS returned 0 elements. One pass
+    // covers the main frame AND every iframe; each node carries a ref that an
+    // `aria-ref=` locator resolves to page-level coordinates (iframe offsets
+    // included). Builds without _snapshotForAI fall back to the body
+    // ariaSnapshot (no refs, no iframes) + getByRole lookups.
     // ═══════════════════════════════════════════════
     const ariaElements: InteractiveElement[] = [];
     let ariaParsedCount = 0; // track how many were parsed (vs resolved) to detect low-resolution pages
+    const vp: { width: number; height: number } = page.viewportSize?.() ?? { width: 1280, height: 800 };
     try {
-        const yaml = await page.locator("body").ariaSnapshot({ timeout: 1200 });
+        const yaml = await ariaSnapshotText(page, 3000);
         if (yaml && yaml.trim().length > 10) {
-            const INTERACTIVE_ROLES = new Set([
-                "button",
-                "link",
-                "textbox",
-                "searchbox",
-                "combobox",
-                "listbox",
-                "checkbox",
-                "radio",
-                "tab",
-                "menuitem",
-                "menuitemcheckbox",
-                "menuitemradio",
-                "option",
-                "switch",
-                "slider",
-                "spinbutton",
-                "treeitem",
-            ]);
-
-            // Parse YAML into (role, name, ref) tuples — works with and without [ref=] annotations
-            // Playwright 1.58 format: "- button \"Submit\"" (no refs)
-            // Playwright 1.60+ format: "- button \"Submit\" [ref=e42]"
-            const parsed: Array<{ role: string; name: string; ref: string; idx: number }> = [];
-            yaml.split("\n").forEach((line: string, idx: number) => {
-                const m = /^[\s-]*(\w+)\s+"([^"]*)"/.exec(line);
-                if (!m) return;
-                const role = m[1].toLowerCase();
-                if (!INTERACTIVE_ROLES.has(role)) return;
-                const ref = /\[ref=([\w\d]+)\]/.exec(line)?.[1] ?? "";
-                parsed.push({ role, name: m[2], ref, idx });
-            });
+            const parsed = parseAriaSnapshot(yaml);
             ariaParsedCount = parsed.length;
 
-            // Resolve bounding boxes in parallel.
-            // Process in batches of 20 to avoid saturating CDP with 320 simultaneous calls
-            // (80 elements × 4 tryBox variants = 320 concurrent CDP protocol messages).
-            // Each batch is still fully parallel internally; 4 batches of 20 is the right balance.
-            const BATCH = 20;
-            const vw = 1280,
-                vh = 800; // viewport dimensions
-            for (let i = 0; i < Math.min(parsed.length, 80); i += BATCH) {
+            // Resolve bounding boxes in parallel batches (bounded CDP fan-out). Every
+            // parsed node is considered — off-screen ones drop out at the viewport
+            // filter — so header/nav links can't crowd the page body out.
+            const BATCH = 40;
+            const vw = vp.width,
+                vh = vp.height;
+            for (let i = 0; i < Math.min(parsed.length, MAX_ARIA_NODES); i += BATCH) {
                 const batch = parsed.slice(i, i + BATCH);
                 const boxes = await Promise.all(
                     batch.map(async (p) => {
+                        if (p.ref) {
+                            // Exact element: one lookup, and the locator doubles as the click handle.
+                            const loc = page.locator(`aria-ref=${p.ref}`);
+                            const box = await loc.boundingBox({ timeout: 300 }).catch(() => null);
+                            const ok =
+                                box &&
+                                box.width > 2 &&
+                                box.height > 2 &&
+                                box.x > -200 &&
+                                box.y > -200 &&
+                                box.x < vw + 200 &&
+                                box.y < vh + 200;
+                            return ok ? { p, box, handle: loc } : null;
+                        }
                         const roleType = p.role as Parameters<typeof page.getByRole>[0];
                         const tryBox = async (exact: boolean, visibleOnly: boolean) => {
                             try {
@@ -1270,12 +1272,12 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                                 /* ignore */
                             }
                         }
-                        return box ? { p, box } : null;
+                        return box ? { p, box, handle: undefined } : null;
                     }),
                 );
                 for (const result of boxes) {
                     if (!result) continue;
-                    const { p, box } = result;
+                    const { p, box, handle } = result;
                     ariaElements.push({
                         label: ariaElements.length + 1,
                         x: Math.round(box.x + box.width / 2),
@@ -1283,7 +1285,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                         tag: p.role,
                         text: p.name.substring(0, 60),
                         atlasId: p.ref ? `aria-${p.ref}` : `aria-${p.idx}`,
-                        handle: undefined,
+                        handle,
                     });
                 }
             }
@@ -1311,7 +1313,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     const ariaResolutionPoor =
         ariaParsedCount > 20 && ariaElements.length < 15 && ariaElements.length < ariaParsedCount * 0.25;
     const allFrames = page.frames(); // hoisted — also used for handle fetching below
-    let legacyCandidates: Array<{
+    type Candidate = {
         x: number;
         y: number;
         tag: string;
@@ -1320,13 +1322,29 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
         atlasId: string;
         frameIndex: number;
         editorType?: string;
-    }> = [];
+        handle?: unknown;
+    };
+    let legacyCandidates: Candidate[] = [];
     if (ariaElements.length < 3 || ariaResolutionPoor) {
+        const mainFrame = page.mainFrame?.();
         const frameScanPromises = allFrames.map(async (frame: Page, fi: number) => {
             try {
+                // SCAN_FRAME_JS reports coordinates in the frame's own viewport:
+                // shift child-frame hits by the iframe's page position (boundingBox
+                // is main-frame relative, so nested frames come out right too).
+                let ox = 0,
+                    oy = 0;
+                if (mainFrame && frame !== mainFrame) {
+                    const box = await (await frame.frameElement()).boundingBox();
+                    if (!box) return []; // hidden / zero-size iframe
+                    ox = box.x;
+                    oy = box.y;
+                }
                 const frameCandidates = await frame.evaluate(`(${SCAN_FRAME_JS})()`);
                 return (frameCandidates as Array<InteractiveElement & { score: number }>).map((c) => ({
                     ...c,
+                    x: Math.round(c.x + ox),
+                    y: Math.round(c.y + oy),
                     frameIndex: fi,
                 }));
             } catch (err) {
@@ -1343,16 +1361,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     // Merge strategy: if SCAN_FRAME_JS ran and has more results, use it as base
     // and prepend ariaSnapshot results (which have better semantic labels).
     // Otherwise use whichever returned more elements.
-    let allCandidates: Array<{
-        x: number;
-        y: number;
-        tag: string;
-        text: string;
-        score: number;
-        atlasId: string;
-        frameIndex: number;
-        editorType?: string;
-    }>;
+    let allCandidates: Candidate[];
     if (legacyCandidates.length > ariaElements.length) {
         // SCAN_FRAME_JS found more — merge: aria first (semantic priority), then legacy
         const ariaCoords = new Set(ariaElements.map((e) => `${e.x},${e.y}`));
@@ -1386,8 +1395,12 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
         return true;
     });
 
-    // Sort deterministically same as before
+    // What's on screen first (the element list shown to the model is capped),
+    // then by score, then reading order.
+    const inView = (c: Candidate) => c.x >= 0 && c.y >= 0 && c.x <= vp.width && c.y <= vp.height;
     uniqueCandidates.sort((a, b) => {
+        const av = inView(a);
+        if (av !== inView(b)) return av ? -1 : 1;
         if (b.score !== a.score) return b.score - a.score;
         if (Math.abs(b.y - a.y) > 5) return a.y - b.y;
         return a.x - b.x;
@@ -1401,10 +1414,10 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
 
     // Parallel handle fetching (18-20x faster than sequential)
     // ariaSnapshot elements (atlasId starts with "aria-") skip DOM handle lookup —
-    // they have no data-atlas-id in the DOM. Coordinate-based clicking works fine for them.
+    // they have no data-atlas-id in the DOM. Their handle is the aria-ref locator
+    // (when the snapshot had refs); otherwise coordinate clicking is used.
     const handleResults = await Promise.all(
         labeled.map(async (item) => {
-            // ariaSnapshot path: return immediately without handle (coordinate click used)
             if (item.atlasId?.startsWith("aria-")) {
                 return {
                     label: item.label,
@@ -1413,7 +1426,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                     tag: item.tag,
                     text: item.text,
                     atlasId: item.atlasId,
-                    handle: undefined,
+                    handle: item.handle,
                     editorType: item.editorType,
                 } as InteractiveElement;
             }
@@ -1479,53 +1492,89 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
 
 // ── Accessibility Tree Extraction ────────────
 
-/**
- * Format a single accessibility tree node and its children as an indented text tree.
- * Filters out noise roles (none, generic) to keep the output compact.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function formatAccessibilityTree(node: any, depth: number): string {
-    let result = "";
-    const indent = "  ".repeat(depth);
-    const role = node.role || "";
-    const name = node.name || "";
-    const value = node.value || "";
+const MAX_ARIA_NODES = 400;
 
-    // Skip noise roles that add bulk without semantic value
-    if (role && role !== "none" && role !== "generic") {
-        result += `${indent}[${role}] ${name}`;
-        if (value) result += ` = "${value}"`;
-        result += "\n";
+const INTERACTIVE_ROLES = new Set([
+    "button",
+    "link",
+    "textbox",
+    "searchbox",
+    "combobox",
+    "listbox",
+    "checkbox",
+    "radio",
+    "tab",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "option",
+    "switch",
+    "slider",
+    "spinbutton",
+    "treeitem",
+]);
+
+// One snapshot per page at a time: scan + accessibility tree run in parallel,
+// and aria-ref lookups resolve against the page's latest snapshot.
+const _snapshotInFlight = new WeakMap<object, Promise<string>>();
+
+/** Page snapshot YAML: _snapshotForAI (all frames, [ref=] per node) when available, else body ariaSnapshot. */
+function ariaSnapshotText(page: Page, timeout: number): Promise<string> {
+    let p = _snapshotInFlight.get(page);
+    if (!p) {
+        const raw: Promise<string> =
+            typeof page._snapshotForAI === "function"
+                ? page._snapshotForAI({ timeout }).then((s: { full?: string } | null) => s?.full ?? "")
+                : page.locator("body").ariaSnapshot({ timeout });
+        p = raw.finally(() => _snapshotInFlight.delete(page));
+        _snapshotInFlight.set(page, p);
     }
+    return p;
+}
 
-    if (node.children) {
-        for (const child of node.children) {
-            result += formatAccessibilityTree(child, role && role !== "none" && role !== "generic" ? depth + 1 : depth);
+/** Interactive nodes of a snapshot as (role, name, ref) — ref is "" on builds without refs. */
+export function parseAriaSnapshot(yaml: string): Array<{ role: string; name: string; ref: string; idx: number }> {
+    const out: Array<{ role: string; name: string; ref: string; idx: number }> = [];
+    yaml.split("\n").forEach((line, idx) => {
+        const m = /^\s*- (\w+)(?: "((?:[^"\\]|\\.)*)")?(.*)$/.exec(line);
+        if (!m) return;
+        const role = m[1].toLowerCase();
+        if (!INTERACTIVE_ROLES.has(role)) return;
+        const ref = /\[ref=(\w+)\]/.exec(m[3])?.[1] ?? "";
+        let name = m[2] ?? "";
+        try {
+            name = JSON.parse(`"${name}"`);
+        } catch {
+            /* keep the raw text */
         }
-    }
-    return result;
+        if (!name && !ref) return; // an unnamed node is only locatable by ref
+        out.push({ role, name, ref, idx });
+    });
+    return out;
+}
+
+/** Snapshot YAML → compact tree for the model: no refs/cursor/url noise or empty wrappers, capped. */
+export function formatAriaTree(yaml: string, maxChars = 4000): string {
+    const out = yaml
+        .split("\n")
+        .filter((l) => !/^\s*- \/url:/.test(l))
+        .map((l) => l.replace(/ \[(?:ref|cursor)=[^\]]*\]/g, ""))
+        .filter((l) => !/^\s*- generic(?: \[active\])?:?$/.test(l))
+        .join("\n")
+        .trim();
+    return out.length > maxChars ? `${out.slice(0, maxChars)}\n…(truncated)` : out;
 }
 
 /**
- * Extract the accessibility tree from a Playwright page.
- * Returns a compact indented text representation of the page's semantic structure.
- * This is typically 80-90% smaller than the full DOM and captures the same interactive elements.
- *
- * Falls back to empty string in Chrome extension mode or if the API is unavailable.
+ * Compact text view of the page's semantic structure (Playwright's AI snapshot,
+ * iframes included). Empty in Chrome extension mode — the extension's
+ * scan_elements list is the view there — or when the snapshot fails.
  */
 export async function getAccessibilityTree(page: Page): Promise<string> {
-    // Chrome extension mode doesn't support Playwright's accessibility API
-    if (getCurrentMode() === "chrome") {
-        return "";
-    }
-
+    if (getCurrentMode() === "chrome") return "";
     try {
-        const snapshot = await page.accessibility.snapshot();
-        if (!snapshot) return "";
-        return formatAccessibilityTree(snapshot, 0);
+        return formatAriaTree(await ariaSnapshotText(page, 3000));
     } catch {
-        // accessibility.snapshot() may not be available in all Playwright versions
-        // or may fail on certain pages — degrade gracefully
         return "";
     }
 }

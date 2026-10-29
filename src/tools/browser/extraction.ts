@@ -30,6 +30,7 @@ import {
     getActivePage,
     getInteractiveElements,
     getLastElementMap,
+    invalidateCache,
     setLastElementMap,
     waitForPageReady,
 } from "./core.js";
@@ -260,6 +261,7 @@ export const browserWait: ToolDefinition = {
                 default:
                     await page.waitForTimeout(2000);
             }
+            invalidateCache(); // waited for the page to change
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
             return JSON.stringify({
@@ -307,8 +309,12 @@ export const browserSelect: ToolDefinition = {
             await agentCursor(page, page.locator(input.selector as string).first(), "click");
             if (input.label) await page.selectOption(input.selector as string, { label: input.label as string });
             else if (input.value) await page.selectOption(input.selector as string, input.value as string);
-            const waitTime = input.wait_after_ms !== undefined ? (input.wait_after_ms as number) : 500;
-            if (waitTime > 0) await page.waitForTimeout(waitTime);
+            if (input.wait_after_ms !== undefined) {
+                if ((input.wait_after_ms as number) > 0) await page.waitForTimeout(input.wait_after_ms as number);
+            } else {
+                await waitForPageReady(page, 1500);
+            }
+            invalidateCache();
             const newElementMap = await getInteractiveElements(page);
             setLastElementMap(newElementMap);
             return JSON.stringify({

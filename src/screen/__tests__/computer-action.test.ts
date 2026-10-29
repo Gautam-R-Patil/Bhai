@@ -159,6 +159,27 @@ describe("resolveCoord — coordinate system handling", () => {
         expect(r.y).toBe(200);
     });
 
+    it("refuses an off-screen screen point instead of clicking the clamped edge", async () => {
+        await expect(resolveCoord([100, 5000], { coordSystem: "screen" }, primary)).rejects.toThrow(/off screen/);
+        // within 2px of the edge is just rounding
+        expect((await resolveCoord([1441, 100], { coordSystem: "screen" }, primary)).x).toBe(1439);
+    });
+
+    it("keeps a screen point that's on another display", async () => {
+        const two: ScreenDimensions = {
+            ...primary,
+            displays: [
+                { x: 0, y: 0, w: 1440, h: 900 },
+                { x: 1440, y: 0, w: 1920, h: 1080 },
+            ],
+        };
+        expect((await resolveCoord([2000, 1000], { coordSystem: "screen" }, two)).x).toBe(2000);
+    });
+
+    it("rejects unknown click modifiers instead of dropping them", () => {
+        expect(parseComputerAction({ action: "click", coord: [0.5, 0.5], modifiers: ["shift", "fn"] }).ok).toBe(false);
+    });
+
     it("respects secondary-monitor origin via percent", async () => {
         const secondary: ScreenDimensions = { ...primary, monitorId: "mac-1", originX: 1440, originY: 0 };
         const r = await resolveCoord([0.5, 0.5], { coordSystem: "percent" }, secondary);

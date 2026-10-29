@@ -118,8 +118,21 @@ export async function executeWithRecovery(
         }
     } catch { /* non-fatal — memory may not be initialized */ }
 
+    // Side effects (sends, clicks, edits) that already completed in any attempt.
+    // A blind re-run would repeat them, so once any ran we only rephrase.
+    const ran = new Set<string>();
+    const run = async (t: SubAgentTask): Promise<SubAgentResult> => {
+        const r = await runSubAgent(llm, t, onProgress);
+        for (const m of r.mutatorsRan ?? []) ran.add(m);
+        return { ...r, mutatorsRan: [...ran] };
+    };
+    const alreadyRanNote = (): string =>
+        ran.size > 0
+            ? `\n\n⚠️ These actions ALREADY RAN in an earlier attempt: ${[...ran].join(", ")}. Check their effects and do NOT repeat them — continue from where it stopped.`
+            : "";
+
     // ── Level 0: Initial execution ──
-    let result = await runSubAgent(llm, task, onProgress);
+    let result = await run(task);
     if (result.success) return result;
 
     const classified = classifyError(result.error || "unknown error", undefined, result.durationMs);
@@ -128,10 +141,10 @@ export async function executeWithRecovery(
     if (classified.category === ErrorCategory.DependencyMissing) {
         console.log(`  🔧 Self-heal: detected dependency issue in step ${task.id}`);
         const heal = await attemptSelfHeal(result.error || "", classified.category);
-        if (heal.fixed) {
+        if (heal.fixed && ran.size === 0) {
             console.log(`  🔧 Self-heal: fix applied (${heal.action}) — retrying step`);
             attempts.push({ level: 0, action: "retry", reason: `Self-healed: ${heal.action}` });
-            result = await runSubAgent(llm, task, onProgress);
+            result = await run(task);
             if (result.success) return result;
             // If still failing after self-heal, continue to normal recovery
         }
@@ -143,8 +156,10 @@ export async function executeWithRecovery(
         return result;
     }
 
-    // ── Level 0: Retry with backoff ──
-    if (classified.retryable) {
+    // ── Level 0: Retry with backoff (only when nothing with side effects ran) ──
+    if (classified.retryable && ran.size > 0) {
+        console.log(`  🔄 Recovery: step ${task.id} already ran ${[...ran].join(", ")} — skipping blind retry`);
+    } else if (classified.retryable) {
         for (let attempt = 0; attempt < p.maxRetries; attempt++) {
             if (Date.now() - recoveryStart > p.budgetMs) break;
 
@@ -153,8 +168,9 @@ export async function executeWithRecovery(
             await sleep(backoff);
 
             attempts.push({ level: 0, action: "retry", reason: classified.message });
-            result = await runSubAgent(llm, task, onProgress);
+            result = await run(task);
             if (result.success) return result;
+            if (ran.size > 0) break; // this attempt had side effects — no more blind retries
         }
     }
 
@@ -172,15 +188,15 @@ export async function executeWithRecovery(
             const catHint = categoryRecoveryHint(classified.category);
             codingHint = `\n\n🔧 CODING ERROR CONTEXT\nCategory: ${classified.category}\n${locHint}\n${catHint}\nRun \`test_run\` after the edit to verify the fix.`;
         }
-        const rephrasedDesc = `${task.description}\n\n⚠️ IMPORTANT: A previous attempt at this task failed with: "${result.error || "unknown error"}". Please try a DIFFERENT approach. Avoid the approach that failed.${codingHint}`;
+        const rephrasedDesc = `${task.description}\n\n⚠️ IMPORTANT: A previous attempt at this task failed with: "${result.error || "unknown error"}". Please try a DIFFERENT approach. Avoid the approach that failed.${codingHint}${alreadyRanNote()}`;
 
         console.log(`  🔄 Recovery: rephrasing step ${task.id}`);
         attempts.push({ level: 1, action: "rephrase", reason: "Previous attempt failed" });
 
-        result = await runSubAgent(llm, {
+        result = await run({
             ...task,
             description: rephrasedDesc,
-        }, onProgress);
+        });
         if (result.success) return result;
     }
 
@@ -193,10 +209,11 @@ export async function executeWithRecovery(
             console.log(`  🔄 Recovery: rerouting step ${task.id} from ${task.role} → ${altRole}`);
             attempts.push({ level: 2, action: "reroute", reason: `Reroute to ${altRole}` });
 
-            result = await runSubAgent(llm, {
+            result = await run({
                 ...task,
+                description: task.description + alreadyRanNote(),
                 role: altRole as AgentRole,
-            }, onProgress);
+            });
             if (result.success) return result;
         }
     }

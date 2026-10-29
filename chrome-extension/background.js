@@ -523,6 +523,10 @@ async function handleCommand(cmd) {
         result = await rawCDP(payload);
         break;
 
+      case "get_cookies":
+        result = await getCookies(payload);
+        break;
+
       default:
         throw new Error(`Unknown command: ${type}`);
     }
@@ -1051,7 +1055,9 @@ async function typeText(payload) {
   return withActiveTab(async (tabId) => {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: (text, selector, editorTypeHint, vaultRules) => {
+      // clear=true replaces the field/editor content; otherwise text goes in at the
+      // caret (a Docs/Notion page must never be select-all'ed by default).
+      func: (text, selector, editorTypeHint, vaultRules, clear) => {
       // ── Editor Detection ──
       function findEditorContext(el) {
         let node = el;
@@ -1081,7 +1087,7 @@ async function typeText(payload) {
               const editor = editors[0];
               const model = editor.getModel();
               if (model) {
-                const range = model.getFullModelRange();
+                const range = clear ? model.getFullModelRange() : editor.getSelection();
                 editor.executeEdits('atlas', [{ range, text, forceMoveMarkers: true }]);
                 return true;
               }
@@ -1092,7 +1098,7 @@ async function typeText(payload) {
         const inputArea = editorEl.querySelector('.inputarea') || editorEl.querySelector('textarea');
         if (inputArea) {
           inputArea.focus();
-          document.execCommand('selectAll', false, null);
+          if (clear) document.execCommand('selectAll', false, null);
           document.execCommand('insertText', false, text);
           return true;
         }
@@ -1102,10 +1108,10 @@ async function typeText(payload) {
       function typeIntoCodeMirror5(editorEl, text) {
         try {
           const cmInstance = editorEl.CodeMirror;
-          if (cmInstance) { cmInstance.setValue(text); cmInstance.refresh(); return true; }
+          if (cmInstance) { if (clear) cmInstance.setValue(text); else cmInstance.replaceSelection(text); cmInstance.refresh(); return true; }
         } catch (e) { /* */ }
         const codeArea = editorEl.querySelector('.CodeMirror-code') || editorEl.querySelector('[contenteditable]');
-        if (codeArea) { codeArea.focus(); document.execCommand('selectAll', false, null); document.execCommand('insertText', false, text); return true; }
+        if (codeArea) { codeArea.focus(); if (clear) document.execCommand('selectAll', false, null); document.execCommand('insertText', false, text); return true; }
         return false;
       }
 
@@ -1114,12 +1120,13 @@ async function typeText(payload) {
           const cmContent = editorEl.querySelector('.cm-content');
           if (cmContent && cmContent.cmView && cmContent.cmView.view) {
             const view = cmContent.cmView.view;
-            view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+            const sel = view.state.selection.main;
+            view.dispatch({ changes: clear ? { from: 0, to: view.state.doc.length, insert: text } : { from: sel.from, to: sel.to, insert: text } });
             return true;
           }
         } catch (e) { /* */ }
         const cmContent = editorEl.querySelector('.cm-content');
-        if (cmContent) { cmContent.focus(); document.execCommand('selectAll', false, null); document.execCommand('insertText', false, text); return true; }
+        if (cmContent) { cmContent.focus(); if (clear) document.execCommand('selectAll', false, null); document.execCommand('insertText', false, text); return true; }
         return false;
       }
 
@@ -1128,7 +1135,7 @@ async function typeText(payload) {
           const aceId = editorEl.id;
           if (aceId && typeof ace !== 'undefined') {
             const editor = ace.edit(aceId);
-            if (editor) { editor.setValue(text, -1); return true; }
+            if (editor) { if (clear) editor.setValue(text, -1); else editor.insert(text); return true; }
           }
         } catch (e) { /* */ }
         const textInput = editorEl.querySelector('.ace_text-input');
@@ -1141,7 +1148,7 @@ async function typeText(payload) {
         if (editorType === 'tinymce') {
           try {
             if (typeof tinymce !== 'undefined' && tinymce.activeEditor) {
-              tinymce.activeEditor.setContent(text);
+              if (clear) tinymce.activeEditor.setContent(text); else tinymce.activeEditor.insertContent(text);
               return true;
             }
           } catch (e) { /* */ }
@@ -1149,14 +1156,14 @@ async function typeText(payload) {
           const iframe = editorEl.querySelector('iframe');
           if (iframe && iframe.contentDocument) {
             const body = iframe.contentDocument.body;
-            if (body) { body.focus(); iframe.contentDocument.execCommand('selectAll', false, null); iframe.contentDocument.execCommand('insertText', false, text); return true; }
+            if (body) { body.focus(); if (clear) iframe.contentDocument.execCommand('selectAll', false, null); iframe.contentDocument.execCommand('insertText', false, text); return true; }
           }
         }
         // Quill, ProseMirror, Tiptap, Slate, Draft.js — all use contenteditable
         const ce = editorEl.querySelector('[contenteditable="true"]') || editorEl;
         if (ce && (ce.hasAttribute('contenteditable') || ce.contentEditable === 'true')) {
           ce.focus();
-          document.execCommand('selectAll', false, null);
+          if (clear) document.execCommand('selectAll', false, null);
           document.execCommand('insertText', false, text);
           return true;
         }
@@ -1178,8 +1185,8 @@ async function typeText(payload) {
           return { success: false, error: `vault_origin_mismatch: the page is ${host || 'not https'} now (or focus is not in a field); nothing was typed` };
         }
         if (target.focus) target.focus();
-        let replace = false;
-        try { replace = target.selectionStart === 0 && target.selectionEnd === target.value.length; } catch (e) { /* no selection API */ }
+        let replace = clear;
+        try { replace = replace || target.selectionStart === 0 && target.selectionEnd === target.value.length; } catch (e) { /* no selection API */ }
         const proto = target.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
         if (setter) setter.call(target, replace ? text : target.value + text); else target.value = replace ? text : target.value + text;
@@ -1230,11 +1237,12 @@ async function typeText(payload) {
         const proto = target.tagName === "INPUT" ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
         const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
         if (setter) {
-          setter.call(target, target.value + text);
+          setter.call(target, clear ? text : target.value + text);
           target.dispatchEvent(new Event("input", { bubbles: true }));
           target.dispatchEvent(new Event("change", { bubbles: true }));
         }
       } else if (target.hasAttribute("contenteditable") || target.contentEditable === "true") {
+        if (clear) document.execCommand("selectAll", false, null);
         document.execCommand("insertText", false, text);
       } else {
         // Generic keyboard event fallback
@@ -1246,7 +1254,7 @@ async function typeText(payload) {
       }
       return { success: true };
     },
-    args: [payload.text, payload.selector || null, payload.editorType || null, payload.vaultRules || null],
+    args: [payload.text, payload.selector || null, payload.editorType || null, payload.vaultRules || null, payload.clear === true],
     });
 
     return results[0]?.result || { success: true };
@@ -1376,6 +1384,17 @@ async function rawCDP(payload) {
   return result || { success: true };
 }
 
+// The cookies Chrome would send to ONE http(s) URL, so Bhai's own browser can
+// reuse the user's session after hitting a login wall. Scoping by URL lets
+// Chrome's public-suffix rules decide: a bare `domain` like "vercel.app" would
+// return every *.vercel.app site's cookies. Never the whole jar.
+async function getCookies(payload) {
+  let url;
+  try { url = new URL(String(payload.url || "")); } catch { url = null; }
+  if (!url || !/^https?:$/.test(url.protocol)) throw new Error("get_cookies needs an http(s) url");
+  return await chrome.cookies.getAll({ url: url.href });
+}
+
 async function navigate(payload) {
   if (payload.newTab) {
     await chrome.tabs.create({ url: payload.url, active: true });
@@ -1466,9 +1485,25 @@ async function keyboard(payload) {
         } else if (keyAction === "up") {
           target.dispatchEvent(new KeyboardEvent("keyup", opts));
         } else {
-          target.dispatchEvent(new KeyboardEvent("keydown", opts));
-          target.dispatchEvent(new KeyboardEvent("keypress", opts));
+          const downOk = target.dispatchEvent(new KeyboardEvent("keydown", opts));
+          const pressOk = target.dispatchEvent(new KeyboardEvent("keypress", opts));
           target.dispatchEvent(new KeyboardEvent("keyup", opts));
+          // Synthetic key events are untrusted, so the browser's implicit form
+          // submission never runs: do it ourselves, as the HTML spec does it,
+          // unless the page took the key (keydown or keypress).
+          const form = target.tagName === "INPUT" ? target.form : null;
+          if (key === "Enter" && downOk && pressOk && form) {
+            const fields = Array.from(form.elements);
+            const btn = fields.find((e) => e.type === "submit") || form.querySelector("input[type=image]");
+            if (btn) {
+              if (!btn.disabled) btn.click(); // the default button: its onclick runs, its name/value is sent
+            } else {
+              const blocking = /^(text|search|email|url|tel|password|date|month|week|time|datetime-local|number)$/;
+              if (fields.filter((e) => e.tagName === "INPUT" && blocking.test(e.type)).length <= 1) {
+                if (form.requestSubmit) form.requestSubmit(); else form.submit();
+              }
+            }
+          }
         }
       },
       args: [payload.key, payload.modifiers || [], payload.action || "press"],

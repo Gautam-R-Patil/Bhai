@@ -144,3 +144,10 @@ describe("shouldOverrideRole", () => {
         }
     });
 });
+
+describe("analyzeRole — 'implement' is a coder keyword (regression: typo was 'implment')", () => {
+    it("recommends 'coder' for an implement task", () => {
+        const r = analyzeRole("implement a REST API feature");
+        expect(r.recommendedRole).toEqual("coder");
+    });
+});
