@@ -652,7 +652,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('telegram')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusTelegram"></span>
-                                <span>🤖 Telegram</span>
+                                <span>🤖 Telegram</span><span class="ch-hint">Easiest · about 1 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleTelegram" onchange="onChannelToggle('telegram')">
@@ -668,7 +668,7 @@
                             <div class="channel-wizard" id="wizardTelegram">
                                 <div class="channel-wizard-step active" id="wizStepTelegram1">
                                     <h4>Create your bot</h4>
-                                    <p>Open BotFather, send <code>/newbot</code> and pick any name. Paste the token it sends back. Bhai checks it as you paste.</p>
+                                    <p>Open BotFather and send <code>/newbot</code>. For the name say <code>Bhai</code>; for the username use <code id="tgSuggestedUsername">bhai_bot</code> <button class="copy-inline-btn" onclick="copyText(document.getElementById('tgSuggestedUsername').textContent)">Copy</button>. Then copy the token it sends back and come back here; Bhai picks it up by itself.</p>
                                     <a class="wizard-link" href="https://t.me/BotFather" target="_blank">Open @BotFather</a>
                                     <div class="input-group" style="margin-top:12px;">
                                         <label class="input-label">Bot Token</label>
@@ -704,7 +704,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('whatsapp')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusWhatsapp"></span>
-                                <span>💬 WhatsApp</span>
+                                <span>💬 WhatsApp</span><span class="ch-hint">Scan a QR · about 1 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleWhatsapp" onchange="onChannelToggle('whatsapp')">
@@ -737,18 +737,18 @@
                                     <h4>Connected!</h4>
                                     <div class="qr-connected" id="waConnectedInfo">WhatsApp is paired and ready to use.</div>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('whatsapp',3)">Set Up Multi-User Access</button>
+                                        <button class="wizard-btn wizard-btn-primary" onclick="startWhatsAppOwnerStep()">Set Up Owner Access</button>
                                     </div>
                                 </div>
                                 <!-- Step 3: Verify Your Number (OTP) -->
                                 <div class="channel-wizard-step" id="wizStepWhatsapp3">
-                                    <h4>Verify your number</h4>
-                                    <p>Send this code from your WhatsApp to register as the owner. Only verified owners get full access to Bhai capabilities.</p>
-                                    <div style="text-align:center;margin:20px 0;">
-                                        <div style="font-size:32px;font-weight:700;letter-spacing:8px;color:var(--accent-primary,#007AFF);font-family:monospace;" id="waOTPCode">------</div>
-                                        <div style="font-size:12px;color:var(--text-muted);margin-top:8px;" id="waOTPTimer">Expires in 5:00</div>
+                                    <h4>Make yourself the owner</h4>
+                                    <p>Scan this with your personal phone's camera. WhatsApp opens with a code already typed to Bhai's number; just tap Send. Use a different number from the one you linked above.</p>
+                                    <div style="text-align:center;margin:16px 0;">
+                                        <div id="waOTPQR" class="qr-container" style="display:none;"></div>
+                                        <div><a class="wizard-link" id="waOTPLink" target="_blank" style="display:none;">Open WhatsApp with the code</a></div>
+                                        <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Or send this code to Bhai's number: <span id="waOTPCode" style="font-weight:700;letter-spacing:3px;font-family:monospace;">------</span> · <span id="waOTPTimer">Expires in 5:00</span></div>
                                     </div>
-                                    <p style="font-size:12px;color:var(--text-muted);">Open WhatsApp, go to the bot chat, and send this code as a message.</p>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-secondary" onclick="regenerateWhatsAppOTP()">New Code</button>
                                         <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('whatsapp',4)">Skip (already verified)</button>
@@ -762,7 +762,7 @@
                                         <div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">No owners verified yet. Complete step 3 first.</div>
                                     </div>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('whatsapp',3)">+ Add Another Owner</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="startWhatsAppOwnerStep()">+ Add Another Owner</button>
                                         <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep('whatsapp',5)">Next</button>
                                     </div>
                                 </div>
@@ -805,7 +805,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('discord')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusDiscord"></span>
-                                <span>🎮 Discord</span>
+                                <span>🎮 Discord</span><span class="ch-hint">About 3 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleDiscord" onchange="onChannelToggle('discord')">
@@ -831,7 +831,7 @@
                                 </div>
                                 <div class="channel-wizard-step" id="wizStepDiscord2">
                                     <h4>Add it to your server</h4>
-                                    <p>Pick a server you own. Bhai only answers you (the app's owner); add others under the option below.</p>
+                                    <p>Bhai only answers you (the app's owner). Add it to a server you're in so you can DM it there.</p>
                                     <div id="discordInviteLink"></div>
                                     <div class="channel-test-result" id="dcIntentWarn"></div>
                                     <details class="ch-advanced">
@@ -844,7 +844,7 @@
                                     </details>
                                     <div class="wizard-nav">
                                         <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('discord', 1)">Back</button>
-                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('discord')">I've added it, connect</button>
+                                        <button class="wizard-btn wizard-btn-success" onclick="connectChannel('discord')">Connect</button>
                                     </div>
                                 </div>
                             </div>
@@ -857,7 +857,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('slack')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusSlack"></span>
-                                <span>📋 Slack</span>
+                                <span>📋 Slack</span><span class="ch-hint">About 3 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleSlack" onchange="onChannelToggle('slack')">
@@ -906,13 +906,14 @@
                                     <h4>Paste two tokens</h4>
                                     <div class="input-group">
                                         <label class="input-label">Bot Token</label>
-                                        <input class="clean-input" type="password" id="chSlackBotToken" placeholder="xoxb-..." autocomplete="off">
+                                        <input class="clean-input" type="password" id="chSlackBotToken" placeholder="xoxb-..." autocomplete="off" oninput="onTokenInput('slack')">
                                         <span class="input-hint">OAuth &amp; Permissions → Bot User OAuth Token</span>
                                     </div>
+                                    <div class="channel-test-result" id="slTokenStatus"></div>
                                     <div class="input-group">
                                         <label class="input-label">App Token</label>
-                                        <input class="clean-input" type="password" id="chSlackAppToken" placeholder="xapp-..." autocomplete="off">
-                                        <span class="input-hint">Basic Information → App-Level Tokens → Generate, add the <code>connections:write</code> scope</span>
+                                        <input class="clean-input" type="password" id="chSlackAppToken" placeholder="xapp-..." autocomplete="off" oninput="onTokenInput('slack-app')">
+                                        <span class="input-hint" id="slAppTokenHint">Basic Information → App-Level Tokens → Generate, add the <code>connections:write</code> scope</span>
                                     </div>
                                     <details class="ch-advanced">
                                         <summary class="advanced-toggle">Who can talk to Bhai</summary>
@@ -937,7 +938,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('email')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusEmail"></span>
-                                <span>📧 Email</span>
+                                <span>📧 Email</span><span class="ch-hint">Needs an app password · 2 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleEmail" onchange="onChannelToggle('email')">
@@ -993,7 +994,7 @@
                         <div class="settings-section-header" onclick="toggleChannelSection('matrix')">
                             <div style="display:flex;align-items:center;gap:10px;">
                                 <span class="channel-status-dot disabled" id="chStatusMatrix"></span>
-                                <span>🟩 Matrix</span>
+                                <span>🟩 Matrix</span><span class="ch-hint">About 1 min</span>
                             </div>
                             <label class="pref-toggle" style="margin:0;" onclick="event.stopPropagation()">
                                 <input type="checkbox" id="chToggleMatrix" onchange="onChannelToggle('matrix')">
@@ -2232,7 +2233,12 @@
         const tokenTimers = {};
         function onTokenInput(channel) {
             clearTimeout(tokenTimers[channel]);
-            tokenTimers[channel] = setTimeout(() => verifyToken(channel), 500);
+            // Both Slack tokens in → connect; nothing left to press.
+            if (channel === 'slack-app') {
+                if (/^xapp-.{20,}/.test(fieldVal('chSlackAppToken')) && /^xoxb-/.test(fieldVal('chSlackBotToken'))) tokenTimers[channel] = setTimeout(() => connectChannel('slack'), 500);
+                return;
+            }
+            tokenTimers[channel] = setTimeout(() => channel === 'slack' ? verifySlackBotToken() : verifyToken(channel), 500);
         }
 
         async function verifyToken(channel) {
@@ -2263,8 +2269,55 @@
                 renderDiscordInvite(r.clientId);
                 renderDiscordIntent(r);
                 goToWizardStep('discord', 2);
+                // Ready to run; adding it to a server is the only step left.
+                if (r.intentOk) connectChannel('discord');
             }
         }
+
+        async function verifySlackBotToken() {
+            const token = fieldVal('chSlackBotToken');
+            const st = document.getElementById('slTokenStatus');
+            if (!/^xoxb-/.test(token)) return setStatus(st, token ? 'The Bot Token starts with xoxb-.' : '', 'error');
+            setStatus(st, 'Checking…', 'loading');
+            const r = await atlas.testChannel('slack', { botToken: token });
+            if (token !== fieldVal('chSlackBotToken')) return;
+            if (!r || !r.success) return setStatus(st, (r && r.message) || 'Slack rejected this token.', 'error');
+            setStatus(st, '✓ ' + r.message, 'success');
+            if (r.ownerId && !fieldVal('chSlackUserIds')) document.getElementById('chSlackUserIds').value = r.ownerId;
+            if (r.appId) {
+                document.getElementById('slAppTokenHint').innerHTML = '<a target="_blank" href="https://api.slack.com/apps/' + encodeURIComponent(r.appId) + '/general">Open App-Level Tokens</a> → Generate Token and Scopes → add <code>connections:write</code> → copy it.';
+            }
+        }
+
+        // Back from BotFather or a developer portal with a token copied? Fill it in.
+        // Main only returns clipboard text shaped like the token asked for.
+        const CLIPBOARD_FIELDS = [
+            ['telegram', 1, 'chTelegramToken', 'telegram'],
+            ['discord', 1, 'chDiscordToken', 'discord'],
+            ['slack', 1, 'chSlackBotToken', 'slackBot'],
+            ['slack', 2, 'chSlackBotToken', 'slackBot'],
+            ['slack', 2, 'chSlackAppToken', 'slackApp'],
+        ];
+        async function pickUpCopiedToken() {
+            if (!atlas.clipboardToken || !document.getElementById('tab-channels').classList.contains('active')) return;
+            for (const [channel, step, id, kind] of CLIPBOARD_FIELDS) {
+                const field = document.getElementById(id);
+                if (!document.getElementById('chToggle' + capitalize(channel)).checked || wizardSteps[channel] !== step || field.value.trim()) continue;
+                const token = await atlas.clipboardToken(kind);
+                if (!token || [...document.querySelectorAll('#tab-channels input')].some(i => i !== field && i.value.trim() === token)) continue;
+                if (channel === 'slack' && step === 1) goToWizardStep('slack', 2);
+                field.value = token;
+                showToast('Pasted your ' + capitalize(channel) + ' token from the clipboard');
+                onTokenInput(channel === 'slack' && kind === 'slackApp' ? 'slack-app' : channel);
+                return;
+            }
+        }
+        window.addEventListener('focus', pickUpCopiedToken);
+
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(() => showToast('Copied')).catch(() => showToast('Select the text to copy it'));
+        }
+        document.getElementById('tgSuggestedUsername').textContent = 'bhai_' + Math.random().toString(36).slice(2, 7) + '_bot';
 
         let tgWaiting = false;
         async function waitForTelegramOwner(token) {
@@ -2388,8 +2441,7 @@
                 if (!area) return;
                 if (qr === 'connected') {
                     area.innerHTML = '<div class="qr-connected">WhatsApp connected!</div>';
-                    // Auto-advance to step 2
-                    goToWizardStep('whatsapp', 2);
+                    atlas.waGetOwners().then(o => (o && o.length) ? goToWizardStep('whatsapp', 2) : startWhatsAppOwnerStep()).catch(() => goToWizardStep('whatsapp', 2));
                     const dot = document.getElementById('chStatusWhatsapp');
                     if (dot) dot.className = 'channel-status-dot connected';
                 } else {
@@ -2400,7 +2452,6 @@
 
         // WhatsApp OTP listener
         if (atlas.onWhatsAppOTP) {
-            let waOTPInterval = null;
             atlas.onWhatsAppOTP((data) => {
                 if (data.verified) {
                     // Owner verified — refresh list and advance to step 4
@@ -2408,32 +2459,44 @@
                     goToWizardStep('whatsapp', 4);
                     showToast('Owner verified successfully!');
                 } else if (data.code) {
-                    // Display OTP code
-                    const codeEl = document.getElementById('waOTPCode');
-                    if (codeEl) codeEl.textContent = data.code;
-                    // Start countdown timer
-                    let remaining = 300; // 5 minutes
-                    const timerEl = document.getElementById('waOTPTimer');
-                    if (timerEl) {
-                        // A new code supersedes any running countdown — clear it so
-                        // overlapping intervals don't fight over #waOTPTimer.
-                        if (waOTPInterval) clearInterval(waOTPInterval);
-                        waOTPInterval = setInterval(() => {
-                            remaining--;
-                            if (remaining <= 0) {
-                                clearInterval(waOTPInterval);
-                                waOTPInterval = null;
-                                timerEl.textContent = 'Code expired. Generate a new one.';
-                                if (codeEl) codeEl.textContent = '------';
-                                return;
-                            }
-                            const m = Math.floor(remaining / 60);
-                            const s = String(remaining % 60).padStart(2, '0');
-                            timerEl.textContent = `Expires in ${m}:${s}`;
-                        }, 1000);
-                    }
+                    showWhatsAppOTP(data);
                 }
             });
+        }
+
+        let waOTPInterval = null;
+        function showWhatsAppOTP(data) {
+            const codeEl = document.getElementById('waOTPCode');
+            const timerEl = document.getElementById('waOTPTimer');
+            const qrEl = document.getElementById('waOTPQR');
+            const linkEl = document.getElementById('waOTPLink');
+            codeEl.textContent = data.code;
+            qrEl.innerHTML = data.qr ? '<img alt="Scan to send the code" src="' + data.qr + '">' : '';
+            qrEl.style.display = data.qr ? 'inline-block' : 'none';
+            if (data.link) linkEl.href = data.link;
+            linkEl.style.display = data.link ? 'inline-flex' : 'none';
+            let remaining = 300;
+            timerEl.textContent = 'Expires in 5:00';
+            // A new code supersedes any running countdown.
+            if (waOTPInterval) clearInterval(waOTPInterval);
+            waOTPInterval = setInterval(() => {
+                remaining--;
+                if (remaining <= 0) {
+                    clearInterval(waOTPInterval);
+                    waOTPInterval = null;
+                    timerEl.textContent = 'Code expired. Tap New Code.';
+                    codeEl.textContent = '------';
+                    qrEl.style.display = 'none';
+                    linkEl.style.display = 'none';
+                    return;
+                }
+                timerEl.textContent = 'Expires in ' + Math.floor(remaining / 60) + ':' + String(remaining % 60).padStart(2, '0');
+            }, 1000);
+        }
+
+        function startWhatsAppOwnerStep() {
+            goToWizardStep('whatsapp', 3);
+            regenerateWhatsAppOTP(true);
         }
 
         // Accessibility: the channel status dots convey state by color alone.
@@ -2526,8 +2589,7 @@
                                 loadWhatsAppOwners();
                                 loadWhatsAppPersona();
                             } else {
-                                // Connected but no owners — show connected step (step 2)
-                                goToWizardStep('whatsapp', 2);
+                                startWhatsAppOwnerStep();
                             }
                         } catch {
                             // Can't check owners — show connected step
@@ -2676,12 +2738,12 @@
         // ── WhatsApp Multi-User Functions ────────────────
 
         // WhatsApp OTP
-        async function regenerateWhatsAppOTP() {
+        async function regenerateWhatsAppOTP(quiet) {
             try {
                 const result = await atlas.waGenerateOTP();
                 if (result && result.code) {
-                    document.getElementById('waOTPCode').textContent = result.code;
-                    showToast('New OTP generated! Send it from your WhatsApp.');
+                    showWhatsAppOTP(result);
+                    if (!quiet) showToast('New code ready.');
                 }
             } catch (err) {
                 showToast('Failed to generate OTP: ' + err.message);

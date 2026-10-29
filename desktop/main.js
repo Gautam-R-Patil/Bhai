@@ -920,6 +920,18 @@ let botMessageCount = 0;
 let botToolCount = 0;
 const channelStatuses = {};
 
+// WhatsApp owner sign-up: the bot's own number (from its ##ATLAS_WA_SELF## line)
+// lets the panel offer a wa.me link/QR with the code already typed in.
+let waSelfNumber = "";
+async function waOtpPayload(code) {
+    const payload = { code, self: waSelfNumber };
+    if (waSelfNumber) {
+        payload.link = `https://wa.me/${waSelfNumber}?text=${code}`;
+        try { payload.qr = await require("qrcode").toDataURL(payload.link, { width: 200, margin: 1 }); } catch { /* link still works */ }
+    }
+    return payload;
+}
+
 // Broadcast a theme change to every window that cares about it. The overlay
 // is a separate BrowserWindow from the main one, so both need to be notified.
 function broadcastThemeChange(theme) {
@@ -1408,11 +1420,13 @@ async function startBot() {
             }
 
             // WhatsApp OTP forwarding
+            const selfMatch = msg.match(/##ATLAS_WA_SELF##(\d+)##END_SELF##/);
+            if (selfMatch) waSelfNumber = selfMatch[1];
             const otpMatch = msg.match(/##ATLAS_WA_OTP##(.+)##END_OTP##/);
             if (otpMatch) {
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                    mainWindow.webContents.send("whatsapp-otp", { code: otpMatch[1] });
-                }
+                waOtpPayload(otpMatch[1]).then(p => {
+                    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("whatsapp-otp", p);
+                });
             }
             // WhatsApp owner verified
             if (msg.includes("[WHATSAPP] Owner verified:")) {
@@ -5758,7 +5772,12 @@ ${body}`;
                 const owner = humans.find(u => u.is_primary_owner) || (humans.length === 1 ? humans[0] : null);
                 if (owner) { ownerId = owner.id; ownerName = owner.real_name || owner.name; }
             } catch { /* optional */ }
-            return { success: true, ownerId, ownerName, message: `Connected to ${data.team} as ${data.user}` };
+            let appId = "";
+            try {
+                const bi = await (await fetch(`https://slack.com/api/bots.info?bot=${encodeURIComponent(data.bot_id || "")}`, { headers })).json();
+                appId = (bi.bot && bi.bot.app_id) || "";
+            } catch { /* optional */ }
+            return { success: true, ownerId, ownerName, appId, message: `Connected to ${data.team} as ${data.user}` };
         } catch (err) { return { success: false, message: err.message }; }
     });
 
@@ -5792,6 +5811,20 @@ ${body}`;
         } catch (err) { return { success: false, message: err.message }; }
     });
 
+    // Coming back from BotFather / the Discord or Slack portal with a token
+    // copied fills it in. Only a value shaped like the asked-for token leaves
+    // main; the rest of the clipboard never reaches the page.
+    const TOKEN_SHAPES = {
+        telegram: /^\d{6,}:[A-Za-z0-9_-]{30,}$/,
+        discord: /^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{25,}$/,
+        slackBot: /^xoxb-[A-Za-z0-9-]{20,}$/,
+        slackApp: /^xapp-[A-Za-z0-9-]{20,}$/,
+    };
+    ipcMain.handle("channel:clipboard-token", (_, kind) => {
+        const text = require("electron").clipboard.readText().trim();
+        return TOKEN_SHAPES[kind] && TOKEN_SHAPES[kind].test(text) ? text : "";
+    });
+
     ipcMain.handle("channel:status-all", () => channelStatuses);
 
     // ── WhatsApp Multi-User Management ───────────
@@ -5817,11 +5850,11 @@ ${body}`;
     });
 
     ipcMain.handle("wa:generate-otp", () => {
-        // Generate OTP and write to a signal file that the bot watches
-        const code = String(Math.floor(100000 + Math.random() * 900000));
+        // The bot reads this file the next time a message arrives (getActiveOTP).
+        const code = String(require("crypto").randomInt(100000, 1000000));
         const otpPath = path.join(DATA_DIR, "whatsapp-otp-signal.json");
-        fs.writeFileSync(otpPath, JSON.stringify({ code, expiresAt: Date.now() + 5 * 60 * 1000 }));
-        return { code };
+        fs.writeFileSync(otpPath, JSON.stringify({ code, expiresAt: Date.now() + 5 * 60 * 1000 }), { mode: 0o600 });
+        return waOtpPayload(code);
     });
 
     // Setup: start a WhatsApp pair session from inside the wizard.

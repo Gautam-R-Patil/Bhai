@@ -181,6 +181,7 @@ contextBridge.exposeInMainWorld("atlas", {
     // ── Channel Setup Helpers ────────────────────────
     testChannel: (channel, params) => ipcRenderer.invoke(`channel:test-${channel}`, params),
     telegramWaitOwner: (token) => ipcRenderer.invoke("channel:telegram-wait-owner", { token }),
+    clipboardToken: (kind) => ipcRenderer.invoke("channel:clipboard-token", kind),
     getChannelStatuses: () => ipcRenderer.invoke("channel:status-all"),
 
     // ── WhatsApp QR ──────────────────────────────────

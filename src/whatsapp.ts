@@ -2235,6 +2235,10 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
             // Initialize multi-user system on connection
             initWhatsAppUsers();
 
+            // The desktop builds a wa.me link to this number for owner sign-up.
+            const selfNumber = (sock.user?.id || "").split(/[:@]/)[0];
+            if (/^\d+$/.test(selfNumber)) console.log(`##ATLAS_WA_SELF##${selfNumber}##END_SELF##`);
+
             // First-time setup: generate OTP for owner registration
             if (getOwners().length === 0) {
                 const otp = generateOTP();
