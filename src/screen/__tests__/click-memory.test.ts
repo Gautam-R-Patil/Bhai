@@ -9,10 +9,23 @@ import {
     clickMemoryStats,
     closeClickMemory,
     listClickSitesForWindow,
+    normalizeWindowTitle,
     recallClickSite,
     recordClickMiss,
     recordClickSuccess,
 } from "../click-memory.js";
+
+describe("normalizeWindowTitle", () => {
+    it("strips notification counts and leading unsaved markers, collapses space", () => {
+        expect(normalizeWindowTitle("Inbox (5) - Gmail")).toBe("Inbox - Gmail");
+        expect(normalizeWindowTitle("Inbox (12) - Gmail")).toBe("Inbox - Gmail");
+        expect(normalizeWindowTitle("WhatsApp (99+)")).toBe("WhatsApp");
+        expect(normalizeWindowTitle("● Report - Word")).toBe("Report - Word");
+    });
+    it("does not collapse genuinely different windows (4-digit years stay)", () => {
+        expect(normalizeWindowTitle("Report (2023)")).not.toBe(normalizeWindowTitle("Report (2024)"));
+    });
+});
 
 const TEST_DB = join(tmpdir(), `atlas_click_test_${Date.now()}.db`);
 const TEST_OPTS = { dbPath: TEST_DB };
@@ -51,6 +64,18 @@ describe("click memory", () => {
         expect(result?.yNorm).toBe(0.5);
         expect(result?.successCount).toBe(1);
         expect(result?.confidence).toBe(0.75); // 0.7 + 1*0.05
+    });
+
+    it("recalls across a changing notification count (same normalized window)", () => {
+        // Learn on "Chat (3)", recall on "Chat (17)" — same window, different badge.
+        recordClickSuccess({ app: "Chat", windowTitle: "Chat (3)", elementLabel: "Send" }, 100, 200, 1000, 1000, TEST_OPTS);
+        const r = recallClickSite({ app: "Chat", windowTitle: "Chat (17)", elementLabel: "Send" }, TEST_OPTS);
+        expect(r).not.toBeNull();
+        expect(r?.xNorm).toBe(0.1);
+        expect(r?.yNorm).toBe(0.2);
+        // and a second success under yet another count bumps the SAME entry, not a new one
+        recordClickSuccess({ app: "Chat", windowTitle: "Chat (1)", elementLabel: "Send" }, 100, 200, 1000, 1000, TEST_OPTS);
+        expect(recallClickSite({ app: "Chat", windowTitle: "Chat", elementLabel: "Send" }, TEST_OPTS)?.successCount).toBe(2);
     });
 
     it("increments success_count on repeated success", () => {

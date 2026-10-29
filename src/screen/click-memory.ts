@@ -90,6 +90,23 @@ export function closeClickMemory(): void {
     }
 }
 
+/**
+ * Normalize a window title before it becomes part of the click-memory key.
+ * Notification counts ("WhatsApp (3)", "Inbox (12) — Gmail") and a leading
+ * unsaved marker ("● Doc") change every time but NOT which window it is or
+ * where its buttons sit — so without this the same element never accumulates
+ * confidence across them. Conservative on purpose: only 1–3 digit bracketed
+ * counts (not 4-digit years) and leading dirty markers are stripped, so two
+ * genuinely different windows stay distinct.
+ */
+export function normalizeWindowTitle(title: string): string {
+    return title
+        .replace(/\s*[([{]\s*\d{1,3}\+?\s*[)\]}]/g, "")
+        .replace(/^\s*[●•*•]\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 /** Record a successful click at the given coordinates. Bumps success_count. */
 export function recordClickSuccess(
     site: ClickSite,
@@ -117,7 +134,7 @@ export function recordClickSuccess(
             last_screen_h = excluded.last_screen_h
     `).run({
         app: site.app,
-        windowTitle: site.windowTitle,
+        windowTitle: normalizeWindowTitle(site.windowTitle),
         elementLabel: site.elementLabel,
         xNorm,
         yNorm,
@@ -141,20 +158,21 @@ export function recordClickMiss(site: ClickSite, opts?: ClickMemoryOptions): voi
         updateStmt.run(s);
         deleteStmt.run();
     });
-    tx(site);
+    tx({ ...site, windowTitle: normalizeWindowTitle(site.windowTitle) });
 }
 
 /** Look up a previously-clicked site. Returns null if no recent record. */
 export function recallClickSite(site: ClickSite, opts?: ClickMemoryOptions): ClickRecall | null {
     if (isDisabled()) return null;
     const db = initClickMemory(opts);
+    const key: ClickSite = { ...site, windowTitle: normalizeWindowTitle(site.windowTitle) };
     const row = db
         .prepare(`
         SELECT x_norm, y_norm, success_count, last_used, last_screen_w, last_screen_h
         FROM click_sites
         WHERE app = @app AND window_title = @windowTitle AND element_label = @elementLabel
     `)
-        .get(site) as
+        .get(key) as
         | {
               x_norm: number;
               y_norm: number;
@@ -170,7 +188,7 @@ export function recallClickSite(site: ClickSite, opts?: ClickMemoryOptions): Cli
     if (Date.now() - row.last_used > AGE_MAX_MS) {
         db.prepare(
             `DELETE FROM click_sites WHERE app = @app AND window_title = @windowTitle AND element_label = @elementLabel`,
-        ).run(site);
+        ).run(key);
         return null;
     }
     return {
@@ -194,7 +212,7 @@ export function listClickSitesForWindow(app: string, windowTitle: string, opts?:
         WHERE app = @app AND window_title = @windowTitle
         ORDER BY last_used DESC
     `)
-        .all({ app, windowTitle }) as Array<{
+        .all({ app, windowTitle: normalizeWindowTitle(windowTitle) }) as Array<{
         x_norm: number;
         y_norm: number;
         success_count: number;
