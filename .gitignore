@@ -218,6 +218,7 @@ desktop/hostinger-upload/
 !src/memory/compression-persist.test.ts
 !src/config/system-prompts.test.ts
 !src/security/oauth-state.test.ts
+!src/guest-history.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts

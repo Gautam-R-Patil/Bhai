@@ -20,6 +20,7 @@ import {
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
 import { takeStuckMarker } from "./channel-text.js";
+import { historyForCaller } from "./guest-history.js";
 import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
 import {
@@ -1394,6 +1395,9 @@ export async function runAgent(
     toolAllowlist?: string[],
     channelContext?: ChannelContext,
 ): Promise<AgentResponse> {
+    // A non-owner (Slack/Discord guest, widget visitor) runs on a history of their own,
+    // never the owner's: forked, so isContactAgent also keeps owner memories out.
+    historyFork = historyForCaller(historyFork, channelContext);
     const isForked = !!historyFork;
     // Caller-context ALS wrapper — privilege-sensitive tools (cron, etc.)
     // read isOwner from this scope, not from a module-level slot, so

@@ -923,7 +923,8 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
 
     let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep your response SHORT and concise — this is a compact overlay, not a full chat. Use 1-3 sentences when possible.]${chromeCtxNote}`;
 
-    if (isScreenQuery(userMessage)) {
+    // Only the owner's own chat bar may look at the screen — never a web-widget visitor.
+    if (wsIsOwner(ws) && isScreenQuery(userMessage)) {
         console.log("  📸 [Overlay] Screen query detected — capturing screenshot...");
         sendToClient(ws, { type: "progress", text: "📸 Looking at your screen…" });
 
