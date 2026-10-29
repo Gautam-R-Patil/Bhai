@@ -794,6 +794,8 @@ const NO_PAGE_CHECK = new Set([
     "browser_connect_electron",
     "browser_network_requests",
     "browser_intercept_read",
+    "browser_handle_captcha",
+    "browser_wait_for_human",
 ]);
 // Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
 const STOPPABLE_TOOLS = new Set(["site_task"]);
