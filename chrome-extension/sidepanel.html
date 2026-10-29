@@ -8,156 +8,234 @@
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
-      --bg: #fffaf5;
-      --surface: #ffffff;
-      --bubble: #f6ebe0;
-      --border: #f0e2d4;
-      --text: #2a1d12;
-      --text2: #7a6656;
-      --accent: #e8762c;
-      --accent-soft: rgba(232, 118, 44, .12);
-      --green: #1f9d4c;
-      --red: #d64545;
+      --bg: #fbf8f4;
+      --raised: #ffffff;
+      --sunk: #f4eee7;
+      --bubble: #f1e6da;
+      --line: #ebe1d6;
+      --ink: #241a12;
+      --ink-2: #6f5f52;
+      --ink-3: #a29384;
+      --accent: #cf6a33;
+      --accent-ink: #ffffff;
+      --ok: #2f8a4c;
+      --bad: #c2453b;
+      --shadow: 0 1px 2px rgba(74, 42, 16, .06), 0 6px 20px rgba(74, 42, 16, .08);
+      --r-lg: 14px;
+      --r-md: 9px;
+      --r-sm: 6px;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #1b1410;
-        --surface: #261c16;
-        --bubble: #33261d;
-        --border: #3a2b21;
-        --text: #f5ebe2;
-        --text2: #b09a88;
-        --accent: #f08a45;
-        --accent-soft: rgba(240, 138, 69, .16);
-        --green: #46c873;
-        --red: #ef6b6b;
+        --bg: #171310;
+        --raised: #201a16;
+        --sunk: #1c1713;
+        --bubble: #2b221c;
+        --line: #31281f;
+        --ink: #f1e9e1;
+        --ink-2: #ad9d8f;
+        --ink-3: #7b6d61;
+        --accent: #e07b42;
+        --ok: #5bc27c;
+        --bad: #ec6f63;
+        --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
       }
     }
 
     html, body { height: 100%; }
     body {
       background: var(--bg);
-      color: var(--text);
-      font: 14px/1.55 -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      color: var(--ink);
+      font: 14px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
       display: flex;
       flex-direction: column;
     }
-    .hidden { display: none !important; }
-    button { font: inherit; cursor: pointer; color: inherit; background: none; border: none; }
+    [hidden] { display: none !important; }
+    button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+    button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+    svg { flex: none; }
 
-    /* Header */
-    .header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-    .header img { width: 24px; height: 24px; border-radius: 6px; }
-    .header-title { font-weight: 600; font-size: 15px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text2); }
-    .dot.on { background: var(--green); }
-    .dot.off { background: var(--red); }
-    .spacer { flex: 1; }
-    .icon-btn { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--text2); }
-    .icon-btn:hover { background: var(--accent-soft); color: var(--text); }
+    /* ── Header ─────────────────────────────── */
+    .top { display: flex; align-items: center; gap: 9px; padding: 11px 12px 11px 14px; }
+    .top img { width: 22px; height: 22px; border-radius: 6px; }
+    .name { font-weight: 600; letter-spacing: -.01em; }
+    .status { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); transition: background .3s; }
+    .status[data-state="on"] { background: var(--ok); }
+    .status[data-state="off"] { background: var(--bad); }
+    .grow { flex: 1; }
+    .icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--r-md); color: var(--ink-2); transition: background .15s, color .15s, transform .1s; }
+    .icon-btn:hover { background: var(--sunk); color: var(--ink); }
+    .icon-btn:active { transform: scale(.94); }
 
-    /* Conversation */
-    .messages { flex: 1; overflow-y: auto; padding: 16px 14px; display: flex; flex-direction: column; gap: 14px; }
-    .msg { max-width: 92%; word-wrap: break-word; }
-    .msg.you { align-self: flex-end; background: var(--bubble); padding: 8px 12px; border-radius: 14px 14px 4px 14px; white-space: pre-wrap; }
-    .msg.bhai { align-self: flex-start; }
-    .msg.error { align-self: flex-start; color: var(--red); font-size: 13px; }
-    .msg.bhai p + p, .msg.bhai pre, .msg.bhai ul { margin-top: 8px; }
-    .msg.bhai code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; }
-    .msg.bhai pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; overflow-x: auto; }
-    .msg.bhai pre code { background: none; padding: 0; }
-    .msg.bhai ul { padding-left: 18px; }
-    .msg.bhai a { color: var(--accent); }
+    /* ── Thread ─────────────────────────────── */
+    .thread { flex: 1; overflow-y: auto; padding: 8px 16px 20px; display: flex; flex-direction: column; gap: 18px; scroll-behavior: smooth; }
+    .msg { animation: rise .18s ease-out both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+    .you { align-self: flex-end; max-width: 88%; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .you .bubble { background: var(--bubble); padding: 8px 13px; border-radius: 16px 16px 5px 16px; white-space: pre-wrap; word-wrap: break-word; }
+    .attach { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+    .tag { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; font-size: 12px; color: var(--ink-2); padding: 2px 8px 2px 6px; border-radius: var(--r-sm); background: var(--sunk); }
+    .tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    /* Empty state */
-    .empty { margin: auto; text-align: center; padding: 20px; }
-    .empty img { width: 64px; height: 64px; border-radius: 16px; margin-bottom: 12px; }
-    .empty h2 { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
-    .empty p { color: var(--text2); font-size: 13px; }
+    .bhai { max-width: 100%; word-wrap: break-word; text-wrap: pretty; }
+    .bhai > div > * + * { margin-top: 10px; }
+    .bhai h3 { font-size: 14px; font-weight: 600; }
+    .bhai ul, .bhai ol { padding-left: 20px; }
+    .bhai li + li { margin-top: 3px; }
+    .bhai strong { font-weight: 600; }
+    .bhai a { color: var(--accent); text-underline-offset: 2px; }
+    .bhai code { font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace; background: var(--sunk); padding: 1px 5px; border-radius: 4px; }
+    .bhai pre { background: var(--sunk); border-radius: var(--r-md); padding: 10px 12px; overflow-x: auto; }
+    .bhai pre code { background: none; padding: 0; }
+    .bhai blockquote { border-left: 2px solid var(--line); padding-left: 10px; color: var(--ink-2); }
+    .reply-tools { margin-top: 4px; margin-left: -6px; opacity: 0; transition: opacity .15s; }
+    .bhai:hover .reply-tools, .reply-tools:focus-within { opacity: 1; }
+    .reply-tools .icon-btn { width: 26px; height: 26px; }
+    .error { color: var(--bad); font-size: 13px; }
 
-    .notice { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; font-size: 13px; }
-    .notice strong { display: block; margin-bottom: 2px; }
-    .notice p { color: var(--text2); margin-bottom: 8px; }
+    .working { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: 13px; animation: rise .18s ease-out both; }
+    .working span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dots { display: flex; gap: 3px; }
+    .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite ease-in-out; }
+    .dots i:nth-child(2) { animation-delay: .15s; }
+    .dots i:nth-child(3) { animation-delay: .3s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 
-    /* Working row */
-    .working { display: flex; align-items: center; gap: 10px; margin: 0 14px 8px; padding: 8px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: 13px; }
-    .working-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text2); }
-    .spinner { width: 14px; height: 14px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .btn-small { font-size: 12px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); }
-    .btn-small:hover { border-color: var(--accent); }
+    /* ── Welcome ────────────────────────────── */
+    .welcome { margin-top: auto; padding: 0 2px 6px; animation: rise .25s ease-out both; }
+    .welcome h1 { font-size: 19px; line-height: 1.3; font-weight: 600; letter-spacing: -.015em; text-wrap: balance; }
+    .welcome h1 b { font-weight: 600; color: var(--accent); }
+    .welcome p { color: var(--ink-2); margin-top: 4px; }
+    .suggest { list-style: none; margin-top: 16px; border-top: 1px solid var(--line); }
+    .suggest button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 2px; border-bottom: 1px solid var(--line); text-align: left; color: var(--ink); transition: color .15s, padding .15s; }
+    .suggest button svg { color: var(--ink-3); transition: color .15s; }
+    .suggest button:hover:not(:disabled) { padding-left: 6px; }
+    .suggest button:hover:not(:disabled) svg { color: var(--accent); }
+    .suggest button:disabled { opacity: .45; cursor: default; }
 
-    /* Composer */
-    .composer { position: relative; margin: 0 12px 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); padding: 10px 12px 8px; }
-    .composer:focus-within { border-color: var(--accent); }
-    .composer textarea { width: 100%; border: none; outline: none; resize: none; background: none; color: var(--text); font: inherit; max-height: 160px; }
-    .mention-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.18); max-height: 260px; overflow-y: auto; }
-    .mention-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
-    .mention-item.active, .mention-item:hover { background: var(--accent-soft); }
-    .mention-item img { width: 16px; height: 16px; flex: none; }
-    .mention-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .mention-host { font-size: 11px; color: var(--text2); flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .mention-empty { padding: 8px; color: var(--text2); font-size: 13px; }
-    .hint { font-size: 12px; color: var(--red); }
+    .notice { border-left: 2px solid var(--bad); padding: 2px 0 2px 12px; font-size: 13px; }
+    .notice strong { font-weight: 600; display: block; }
+    .notice p { color: var(--ink-2); margin: 2px 0 6px; }
+    .link-btn { color: var(--accent); font-weight: 500; font-size: 13px; }
+    .link-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+    /* ── Dock ───────────────────────────────── */
+    .dock { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .pending { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); padding: 0 4px; animation: rise .15s ease-out both; }
+    .pending .quote { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pending .link-btn { font-size: 12.5px; }
+    .composer { position: relative; background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 10px 10px 8px 13px; transition: border-color .15s; }
+    .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+    textarea { width: 100%; border: none; outline: none; resize: none; background: none; color: var(--ink); font: inherit; max-height: 160px; display: block; }
+    textarea::placeholder { color: var(--ink-3); }
+    textarea:focus-visible { outline: none; }
+    .tools { display: flex; align-items: center; gap: 2px; margin-top: 6px; margin-left: -5px; }
+    .tool { height: 28px; min-width: 28px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border-radius: var(--r-sm); color: var(--ink-2); font-size: 12.5px; transition: background .15s, color .15s, transform .1s; }
+    .tool:hover:not(:disabled) { background: var(--sunk); color: var(--ink); }
+    .tool:active:not(:disabled) { transform: scale(.95); }
+    .tool:disabled { opacity: .4; cursor: default; }
+    .tool.at { font-weight: 600; font-size: 14px; }
+    .ctx { min-width: 0; max-width: 170px; }
+    .ctx img { width: 14px; height: 14px; border-radius: 3px; }
+    .ctx span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ctx[data-off] span { text-decoration: line-through; color: var(--ink-3); }
+    .send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); transition: transform .1s, opacity .15s, background .15s; }
+    .send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, black); }
+    .send:active:not(:disabled) { transform: scale(.92); }
+    .send:disabled { opacity: .35; cursor: default; }
+    .send .stop-icon { display: none; }
+    .send.busy { background: var(--ink); color: var(--bg); }
+    .send.busy .send-icon { display: none; }
+    .send.busy .stop-icon { display: block; }
+    .hint { font-size: 12px; color: var(--bad); padding: 0 4px; }
     .hint:empty { display: none; }
-    .composer-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
-    .chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--text2); }
-    .chip:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
-    .send { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; }
-    button:disabled { opacity: .4; cursor: default; }
+
+    .mention-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 4px; box-shadow: var(--shadow); max-height: 264px; overflow-y: auto; animation: rise .12s ease-out both; z-index: 2; }
+    .mention-head { font-size: 11.5px; color: var(--ink-3); padding: 6px 8px 4px; }
+    .mention-item { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: var(--r-md); cursor: pointer; }
+    .mention-item.active { background: var(--sunk); }
+    .mention-item img, .mention-item .ph { width: 16px; height: 16px; border-radius: 3px; flex: none; }
+    .mention-item .ph { background: var(--sunk); }
+    .mention-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mention-host { font-size: 11.5px; color: var(--ink-3); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mention-empty { padding: 8px; color: var(--ink-2); font-size: 13px; }
+
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   </style>
 </head>
 <body>
-  <div class="header">
-    <img src="icons/icon48.png" alt="">
-    <span class="header-title">Bhai</span>
-    <span class="dot" id="dot" title="Connecting…"></span>
-    <span class="spacer"></span>
-    <button class="icon-btn" id="btnNew" title="New chat" aria-label="New chat">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    </button>
-  </div>
+  <!-- One icon set, one stroke weight -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V6M6 11.5l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M15.5 4.5l4 4L9 19l-5 1 1-5L15.5 4.5z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></symbol>
+      <symbol id="i-doc" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10A.5.5 0 0 1 7 20V3.5zM14 3.5V8h4M9.5 12.5h5M9.5 16h5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+      <symbol id="i-ask" viewBox="0 0 24 24"><path d="M9.2 9.3a2.9 2.9 0 1 1 3.6 2.8c-.5.2-.8.6-.8 1.1v.8M12 17.3v.2" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-quote" viewBox="0 0 24 24"><path d="M5 5.5h14M5 10h14M5 14.5h8" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
+      <symbol id="i-tab" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M3.5 9.5h17" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+    </defs>
+  </svg>
 
-  <div class="messages" id="messages">
-    <div class="notice hidden" id="offline">
+  <header class="top">
+    <img src="icons/icon48.png" alt="">
+    <span class="name">Bhai</span>
+    <span class="status" id="status" role="status" title="Connecting…"></span>
+    <span class="grow"></span>
+    <button class="icon-btn" id="btnNew" title="New chat" aria-label="New chat"><svg width="17" height="17"><use href="#i-plus"/></svg></button>
+  </header>
+
+  <main class="thread" id="thread">
+    <div class="notice" id="offline" hidden>
       <strong>Bhai isn't running</strong>
       <p>Open the Bhai app on this computer. This panel connects by itself once it's open.</p>
-      <button class="btn-small" id="btnRetry">Try again</button>
+      <button class="link-btn" id="btnRetry">Try again</button>
     </div>
-    <div class="empty" id="empty">
-      <img src="icons/icon128.png" alt="">
-      <h2>How can I help?</h2>
-      <p>Ask about this page, or tell Bhai to do something in Chrome for you.</p>
+    <section class="welcome" id="welcome">
+      <h1 id="welcomeTitle">Hey, I'm right here with you.</h1>
+      <p>Ask about this page, or tell me what to do in it.</p>
+      <ul class="suggest">
+        <li><button data-act="summary"><svg width="17" height="17"><use href="#i-doc"/></svg>Summarize this page</button></li>
+        <li><button data-act="explain"><svg width="17" height="17"><use href="#i-ask"/></svg>Explain what's here</button></li>
+        <li><button data-act="draw"><svg width="17" height="17"><use href="#i-pen"/></svg>Circle something and ask about it</button></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="dock">
+    <div class="pending" id="selChip" hidden>
+      <svg width="15" height="15"><use href="#i-quote"/></svg>
+      <span class="quote" id="selText"></span>
+      <button class="link-btn" id="btnSelOff">Ignore</button>
     </div>
-  </div>
-
-  <div class="working hidden" id="working">
-    <div class="spinner"></div>
-    <div class="working-text" id="workingText">Working…</div>
-    <button class="btn-small" id="btnStop">Stop</button>
-  </div>
-
-  <div class="working hidden" id="drawNote">
-    <span>🖍️</span>
-    <div class="working-text">Drawing ready to send</div>
-    <button class="btn-small" id="btnDrawEdit">Edit</button>
-    <button class="btn-small" id="btnDrawRemove">Remove</button>
-  </div>
-
-  <div class="composer">
-    <div class="mention-menu hidden" id="mentionMenu" role="listbox"></div>
-    <textarea id="input" rows="1" placeholder="Ask Bhai anything… (@ to add a tab)"></textarea>
-    <div class="hint" id="hint"></div>
-    <div class="composer-row">
-      <button class="chip" id="btnSummary" title="Send this page and ask for a summary">Summarize</button>
-      <button class="chip" id="btnExplain" title="Send your selected text and ask Bhai to explain it">Explain</button>
-      <button class="chip" id="btnDraw" title="Draw on the page to show Bhai what you mean">🖍️ Mark up</button>
-      <span class="spacer"></span>
-      <button class="send" id="btnSend" title="Send" aria-label="Send">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-      </button>
+    <div class="pending" id="drawChip" hidden>
+      <svg width="15" height="15"><use href="#i-pen"/></svg>
+      <span class="quote">Your drawing goes with the next message</span>
+      <button class="link-btn" id="btnDrawEdit">Edit</button>
+      <button class="link-btn" id="btnDrawRemove">Remove</button>
     </div>
-  </div>
+    <div class="hint" id="hint" role="alert"></div>
+    <div class="composer">
+      <div class="mention-menu" id="mentionMenu" role="listbox" hidden></div>
+      <textarea id="input" rows="1" placeholder="Ask Bhai…" aria-label="Message Bhai"></textarea>
+      <div class="tools">
+        <button class="tool" id="btnDraw" title="Draw on the page to show Bhai what you mean" aria-label="Draw on the page"><svg width="16" height="16"><use href="#i-pen"/></svg></button>
+        <button class="tool at" id="btnAt" title="Mention another tab" aria-label="Mention a tab">@</button>
+        <button class="tool ctx" id="ctx" title="Bhai sees this tab with your message. Click to stop sharing it.">
+          <svg width="14" height="14" id="ctxFallback"><use href="#i-tab"/></svg><img id="ctxIcon" alt="" hidden><span id="ctxLabel">This tab</span>
+        </button>
+        <span class="grow"></span>
+        <button class="send" id="btnSend" title="Send" aria-label="Send">
+          <svg class="send-icon" width="16" height="16"><use href="#i-up"/></svg>
+          <svg class="stop-icon" width="16" height="16"><use href="#i-stop"/></svg>
+        </button>
+      </div>
+    </div>
+  </footer>
 
   <script src="sidepanel.js"></script>
 </body>

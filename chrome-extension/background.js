@@ -34,9 +34,9 @@ let _chat = [];
 const chatReady = chrome.storage.session.get("chat")
   .then((r) => { if (Array.isArray(r.chat)) _chat = r.chat; })
   .catch(() => {});
-function addChat(role, text) {
+function addChat(role, text, meta = null) {
   if (!text) return;
-  _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now() });
+  _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now(), ...(meta ? { meta } : {}) });
   if (_chat.length > MAX_CHAT) _chat = _chat.slice(-MAX_CHAT);
   chrome.storage.session.set({ chat: _chat }).catch(() => {});
   chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
@@ -378,6 +378,7 @@ function removeDrawing(tabId) {
 // Text of tabs the user @-mentioned (at most 3).
 async function mentionedTabs(ids) {
   let out = "";
+  const titles = [];
   for (const id of (Array.isArray(ids) ? ids : []).slice(0, 3)) {
     const tab = await chrome.tabs.get(id).catch(() => null);
     if (!tab) continue;
@@ -388,8 +389,9 @@ async function mentionedTabs(ids) {
       text = r?.result || "";
     }
     out += `\n\n[Tab the user mentioned: "${tab.title || "Untitled"}" (${tab.url})\n${text.slice(0, 6000) || "(couldn't read this tab)"}]`;
+    titles.push(tab.title || "Untitled");
   }
-  return out;
+  return { text: out, titles };
 }
 
 // One path for everything sent from the side panel: the message, what's
@@ -399,8 +401,9 @@ async function sendFromPanel(msg) {
   const ctx = await capturePageContext();
   const url = ctx?.url || tab?.url || "";
   const title = ctx?.title || tab?.title || "";
-  const selection = (ctx?.selectedText || "").trim().slice(0, 2000);
-  const shot = await captureTab(tab);
+  const selection = msg.ignoreSelection ? "" : (ctx?.selectedText || "").trim().slice(0, 2000);
+  // "Not sharing" in the panel skips the screenshot, unless they drew (that's the point of drawing).
+  const shot = msg.noScreenshot && !drawnTabs.has(tab?.id) ? null : await captureTab(tab);
   const quote = (t) => `"${t.slice(0, 100)}${t.length > 100 ? "…" : ""}"`;
 
   let body;
@@ -418,14 +421,17 @@ async function sendFromPanel(msg) {
     display = msg.text;
     if (selection) body += `\n\n[Selected on the page; the user wants you to focus on this: "${selection}"]`;
   }
-  const text = `${url ? `[From browser: ${url}] ` : ""}${body}${await mentionedTabs(msg.mentions)}`;
+  const mentions = await mentionedTabs(msg.mentions);
+  const text = `${url ? `[From browser: ${url}] ` : ""}${body}${mentions.text}`;
   const sent = sendToAtlas(text, { url, title, action: msg.type }, shot?.image || null);
+  // What went with the message, for the panel to show as chips.
   if (sent) {
-    const notes = [
-      shot?.drew ? "🖍️ with your drawing" : "",
-      msg.type === "send_message" && selection ? `📌 ${quote(selection)}` : "",
-    ].filter(Boolean);
-    addChat("you", [display, ...notes].join("\n"));
+    addChat("you", display, {
+      drew: !!shot?.drew,
+      shared: !!shot,
+      selection: msg.type === "send_message" && selection ? selection.slice(0, 140) : "",
+      tabs: mentions.titles,
+    });
   }
   return { ok: sent, drawing: !!shot?.drew };
 }
