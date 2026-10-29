@@ -421,14 +421,41 @@ const terms = (t: string): string[] =>
  * how many of the query's meaningful words a result mentions. Results that
  * mention none are dropped once at least two relevant ones remain.
  */
+// Tracking params that never change which page a URL points at — stripped so
+// the same result from two engines doesn't survive dedup as two rows.
+const TRACKING_PARAM = /^(?:utm_|ga_|mc_|_hs|pk_|piwik_)|^(?:fbclid|gclid|dclid|msclkid|yclid|igshid|mkt_tok|ref|ref_src|ref_url|source|spm|_ga)$/i;
+
+/**
+ * A dedup key that treats the same page the same across engines: http/https,
+ * a leading www., a trailing slash and a #fragment don't matter, and tracking
+ * query params are dropped while meaningful ones (?id=5) are kept and sorted.
+ * The displayed URL is untouched — only the key is canonical.
+ */
+export function canonicalUrl(raw: string): string {
+    try {
+        const u = new URL(raw);
+        const host = u.hostname.toLowerCase().replace(/^www\./, "");
+        const path = u.pathname.replace(/\/+$/, "") || "/";
+        const params = [...u.searchParams.entries()]
+            .filter(([k]) => !TRACKING_PARAM.test(k))
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        const search = params.length ? `?${params.map(([k, v]) => `${k}=${v}`).join("&")}` : "";
+        return `${host}${path}${search}`;
+    } catch {
+        return raw.trim().toLowerCase();
+    }
+}
+
 export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResult[] {
     const seen = new Set<string>();
     const merged: SearchResult[] = [];
     for (let i = 0; lists.some((l) => i < l.length); i++) {
         for (const l of lists) {
             const r = l[i];
-            if (r && !seen.has(r.url)) {
-                seen.add(r.url);
+            if (!r) continue;
+            const key = canonicalUrl(r.url);
+            if (!seen.has(key)) {
+                seen.add(key);
                 merged.push(r);
             }
         }
