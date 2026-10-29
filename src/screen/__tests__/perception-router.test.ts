@@ -1,7 +1,23 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type ClickTarget, findClickTarget, formatCascadeResult } from "../perception-router.js";
+
+// The cold-window AX re-dump deliberately re-dumps the LIVE screen once after
+// the AX tiers miss — even when the caller passed axDumpHint (os_smart_click's
+// hint is a pre-click dump, not "settled"). Correct on a real desktop, but in
+// these tests it invokes the real AX helper, whose latency on a headless CI
+// runner is unbounded (seen as a 10s-timeout flake on Node 24 / macOS). Disable
+// it so the controlled hint is the only AX source — the determinism the hint
+// tests already claim in their comments. No test here exercises the retry path.
+const prevNoAxRetry = process.env.ATLAS_NO_AX_RETRY;
+beforeAll(() => {
+    process.env.ATLAS_NO_AX_RETRY = "true";
+});
+afterAll(() => {
+    if (prevNoAxRetry === undefined) delete process.env.ATLAS_NO_AX_RETRY;
+    else process.env.ATLAS_NO_AX_RETRY = prevNoAxRetry;
+});
 
 describe("findClickTarget — tier gating + fallthrough", () => {
     it("returns null when all tiers skipped and no screenshot", async () => {
