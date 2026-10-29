@@ -72,7 +72,6 @@
         "resumed": "^6.1.0",
         "screenshot-desktop": "^1.12.7",
         "sharp": "^0.35.5",
-        "snoowrap": "^1.23.0",
         "tar": "^7.5.22",
         "tree-sitter": "^0.22.4",
         "tree-sitter-go": "^0.21.2",
@@ -99,7 +98,6 @@
         "@types/node": "^22.13.4",
         "@types/node-cron": "^3.0.11",
         "@types/proper-lockfile": "^4.1.4",
-        "@types/snoowrap": "^1.16.1",
         "@types/tar": "^6.1.13",
         "@types/ws": "^8.5.13",
         "@vitest/ui": "^4.1.12",
@@ -114,15 +112,10 @@
     "overrides": {
         "sharp": "^0.35.5",
         "proxy-addr": "^2.0.8",
-        "request": {
-            "form-data": "^2.5.4"
-        },
         "protobufjs": "^7.5.5",
         "basic-ftp": "^6.2.3",
         "image-size": "^2.0.3",
-        "snoowrap": {
-            "ws": "^5.2.7"
-        },
-        "qs": "^6.17.0"
+        "qs": "^6.17.0",
+        "uuid": "^11.1.1"
     }
 }
