@@ -4,7 +4,7 @@
 // could reach the model, or be typed where it shouldn't.
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { offloadIfLarge } from "../agents/tool-output-offload.js";
 import { _resetConsent, noteOwnerMessage } from "./consent.js";
 import { protect, reveal, revealArgs } from "./pii-vault.js";
@@ -93,6 +93,62 @@ describe("cards and UPI only in the browser, on the authorized site, once", () =
     });
 });
 
+describe("a saved secret is never accepted as a key name or hotkey (finding #2)", () => {
+    it("refuses a vault token in the key field even after the owner approves the call", async () => {
+        // Old behaviour: with the owner's OK the password was swapped into `key`, then
+        // the OS layer lowercased it and echoed it in an "unknown key" error.
+        expect(await resolveVaultArgs("os_type", { key: "{{vault:gh.password}}" }, owner(""))).toHaveProperty("error");
+        noteOwnerMessage("yes");
+        const r = await resolveVaultArgs("os_type", { key: "{{vault:gh.password}}", confirmed: true }, owner(""));
+        expect(r).toHaveProperty("error");
+        expect(JSON.stringify(r)).not.toContain("Gh-Secret-77!");
+    });
+    it("refuses a token in os_multi_action actions[].key too", async () => {
+        const r = await resolveVaultArgs(
+            "os_multi_action",
+            { actions: [{ type: "key", key: "{{vault:gh.password}}" }] },
+            owner(""),
+        );
+        expect(r).toHaveProperty("error");
+        expect(JSON.stringify(r)).not.toContain("Gh-Secret-77!");
+    });
+});
+
+describe("a payment is bound to the approved merchant host (finding #1)", () => {
+    it("the card is refused on any origin other than the authorized one", async () => {
+        await authCard(); // authorized on pay.example.com
+        const r = await resolveVaultArgs(
+            "browser_type",
+            { text: "{{vault:hdfc.number}}" },
+            owner("https://look-alike-pay.example/checkout"),
+        );
+        expect(r).toHaveProperty("error");
+        expect(JSON.stringify(r)).not.toContain("4111");
+    });
+    it("the CVV prompt is told the merchant host", async () => {
+        let promptedSite = "";
+        await authorizePayment("hdfc", 249, "Biryani", "pay.example.com", async (_l, _i, _a, site) => {
+            promptedSite = site;
+            return "737";
+        });
+        expect(promptedSite).toBe("pay.example.com");
+    });
+});
+
+describe("a typed CVV stays masked after the authorization ends (finding #4)", () => {
+    it("protect() still hides the CVV once the 5-minute window closes", async () => {
+        vi.useFakeTimers();
+        try {
+            await authorizePayment("hdfc", 249, "Biryani", "pay.example.com", async () => "737");
+            expect(protect('{"cvv":"737","n":"x"}')).not.toContain("737"); // during the window
+            vi.advanceTimersByTime(6 * 60_000); // past AUTH_MS → the authorization expires
+            expect(protect('{"cvv":"737"}')).not.toContain("737"); // still masked for the rest of the task
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
 describe("public suffixes are not a site", () => {
     it("a login saved for co.uk or github.io never resolves on someone's subdomain", async () => {
         for (const [tok, url] of [
@@ -138,18 +194,22 @@ describe("the origin is checked where the keystrokes land", () => {
         expect(vaultTargetError(r.rules, "https://github.com/login", "https://evil.com/frame")).toMatch(/Refused/);
         expect(vaultTargetError(r.rules, "https://github.com/login", "")).toMatch(/Refused/);
     });
-    it("payments are bound to the authorized top page; the card field may sit in an https PSP frame", async () => {
+    it("payments are bound to the authorized top page; the card field may sit in a known-PSP frame only", async () => {
         await authCard();
         const r = await resolveVaultArgs("browser_type", { text: "{{vault:hdfc.number}}" }, owner("https://pay.example.com/x"));
         if (!("rules" in r)) throw new Error("no rules");
+        // merchant's own frame or a known payment provider (Stripe): allowed
+        expect(vaultTargetError(r.rules, "https://pay.example.com/x", "https://pay.example.com/x")).toBeNull();
         expect(vaultTargetError(r.rules, "https://pay.example.com/x", "https://js.stripe.com/f")).toBeNull();
+        // a cross-origin ad/widget iframe on the merchant page: refused (finding #3)
+        expect(vaultTargetError(r.rules, "https://pay.example.com/x", "https://evil.example/ad")).toMatch(/Refused/);
         expect(vaultTargetError(r.rules, "https://evil.com/", "https://js.stripe.com/f")).toMatch(/Refused/);
         expect(vaultTargetError(r.rules, "https://pay.example.com/x", "http://plain.example/f")).toMatch(/Refused/);
     });
-    it("a document a secret was typed into is tainted until it navigates", () => {
-        noteSecretTyped("https://github.com|1700000000000");
-        expect(secretTypedIn("https://github.com|1700000000000")).toBe(true);
-        expect(secretTypedIn("https://github.com|1700000009999")).toBe(false);
+    it("an origin a secret was typed into stays tainted for the rest of the task (survives back/forward)", () => {
+        noteSecretTyped("https://github.com");
+        expect(secretTypedIn("https://github.com")).toBe(true); // any page on that origin, even a fresh document
+        expect(secretTypedIn("https://other.example")).toBe(false); // a different origin is clear
     });
 });
 

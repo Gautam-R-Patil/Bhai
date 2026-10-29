@@ -520,7 +520,7 @@ export function requiresConfirmation(
                 warning = `⚠️ Force-quitting "${args.app}" may cause unsaved data loss.`;
                 break;
             case "vault_authorize_payment":
-                warning = `⚠️ This lets Bhai pay ₹${args.amount} for "${args.item}" with a saved card or UPI ID.`;
+                warning = `⚠️ This lets Bhai pay ₹${args.amount} for "${args.item}" with a saved card or UPI ID on ${args.site ? String(args.site) : "an unknown site — open the https payment page in the browser first"}.`;
                 break;
             case "site_task":
                 warning = `⚠️ This places the order and pays ₹${args.amount}. It cannot be undone.`;

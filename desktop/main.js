@@ -1187,6 +1187,7 @@ function askCvv(req) {
         label: String(req.label || "").slice(0, 80),
         item: String(req.item || "").slice(0, 120),
         amount: Number(req.amount) || 0,
+        site: String(req.site || "").slice(0, 120), // the merchant host the card will be used on
     });
 }
 let stopPromise = null; // resolves when the bot being stopped has really exited

@@ -50,7 +50,7 @@ import {
 } from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
-import { hasVaultToken, resolveVaultArgs, runVaultCall, type VaultCall } from "./security/vault.js";
+import { anySecretTyped, hasVaultToken, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
 import {
     buildVerifyReminder,
     isMutator,
@@ -617,6 +617,17 @@ function createSyntheticDeferredResult(toolCall: {
     return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent: result, isBrowser: false, isError: false };
 }
 
+/** True when the live browser tab's origin had a saved secret typed into it (screenshots are withheld there). */
+async function browserOriginTainted(): Promise<boolean> {
+    try {
+        const { getActivePage } = await import("./tools/browser/core.js");
+        const { liveUrl } = await import("./tools/browser/vault-typing.js");
+        return secretTypedIn(new URL(await liveUrl(await getActivePage())).origin);
+    } catch {
+        return true; // can't tell + a secret was typed this task → withhold, don't risk a leak
+    }
+}
+
 /**
  * Execute a single tool call and process the result (screenshot extraction, error detection).
  */
@@ -827,15 +838,30 @@ async function executeAndProcessToolCall(
         const parsed = JSON.parse(rawResult);
         const b64 = parsed.screenshot_base64 || parsed.zoomed_base64;
         if (b64) {
-            // The API rejects oversized images (e.g. a full-page browser capture).
-            const { downscaleForVision } = await import("./screen/ui-tars.js");
-            const img = await downscaleForVision(Buffer.from(b64, "base64"));
-            imageUrl = `data:${img.mime};base64,${img.buf.toString("base64")}`;
-            delete parsed.screenshot_base64;
-            delete parsed.zoomed_base64;
-            delete parsed.mime_type;
-            parsed.image_attached = true;
-            rawResult = JSON.stringify(parsed);
+            // A browser screenshot of a page a saved secret was typed into can show the
+            // value — a field that echoed it, a card/UPI preview, a split input that
+            // auto-advanced — and an image is never masked (protect() can't touch pixels).
+            // Withhold it; the model still reads the page via browser_scan/extract (text,
+            // which IS masked). Only pay the origin lookup once a secret has been typed.
+            if (fnName.startsWith("browser_") && anySecretTyped() && (await browserOriginTainted())) {
+                delete parsed.screenshot_base64;
+                delete parsed.zoomed_base64;
+                delete parsed.mime_type;
+                parsed.image_attached = false;
+                parsed.screenshot_withheld =
+                    "A saved secret was typed on this page, so its screenshot is withheld (it could show the value). Use browser_scan or browser_extract to read the page.";
+                rawResult = JSON.stringify(parsed);
+            } else {
+                // The API rejects oversized images (e.g. a full-page browser capture).
+                const { downscaleForVision } = await import("./screen/ui-tars.js");
+                const img = await downscaleForVision(Buffer.from(b64, "base64"));
+                imageUrl = `data:${img.mime};base64,${img.buf.toString("base64")}`;
+                delete parsed.screenshot_base64;
+                delete parsed.zoomed_base64;
+                delete parsed.mime_type;
+                parsed.image_attached = true;
+                rawResult = JSON.stringify(parsed);
+            }
         }
     } catch {
         /* not json */

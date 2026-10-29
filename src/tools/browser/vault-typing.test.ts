@@ -74,7 +74,7 @@ function fakePage(o: { url: string; frameUrl?: string; clickNavigatesTo?: string
         mainFrame: () => main,
         frames: () => (o.frameUrl ? [main, child] : [main]),
         evaluate: async (code: unknown) =>
-            String(code).includes("performance.timeOrigin") ? `${new URL(url).origin}|${o.doc ?? "111"}` : undefined,
+            String(code).includes("location.origin") ? new URL(url).origin : undefined,
         mouse: {
             click: async () => {
                 if (o.clickNavigatesTo) url = o.clickNavigatesTo;
@@ -115,15 +115,19 @@ describe("browser_type with a saved secret", () => {
     });
 
     it("types on the right site and doesn't echo what it typed", async () => {
-        const page = fakePage({ url: "https://github.com/login", doc: "222" });
+        const page = fakePage({ url: "https://github.com/login" });
         getActivePage.mockResolvedValue(page);
         const out = await asVault(() => browserType.handler({ text: SECRET }));
         expect(page.typed.join("")).toBe(SECRET);
         expect(out).not.toContain(SECRET);
         expect(JSON.parse(out)).toMatchObject({ success: true, typed_chars: SECRET.length });
-        // ...and page JavaScript is off on that document until it navigates
+        // ...and page JavaScript is off on that ORIGIN for the rest of the task — even
+        // after navigating within github.com (Back/forward could refill the field).
         expect(JSON.parse(await browserRunJs.handler({ code: "return 1" }))).toHaveProperty("error");
-        getActivePage.mockResolvedValue(fakePage({ url: "https://github.com/dashboard", doc: "333" }));
+        getActivePage.mockResolvedValue(fakePage({ url: "https://github.com/dashboard" }));
+        expect(JSON.parse(await browserRunJs.handler({ code: "return 1" }))).toHaveProperty("error");
+        // a different origin was never typed into, so page JavaScript is fine there
+        getActivePage.mockResolvedValue(fakePage({ url: "https://elsewhere.example/" }));
         expect(JSON.parse(await browserRunJs.handler({ code: "return 1" })).error ?? "").not.toMatch(/saved secret/);
     });
 });

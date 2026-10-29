@@ -3400,7 +3400,9 @@
                 if (vaultCvvReq) atlas.vault.submitCvv(vaultCvvReq.id, null); // one prompt at a time
                 vaultCvvReq = req;
                 document.getElementById('vaultCvvText').textContent =
-                    `Bhai wants to pay ₹${req.amount} for "${req.item}" with ${req.label}. Enter the card's CVV to continue.`;
+                    `Bhai wants to pay ₹${req.amount} for "${req.item}" with ${req.label}`
+                    + (req.site ? ` on ${req.site}` : '')
+                    + `. Enter the card's CVV to continue.`;
                 document.getElementById('vaultCvvModal').style.display = 'flex';
                 document.getElementById('vaultCvvInput').focus();
             });

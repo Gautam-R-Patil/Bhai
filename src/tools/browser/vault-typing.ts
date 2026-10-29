@@ -59,9 +59,12 @@ async function focusTarget(page: AnyPage): Promise<{ top: string; frameUrl: stri
 /** Draws the focused field as dots, so a screenshot doesn't show the typed value. */
 const HIDE_FOCUSED_JS = `(() => { const el = document.activeElement; if (el && el.type !== "password" && el.style) el.style.setProperty("-webkit-text-security", "disc"); })()`;
 
-/** The top document's identity: its origin and when it was created. */
+// The top document's origin. Taint is keyed on origin alone (not origin+timeOrigin):
+// Back/forward or a reload to a no-store page loads a NEW document (new timeOrigin)
+// into which the browser refills the typed field — so the lock has to outlive the
+// document and cover every page on that origin for the rest of the task.
 const docOf = async (page: AnyPage): Promise<string> =>
-    String((await page.evaluate("location.origin + '|' + performance.timeOrigin").catch(() => "")) ?? "");
+    String((await page.evaluate("location.origin").catch(() => "")) ?? "");
 
 /**
  * Types `text` (it holds resolved vault values) where focus is, if the vault

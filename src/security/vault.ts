@@ -105,6 +105,7 @@ export function loadVault(list: unknown): void {
     }
     entries = next;
     auths.clear(); // an edited card must be authorized again
+    stickyCvv.clear();
     tainted.clear();
     syncMasks();
 }
@@ -126,7 +127,7 @@ function syncMasks(): void {
     for (const e of entries.values()) {
         for (const [field, value] of fieldsOf(e)) if (field !== "holder" && field !== "expiry") add(value, e.id, field);
     }
-    for (const [id, a] of auths) if (a.cvv) add(a.cvv, id, "cvv");
+    for (const [value, token] of stickyCvv) m.set(value, token);
     setSecrets(m, partial);
 }
 
@@ -195,8 +196,11 @@ export function listVault(query = ""): VaultListing[] {
 const AUTH_MS = 5 * 60_000;
 // `used`: the fields typed under this authorization; each goes once, so one OK pays once.
 const auths = new Map<string, { exp: number; site: string; cvv?: string; used: Set<string> }>();
+// CVVs entered under any authorization: kept masked until the vault reloads (task
+// end / an edit), outliving the 5-minute auth so a later scan can't read one back.
+const stickyCvv = new Map<string, string>(); // cvv value → its token
 
-const siteOf = (url: string) => {
+export const siteOf = (url: string) => {
     try {
         const u = new URL(url);
         return u.protocol === "https:" ? u.hostname.toLowerCase() : "";
@@ -204,6 +208,30 @@ const siteOf = (url: string) => {
         return "";
     }
 };
+
+// Payment-provider frames that may legitimately host a card field on a merchant
+// page (Stripe, Razorpay, PayU, …). A card may sit in one of these OR in a frame
+// on the merchant's own host — never in an arbitrary cross-origin ad/widget frame.
+const PSP_SUFFIXES = [
+    "stripe.com",
+    "stripe.network",
+    "razorpay.com",
+    "payu.in",
+    "payubiz.in",
+    "ccavenue.com",
+    "billdesk.com",
+    "paypal.com",
+    "paypalobjects.com",
+    "cashfree.com",
+    "phonepe.com",
+    "paytm.in",
+    "paytm.com",
+    "instamojo.com",
+    "juspay.in",
+    "checkout.com",
+    "adyen.com",
+];
+const isKnownPsp = (host: string) => !!host && PSP_SUFFIXES.some((d) => host === d || host.endsWith(`.${d}`));
 const onDomains = (host: string, domains: string[]) =>
     !!host && domains.some((d) => host === d || host.endsWith(`.${d}`));
 
@@ -216,15 +244,18 @@ export async function authorizePayment(
     entryId: string,
     amount: number,
     item: string,
-    pageUrl: string,
-    askCvv: (label: string, item: string, amount: number) => Promise<string | null> = requestCvv,
+    host: string,
+    askCvv: (label: string, item: string, amount: number, site: string) => Promise<string | null> = requestCvv,
 ): Promise<{ ok: true; tokens: string[]; site: string } | { error: string }> {
     if (!vaultEnabled()) return { error: "The vault is turned off (ATLAS_NO_VAULT)." };
     const e = entries.get(entryId);
     if (!e || (e.kind !== "card" && e.kind !== "upi"))
         return { error: `No saved card or UPI ID with id "${entryId}". Call vault_list.` };
     if (!(amount > 0)) return { error: "amount must be the total the owner approved, above 0." };
-    const site = siteOf(pageUrl);
+    // The merchant host was captured from the live tab at approval time (the consent
+    // gate), so the card is bound to the site the owner saw — not whatever tab is
+    // live when this runs.
+    const site = siteOf(host.includes("://") ? host : `https://${host}`);
     if (!site) return { error: "Open the https payment page in the browser first, then authorize there." };
     if (!spendAllowed(amount))
         return {
@@ -232,10 +263,14 @@ export async function authorizePayment(
         };
     let cvv: string | undefined;
     if (e.kind === "card") {
-        const c = await askCvv(e.label, item, amount);
+        const c = await askCvv(e.label, item, amount, site);
         if (!c || !/^\d{3,4}$/.test(c))
             return { error: "The owner didn't enter the CVV, so nothing was paid. Ask if they want to try again." };
         cvv = c;
+        // The page may still show the CVV after the 5-minute window closes (a stalled
+        // checkout, a scan/form_state read). Keep masking it for the rest of the task,
+        // not just while the authorization lasts (the auth — and its cvv — is deleted on expiry).
+        stickyCvv.set(cvv, tokenOf(entryId, "cvv"));
     }
     recordSpend(amount);
     auths.set(entryId, { exp: Date.now() + AUTH_MS, site, cvv, used: new Set() });
@@ -287,6 +322,19 @@ export const vaultCall = (): VaultCall | undefined => calls.getStore();
 const ANY_TOKEN = new RegExp(TOKEN_RE.source); // non-global: no lastIndex state shared with matchAll/replace
 export const hasVaultToken = (args: unknown) => ANY_TOKEN.test(JSON.stringify(args ?? ""));
 
+/** True when a vault token sits in a key/combo/hotkey field anywhere in the args (incl. os_multi_action's actions[]). */
+function tokenInKeyField(v: unknown): boolean {
+    if (Array.isArray(v)) return v.some(tokenInKeyField);
+    if (v && typeof v === "object") {
+        for (const [k, x] of Object.entries(v)) {
+            if ((k === "key" || k === "combo" || k === "hotkey") && typeof x === "string" && ANY_TOKEN.test(x))
+                return true;
+            if (tokenInKeyField(x)) return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Null when every rule allows typing where the keys land now: `top` is the live
  * top-level URL, `frame` the URL of the frame holding focus ("" = unknown, e.g.
@@ -297,7 +345,12 @@ export function vaultTargetError(rules: VaultRule[], top: string, frame: string)
     const frameHost = siteOf(frame);
     for (const r of rules) {
         const host = r.payment ? topHost : frameHost;
-        const ok = r.payment ? !!frameHost && host === r.domains[0] : onDomains(host, r.domains);
+        // Payment: the top page is the authorized merchant, and the card field is
+        // on the merchant's own host or a known payment provider's frame — not an
+        // arbitrary cross-origin ad/widget iframe on the page.
+        const ok = r.payment
+            ? topHost === r.domains[0] && (frameHost === topHost || isKnownPsp(frameHost))
+            : onDomains(host, r.domains);
         if (!ok) {
             const where =
                 frameHost && frameHost !== topHost
@@ -310,13 +363,16 @@ export function vaultTargetError(rules: VaultRule[], top: string, frame: string)
     return null;
 }
 
-// Documents (origin|timeOrigin) a secret was typed into: page JavaScript is refused there.
-// ponytail: grows by one per typed secret, cleared on vault reload; never large.
+// Origins a secret was typed into: page JavaScript is refused and screenshots are
+// withheld there, for the rest of the task (back/forward can refill the field on a
+// new document of the same origin). Cleared on vault reload; one entry per origin.
 const tainted = new Set<string>();
-export const noteSecretTyped = (doc: string): void => {
-    tainted.add(doc);
+export const noteSecretTyped = (origin: string): void => {
+    tainted.add(origin);
 };
-export const secretTypedIn = (doc: string): boolean => tainted.has(doc);
+export const secretTypedIn = (origin: string): boolean => tainted.has(origin);
+/** True once any saved secret has been typed into a page this task (cheap screenshot gate). */
+export const anySecretTyped = (): boolean => tainted.size > 0;
 
 /** A stable text for a consent key / question: tokens as written, values masked. */
 const describeArgs = (args: Record<string, unknown>) =>
@@ -344,6 +400,13 @@ export async function resolveVaultArgs<T>(
     if (!hasVaultToken(args)) return { args, rules: [] };
     if (!vaultEnabled()) return { error: "The vault is turned off (ATLAS_NO_VAULT), so saved secrets can't be typed." };
     if (!ctx.isOwner) return { error: "Saved secrets can only be used for the owner." };
+    // A saved secret is typed as text only — never a key name or hotkey combo. The
+    // OS layer lowercases (mac) / uppercases (win) a key and echoes it in an
+    // "unknown key" error, which masking (exact forms + prefixes) wouldn't catch.
+    if (tokenInKeyField(args))
+        return {
+            error: 'A saved secret can only be typed as text, not as a key name or hotkey. Put the {{vault:…}} token in the "text" field.',
+        };
     if (tool === "browser_multi_action" || tool === "site_task") {
         return {
             error: "Type saved secrets with browser_type, one field per call (a multi-step action or a Site Skill could leave the site, or keep the value, before it types).",
@@ -484,7 +547,7 @@ export function handleDesktopLine(line: string): void {
     }
 }
 
-function requestCvv(label: string, item: string, amount: number): Promise<string | null> {
+function requestCvv(label: string, item: string, amount: number, site: string): Promise<string | null> {
     if (!desktopAttached) return Promise.resolve(null);
     const id = ++cvvSeq;
     return new Promise((resolve) => {
@@ -495,6 +558,9 @@ function requestCvv(label: string, item: string, amount: number): Promise<string
         };
         const timer = setTimeout(() => done(null), 120_000);
         cvvWaiters.set(id, done);
-        process.stdout.write(`##BHAI_VAULT_CVV##${JSON.stringify({ id, label, item: item.slice(0, 120), amount })}\n`);
+        // `site` tells the owner which merchant the card goes to, in the CVV prompt itself.
+        process.stdout.write(
+            `##BHAI_VAULT_CVV##${JSON.stringify({ id, label, item: item.slice(0, 120), amount, site })}\n`,
+        );
     });
 }

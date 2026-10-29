@@ -736,6 +736,18 @@ export function consentKey(name: string, args: Record<string, unknown>): string 
     return `${name}:${stableJson(args)}`;
 }
 
+/** The live browser tab's https host for a payment authorization ("" when no https page). */
+async function livePaymentHost(): Promise<string> {
+    try {
+        const { getActivePage } = await import("./browser/core.js");
+        const { liveUrl } = await import("./browser/vault-typing.js");
+        const { siteOf } = await import("../security/vault.js");
+        return siteOf(await liveUrl(await getActivePage()));
+    } catch {
+        return ""; // no browser: authorizePayment refuses with "open the https payment page first"
+    }
+}
+
 function stableJson(v: unknown): string {
     if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
     if (v && typeof v === "object") {
@@ -798,6 +810,11 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     // `confirmed` is stripped only for gated calls: other tools (git_op) read
     // their own `confirmed` flag.
     const { confirmed, ...actionArgs } = input;
+    // vault_authorize_payment binds the owner's OK to the MERCHANT. Capture the live
+    // browser origin NOW and fold it into both the consent prompt and the consent key,
+    // so a yes for site A can't let the card be typed on site B (the tab can't be
+    // swapped between the ask and the confirm). Overwrites any model-supplied `site`.
+    if (name === "vault_authorize_payment") actionArgs.site = await livePaymentHost();
     const confirmCheck = requiresConfirmation(name, actionArgs);
     if (
         confirmCheck.needsConfirmation &&

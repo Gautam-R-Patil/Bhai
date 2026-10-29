@@ -58,20 +58,14 @@ export const vaultAuthorizePayment: ToolDefinition = {
     },
     async handler(input) {
         if (!vaultEnabled()) return OFF;
-        let url = "";
-        try {
-            // The live tab (the Chrome proxy's url() is a cache). Lazy: core → … → tools/index cycle.
-            const { getActivePage } = await import("./browser/core.js");
-            const { liveUrl } = await import("./browser/vault-typing.js");
-            url = await liveUrl(await getActivePage());
-        } catch {
-            /* no browser: authorizePayment refuses */
-        }
+        // `site` is the merchant host the consent gate (tools/index.ts) captured from
+        // the live tab at approval time and showed the owner. The card binds to THAT
+        // host, not whatever tab is live now.
         const r = await authorizePayment(
             String(input.entry_id ?? ""),
             Number(input.amount),
             String(input.item ?? ""),
-            url,
+            String(input.site ?? ""),
         );
         if ("error" in r) return JSON.stringify(r);
         return JSON.stringify({
