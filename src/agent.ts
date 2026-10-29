@@ -77,6 +77,7 @@ import type { ChatCompletionMessageParam, LLMClient, ThinkingLevel } from "./llm
 import { MODEL_DISPLAY, MODELS } from "./llm.js";
 import { getLocationSnippet, getTimezone } from "./location/index.js";
 import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
+import { buildMemoryCards } from "./memory/cards.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
@@ -2521,11 +2522,19 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const topScore = queriedMems.length > 0 ? ((queriedMems[0] as any).score ?? 0) : 0;
                     if (_harnessTraceId) recordMemoryHit(_harnessTraceId, uniqueMems.length, topScore);
-                    if (uniqueMems && uniqueMems.length > 0) {
-                        noteShownMemories(uniqueMems.map((m: { id: number }) => m.id));
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    // Owner-only: contacts and autonomous runs keep the plain list, never the owner's cards.
+                    const { cards, ids, rest } =
+                        channelContext?.isOwner !== false && !channelContext?.autonomous
+                            ? buildMemoryCards(rawUserMessage, uniqueMems, new Set(coreMems.map((c) => c.id)))
+                            : { cards: "", ids: [], rest: uniqueMems };
+                    if (cards) {
+                        noteShownMemories(ids);
+                        parts.push(cards);
+                    }
+                    if (rest.length > 0) {
+                        noteShownMemories(rest.map((m) => m.id));
                         parts.push(
-                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
+                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${rest.map((m) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
                         );
                     }
 

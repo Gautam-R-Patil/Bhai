@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { normalizeTags } from "../memory/cards.js";
 import { executeForget, forgetTerms, previewForget } from "../memory/forget.js";
 import {
     addGoal,
@@ -50,7 +51,7 @@ export const memoryStore: ToolDefinition = {
         function: {
             name: "memory_store",
             description:
-                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored.',
+                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored. Tag who and what a memory is about as `person:<name>` / `project:<name>` (e.g. tags "person:riya, project:atlas") so it comes up on their card whenever they are mentioned.',
             parameters: {
                 type: "object",
                 properties: {
@@ -59,7 +60,11 @@ export const memoryStore: ToolDefinition = {
                         type: "string",
                         description: "Category: general, preference, fact, person, task, note",
                     },
-                    tags: { type: "string", description: "Comma-separated tags for easier retrieval" },
+                    tags: {
+                        type: "string",
+                        description:
+                            "Comma-separated tags; person:<name> / project:<name> for the people and projects it is about",
+                    },
                     importance: { type: "number", description: "1-10 importance level (default 5)" },
                     supersedes: {
                         type: "number",
@@ -101,7 +106,7 @@ export const memoryStore: ToolDefinition = {
         const id = await remember(
             input.content as string,
             (input.category as string) || "general",
-            (input.tags as string) || "",
+            normalizeTags(typeof input.tags === "string" ? input.tags : ""),
             imp,
             "user",
             useSmartWrite,
