@@ -415,6 +415,19 @@ export function forgetMemoryById(id: number, reason = "undo"): boolean {
     return true;
 }
 
+const UNDO_TTL_MS = 10 * 60_000;
+
+/** Button data for "Forget that" under the reply to a turn that stored memory `id` at `at` (ms). */
+export const memoryUndoAction = (u: { id: number; at: number }) => `mem:forget:${u.id}:${Math.floor(u.at / 1000)}`;
+
+/** The owner tapped "Forget that": the short answer, or undefined when `data` is not that button. */
+export function undoMemoryTap(data: string, now = Date.now()): string | undefined {
+    const m = /^mem:forget:(\d+):(\d+)$/.exec(data);
+    if (!m) return undefined;
+    if (now - Number(m[2]) * 1000 > UNDO_TTL_MS) return "Too late for the button, ask me to forget it.";
+    return forgetMemoryById(Number(m[1])) ? "Forgotten." : "Already gone.";
+}
+
 /** @internal — tests only. */
 export function _resetForget(): void {
     pending.clear();

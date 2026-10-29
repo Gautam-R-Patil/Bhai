@@ -634,6 +634,8 @@ export interface AgentResponse {
     stuck?: boolean;
     /** The screenshot taken after the turn's last action, for the owner's private chat (pickReceipt). */
     receipt?: Receipt;
+    /** The memory this owner turn stored last, for a one-tap "Forget that" (memoryUndoAction). */
+    memoryUndo?: { id: number; at: number };
 }
 
 export interface ChannelContext {
@@ -1412,14 +1414,15 @@ export async function runAgent(
         const mod = await import("./tools/cron-tool.js");
         let res: AgentResponse;
         const nudges = new Set<object>();
+        const caller: import("./tools/cron-tool.js").CronCallerContext = {
+            isOwner: callerIsOwner,
+            autonomous: channelContext?.autonomous === true,
+        };
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
             const turn = () =>
                 runWithTurnNudges(nudges, () =>
-                    mod.runWithCallerContext(
-                        { isOwner: callerIsOwner, autonomous: channelContext?.autonomous === true },
-                        () => trackCursorTurn(fn),
-                    ),
+                    mod.runWithCallerContext(caller, () => trackCursorTurn(fn)),
                 );
             // Turns share one send ledger (send-ledger.ts); an autonomous run gets its own,
             // so a recurring cron job may send the same text on its next tick.
@@ -1456,6 +1459,8 @@ export async function runAgent(
             res.text = reveal(res.text);
         }
         if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") noteOwnerReply(res.text, userMessage);
+        // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
+        if (caller.storedMemory && channelContext?.isPrivate === true && res) res.memoryUndo = caller.storedMemory;
         return res;
     };
     if (!isForked) {

@@ -13,9 +13,11 @@ type Op = "schedule" | "list" | "cancel" | "trigger";
 // (e.g. telegram-owner + whatsapp-contact) each run inside their own ALS
 // frame, so a contact-agent never sees the owner's isOwner:true even when
 // both turns are interleaving LLM awaits on the same event loop.
-interface CronCallerContext {
+export interface CronCallerContext {
     isOwner: boolean;
     autonomous?: boolean;
+    /** The last memory memory_store saved in this owner turn, for the reply's "Forget that" button. */
+    storedMemory?: { id: number; at: number };
 }
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
 
@@ -28,6 +30,12 @@ export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promis
 export function isOwnerCaller(): boolean {
     const ctx = _callerStorage.getStore();
     return ctx?.isOwner === true && !ctx.autonomous;
+}
+
+/** memory_store saved `id` on the owner's live turn: the reply may offer a one-tap undo. */
+export function noteStoredMemory(id: number): void {
+    const ctx = _callerStorage.getStore();
+    if (ctx && isOwnerCaller()) ctx.storedMemory = { id, at: Date.now() };
 }
 
 /** Legacy setter preserved for callers that can't wrap — always overwrites

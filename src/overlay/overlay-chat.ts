@@ -29,6 +29,7 @@ import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/lo
 import { formatStepStatus, parseStepLine } from "../step-status.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
 import { classifyQuery } from "../memory/classifier.js";
+import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
 import { captureScreenshot } from "../tools/platform.js";
 import { getUserPresence } from "../proactive/activity.js";
 import {
@@ -614,6 +615,11 @@ export function initOverlayChat(llm: LLMClient): void {
                     await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim());
                 } else if (msg.type === "quick_action" && msg.text) {
                     const actionText = msg.text.trim();
+                    if (actionText.startsWith("mem:forget:")) {
+                        const text = (wsIsOwner(ws) && undoMemoryTap(actionText)) || "Only the owner can do that.";
+                        sendToClient(ws, { type: "response", text, toolCalls: 0, quickActions: [], files: [], links: [], widgets: [] });
+                        return;
+                    }
                     // Handle feedback actions locally (don't send to agent)
                     if (actionText === "feedback:good" || actionText === "feedback:bad") {
                         const isGood = actionText === "feedback:good";
@@ -1008,11 +1014,13 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         }
 
         // Append feedback quick actions when the agent completed a multi-tool task
-        const feedbackActions = result.toolCalls >= 2 ? [
+        const feedbackActions: Array<string | { label: string; action: string }> = result.toolCalls >= 2 ? [
             ...(interactive.quickActions || []),
             { label: "👍", action: "feedback:good" },
             { label: "👎", action: "feedback:bad" },
         ] : (interactive.quickActions || []);
+        // Bhai just noted something: one tap takes it back (memoryUndo is set only for the owner's turn).
+        if (result.memoryUndo) feedbackActions.push({ label: "Forget that", action: memoryUndoAction(result.memoryUndo) });
 
         logChatMessage(chat, "assistant", interactive.text, source);
         sendToClient(ws, {

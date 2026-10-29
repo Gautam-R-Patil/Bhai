@@ -12,7 +12,7 @@ import {
 } from "../memory/identity.js";
 import { getMemoryStats, listMemories, recall, remember } from "../memory/sqlite.js";
 import { exportTraitsSnapshot, getAllTraits, reinforceTrait } from "../memory/traits.js";
-import { isOwnerCaller } from "./cron-tool.js";
+import { isOwnerCaller, noteStoredMemory } from "./cron-tool.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Memory Tools for LLM ──────────────────────
@@ -54,6 +54,7 @@ export const memoryStore: ToolDefinition = {
         if (id === null) {
             return JSON.stringify({ success: false, reason: "rejected_by_value_gate" });
         }
+        noteStoredMemory(id);
         return JSON.stringify({ success: true, id, message: "Memory stored." });
     },
 };

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import type { CronCallerContext } from "../../tools/cron-tool.js";
 
 process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-forget-"));
 
@@ -190,5 +191,37 @@ describe("memory_forget across tiers", () => {
             await runWithCallerContext({ isOwner: true }, () => memoryForget.handler({ query: "zebra" })),
         );
         expect(out).toMatchObject({ success: true, count: 0 });
+    });
+});
+
+describe("Forget that button", () => {
+    it("memory_store notes the stored id only on the owner's live turn", async () => {
+        const { memoryStore } = await import("../../tools/memory-tools.js");
+        const { runWithCallerContext } = await import("../../tools/cron-tool.js");
+        const store = async (ctx: CronCallerContext, content: string) => {
+            const out = JSON.parse(await runWithCallerContext(ctx, () => memoryStore.handler({ content })));
+            return { out, noted: ctx.storedMemory };
+        };
+        expect((await store({ isOwner: false }, "Contact likes tea")).noted).toBeUndefined();
+        expect((await store({ isOwner: true, autonomous: true }, "Cron noted the weather")).noted).toBeUndefined();
+        const owner: CronCallerContext = { isOwner: true };
+        await store(owner, "Owner's gym is on 5th street");
+        const { out } = await store(owner, "Owner's dentist is Dr. Rao");
+        expect(owner.storedMemory?.id).toBe(out.id);
+    });
+
+    it("forgets on a tap within 10 minutes and says too late after", () => {
+        const ins = raw.prepare("INSERT INTO memories (content, category) VALUES (?, 'fact')");
+        const fresh = Number(ins.run("Owner parks on level 3").lastInsertRowid);
+        const old = Number(ins.run("Owner's locker code is blue").lastInsertRowid);
+        const now = Date.now();
+        expect(forget.undoMemoryTap("stuck:retry", now)).toBeUndefined();
+        const tap = forget.memoryUndoAction({ id: fresh, at: now - 9 * 60_000 });
+        expect(forget.undoMemoryTap(tap, now)).toBe("Forgotten.");
+        expect(forget.undoMemoryTap(tap, now)).toBe("Already gone.");
+        const late = forget.memoryUndoAction({ id: old, at: now - 11 * 60_000 });
+        expect(forget.undoMemoryTap(late, now)).toMatch(/too late/i);
+        expect(count(`SELECT COUNT(*) n FROM memories WHERE id = ${old}`)).toBe(1);
+        expect(new TextEncoder().encode(tap).length).toBeLessThanOrEqual(64); // Telegram's callback_data cap
     });
 });

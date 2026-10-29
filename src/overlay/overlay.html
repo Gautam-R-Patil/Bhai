@@ -3369,7 +3369,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         const DANGER_WORDS = ['delete', 'remove', 'destroy', 'drop', 'erase', 'nuke', 'wipe', 'uninstall'];
         const CONFIRM_WORDS = ['yes', 'confirm', 'approve', 'accept', 'proceed', 'go ahead', 'do it', 'ok'];
 
-        actions.forEach(label => {
+        actions.forEach(a => {
+          // A string is both label and message; {label, action} sends the action (feedback, "Forget that").
+          const label = typeof a === 'string' ? a : a.label;
           const btn = document.createElement('button');
           btn.className = 'quick-action-btn';
           btn.textContent = label;
@@ -3384,7 +3386,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             input.disabled = true;
             replyBox.classList.remove('visible');
             clearInteractive();
-            ws.send(JSON.stringify({ type: 'quick_action', text: label, chat: chatId }));
+            ws.send(JSON.stringify({ type: 'quick_action', text: typeof a === 'string' ? a : a.action, chat: chatId }));
           };
           quickActionsBox.appendChild(btn);
         });

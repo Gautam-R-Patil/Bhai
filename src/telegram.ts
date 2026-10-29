@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename as nodeBasename } from "node:path";
 import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
+import type { InlineKeyboardMarkup } from "grammy/types";
 import {
     type AgentResponse,
     type ChannelContext,
@@ -49,6 +50,7 @@ import { encryptedFetch } from "./crypto-transport.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
 import { classifyQuery } from "./memory/classifier.js";
+import { memoryUndoAction, undoMemoryTap } from "./memory/forget.js";
 import { getSessionToken } from "./session.js";
 import { mapStepStatus, parseStepLine, STEP_HEARTBEAT_MS } from "./step-status.js";
 import { batchKey } from "./telegram-batch.js";
@@ -142,17 +144,32 @@ function wantsStuckButtons(res: { stuck?: boolean }, senderIsOwner: boolean, cha
     return res.stuck === true && senderIsOwner && chatType === "private";
 }
 
+/** The owner's private chat gets buttons under a reply: the stuck handoff and/or "Forget that" for what it just noted. */
+function replyKeyboard(
+    res: Pick<AgentResponse, "stuck" | "memoryUndo">,
+    senderIsOwner: boolean,
+    chatType?: string,
+): InlineKeyboardMarkup | undefined {
+    if (!senderIsOwner || chatType !== "private") return undefined;
+    const rows = res.stuck ? stuckKeyboard().inline_keyboard : [];
+    if (res.memoryUndo) rows.push([{ text: "Forget that", callback_data: memoryUndoAction(res.memoryUndo) }]);
+    return rows.length ? { inline_keyboard: rows } : undefined;
+}
+
 /**
- * Put the I'll take over / Retry / Skip buttons under the report's last bubble. If that edit fails
- * (or nothing was sent), they go out under a short follow-up instead, so they are never silently lost.
+ * Put the reply's buttons under its last bubble. If that edit fails (or nothing was sent), the
+ * stuck report's I'll take over / Retry / Skip go out under a short follow-up, so they are never
+ * silently lost; a lone "Forget that" is just dropped (memory_forget still works).
  */
-async function attachStuckKeyboard(
+async function attachReplyKeyboard(
     api: Bot["api"],
     chatId: number,
     messageId: number | undefined,
+    reply_markup: InlineKeyboardMarkup | undefined,
+    stuck: boolean | undefined,
     lastEditAt = 0,
 ): Promise<void> {
-    const reply_markup = stuckKeyboard();
+    if (!reply_markup) return;
     if (messageId) {
         // Telegram throttles rapid edits of one message — keep them ≥1s apart
         const wait = lastEditAt + 1000 - Date.now();
@@ -161,9 +178,10 @@ async function attachStuckKeyboard(
             await withTelegramRetry(() => api.editMessageReplyMarkup(chatId, messageId, { reply_markup }));
             return;
         } catch (err) {
-            console.warn("[TELEGRAM] Failed to attach stuck keyboard, sending it separately:", (err as Error).message);
+            console.warn("[TELEGRAM] Failed to attach reply keyboard:", (err as Error).message);
         }
     }
+    if (!stuck) return;
     // As a reply to the report, so a tap still carries the report as its reply context.
     const reply_parameters = messageId ? { message_id: messageId, allow_sending_without_reply: true } : undefined;
     await withTelegramRetry(() => api.sendMessage(chatId, "What next?", { reply_markup, reply_parameters })).catch(
@@ -195,7 +213,7 @@ async function sendReceipt(
 async function replyInBubbles(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctx: any,
-    result: Pick<AgentResponse, "text" | "stuck" | "receipt">,
+    result: Pick<AgentResponse, "text" | "stuck" | "receipt" | "memoryUndo">,
     senderIsOwner: boolean,
 ): Promise<void> {
     const buttons = wantsStuckButtons(result, senderIsOwner, ctx.chat?.type);
@@ -211,7 +229,8 @@ async function replyInBubbles(
         const sent = await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
         lastId = sent.messageId ?? lastId;
     }
-    if (buttons) await attachStuckKeyboard(ctx.api, ctx.chat.id, lastId);
+    const keyboard = replyKeyboard(result, senderIsOwner, ctx.chat?.type);
+    await attachReplyKeyboard(ctx.api, ctx.chat.id, lastId, keyboard, result.stuck);
     await sendReceipt(ctx.api, ctx.chat.id, result.receipt);
 }
 
@@ -1263,7 +1282,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         await sendTelegramMarkdown(reply, bubble, replyOpts, track);
                     }
                 }
-                if (stuckButtons) await attachStuckKeyboard(ctx.api, chatId, lastSentId, lastEditAt);
+                const keyboard = replyKeyboard(response, senderIsOwner, ctx.chat?.type);
+                await attachReplyKeyboard(ctx.api, chatId, lastSentId, keyboard, response.stuck, lastEditAt);
                 await sendReceipt(ctx.api, chatId, response.receipt, replyOpts);
             } catch (err) {
                 if (!controller.signal.aborted) {
@@ -1403,6 +1423,14 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             // Buttons under the "What next?" fallback reply to the report: carry that instead.
             const reportText = stuckMsg?.reply_to_message?.text ?? stuckMsg?.text;
             if (message && chatId && stuckMsg) bufferMessage(ctx, chatId, stuckMsg.message_id, message, reportText);
+            return;
+        }
+
+        // ── "Forget that" under a reply that noted something: mem:forget:<id>:<storedAt> ──
+        if (data.startsWith("mem:forget:")) {
+            const owner = !!ctx.from?.id && telegramOwners.has(ctx.from.id) && ctx.chat?.type === "private";
+            const text = owner ? undoMemoryTap(data) : "Only the owner can do that.";
+            await ctx.answerCallbackQuery({ text }).catch(() => {});
             return;
         }
 
