@@ -338,6 +338,34 @@ function sendToAtlas(text, meta = {}) {
   return true;
 }
 
+// The visible tab with the user's drawing on it, as a JPEG data URL; null if
+// they haven't drawn. The drawing is removed once it's been captured.
+async function takeMarkedScreenshot(tab) {
+  const [probe] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => {
+      const d = window.__bhaiDraw;
+      if (!d || !d.hasInk()) return false;
+      d.hideBar();
+      return true;
+    },
+  }).catch(() => []);
+  if (!probe?.result) return null;
+  await new Promise((r) => setTimeout(r, 80)); // let the toolbar disappear before the capture
+  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
+  chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => window.__bhaiDraw?.remove() }).catch(() => {});
+  return dataUrl;
+}
+
+// A message with a picture goes as the chat server's file attachment.
+function sendImageToAtlas(text, dataUrl) {
+  if (!overlayWs || overlayWs.readyState !== WebSocket.OPEN) return false;
+  const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl || "");
+  if (!m) return false;
+  overlayWs.send(JSON.stringify({ type: "file_attach", name: "marked-page.jpg", mimeType: m[1], base64: m[2], text }));
+  return true;
+}
+
 // ── Handle Messages from Bhai Server ────────
 
 // Bridge socket (18800): auth handshake + command/response traffic only.
@@ -2163,18 +2191,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "send_message") {
-    capturePageContext().then((ctx) => {
+    (async () => {
+      const ctx = await capturePageContext();
       const url = ctx?.url || "";
       const title = ctx?.title || "";
       const prefix = url ? `[From browser: ${url}] ` : "";
-      const text = `${prefix}${msg.text}`;
-      const sent = sendToAtlas(text, {
-        url,
-        title,
-        action: "send_message",
-      });
-      if (sent && msg.text !== "stop") addChat("you", msg.text);
-      sendResponse({ ok: sent });
+      let text = `${prefix}${msg.text}`;
+      if (msg.text === "stop") {
+        sendResponse({ ok: sendToAtlas(text, { url, title, action: "send_message" }) });
+        return;
+      }
+      // Text selected on the page is what the user means: Bhai should focus on it.
+      const selection = (ctx?.selectedText || "").trim().slice(0, 2000);
+      if (selection) text += `\n\n[Selected on the page; the user wants you to focus on this: "${selection}"]`;
+      // Drew on the page? Send what they see, drawing included.
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+      const shot = tab?.id ? await takeMarkedScreenshot(tab).catch(() => null) : null;
+      const sent = shot
+        ? sendImageToAtlas(`${text}\n\n[Attached: the page as the user sees it, with their drawing in orange. Focus on what they marked.]`, shot)
+        : sendToAtlas(text, { url, title, action: "send_message" });
+      if (sent) {
+        const notes = [
+          shot ? "🖍️ with your drawing" : "",
+          selection ? `📌 "${selection.slice(0, 100)}${selection.length > 100 ? "…" : ""}"` : "",
+        ].filter(Boolean);
+        addChat("you", [msg.text, ...notes].join("\n"));
+      }
+      sendResponse({ ok: sent, drawing: !!shot });
+    })();
+    return true;
+  }
+
+  // "Mark up page": drawing layer on the current tab (draw.js).
+  if (msg.type === "start_draw") {
+    (async () => {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (!tab?.id || !/^https?:|^file:/.test(tab.url || "")) {
+        sendResponse({ ok: false, error: "Chrome doesn't let extensions draw on this page." });
+        return;
+      }
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["draw.js"] });
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || "Couldn't open drawing on this page." });
+      }
+    })();
+    return true;
+  }
+  if (msg.type === "clear_draw") {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
+      if (tab?.id) chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => window.__bhaiDraw?.remove() }).catch(() => {});
+      sendResponse({ ok: true });
     });
     return true;
   }

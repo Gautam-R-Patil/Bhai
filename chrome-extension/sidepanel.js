@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 const messages = $('messages');
 const input = $('input');
 const sendBtn = $('btnSend');
-const chips = [$('btnSummary'), $('btnExplain')];
+const chips = [$('btnSummary'), $('btnExplain'), $('btnDraw')];
 
 let canChat = false;
 
@@ -97,8 +97,10 @@ async function sendText() {
   input.value = '';
   autosize();
   const resp = await send({ type: 'send_message', text });
-  if (resp?.ok) setBusy(true, 'Thinking…');
-  else { input.value = text; autosize(); }
+  if (resp?.ok) {
+    setBusy(true, resp.drawing ? 'Looking at your drawing…' : 'Thinking…');
+    if (resp.drawing) $('drawNote').classList.add('hidden');
+  } else { input.value = text; autosize(); }
 }
 
 function autosize() {
@@ -120,6 +122,24 @@ $('btnExplain').addEventListener('click', async () => {
   const resp = await send({ type: 'send_selection', question: 'Explain this simply.' });
   if (resp?.ok) setBusy(true, 'Thinking…');
 });
+function showHint(text) {
+  $('hint').textContent = text || '';
+  if (text) setTimeout(() => { if ($('hint').textContent === text) $('hint').textContent = ''; }, 5000);
+}
+
+async function startDrawing() {
+  const resp = await send({ type: 'start_draw' });
+  if (!resp?.ok) return showHint(resp?.error || "Couldn't open drawing on this page.");
+  $('drawNote').classList.remove('hidden');
+  showHint('');
+}
+$('btnDraw').addEventListener('click', startDrawing);
+$('btnDrawEdit').addEventListener('click', startDrawing);
+$('btnDrawRemove').addEventListener('click', async () => {
+  await send({ type: 'clear_draw' });
+  $('drawNote').classList.add('hidden');
+});
+
 $('btnStop').addEventListener('click', () => {
   send({ type: 'send_message', text: 'stop' });
   setBusy(false);

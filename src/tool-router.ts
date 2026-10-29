@@ -216,6 +216,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "browser_scroll",
             "browser_analyze",
             "browser_run_js",
+            "browser_mark",
             "browser_wait",
             "browser_select",
             "browser_right_click",

@@ -35,6 +35,7 @@ import { audioVisualize } from "./audio-visualize.js";
 import { blenderScript } from "./blender.js";
 import { brandAudit } from "./brand-audit.js";
 import { captchaAfterAction } from "./browser/captcha.js";
+import { browserMark } from "./browser/mark.js";
 import { getActivePage } from "./browser/core.js";
 import {
     browserAnalyze,
@@ -521,6 +522,7 @@ registry.set(browserExtract.schema.function.name, browserExtract);
 registry.set(browserBack.schema.function.name, browserBack);
 registry.set(browserAnalyze.schema.function.name, browserAnalyze);
 registry.set(browserRunJs.schema.function.name, browserRunJs);
+registry.set(browserMark.schema.function.name, browserMark);
 registry.set(browserWait.schema.function.name, browserWait);
 registry.set(browserSelect.schema.function.name, browserSelect);
 registry.set(browserSaveStrategy.schema.function.name, browserSaveStrategy);
