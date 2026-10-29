@@ -87,6 +87,31 @@ export function hardAllow(_content: string, source: Source, importance: number, 
     return { allow: false, reason: "" };
 }
 
+// Reject reasons that must win even over an explicit allow — binary blobs, tool
+// telemetry and spill markers are never worth storing whatever the category or
+// importance. The shape-based rejects (oversize, pure_json) are overridable.
+const UNCONDITIONAL_REJECT_REASONS = new Set(["tool_result_prefix", "binary_blob", "wm_spill_marker"]);
+
+export type GateVerdict = { verdict: "reject" | "allow" | "undecided"; reason: string };
+
+/**
+ * Compose hardReject + hardAllow in the correct precedence. hardReject alone
+ * runs BEFORE hardAllow at the call site, so a curated/high-importance memory
+ * that happens to be pure JSON or >2000 chars (e.g. a brand profile) was dropped
+ * despite an explicit allow. Order: unconditional rejects → allow → shape rejects.
+ * "undecided" means neither fired — caller falls through to the LLM gate.
+ */
+export function gateVerdict(content: string, source: Source, importance: number, category: string): GateVerdict {
+    const rej = hardReject(content, source, importance, category);
+    if (rej.reject && UNCONDITIONAL_REJECT_REASONS.has(rej.reason)) {
+        return { verdict: "reject", reason: rej.reason };
+    }
+    const allow = hardAllow(content, source, importance, category);
+    if (allow.allow) return { verdict: "allow", reason: allow.reason };
+    if (rej.reject) return { verdict: "reject", reason: rej.reason };
+    return { verdict: "undecided", reason: "" };
+}
+
 const LLM_TIMEOUT_MS = 2000;
 const LLM_CACHE_MAX = 10000;
 const llmCache = new Map<string, "ADD" | "DROP">();

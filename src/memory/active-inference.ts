@@ -80,7 +80,9 @@ export function makeInferenceDecision(
         freeEnergy: entropy,
         entropy,
         bestQueryIndex: 0,
-        explorationScore: Math.min(1, entropy / Math.log(beliefs.hypotheses.length || 2)),
+        // `|| 2` only guarded length 0; length 1 gives log(1)=0 → 0/0 = NaN.
+        // A single hypothesis has zero entropy, so exploration score is 0.
+        explorationScore: Math.min(1, entropy / Math.log(Math.max(2, beliefs.hypotheses.length))),
     };
 }
 

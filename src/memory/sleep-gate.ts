@@ -45,19 +45,22 @@ export async function runSleepGateConsolidation(db: Database): Promise<Consolida
         if (existing.length === 0) return result;
         result.totalProcessed = existing.length;
 
-        // Compute similarity matrices
-        const recentEmbeddings = await getMemoryEmbeddings(db, recent.map(m => m.id));
-        const existingEmbeddings = await getMemoryEmbeddings(db, existing.map(m => m.id));
+        // Load embeddings aligned to the entry arrays, then drop entries whose
+        // embedding is missing in LOCKSTEP — otherwise the similarity matrices
+        // (sized by embeddings) and the native entry arrays (sized by rows) fall
+        // out of index alignment and forget/merge decisions hit the wrong memory.
+        const recentA = alignEmbeddings(recent, await getMemoryEmbeddings(db, recent.map(m => m.id)));
+        const existingA = alignEmbeddings(existing, await getMemoryEmbeddings(db, existing.map(m => m.id)));
 
         // Try native pipeline
         const native = loadNative();
-        if (native && recentEmbeddings.length > 0 && existingEmbeddings.length > 0) {
+        if (native && recentA.embeddings.length > 0 && existingA.embeddings.length > 0) {
             // Compute similarity matrices
-            const recentToExisting = computeSimilarityMatrix(recentEmbeddings, existingEmbeddings);
-            const existingPairwise = computeSimilarityMatrix(existingEmbeddings, existingEmbeddings);
+            const recentToExisting = computeSimilarityMatrix(recentA.embeddings, existingA.embeddings);
+            const existingPairwise = computeSimilarityMatrix(existingA.embeddings, existingA.embeddings);
 
-            const nativeRecent = recent.map(m => toNativeEntry(m, recentEmbeddings));
-            const nativeExisting = existing.map(m => toNativeEntry(m, existingEmbeddings));
+            const nativeRecent = recentA.rows.map(m => toNativeEntry(m));
+            const nativeExisting = existingA.rows.map(m => toNativeEntry(m));
 
             const sgResult = native.runSleepGate(
                 nativeRecent, nativeExisting,
@@ -141,8 +144,10 @@ function getExistingMemories(db: Database, limit: number): MemoryRow[] {
     }));
 }
 
-async function getMemoryEmbeddings(db: Database, ids: number[]): Promise<Float32Array[]> {
-    if (!isReady() || ids.length === 0) return [];
+// Returns one slot per input id (null when that memory has no embedding row), so
+// the result stays index-aligned with `ids` for alignEmbeddings() to zip.
+async function getMemoryEmbeddings(db: Database, ids: number[]): Promise<(Float32Array | null)[]> {
+    if (!isReady() || ids.length === 0) return ids.map(() => null);
 
     try {
         const { bufferToEmbedding } = await import("./embeddings.js");
@@ -151,7 +156,7 @@ async function getMemoryEmbeddings(db: Database, ids: number[]): Promise<Float32
             `SELECT memory_id, embedding FROM memory_embeddings WHERE memory_id IN (${placeholders})`,
             ids
         );
-        if (!results[0]?.values) return [];
+        if (!results[0]?.values) return ids.map(() => null);
 
         // Build a map keyed by memory_id, then return in the original ids order
         const embMap = new Map<number, Float32Array>();
@@ -161,24 +166,40 @@ async function getMemoryEmbeddings(db: Database, ids: number[]): Promise<Float32
             embMap.set(memId, bufferToEmbedding(blob));
         }
 
-        // Return embeddings in the same order as the input ids (skip missing)
-        const out: Float32Array[] = [];
-        for (const id of ids) {
-            const emb = embMap.get(id);
-            if (emb) out.push(emb);
-        }
-        return out;
+        return ids.map(id => embMap.get(id) ?? null);
     } catch (err) {
         console.warn("[SLEEP-GATE] Failed to load embeddings:", (err as Error).message);
-        return [];
+        return ids.map(() => null);
     }
+}
+
+/**
+ * Zip rows with their (nullable, index-aligned) embeddings and keep only the
+ * pairs that have an embedding, in lockstep. This guarantees the returned
+ * `rows[i]` always corresponds to `embeddings[i]` so similarity matrices built
+ * from `embeddings` index-align with native entries built from `rows`.
+ */
+export function alignEmbeddings<T>(
+    rows: T[],
+    embeddings: (Float32Array | null)[],
+): { rows: T[]; embeddings: Float32Array[] } {
+    const outRows: T[] = [];
+    const outEmb: Float32Array[] = [];
+    for (let i = 0; i < rows.length; i++) {
+        const e = embeddings[i];
+        if (e) {
+            outRows.push(rows[i]);
+            outEmb.push(e);
+        }
+    }
+    return { rows: outRows, embeddings: outEmb };
 }
 
 function computeSimilarityMatrix(a: Float32Array[], b: Float32Array[]): number[][] {
     return a.map(av => b.map(bv => cosineSimilarity(av, bv)));
 }
 
-function toNativeEntry(m: MemoryRow, _embeddings: Float32Array[]): any {
+function toNativeEntry(m: MemoryRow): any {
     return {
         id: m.id, content: m.content, importance: m.importance,
         access_count: m.accessCount, days_old: m.daysOld,

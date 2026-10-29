@@ -149,6 +149,10 @@ export function saveStrategy(opts: {
 export function getStrategy(query: string): Strategy | null {
     if (!initialized) initStrategyLibrary();
     if (store.strategies.length === 0) return null;
+    // An empty/whitespace query normalizes to "" which patternLower.includes("")
+    // matches for every strategy (+5 each) — injecting an unrelated strategy into
+    // the prompt for a contentless (e.g. media-only) message.
+    if (query.trim() === "") return null;
 
     const queryLower = query.toLowerCase();
     const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
