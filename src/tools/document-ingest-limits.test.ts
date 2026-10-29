@@ -89,7 +89,12 @@ async function ingestHello(): Promise<string> {
     return JSON.stringify(doc);
 }
 
-describe("ingestPdfToDocument limits", () => {
+// The decompression-bomb case kills the child via an RSS-poll watchdog; whether
+// the poll catches the spike before parse completes is timing-sensitive and can
+// miss once on a loaded Windows runner (killed.ok briefly true). Retry absorbs
+// that race. If it fails ALL attempts on Windows, the cap is genuinely not
+// enforced there — investigate rather than bumping retries.
+describe("ingestPdfToDocument limits", { retry: 2 }, () => {
     it("reads a PDF's text in a child process", async () => {
         expect(await ingestHello()).toContain("Hello Ingest");
         expect(children).toHaveLength(1);

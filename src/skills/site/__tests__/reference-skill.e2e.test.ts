@@ -35,7 +35,11 @@ afterAll(async () => {
     await browser?.close();
 });
 
-describe("reference skill on the synthetic shop", () => {
+// Real headless-Chromium E2E against the synthetic shop: a few assertions turn
+// on request/render ordering that drifts on a loaded Windows runner (seen as
+// 'failed' where 'options' was expected). Retry absorbs the transient; a real
+// regression fails all attempts. Same class as spa-primitives.e2e.
+describe("reference skill on the synthetic shop", { retry: 2 }, () => {
     it(`search → select → confirm → done, ${RUNS}/${RUNS}`, async (ctx) => {
         if (!browser) return ctx.skip();
         const shop = await startShop();
@@ -160,7 +164,7 @@ describe("reference skill on the synthetic shop", () => {
 });
 
 
-describe("typeCode (OTP split into boxes)", () => {
+describe("typeCode (OTP split into boxes)", { retry: 2 }, () => {
     it("fills six boxes, leaves a promo field alone, refuses a wrong length, doesn't split address fields", async (ctx) => {
         if (!browser) return ctx.skip();
         const page = await browser.newPage();
@@ -182,7 +186,7 @@ describe("typeCode (OTP split into boxes)", () => {
     }, 30_000);
 });
 
-describe("recovery", () => {
+describe("recovery", { retry: 2 }, () => {
     it("a 5-second network drop is waited out; a closed tab is reopened and the task carries on", async (ctx) => {
         if (!browser) return ctx.skip();
         const shop = await startShop();
@@ -232,7 +236,7 @@ describe("recovery", () => {
 });
 
 
-describe("hardening: the commit guard, visible-only matches, Leave site?, richer snapshots", () => {
+describe("hardening: the commit guard, visible-only matches, Leave site?, richer snapshots", { retry: 2 }, () => {
     const fixture = path.join(builtin, "synthetic-shop");
     // The reference skill, except that once the captcha is ticked, select runs
     // `actions` (which reach the place-order button) instead of returning confirm.
