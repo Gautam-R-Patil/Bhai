@@ -6,16 +6,25 @@
 // this handler only runs a confirm after the owner said yes in a new message;
 // it then mints the single-use token the runtime requires.
 
-import { pageDriver } from "../skills/site/page-driver.js";
-import { findSiteSkill } from "../skills/site/registry.js";
-import { drainTrace, startTrace, tracing } from "../skills/site/mint/recorder.js";
-import { pendingRepair, repairBlocked } from "../skills/site/drift.js";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { currentSwarmRun } from "../agents/swarm-context.js";
 import { getDataDir } from "../config/paths.js";
-import { loadCheckpoint, mintConsent, type PageDriver, type Phase, runSiteTask, saveCheckpoint, type SiteTask, type SiteTaskResult } from "../skills/site/runtime.js";
 import { checkConsent } from "../security/consent.js";
+import { pendingRepair, repairBlocked } from "../skills/site/drift.js";
+import { drainTrace, startTrace, tracing } from "../skills/site/mint/recorder.js";
+import { pageDriver } from "../skills/site/page-driver.js";
+import { findSiteSkill } from "../skills/site/registry.js";
+import {
+    loadCheckpoint,
+    mintConsent,
+    type PageDriver,
+    type Phase,
+    runSiteTask,
+    type SiteTask,
+    type SiteTaskResult,
+    saveCheckpoint,
+} from "../skills/site/runtime.js";
 import { getActivePage } from "./browser/core.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
@@ -65,19 +74,21 @@ async function recordSession(page: any, fresh = false): Promise<boolean> {
 const REPAIR_NEXT =
     "The site changed and the learned skill no longer fits it (nothing was ordered). Tell the user. Only if they want, finish the task with the browser tools (this session is recorded on this machine); when it's done, call site_skill_mint with action repair: Bhai fixes the skill in the background from it.";
 
-// A human check (CAPTCHA) stopped the task: the owner ticks it via
-// browser_wait_for_human, then resume re-runs the phase it stopped in.
+// A CAPTCHA mid-task goes to the CAPTCHA pipeline right in the snapshot (solvers,
+// then the owner) and the skill carries on. Only one the owner didn't finish either
+// stops the task; resume then re-runs the phase it stopped in.
 // ponytail: in memory only; a restart mid-wait drops it (the owner starts again).
 const HUMAN_CHECK = "human_check";
 let humanCheck: { phase: Phase; input?: Record<string, unknown> } | null = null;
 const HANDOFF =
-    "The site is showing a human-verification check (CAPTCHA). Don't tick or solve it yourself: call browser_wait_for_human so the owner can do it.";
+    "The site has a step only the owner can finish (they were asked and it's still open). Tell them in one line.";
 
 const NEXT: Record<SiteTaskResult["status"], string> = {
     options: "Show the user these options and ask which one. Then call site_task with action select and option_id.",
     confirm:
         "Tell the user exactly what will be ordered and the total, and ask them to confirm. Only after they say yes, call site_task with action confirm, the same amount, and confirmed: true.",
-    needs_user: "Ask the user for this (e.g. the code they received). Then call site_task with action resume and answer.",
+    needs_user:
+        "Ask the user for this (e.g. the code they received). Then call site_task with action resume and answer.",
     done: "Tell the user it's done, with the summary.",
     // write_status may_have_applied: the order may exist. Never place it again.
     failed: "Tell the user what went wrong; you can continue with the browser tools if they want.",
@@ -108,7 +119,8 @@ export const siteTask: ToolDefinition = {
     },
 
     async handler(input) {
-        if (busy) return JSON.stringify({ error: "A site task step is still running. Wait for it before the next call." });
+        if (busy)
+            return JSON.stringify({ error: "A site task step is still running. Wait for it before the next call." });
         busy = true;
         try {
             return await run(input);
@@ -123,12 +135,13 @@ async function run(input: Record<string, unknown>): Promise<string> {
         const action = input.action as string;
         const page = await getActivePage();
         const base = pageDriver(page, 5000, () => getActivePage()); // a closed tab is reopened
-        // Stop before the skill sees a CAPTCHA page: it must never click it.
+        // The skill never sees a CAPTCHA page (it must never click one): the pipeline clears it first.
         const driver: PageDriver = {
             ...base,
             snapshot: async () => {
-                const { quickCaptchaCheck } = await import("./browser/captcha.js"); // lazy: avoids an import cycle via the bridge
-                if (await quickCaptchaCheck(page)) throw new Error(HUMAN_CHECK);
+                const { clearCaptchaIfAny } = await import("./browser/captcha.js"); // lazy: avoids an import cycle via the bridge
+                const check = await clearCaptchaIfAny(page, input._signal as AbortSignal | undefined);
+                if (check.present && !check.cleared) throw new Error(HUMAN_CHECK);
                 return base.snapshot();
             },
         };
@@ -140,11 +153,11 @@ async function run(input: Record<string, unknown>): Promise<string> {
                 if (!again) humanCheck = { phase: r.task.phase, input: phaseInput };
                 return JSON.stringify({
                     status: "needs_user",
-                    needsUser: { kind: HUMAN_CHECK, prompt: "Complete the human-verification check on the site" },
+                    needsUser: { kind: HUMAN_CHECK, prompt: "Finish the open step on the site" },
                     writeStatus: r.writeStatus,
                     task_id: r.task.taskId,
                     steps: r.task.stepCount,
-                    next_step: `${HANDOFF} When it returns cleared, ${again ? "call site_task with action confirm again with the same amount" : "call site_task with action resume (no answer needed)"}.`,
+                    next_step: `${HANDOFF} When they say it's done, ${again ? "call site_task with action confirm again with the same amount" : "call site_task with action resume (no answer needed)"}.`,
                 });
             }
             current = ["done", "failed", "aborted", "refused"].includes(r.status) ? null : r.task;
@@ -155,8 +168,8 @@ async function run(input: Record<string, unknown>): Promise<string> {
             const next = repair
                 ? REPAIR_NEXT
                 : r.needsUser?.kind === "payment"
-                    ? "The order is on the site's payment page. Ask the user to finish paying there themselves (never enter card or UPI details); when they say it's done, call site_task with action resume. Do NOT order again."
-                    : r.writeStatus === "may_have_applied" && r.status !== "done" && r.status !== "needs_user"
+                  ? "The order is on the site's payment page. Ask the user to finish paying there themselves (never enter card or UPI details); when they say it's done, call site_task with action resume. Do NOT order again."
+                  : r.writeStatus === "may_have_applied" && r.status !== "done" && r.status !== "needs_user"
                     ? "The order may already have been placed (the submit didn't confirm). Do NOT order again: tell the user, and check the site's orders page with the browser tools."
                     : r.reason === "total_changed"
                       ? "The total changed since the user agreed. Show the new total (if any) and ask again before confirming."
@@ -198,34 +211,64 @@ async function run(input: Record<string, unknown>): Promise<string> {
                 });
             }
             if (current?.commit?.state === "sent") {
-                return JSON.stringify({ error: "The last order may already have been placed. Check the site's orders page before starting another one." });
+                return JSON.stringify({
+                    error: "The last order may already have been placed. Check the site's orders page before starting another one.",
+                });
             }
             if (current) {
                 current.status = "superseded"; // a new search abandons the parked one
                 saveCheckpoint(dir, current);
             }
             const searchInput = { query: input.query };
-            return view(await runSiteTask({ skillPath, phase: "search", input: searchInput, driver, checkpointDir: dir }), searchInput);
+            return view(
+                await runSiteTask({ skillPath, phase: "search", input: searchInput, driver, checkpointDir: dir }),
+                searchInput,
+            );
         }
         current ??= restoreParked(); // a parked task survives a restart (its consent does not)
         if (!current) return JSON.stringify({ error: "No site task in progress. Start with action: search." });
         if (action === "select") {
             const selectInput = { id: input.option_id };
-            return view(await runSiteTask({ task: current, phase: "select", input: selectInput, driver, checkpointDir: dir }), selectInput);
+            return view(
+                await runSiteTask({ task: current, phase: "select", input: selectInput, driver, checkpointDir: dir }),
+                selectInput,
+            );
         }
         if (action === "confirm") {
             // Checkout needs a page that can take the "Place order?" dialog and prove one
             // match (the built-in browser). Refuse before anything is marked as sent.
             if (typeof (page as { on?: unknown }).on !== "function") {
-                return JSON.stringify({ error: "Checkout through the Chrome extension isn't supported yet. Ask the user to place the order themselves, or use the built-in browser." });
+                return JSON.stringify({
+                    error: "Checkout through the Chrome extension isn't supported yet. Ask the user to place the order themselves, or use the built-in browser.",
+                });
             }
             if (current.commit?.state === "sent") {
-                return JSON.stringify({ error: "The last order may already have been placed. Check the site's orders page before anything else; never order again blindly." });
+                return JSON.stringify({
+                    error: "The last order may already have been placed. Check the site's orders page before anything else; never order again blindly.",
+                });
             }
             if (!current.pendingConfirm || input.amount !== current.pendingConfirm.amount) {
-                return JSON.stringify({ error: "Nothing is waiting for confirmation at that total. Show the user the current summary first." });
+                return JSON.stringify({
+                    error: "Nothing is waiting for confirmation at that total. Show the user the current summary first.",
+                });
             }
-            return view(await runSiteTask({ task: current, phase: "confirm", consentToken: mintConsent(current), driver, checkpointDir: dir }));
+            return view(
+                await runSiteTask({
+                    task: current,
+                    phase: "confirm",
+                    consentToken: mintConsent(current),
+                    driver,
+                    checkpointDir: dir,
+                }),
+            );
+        }
+        if (action === "resume" && humanCheck) {
+            const { phase, input: phaseInput } = humanCheck;
+            current.repeats = {}; // the same step again after the check is not a loop
+            return view(
+                await runSiteTask({ task: current, phase, input: phaseInput, driver, checkpointDir: dir }),
+                phaseInput,
+            );
         }
         if (action === "resume" && humanCheck) {
             const { phase, input: phaseInput } = humanCheck;
@@ -233,7 +276,15 @@ async function run(input: Record<string, unknown>): Promise<string> {
             return view(await runSiteTask({ task: current, phase, input: phaseInput, driver, checkpointDir: dir }), phaseInput);
         }
         if (action === "resume") {
-            return view(await runSiteTask({ task: current, phase: "resume", answer: input.answer as string, driver, checkpointDir: dir }));
+            return view(
+                await runSiteTask({
+                    task: current,
+                    phase: "resume",
+                    answer: input.answer as string,
+                    driver,
+                    checkpointDir: dir,
+                }),
+            );
         }
         return JSON.stringify({ error: `Unknown action: ${action}` });
     }

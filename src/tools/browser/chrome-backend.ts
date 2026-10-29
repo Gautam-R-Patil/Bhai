@@ -71,6 +71,38 @@ export class ChromePageProxy {
         return this._url;
     }
 
+    /**
+     * Re-read url/title after something that may navigate (a click, Enter). A link's
+     * navigation starts a beat after the click, so look again shortly after and, while
+     * the tab is loading, wait for it (up to 8s) instead of reporting the old page.
+     */
+    private async syncTab(): Promise<void> {
+        const read = () =>
+            getActiveExtensionTab().catch(() => null) as Promise<{
+                url: string;
+                title?: string;
+                status?: string;
+                pendingUrl?: string;
+            } | null>;
+        const before = this._url;
+        await new Promise((r) => setTimeout(r, 250));
+        let tab = await read();
+        const end = Date.now() + 8000;
+        while (
+            tab &&
+            (tab.status === "loading" || (tab.pendingUrl && tab.pendingUrl !== tab.url)) &&
+            Date.now() < end
+        ) {
+            await new Promise((r) => setTimeout(r, 200));
+            tab = await read();
+        }
+        if (tab?.url) {
+            this._url = tab.url;
+            this._title = tab.title || "";
+        }
+        if (this._url !== before) await waitBridgeReady(3000, 200, Date.now()).catch(() => {});
+    }
+
     /** The active tab's URL right now (url() is a cache: clicks, redirects and tab switches don't update it). */
     async liveUrl(): Promise<string> {
         const tab = await getActiveExtensionTab();
@@ -168,14 +200,35 @@ export class ChromePageProxy {
     }
 
     // Interaction proxies
+    /**
+     * A click lands only inside the viewport (real input, like a person's). A point
+     * outside it (a scan label below the fold) is scrolled into view first and
+     * moved by however far the page actually scrolled.
+     */
+    private async intoView(x: number, y: number): Promise<[number, number]> {
+        const v = (await this.evaluate("({ w: innerWidth, h: innerHeight })").catch(() => null)) as {
+            w: number;
+            h: number;
+        } | null;
+        if (!v || (x >= 0 && y >= 0 && x < v.w && y < v.h)) return [x, y];
+        const dx = x < 0 || x >= v.w ? Math.round(x - v.w / 2) : 0;
+        const dy = y < 0 || y >= v.h ? Math.round(y - v.h / 2) : 0;
+        const moved = (await this.evaluate(
+            `(() => { const sx = scrollX, sy = scrollY; scrollBy({ left: ${dx}, top: ${dy}, behavior: "instant" }); return { dx: scrollX - sx, dy: scrollY - sy }; })()`,
+        ).catch(() => null)) as { dx: number; dy: number } | null;
+        return moved ? [x - moved.dx, y - moved.dy] : [x, y];
+    }
+
     mouse = {
         click: async (x: number, y: number, opts?: { button?: string }) => {
-            await sendBridgeCommand("click_at", { x, y, button: opts?.button || "left" });
-            await this.refresh();
+            const [cx, cy] = await this.intoView(x, y);
+            await sendBridgeCommand("click_at", { x: cx, y: cy, button: opts?.button || "left" });
+            await this.syncTab();
         },
         dblclick: async (x: number, y: number) => {
-            await sendBridgeCommand("click_at", { x, y, doubleClick: true });
-            await this.refresh();
+            const [cx, cy] = await this.intoView(x, y);
+            await sendBridgeCommand("click_at", { x: cx, y: cy, doubleClick: true });
+            await this.syncTab();
         },
         // wheel() — maps deltaX/deltaY to the Chrome extension's scroll command.
         // page.mouse.wheel() is a Playwright-only API; ChromePageProxy must implement it.
@@ -203,9 +256,16 @@ export class ChromePageProxy {
     };
 
     keyboard = {
-        press: async (key: string) => {
-            await sendBridgeCommand("keyboard", { key, action: "press" });
-            await this.refresh();
+        // Playwright-style combos ("ControlOrMeta+a", "Shift+Tab") as a key plus modifiers.
+        press: async (combo: string) => {
+            const parts = combo.length > 1 ? combo.split("+") : [combo];
+            const key = parts.pop() || combo;
+            const modifiers = parts.map((m) =>
+                m === "ControlOrMeta" ? (process.platform === "darwin" ? "Meta" : "Control") : m === "Cmd" ? "Meta" : m,
+            );
+            await sendBridgeCommand("keyboard", { key, modifiers, action: "press" });
+            if (key === "Enter") await this.syncTab();
+            else await this.refresh();
         },
         down: async (key: string) => {
             await sendBridgeCommand("keyboard", { key, action: "down" });
@@ -229,11 +289,7 @@ export class ChromePageProxy {
     };
 
     async screenshot(opts?: { type?: string; quality?: number; fullPage?: boolean }): Promise<Buffer> {
-        const result = (await sendBridgeCommand("screenshot", {
-            format: opts?.type || "jpeg",
-            quality: opts?.quality || 55,
-        })) as { base64: string };
-        return Buffer.from(result.base64, "base64");
+        return chromeScreenshot(opts?.type === "png" ? "png" : "jpeg", opts?.quality);
     }
 
     // Frames — Chrome extension scans all frames via chrome.scripting
@@ -255,9 +311,15 @@ export class ChromePageProxy {
     getByText(text: string, opts?: { exact?: boolean }): ChromeLocatorProxy {
         // Convert text search to a CSS/XPath selector via JS execution
         const exact = opts?.exact ?? false;
-        const escaped = text.replace(/'/g, "\\'");
-        // Use XPath to find elements by text content
-        const xpath = exact ? `//*[text()='${escaped}']` : `//*[contains(text(),'${escaped}')]`;
+        // An XPath string literal: concat() when the text holds both quote kinds.
+        const lit = !text.includes("'")
+            ? `'${text}'`
+            : !text.includes('"')
+              ? `"${text}"`
+              : `concat('${text.split("'").join(`', "'", '`)}')`;
+        const has = (expr: string) => (exact ? `normalize-space(${expr})=${lit}` : `contains(${expr},${lit})`);
+        // Text nodes, plus buttons / inputs named by value or aria-label (<input value="Submit"> has no text node).
+        const xpath = `//*[not(self::script or self::style or self::title)][text()[${has(".")}]] | //*[@value][self::input or self::button][${has("@value")}] | //*[@aria-label][${has("@aria-label")}]`;
         return new ChromeLocatorProxy(`xpath=${xpath}`);
     }
 
@@ -296,41 +358,73 @@ export class ChromePageProxy {
     }
 }
 
-/** In-page expression: every element a Playwright-style selector (CSS or `xpath=`) matches. */
-export function matchesJs(selector: string): string {
-    if (selector.startsWith("xpath=")) {
-        return `(() => { const r = document.evaluate(${JSON.stringify(selector.slice(6))}, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null); const a = []; for (let i = 0; i < r.snapshotLength; i++) a.push(r.snapshotItem(i)); return a; })()`;
-    }
-    return `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`;
+/**
+ * The active tab's viewport. CDP first: it works with the window unfocused and in any
+ * tab; captureVisibleTab (the bridge's screenshot) needs the window in front and
+ * fails with "Cannot access contents of url" in some windows. Older extensions
+ * without the cdp command fall back to it.
+ */
+async function chromeScreenshot(format: "png" | "jpeg", quality?: number): Promise<Buffer> {
+    const cdp = (await sendBridgeCommand(
+        "cdp",
+        {
+            method: "Page.captureScreenshot",
+            params: { format, ...(format === "jpeg" ? { quality: quality || 55 } : {}) },
+        },
+        10000,
+    ).catch(() => null)) as { data?: string } | null;
+    if (cdp?.data) return Buffer.from(cdp.data, "base64");
+    const result = (await sendBridgeCommand("screenshot", { format, quality: quality || 55 })) as { base64: string };
+    return Buffer.from(result.base64, "base64");
 }
 
-/**
- * Proxy for Playwright's Locator API.
- * Routes element operations through the Chrome extension bridge by finding
- * the element via JS — CSS or `xpath=`, the index-th match (-1 = last) — and
- * using coordinate-based interaction.
- */
 export class ChromeLocatorProxy {
-    constructor(
-        private selector: string,
-        private index = 0,
-    ) {}
+    private selector: string;
+    /** Which match: 0 = first (the first visible one), -1 = last, n = nth. */
+    private index: number;
 
-    /** In-page IIFE running `body` with `el` bound to this locator's element (or undefined). */
-    withEl(body: string): string {
-        return `(() => { const all = ${matchesJs(this.selector)}; const el = all[${this.index} < 0 ? all.length - 1 : ${this.index}]; ${body} })()`;
+    constructor(selector: string, index = 0) {
+        this.selector = selector;
+        this.index = index;
     }
 
-    private run(body: string, timeout = 5000): Promise<unknown> {
-        return sendBridgeCommand("execute_js", { code: this.withEl(body) }, timeout);
+    /** A JS expression for every element the selector (CSS or xpath=) matches. */
+    private allJs(): string {
+        return this.selector.startsWith("xpath=")
+            ? `(() => { const r = document.evaluate(${JSON.stringify(this.selector.slice(6))}, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null); return Array.from({ length: r.snapshotLength }, (_, k) => r.snapshotItem(k)); })()`
+            : `(() => { try { return Array.from(document.querySelectorAll(${JSON.stringify(this.selector)})); } catch { return []; } })()`;
+    }
+
+    /** A JS expression for the element, honouring the index. */
+    private elJs(): string {
+        // "first" means the first one a person could click: hidden duplicates (menus, templates) come first in the DOM.
+        return `(() => {
+            const all = ${this.allJs()};
+            const shown = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+            const i = ${this.index};
+            if (i === 0) return all.find(shown) || all[0] || null;
+            return all[i < 0 ? all.length + i : i] || null;
+        })()`;
+    }
+
+    /** In-page IIFE running `body` with `el` bound to this locator's element (or null). */
+    withEl(body: string): string {
+        return `(() => { const el = ${this.elJs()}; ${body} })()`;
+    }
+
+    private run<T>(body: string, timeoutMs = 5000): Promise<T> {
+        return sendBridgeCommand("execute_js", { code: this.withEl(body) }, timeoutMs) as Promise<T>;
     }
 
     private async findElement(): Promise<{ x: number; y: number; found: boolean }> {
-        const result = (await this.run(
-            "if (!el) return { found: false, x: 0, y: 0 }; const r = el.getBoundingClientRect(); return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };",
+        const r = await this.run<{ x: number; y: number; found: boolean } | null>(
+            `if (!el) return { found: false, x: 0, y: 0 };
+            el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+            const rect = el.getBoundingClientRect();
+            return { found: true, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };`,
             10000,
-        )) as { x: number; y: number; found: boolean } | null;
-        return result || { found: false, x: 0, y: 0 };
+        );
+        return r || { found: false, x: 0, y: 0 };
     }
 
     async click(opts?: { timeout?: number }): Promise<void> {
@@ -357,18 +451,18 @@ export class ChromeLocatorProxy {
     }
 
     async count(): Promise<number> {
-        const n = await sendBridgeCommand("execute_js", { code: `${matchesJs(this.selector)}.length` }, 5000);
+        const n = await sendBridgeCommand("execute_js", { code: `${this.allJs()}.length` }, 5000);
         return (n as number) || 0;
     }
 
-    async boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> {
-        return (await this.run(
+    boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> {
+        return this.run(
             "if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height };",
-        )) as { x: number; y: number; width: number; height: number } | null;
+        );
     }
 
-    async textContent(): Promise<string | null> {
-        return (await this.run("return el ? el.textContent : null;")) as string | null;
+    textContent(): Promise<string | null> {
+        return this.run("return el ? el.textContent : null;");
     }
 
     async innerText(): Promise<string> {
@@ -378,13 +472,16 @@ export class ChromeLocatorProxy {
     async isVisible(): Promise<boolean> {
         return (
             ((await this.run(
-                "if (!el) return false; const s = window.getComputedStyle(el); return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';",
+                "if (!el) return false; const s = getComputedStyle(el), r = el.getBoundingClientRect(); return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0' && r.width > 0 && r.height > 0;",
             )) as boolean) || false
         );
     }
 
     async scrollIntoViewIfNeeded(): Promise<void> {
-        await this.run("if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });");
+        // Instant, and only when needed: callers measure the box right after.
+        await this.run(
+            "if (!el) return; const r = el.getBoundingClientRect(); if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });",
+        );
     }
 
     async selectOption(value: string | string[]): Promise<string[]> {
@@ -610,11 +707,7 @@ export class ChromeExtensionBackend implements BrowserBackend {
     }
 
     async screenshot(opts?: { quality?: number; fullPage?: boolean }): Promise<Buffer> {
-        const result = (await sendBridgeCommand("screenshot", {
-            format: "jpeg",
-            quality: opts?.quality || 55,
-        })) as { base64: string };
-        return Buffer.from(result.base64, "base64");
+        return chromeScreenshot("jpeg", opts?.quality);
     }
 
     async waitForSelector(selector: string, timeoutMs = 10000): Promise<boolean> {

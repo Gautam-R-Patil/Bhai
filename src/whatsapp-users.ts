@@ -292,7 +292,20 @@ export function generateOTP(): PendingOTP {
     return pendingOTP;
 }
 
+// The desktop's "New Code" button drops a fresh code here; it replaces the
+// one generated at connect time.
+const OTP_SIGNAL_PATH = path.join(DATA_DIR, "whatsapp-otp-signal.json");
+
 export function getActiveOTP(): string | null {
+    try {
+        const sig = JSON.parse(fs.readFileSync(OTP_SIGNAL_PATH, "utf-8"));
+        fs.rmSync(OTP_SIGNAL_PATH, { force: true });
+        if (typeof sig.code === "string" && /^\d{6}$/.test(sig.code) && sig.expiresAt > Date.now()) {
+            pendingOTP = { code: sig.code, expiresAt: Math.min(sig.expiresAt, Date.now() + OTP_TTL_MS) };
+        }
+    } catch {
+        /* no new code from the desktop */
+    }
     if (!pendingOTP) return null;
     if (Date.now() > pendingOTP.expiresAt) {
         pendingOTP = null;

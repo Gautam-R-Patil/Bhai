@@ -10,6 +10,7 @@ import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
 import type { SendMailOptions, Transporter } from "nodemailer/lib/mailer";
 import { type ChannelContext, runAgent } from "./agent.js";
+import { withStuckReplyLine } from "./channel-text.js";
 import type { Config } from "./config.js";
 import type { LLMClient } from "./llm.js";
 import { sendOverlayNotification } from "./overlay/overlay-chat.js";
@@ -472,7 +473,7 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                         isOwner: senderIsOwner,
                     },
                 );
-                const replyText = response.text;
+                const replyText = withStuckReplyLine(response, senderIsOwner);
                 console.log(`   🤖 Agent response: ${replyText.substring(0, 200)}...`);
 
                 if (replyText.trim() && replyText.trim() !== "[NO_REPLY]") {
@@ -549,13 +550,14 @@ function stripHtmlTags(html: string): string {
     // IMPORTANT: Decode HTML entities BEFORE stripping tags to prevent
     // injection via encoded entities like &lt;system&gt;
     let text = html;
-    // 1. Decode entities first (while still inside tag context)
-    text = text.replace(/&amp;/g, "&");
+    // 1. Decode entities first (while still inside tag context). &amp; goes
+    // last so "&amp;lt;" decodes once to the text "&lt;", not twice to "<".
     text = text.replace(/&lt;/g, "<");
     text = text.replace(/&gt;/g, ">");
     text = text.replace(/&quot;/g, '"');
     text = text.replace(/&#39;/g, "'");
     text = text.replace(/&nbsp;/g, " ");
+    text = text.replace(/&amp;/g, "&");
     // 2. Convert structural HTML to whitespace
     text = text.replace(/<br\s*\/?>/gi, "\n");
     text = text.replace(/<\/p>/gi, "\n\n");

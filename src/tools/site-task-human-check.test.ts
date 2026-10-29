@@ -1,6 +1,6 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
-// A CAPTCHA mid-task: site_task stops before the skill sees it (the skill must
-// never click it), hands it to the owner via browser_wait_for_human, and
+// A CAPTCHA mid-task that the pipeline (solvers, then the owner) didn't clear:
+// site_task stops before the skill sees it (the skill must never click it), and
 // `resume` re-runs the phase it stopped in with the same input.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +15,11 @@ const snap = { url: "https://shop.test/", title: "Shop", text: "", elements: [] 
 vi.mock("./browser/core.js", () => ({
     getActivePage: async () => ({ url: () => snap.url, evaluate: async () => snap }),
 }));
-vi.mock("./browser/captcha.js", () => ({ quickCaptchaCheck: async () => (captchaOn.value ? "recaptcha-v2" : null) }));
+// A CAPTCHA the solvers can't get past (when they can, the skill never sees it at all).
+vi.mock("./browser/captcha.js", () => ({
+    clearCaptchaIfAny: async () =>
+        captchaOn.value ? { present: true, cleared: false, detail: {} } : { present: false },
+}));
 vi.mock("../skills/site/registry.js", () => ({ findSiteSkill: () => "/s/skill.cjs" }));
 vi.mock("../skills/site/runtime.js", async (orig) => ({ ...(await orig<object>()), runSiteTask }));
 
@@ -45,14 +49,14 @@ async function runtimeLike(opts: { driver: { snapshot(): Promise<unknown> } }) {
     return { status: "options", options: [{ id: "1", label: "Pizza" }], writeStatus: "not_attempted", task };
 }
 
-describe("site_task on a human-verification check", () => {
-    it("hands off to the owner, then resumes the same phase", async () => {
+describe("site_task on a CAPTCHA the pipeline couldn't clear", () => {
+    it("stops for the owner, then resumes the same phase", async () => {
         const { siteTask } = await import("./site-task.js");
         runSiteTask.mockImplementationOnce(runtimeLike);
         const paused = JSON.parse(await siteTask.handler({ action: "search", query: "pizza" }));
         expect(paused.status).toBe("needs_user");
         expect(paused.needsUser.kind).toBe("human_check");
-        expect(paused.next_step).toContain("browser_wait_for_human");
+        expect(paused.next_step).toContain("only the owner can finish");
         expect(paused.next_step).toContain("action resume");
 
         captchaOn.value = false; // the owner ticked it

@@ -19,6 +19,8 @@ import {
     tryHalfOpen,
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
+import { takeStuckMarker } from "./channel-text.js";
+import { historyForCaller } from "./guest-history.js";
 import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
 import {
@@ -51,14 +53,18 @@ import {
 } from "./agents/tool-call-guardrail.js";
 import { offloadIfLarge } from "./agents/tool-output-offload.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
+import { withoutGrid } from "./screen/grid-overlay.js";
 import { anySecretTyped, hasVaultToken, resetVaultTask, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
 import {
     buildVerifyReminder,
-    isMutator,
+    drivesScreen as gateDrivesScreen,
     isVerifier,
     newVerifyGateState,
-    recordToolCall as recordToolCallForVerifyGate,
+    pickReceipt,
+    type Receipt,
+    recordBatch as recordBatchForVerifyGate,
     shouldForceVerify,
+    type VerifyGateState,
 } from "./agents/verify-before-done.js";
 import { getDimensionValue } from "./harness/registry.js";
 import {
@@ -89,7 +95,15 @@ import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./me
 // ── Dynamic Context Injections ────────────────
 import { getCoreMemory, recall, recallConversation } from "./memory/sqlite.js";
 import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
-import { getTaskLearningsContext } from "./memory/task-learnings.js";
+import {
+    buildPlaybook,
+    inLaneOrder,
+    type PlaybookCall,
+    playbookTaskText,
+    STUCK_NOTE_OPENER,
+    verificationFailed,
+} from "./memory/playbooks.js";
+import { demoteLearnings, getTaskLearningsContext, upsertLearning } from "./memory/task-learnings.js";
 import { getTraitsForInjection, resetSessionTraitCaps } from "./memory/traits.js";
 import { getUserModelSnippet } from "./memory/user-model.js";
 import { getWMSnippet, reflect as wmReflect, retain as wmRetain } from "./memory/working-memory.js";
@@ -113,6 +127,7 @@ import { lateNightNote, noteOwnerReply } from "./late-night-nudge.js";
 import { noteOwnerMessage } from "./security/consent.js";
 import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
 import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
+import { formatStepStatus, SELF_REPORTING_TOOLS, startStepHeartbeat } from "./step-status.js";
 import {
     clearToolRouterState,
     getLastIntent,
@@ -130,6 +145,7 @@ import {
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
+import { withSendLedger } from "./tools/send-ledger.js";
 
 // ── Music fast-path helpers ──────────────────────
 // Short-circuits the Sonnet orchestrator + heavy memory briefing when the LLM
@@ -241,32 +257,8 @@ const MEMORY_NUDGE_INTERVAL = 5;
 
 // ── Browser tool names ────────────────────────
 
-const BROWSER_TOOLS = new Set([
-    "browser_navigate",
-    "browser_click_at",
-    "browser_type",
-    "browser_scan",
-    "browser_extract",
-    "browser_back",
-    "browser_scroll",
-    "browser_analyze",
-    "browser_run_js",
-    "browser_wait",
-    "browser_select",
-    "browser_right_click",
-    "browser_hold_click",
-    "browser_drag",
-    "browser_hover",
-    "browser_keyboard",
-    "browser_switch_tab",
-    "browser_upload_file",
-    "browser_save_strategy",
-    "browser_recall_strategy",
-    "browser_parallel_tabs",
-    "browser_parallel_actions",
-    "browser_multi_action",
-    "browser_wait_for_human",
-]);
+// Every browser tool shares one page, so they all run one at a time, in call order.
+const isBrowserTool = (name: string) => name.startsWith("browser_");
 
 const OS_TASK_HINT = `[OS TASK — desktop control]
 1. Click things by description with os_smart_click (it finds the element itself; no screenshot needed first).
@@ -307,19 +299,6 @@ const isGuiOnly = (cats: string[]) =>
     cats.some((c) => c === "os_control" || c === "app_management") && cats.every((c) => GUI_LOOP_CATEGORIES.has(c));
 
 /**
- * Order for the verify-before-done gate. The browser lane runs alongside the
- * in-order screen lane, so a screenshot in the same batch may predate a browser
- * action: record browser calls last, so they still need their own check.
- */
-const gateOrder = <T extends { isBrowser: boolean }>(rs: T[]): T[] => [
-    ...rs.filter((r) => !r.isBrowser),
-    ...rs.filter((r) => r.isBrowser),
-];
-
-/** Non-os_* tools that also drive the screen (os_* / win_os_* are matched by prefix). */
-const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut", "computer_use"]);
-
-/**
  * Steering messages (memory nudge, verification, circuit breaker, retry hints)
  * matter only for the turn that raised them. They're tagged here and stripped
  * from history when the turn ends, so they aren't resent on every later turn.
@@ -336,6 +315,97 @@ export function runWithTurnNudges<T>(owned: Set<object>, fn: () => T): T {
 }
 export function stripTurnNudges(msgs: ChatCompletionMessageParam[], owned: ReadonlySet<object>): void {
     for (let i = msgs.length - 1; i >= 0; i--) if (owned.has(msgs[i])) msgs.splice(i, 1);
+}
+
+/**
+ * The turn's contract: the done-criterion Bhai stated in its ack ("on it — …;
+ * done = it shows in Sent"). The marker is "done =" at the start of the line or
+ * after a clause break (". ", ", ", "; ", ": ", —, – or " - "), so "All done!",
+ * "done: …", "done when …" and `state.done = true` never count, nor does code.
+ */
+const DONE_RE = /(?:^|[.,;:]\s|[—–]|\s-\s)\s*done\s*=\s*(.+)/i;
+/** First prose line with the marker, `*` dropped, plus the criterion after it; code (fenced or `inline`) never counts. */
+function matchAck(text: string | null | undefined): { line: string; contract: string } | undefined {
+    let inFence = false;
+    for (const raw of sanitizeAgentResponse(text ?? "").split("\n")) {
+        if (/^\s*(```|~~~)/.test(raw)) {
+            inFence = !inFence;
+            continue;
+        }
+        const line = raw.replace(/\*/g, "");
+        // Mask `code` at the same length so the marker is found only in prose, then read the criterion from the real line.
+        const m = inFence ? null : DONE_RE.exec(line.replace(/`[^`]*`/g, (c) => "\0".repeat(c.length)));
+        if (!m) continue;
+        const contract = line.slice(m.index + m[0].length - m[1].length).replace(/`/g, "").trim().slice(0, 200);
+        return { line: line.replace(/`/g, "").trim(), contract };
+    }
+    return undefined;
+}
+/** The ack line, cleaned for the user: internal tags and `*`/`` ` `` markup dropped. */
+export function findAckLine(text: string | null | undefined): string | undefined {
+    return matchAck(text)?.line;
+}
+export function extractDoneContract(text: string | null | undefined): string | undefined {
+    return matchAck(text)?.contract || undefined;
+}
+
+/**
+ * The "[ACK] …" progress line channels show for a reply: only when it states a
+ * contract AND has tool calls, i.e. the work is actually starting. A reply with
+ * no tool calls is the final answer (maybe a confirm-first question), never an ack.
+ */
+export function contractProgressLine(content: string | null | undefined, hasToolCalls: boolean): string | undefined {
+    const ack = hasToolCalls && extractDoneContract(content) ? findAckLine(content) : undefined;
+    return ack && `[ACK] ${ack}`;
+}
+
+/** Steers the verify step to check the criterion the agent itself promised. */
+export function contractCheckNudge(contract: string): string {
+    return `Your own done-criterion was: "${contract}". Check exactly that and say what you saw.`;
+}
+
+/** An honest stuck report: why it stopped, what it tried, that it isn't done, and the owner's options. */
+export function stuckNote(stopped: string, triedTools: string[], contract?: string): string {
+    const tried = [...new Set(triedTools)].slice(-5);
+    return [
+        `${STUCK_NOTE_OPENER} ${stopped}.`,
+        tried.length > 0 ? `I tried ${tried.join(", ")}.` : "",
+        contract ? `It isn't done yet (done = ${contract}).` : "It isn't done yet.",
+        "I can retry with a different approach, or you can take over from here.",
+    ]
+        .filter(Boolean)
+        .join(" ");
+}
+
+/**
+ * The reply for a turn that stopped early: the latest text the model wrote this turn, but never the
+ * ack ("on it …; done = …" reads as still working), else an honest stuck note.
+ */
+export function stuckExitText(
+    messages: ChatCompletionMessageParam[],
+    stopped: string,
+    triedTools: string[],
+    contract?: string,
+): string {
+    let turnStart = messages.length - 1;
+    while (turnStart >= 0 && messages[turnStart].role !== "user") turnStart--;
+    const partial = messages
+        .slice(turnStart + 1)
+        .flatMap((m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.trim() &&
+            !extractDoneContract(m.content)
+                ? [m.content]
+                : [],
+        )
+        .pop();
+    return partial ?? stuckNote(stopped, triedTools, contract);
+}
+
+/** The verify gate wants one more iteration, unless the final reply is a stuck report (the agreed handoff). */
+export function verifyGateFires(gate: VerifyGateState, responseText: string): boolean {
+    return !takeStuckMarker(responseText).stuck && shouldForceVerify(gate);
 }
 
 /** The orchestrator's TOOLS block, built from the tools this turn actually offers. */
@@ -361,6 +431,80 @@ function sanitizeAgentResponse(text: string): string {
         .replace(/\[no_reply\]/gi, "")
         .replace(/\[SOURCE:.*?\]/gs, "")
         .trim();
+}
+
+/** Channels that stay silent when the whole reply is [NO_REPLY]; the overlay and the rest always answer. */
+const NO_REPLY_CHANNELS = new Set(["telegram", "whatsapp", "discord", "slack", "matrix", "email"]);
+
+/** The final reply as channels get it: an exact [NO_REPLY] on a silent-capable, user-typed turn survives sanitizing. */
+export function finalReplyText(raw: string, channelContext?: ChannelContext): string {
+    if (
+        raw.trim().toUpperCase() === "[NO_REPLY]" &&
+        channelContext &&
+        !channelContext.autonomous &&
+        NO_REPLY_CHANNELS.has(channelContext.channel)
+    ) {
+        return "[NO_REPLY]";
+    }
+    return sanitizeAgentResponse(raw);
+}
+
+/**
+ * Anti-giving-up guard: an action task the reply hands back to the user (or gives up on)
+ * right after a tool failure. Returns how many recent tool results failed when it should
+ * force a retry, else 0. A stuck report ([[STUCK]]) is the agreed hand-off, so never over it.
+ */
+export function antiGivingUpFailures(
+    messages: ChatCompletionMessageParam[],
+    lastUserText: string,
+    responseText: string,
+    totalToolCalls: number,
+): number {
+    if (takeStuckMarker(responseText).stuck) return 0;
+    const lower = responseText.toLowerCase();
+    const failures = messages.slice(-10).filter((m) => {
+        if (m.role !== "tool") return false;
+        const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        return (
+            txt.includes('"error"') ||
+            txt.includes('"success":false') ||
+            txt.includes("NOT_PLAYING") ||
+            txt.includes("NO_RESULTS") ||
+            txt.includes("failed")
+        );
+    }).length;
+    if (failures === 0 || totalToolCalls >= 15) return 0;
+    const isActionTask =
+        /\b(play|open|send|create|set|start|stop|run|install|build|find|show|take|click|type|write|download|upload|schedule|remind|pause|skip|next|search)\b/i.test(
+            lastUserText,
+        );
+    const isDelegatingToUser = [
+        "you can ",
+        "you should ",
+        "you need to ",
+        "you'll need to",
+        "go ahead and ",
+        "from there",
+        "i recommend you",
+    ].some((p) => lower.includes(p));
+    const isGivingUp = [
+        "want me to try",
+        "shall i try",
+        "something else?",
+        "another way",
+        "isn't finding",
+        "not finding",
+        "couldn't find",
+        "not in your library",
+        "not available",
+        "something's off",
+        "having trouble",
+        "doesn't seem",
+        "unable to",
+    ].some((p) => lower.includes(p));
+    // Substantial replies (>200 chars) delegating to the user are likely genuine instructions.
+    const fire = (isDelegatingToUser && isActionTask && responseText.length < 200) || isGivingUp;
+    return fire ? failures : 0;
 }
 
 // ── Milestone tool descriptions ───────────────
@@ -484,6 +628,10 @@ export type ProgressCallback = (message: string) => Promise<void>;
 export interface AgentResponse {
     text: string;
     toolCalls: number;
+    /** The turn ended in a stuck report: Bhai needs the user to unblock it. */
+    stuck?: boolean;
+    /** The screenshot taken after the turn's last action, for the owner's private chat (pickReceipt). */
+    receipt?: Receipt;
 }
 
 export interface ChannelContext {
@@ -655,6 +803,12 @@ interface ToolCallResult {
     isError: boolean;
     /** Ran, but its JSON result said `success: false` (not an error, so no self-heal / escalation). */
     reportedFailure?: boolean;
+    /** The screenshot lifted out of the result (data URL), unless it was withheld. */
+    imageUrl?: string;
+    /** The same screen without the model's coordinate grid, for a done-receipt (unset if it couldn't be made). */
+    receiptUrl?: string;
+    /** Touched the vault (a vault tool or a {{vault:…}} token) or had its screenshot withheld. */
+    secret?: boolean;
 }
 
 /** The tool call failed, judged from its own result flags, not from the word "error" in its output. */
@@ -853,7 +1007,16 @@ async function executeAndProcessToolCall(
         });
         if ("error" in v) {
             const err = JSON.stringify({ error: v.error });
-            return { toolCallId: toolCall.id, fnName, fnArgs, result: err, finalContent: err, isBrowser: false, isError: true };
+            return {
+                toolCallId: toolCall.id,
+                fnName,
+                fnArgs,
+                result: err,
+                finalContent: err,
+                isBrowser: false,
+                isError: true,
+                secret: true,
+            };
         }
         execArgs = v.args;
         vault = { tool: fnName, rules: v.rules };
@@ -900,6 +1063,8 @@ async function executeAndProcessToolCall(
     // Lift a screenshot out before offload/truncate/fencing, which would
     // otherwise turn it into a few KB of base64 text the model can't see.
     let imageUrl: string | undefined;
+    let receiptUrl: string | undefined;
+    let secret = fnName.startsWith("vault_") || hasVaultToken(fnArgs);
     try {
         const parsed = JSON.parse(rawResult);
         const b64 = parsed.screenshot_base64 || parsed.zoomed_base64;
@@ -917,6 +1082,7 @@ async function executeAndProcessToolCall(
                 anySecretTyped() &&
                 (fnName.startsWith("browser_") ? await browserOriginTainted() : true);
             if (withhold) {
+                secret = true;
                 delete parsed.screenshot_base64;
                 delete parsed.zoomed_base64;
                 delete parsed.mime_type;
@@ -929,6 +1095,13 @@ async function executeAndProcessToolCall(
                 const { downscaleForVision } = await import("./screen/ui-tars.js");
                 const img = await downscaleForVision(Buffer.from(b64, "base64"));
                 imageUrl = `data:${img.mime};base64,${img.buf.toString("base64")}`;
+                // The owner's receipt is the screen without the grid. Look the clean copy up by the
+                // tool's own bytes: once downscaled they no longer match the grid cache's key.
+                const clean = await withoutGrid(b64);
+                if (clean) {
+                    const c = clean === b64 ? img : await downscaleForVision(Buffer.from(clean, "base64"));
+                    receiptUrl = `data:${c.mime};base64,${c.buf.toString("base64")}`;
+                }
                 delete parsed.screenshot_base64;
                 delete parsed.zoomed_base64;
                 delete parsed.mime_type;
@@ -983,7 +1156,7 @@ async function executeAndProcessToolCall(
         /* pattern speculator not wired in this build */
     }
 
-    const isBrowser = BROWSER_TOOLS.has(fnName);
+    const isBrowser = isBrowserTool(fnName);
 
     const finalContent: string | Array<Record<string, unknown>> = imageUrl
         ? [
@@ -992,7 +1165,19 @@ async function executeAndProcessToolCall(
           ]
         : result;
 
-    return { toolCallId: toolCall.id, fnName, fnArgs, result, finalContent, isBrowser, isError, reportedFailure };
+    return {
+        toolCallId: toolCall.id,
+        fnName,
+        fnArgs,
+        result,
+        finalContent,
+        isBrowser,
+        isError,
+        reportedFailure,
+        imageUrl,
+        receiptUrl,
+        secret,
+    };
 }
 
 /**
@@ -1004,6 +1189,8 @@ async function executeToolCallsBatch(
     toolCalls: Array<{ id: string; function: { name: string; arguments: string } }>,
     ctx: {
         sendProgress: (msg: string) => Promise<void>;
+        /** A tool's status line ("🌐 Opening …"); the caller stamps it with the step and elapsed time. */
+        sendStatus: (status: string) => Promise<void>;
         trackBrowserFn: (fnName: string, fnArgs: Record<string, unknown>, success: boolean) => void;
         onError: () => void;
         onToolComplete: (count: number) => Promise<void>;
@@ -1021,7 +1208,7 @@ async function executeToolCallsBatch(
 
     for (const tc of toolCalls) {
         const fnName = tc.function.name;
-        if (BROWSER_TOOLS.has(fnName)) {
+        if (isBrowserTool(fnName)) {
             browserCalls.push(tc);
         } else if (DEFERRABLE_TOOLS.has(fnName)) {
             deferrableCalls.push(tc);
@@ -1075,11 +1262,15 @@ async function executeToolCallsBatch(
     };
     // Also anything the verify-before-done gate tracks (e.g. browser_click), so
     // its "a check after the action" reading matches what actually ran.
-    const drivesScreen = (tc: (typeof toolCalls)[number]) =>
-        /^(win_)?os_/.test(tc.function.name) ||
-        SCREEN_TOOLS.has(tc.function.name) ||
-        isMutator(tc.function.name, {}) ||
-        isVerifier(tc.function.name, {});
+    const drivesScreen = (tc: (typeof toolCalls)[number]) => {
+        let args: Record<string, unknown> = {};
+        try {
+            args = JSON.parse(tc.function.arguments || "{}");
+        } catch {
+            /* unparseable: judged by name alone */
+        }
+        return gateDrivesScreen(tc.function.name, args);
+    };
     const screenCalls = nonBrowserCalls.filter(drivesScreen);
     // Each call already has its own timeout in executeTool, so the in-order
     // lane gets room for every step. Once the batch is given up on, no further
@@ -1136,7 +1327,7 @@ async function executeToolCallsBatch(
             /* */
         }
         const milestone = getMilestoneMessage(tc.function.name, fnArgs);
-        if (milestone) await ctx.sendProgress(milestone);
+        if (milestone) await ctx.sendStatus(milestone);
 
         const r = await executeAndProcessToolCall(
             tc,
@@ -1159,7 +1350,7 @@ async function executeToolCallsBatch(
     // Send milestones for non-browser tools (after they complete)
     for (const r of nonBrowserResults) {
         const milestone = getMilestoneMessage(r.fnName, r.fnArgs);
-        if (milestone) await ctx.sendProgress(milestone);
+        if (milestone) await ctx.sendStatus(milestone);
 
         // Diff preview for edit/write: surface the change so the user can
         // see what happened. Not a blocking approval gate (which would
@@ -1204,6 +1395,9 @@ export async function runAgent(
     toolAllowlist?: string[],
     channelContext?: ChannelContext,
 ): Promise<AgentResponse> {
+    // A non-owner (Slack/Discord guest, widget visitor) runs on a history of their own,
+    // never the owner's: forked, so isContactAgent also keeps owner memories out.
+    historyFork = historyForCaller(historyFork, channelContext);
     const isForked = !!historyFork;
     // Caller-context ALS wrapper — privilege-sensitive tools (cron, etc.)
     // read isOwner from this scope, not from a module-level slot, so
@@ -1221,9 +1415,13 @@ export async function runAgent(
         const nudges = new Set<object>();
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
-            res = await runWithTurnNudges(nudges, () =>
-                mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn)),
-            );
+            const turn = () =>
+                runWithTurnNudges(nudges, () =>
+                    mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn)),
+                );
+            // Turns share one send ledger (send-ledger.ts); an autonomous run gets its own,
+            // so a recurring cron job may send the same text on its next tick.
+            res = await (channelContext?.autonomous ? withSendLedger(turn) : turn());
         } finally {
             // Read after the turn: pruning may have swapped the history array.
             stripTurnNudges(historyFork ?? conversationHistory, nudges);
@@ -1237,6 +1435,11 @@ export async function runAgent(
                         return null;
                     });
             }
+        }
+        if (typeof res?.text === "string") {
+            const { text, stuck } = takeStuckMarker(res.text);
+            res.text = text;
+            if (stuck) res.stuck = true;
         }
         // The model only ever sees handles ([OTP_1], [CARD_2]); the owner asked
         // about their own values, so show them. Everyone else keeps the handle.
@@ -1317,6 +1520,9 @@ async function _runAgentBody(
     // historyFork already supplies the contact's context and we must not
     // leak the owner's identity, memories, location, or traits.
     const isContactAgent = isForked && channelContext?.isOwner === false;
+    // What a contact or guest says is never the owner's: it must not become the owner's goal,
+    // session context or anticipation pattern. (No channel context = an owner path, e.g. voice.)
+    const ownerTurn = channelContext?.isOwner !== false;
 
     // Tag every runAgent invocation with a unique turn id so offloaded
     // tool outputs cluster per turn on disk.
@@ -1367,11 +1573,17 @@ async function _runAgentBody(
     const userIntentText =
         rawUserMessage.replace(/^\[Replying to [^\n]*?message: "[\s\S]*?"\]\n\n/, "").trim() || rawUserMessage;
     // Only a message the owner actually sent can answer a consent question.
-    if (channelContext?.isOwner && !channelContext.autonomous) noteOwnerMessage(userIntentText);
+    if (channelContext?.isOwner && !channelContext.autonomous) {
+        noteOwnerMessage(userIntentText);
+        // Any channel: the owner talking back is engagement (proactive fatigue gate).
+        import("./proactive/notification-tracker.js")
+            .then((m) => m.recordOwnerEngagement())
+            .catch(() => {});
+    }
 
     // ── Goal detection: check if user mentioned a goal ──
     try {
-        const detectedGoal = detectGoalFromMessage(userIntentText);
+        const detectedGoal = ownerTurn ? detectGoalFromMessage(userIntentText) : null;
         if (detectedGoal) {
             createGoal(detectedGoal.description, detectedGoal.deadline ?? undefined);
             console.log(`  🎯 Goal detected: "${detectedGoal.description}"`);
@@ -1479,7 +1691,43 @@ async function _runAgentBody(
     let lastUsedModel: string | undefined; // Track model for credit deduction
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
+    const receiptFor = async (text: string): Promise<Receipt | undefined> => {
+        const receipt = pickReceipt(verifyGate, {
+            stuck: takeStuckMarker(text).stuck,
+            isOwner: channelContext?.isOwner === true,
+            isPrivate: channelContext?.isPrivate === true,
+        });
+        return receipt; // already the clean (ungridded) screen: see receiptUrl
+    };
+    // Playbooks: every tool call this turn, and the learnings shown to it.
+    const turnCalls: PlaybookCall[] = [];
+    const injectedLearnings = new Set<string>();
+    const recordBatch = (batch: ToolCallResult[]) => {
+        recordBatchForVerifyGate(verifyGate, batch);
+        // Lane order, like the gate: a screen check batched with a browser action may have run before it.
+        for (const r of inLaneOrder(batch)) {
+            turnCalls.push({ fnName: r.fnName, fnArgs: r.fnArgs, failed: toolFailed(r) });
+        }
+    };
+    // A verified win teaches a playbook; a failed replay demotes what it was shown.
+    // A Retry/Skip handoff turn is keyed by the report it replies to, or learns nothing.
+    const playbookTask = playbookTaskText(rawUserMessage, userIntentText);
+    const settleLearnings = (reply: string, stuck = takeStuckMarker(reply).stuck) => {
+        if (channelContext?.isOwner !== true || playbookTask === undefined) return;
+        try {
+            const pb = buildPlaybook(playbookTask, turnCalls, reply, stuck);
+            if (pb) {
+                upsertLearning(pb.category, pb.taskPattern, pb.context, pb.steps, [], [], 1, new Date().toISOString());
+            } else if (injectedLearnings.size > 0 && (stuck || verificationFailed(turnCalls))) {
+                demoteLearnings(injectedLearnings);
+            }
+        } catch (err) {
+            console.warn("[LEARNINGS] playbook update skipped:", (err as Error).message);
+        }
+    };
     let verificationNagged = false;
+    // The done-criterion from this turn's ack, fed back to the verify nudges.
+    let turnContract: string | undefined;
     // A non-complex desktop-only turn (set on iteration 1) stays on Haiku and
     // skips the memory nudge while it's short and nothing has gone wrong.
     let guiTurn = false;
@@ -1522,6 +1770,42 @@ async function _runAgentBody(
             await onProgress(msg);
         } catch {
             /* don't let progress errors kill the agent */
+        }
+    };
+
+    // Tool statuses read "step N · <status> · <elapsed>s"; a batch that runs
+    // quiet for ~20s re-sends its current status so long tasks show a pulse.
+    const turnStartedAt = Date.now();
+    let toolStep = 0;
+    let stepStatus = "working on it";
+    const sendStatus = (status: string) => {
+        stepStatus = status;
+        return sendProgress(formatStepStatus(toolStep, status, Date.now() - turnStartedAt));
+    };
+    const runToolBatch = async (
+        calls: Array<{ id: string; function: { name: string; arguments: string } }>,
+        ctx: Omit<Parameters<typeof executeToolCallsBatch>[1], "sendProgress" | "sendStatus">,
+    ): Promise<ToolCallResult[]> => {
+        toolStep++;
+        const milestoneOf = (tc: (typeof calls)[number]) => {
+            try {
+                return getMilestoneMessage(tc.function.name, JSON.parse(tc.function.arguments || "{}"));
+            } catch {
+                return null;
+            }
+        };
+        stepStatus = calls.map(milestoneOf).find(Boolean) ?? "working on it";
+        const stop =
+            onProgress && !calls.some((tc) => SELF_REPORTING_TOOLS.has(tc.function.name))
+            ? startStepHeartbeat(
+                  () => lastProgressTime,
+                  () => void sendStatus(stepStatus),
+              )
+            : () => {};
+        try {
+            return await executeToolCallsBatch(calls, { ...ctx, sendProgress, sendStatus });
+        } finally {
+            stop();
         }
     };
 
@@ -1608,9 +1892,15 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         if (iterations >= MAX_AGENT_ITERATIONS) {
             console.log(`  🛑 Iteration cap (${MAX_AGENT_ITERATIONS}) reached`);
             if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+            settleLearnings("", true);
             return {
-                text: `I stopped after ${MAX_AGENT_ITERATIONS} steps without finishing. Tell me what to focus on and I'll pick it up from here.`,
+                text: stuckNote(
+                    `I hit the ${MAX_AGENT_ITERATIONS}-step limit without finishing`,
+                    turnCalls.map((c) => c.fnName),
+                    turnContract,
+                ),
                 toolCalls: totalToolCalls,
+                stuck: true,
             };
         }
         // Metacognition-driven nudge. A2: instead of a single one-shot nudge,
@@ -1718,14 +2008,6 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                             /* non-fatal */
                         }
                     }
-                    const partialResponses = messages
-                        .filter(
-                            (m) => m.role === "assistant" && typeof (m as { content?: string }).content === "string",
-                        )
-                        .map((m) => (m as { content: string }).content)
-                        .filter(Boolean);
-                    const partialText =
-                        partialResponses.length > 0 ? partialResponses[partialResponses.length - 1] : null;
                     // P5.2 STEP-0: genuine reasoning-failure terminal exit (circuit
                     // breaker tripped on sustained trouble) → true-negative label.
                     // model not picked at this point → global-calibrator fallback.
@@ -1735,11 +2017,16 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                         /* best-effort */
                     }
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+                    settleLearnings("", true);
                     return {
-                        text:
-                            partialText ||
-                            `I've been having trouble completing this task (${tripResult.reason}). Please try again or try a different approach.`,
+                        text: stuckExitText(
+                            messages,
+                            "the same steps kept failing",
+                            turnCalls.map((c) => c.fnName),
+                            turnContract,
+                        ),
                         toolCalls: totalToolCalls,
+                        stuck: true,
                     };
                 }
             }
@@ -1883,7 +2170,19 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // ── Build conversation context for tool router ──
             // Gives the tool selector awareness of recent conversation turns so it
             // can disambiguate references like "open the file manager" (OS app vs. website button)
-            const convCtx = buildToolRouterContext(workingHistory);
+            // The router classifies the bare words, so "do this for me" needs the situation
+            // the words point at: what's attached, and whether a page in the owner's Chrome
+            // can be driven (no title/URL: the page writes those). First, so the router's
+            // cache key (the context's first 200 chars) tells the situations apart.
+            const situation = [
+                media?.some((m) => m.type === "image") ? "The user attached an image (or a screenshot of their screen)." : "",
+                userMessage.includes("[BROWSER CONTEXT: Chrome extension is connected")
+                    ? "The user has a web page open in their own Chrome, which the browser tools can act on."
+                    : "",
+            ].filter(Boolean);
+            const convCtx = [situation.length ? `(${situation.join(" ")})` : "", buildToolRouterContext(workingHistory)]
+                .filter(Boolean)
+                .join("\n");
 
             // ── Start tool selection in parallel with memory injection ──
             // For llm_only (greetings/acks): use fast-path (no embeddings, instant)
@@ -2009,8 +2308,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // For coding tasks, surface the code-category task-learnings ahead
                 // of the general recall so previously-validated patterns aren't
                 // crowded out by browser/os/app entries when the top-3 is shared.
+                // Owner-only: playbooks quote the owner's own task messages.
                 try {
-                    const codingLearnings = getTaskLearningsContext(rawUserMessage, "code");
+                    const codingLearnings =
+                        channelContext?.isOwner === false
+                            ? ""
+                            : getTaskLearningsContext(rawUserMessage, "code", injectedLearnings);
                     if (codingLearnings) parts.push(codingLearnings);
                 } catch {
                     /* task-learnings not initialized */
@@ -2196,8 +2499,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                             }
                         }),
                         Promise.resolve().then(() => {
+                            // Owner-only: playbooks quote the owner's own task messages.
+                            if (channelContext?.isOwner === false) return null;
                             try {
-                                return getTaskLearningsContext(rawUserMessage);
+                                return getTaskLearningsContext(rawUserMessage, undefined, injectedLearnings);
                             } catch {
                                 return null;
                             }
@@ -2604,8 +2909,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // would otherwise re-emerge in the next turn's session-summary
             // injection (and into overnight dream-replay), defeating the
             // boundary sanitizer.
-            appendTurn("user", safeUserMessage);
-            trackSessionForAnticipation();
+            if (ownerTurn) {
+                appendTurn("user", safeUserMessage);
+                trackSessionForAnticipation();
+            }
         }
 
         // Smart thinking: use router's recommended thinking level
@@ -3088,6 +3395,9 @@ PLAN:`,
                 // Unhinged on Grok gets its own personality prompt (rules + prompts/unhinged.md)
                 // instead of the default one, whose calm, short style rules won out.
                 serverPromptSlug: model === MODELS.GROK ? "unhinged" : undefined,
+                // Unhinged runs hot: a higher sampling temperature makes Grok wilder
+                // and less predictable — the point of the mode. Normal turns omit it.
+                temperature: model === MODELS.GROK ? 1.1 : undefined,
             });
         } catch (llmErr) {
             cbRecordFailure(circuitBreaker);
@@ -3122,33 +3432,22 @@ PLAN:`,
                 errorCount++;
                 if (errorCount >= 3) {
                     console.error(`[AGENT] ${errorCount} consecutive LLM failures — returning partial results`);
-                    // Guard against returning stale responses from previous turns.
-                    // Only use a partial response if it was generated in THIS agent run (iterations > 0),
-                    // not a leftover from conversation history.
-                    // Only text written after THIS turn's user message counts (the old
-                    // iterations*3 window reached back into the previous turn, and an
-                    // out-of-credits user got the last turn's answer again).
-                    let turnStart = messages.length - 1;
-                    while (turnStart >= 0 && messages[turnStart].role !== "user") turnStart--;
-                    const currentRunResponses = messages
-                        .filter(
-                            (m, idx) =>
-                                m.role === "assistant" &&
-                                typeof (m as { content?: string }).content === "string" &&
-                                idx > turnStart,
-                        )
-                        .map((m) => (m as { content: string }).content)
-                        .filter(Boolean);
-                    const partialText = currentRunResponses.length > 0 ? currentRunResponses.pop() : null;
+                    // Only text written after THIS turn's user message counts (an out-of-credits
+                    // user once got the last turn's answer again), and never the ack.
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                     const outOfCredits = /run out of (AI )?credits|insufficient credits/i.test(lastLlmError);
                     return {
-                        text:
-                            partialText ||
-                            (outOfCredits
-                                ? "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again."
-                                : "I'm having trouble connecting right now. Please try again in a moment."),
+                        text: outOfCredits
+                            ? "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again."
+                            : stuckExitText(
+                                  messages,
+                                  "I lost my connection to the AI model",
+                                  turnCalls.map((c) => c.fnName),
+                                  turnContract,
+                              ),
                         toolCalls: totalToolCalls,
+                        // Out of credits: a Retry tap would fail the same way, so no handoff buttons.
+                        stuck: !outOfCredits,
                     };
                 }
                 console.warn(`[AGENT] LLM error (attempt ${errorCount}/3) — retrying next iteration`);
@@ -3242,6 +3541,22 @@ PLAN:`,
         }
 
         const assistantMessage = choice.message;
+        const hasToolCalls = !!assistantMessage.tool_calls?.length;
+        // The contract comes only from the ack, before any tool output is in
+        // context, so quoted page/email text can't become the done-criterion.
+        // Owner (or internal) turns only: a contact's text must never come back
+        // as a system-role "your own done-criterion".
+        if (totalToolCalls === 0 && !turnContract && (!channelContext || channelContext.isOwner)) {
+            turnContract = extractDoneContract(assistantMessage.content);
+            const ackLine = contractProgressLine(assistantMessage.content, hasToolCalls);
+            if (ackLine && onProgress) {
+                try {
+                    await onProgress(ackLine);
+                } catch {
+                    /* non-fatal */
+                }
+            }
+        }
 
         if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
             const responseText = assistantMessage.content || "";
@@ -3394,85 +3709,15 @@ PLAN:`,
             // the user instead of trying alternative approaches → it's giving up.
             // If the agent is asking a DISAMBIGUATION question (no errors) → legitimate.
 
-            // Check if recent tool results had errors/failures
-            const recentToolMessages = [...messages].slice(-10);
-            const recentToolErrors = recentToolMessages.filter((m) => {
-                if (m.role !== "tool") return false;
-                const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-                return (
-                    txt.includes('"error"') ||
-                    txt.includes('"success":false') ||
-                    txt.includes("NOT_PLAYING") ||
-                    txt.includes("NO_RESULTS") ||
-                    txt.includes("failed")
-                );
-            });
-            const hadRecentToolFailure = recentToolErrors.length > 0;
-
-            // Check if the user's original message was an action command
-            const isActionTask =
-                /\b(play|open|send|create|set|start|stop|run|install|build|find|show|take|click|type|write|download|upload|schedule|remind|pause|skip|next|search)\b/i.test(
-                    lastUserText,
-                );
-
-            // Detect explicit delegation patterns
-            const isDelegatingToUser =
-                responseTextLower.includes("you can ") ||
-                responseTextLower.includes("you should ") ||
-                responseTextLower.includes("you need to ") ||
-                responseTextLower.includes("you'll need to") ||
-                responseTextLower.includes("go ahead and ") ||
-                responseTextLower.includes("from there") ||
-                responseTextLower.includes("i recommend you");
-
-            // Detect "giving up" — agent had a tool failure and is now asking
-            // instead of trying a different approach
-            const isGivingUp =
-                hadRecentToolFailure &&
-                (responseTextLower.includes("want me to try") ||
-                    responseTextLower.includes("shall i try") ||
-                    responseTextLower.includes("something else?") ||
-                    responseTextLower.includes("another way") ||
-                    responseTextLower.includes("isn't finding") ||
-                    responseTextLower.includes("not finding") ||
-                    responseTextLower.includes("couldn't find") ||
-                    responseTextLower.includes("not in your library") ||
-                    responseTextLower.includes("not available") ||
-                    responseTextLower.includes("something's off") ||
-                    responseTextLower.includes("having trouble") ||
-                    responseTextLower.includes("doesn't seem") ||
-                    responseTextLower.includes("unable to"));
-
-            // Determine if the agent should be forced to continue
-            // TRUE = giving up after failure, or delegating to user on an action task
-            // FALSE = legitimate question (disambiguation, missing info, no errors)
-            // Guard: ONLY force retry if there were actual tool errors AND response is short
-            // (substantial responses >200 chars are likely genuine instructions, not giving up)
-            const shouldForceRetry =
-                (isDelegatingToUser &&
-                    isActionTask &&
-                    hadRecentToolFailure &&
-                    totalToolCalls < 15 &&
-                    responseText.length < 200) ||
-                (isGivingUp && totalToolCalls < 15);
-
-            if (shouldForceRetry) {
-                // Build context-aware continuation prompt based on what failed
-                const failedTools = recentToolErrors
-                    .map((m) => {
-                        const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-                        // Extract tool name from context if possible
-                        return txt.substring(0, 100);
-                    })
-                    .join("; ");
-
+            const recentFailures = antiGivingUpFailures(messages, lastUserText, responseText, totalToolCalls);
+            if (recentFailures > 0) {
                 const hasVisualTools = toolSelection.categories.includes("os_control");
                 const continuationHint = hasVisualTools
                     ? "Use os_smart_click with a natural-language instruction (e.g. 'the Wi-Fi row') — it cascades AX → OmniParser → UI-TARS/cloud grounding automatically and is far more reliable than os_ocr_click, which has been failing here. Only fall back to os_screenshot + os_click if os_smart_click returns cascade_miss. You have full mouse+keyboard control."
                     : "Try a completely different approach — use request_tools if you need different capabilities, or try browser_navigate to accomplish it via the web.";
 
                 console.log(
-                    `  🔄 Anti-giving-up: agent stopped after tool failure (${recentToolErrors.length} errors) — forcing retry with visual fallback`,
+                    `  🔄 Anti-giving-up: agent stopped after tool failure (${recentFailures} errors) — forcing retry with visual fallback`,
                 );
                 messages.push({ role: "assistant", content: responseText });
                 messages.push({
@@ -3491,13 +3736,14 @@ PLAN:`,
             // on count-of-tool-calls, not on whether the actions were
             // verified). Capped at one fire per run via verifyGate.nudgedThisRun.
             // Kill-switch: ATLAS_NO_VERIFY_GATE=true disables.
-            if (shouldForceVerify(verifyGate)) {
+            if (verifyGateFires(verifyGate, responseText)) {
                 console.log(
                     `  🔍 Verify gate: ${verifyGate.lastMutator} mutated UI but no verification ran — forcing one more iteration`,
                 );
                 verifyGate.nudgedThisRun = true;
                 messages.push({ role: "assistant", content: responseText });
                 messages.push({ role: "user", content: buildVerifyReminder(verifyGate) });
+                if (turnContract) pushNudge(messages, contractCheckNudge(turnContract));
                 lastToolCalls = undefined; // bump model selection to PRO for the verify-and-respond turn
                 continue;
             }
@@ -3517,6 +3763,7 @@ PLAN:`,
                 (responseText.length > 200 && totalToolCalls >= 2) ||
                 responseText.length > 600;
             const shouldNudge =
+                !takeStuckMarker(responseText).stuck &&
                 totalToolCalls > 0 &&
                 totalToolCalls < 6 &&
                 !hasSubstantialResponse &&
@@ -3553,6 +3800,8 @@ PLAN:`,
             if (
                 finalSelection &&
                 model !== MODELS.PRO &&
+                // Choosing to stay silent is the answer; a stronger model mustn't overwrite it.
+                responseText.trim().toUpperCase() !== "[NO_REPLY]" &&
                 TIER_RANK[claudeTier(finalSelection.modelId)] > TIER_RANK[claudeTier(model)]
             ) {
                 console.log(`  🧠 Switching to ${finalSelection.displayName} for final answer`);
@@ -3574,13 +3823,12 @@ PLAN:`,
                         lastToolCalls = finalChoice.message.tool_calls.map((tc) => ({
                             function: { name: tc.function.name },
                         }));
-                        const batchResults = await executeToolCallsBatch(
+                        const batchResults = await runToolBatch(
                             finalChoice.message.tool_calls as Array<{
                                 id: string;
                                 function: { name: string; arguments: string };
                             }>,
                             {
-                                sendProgress,
                                 trackBrowserFn: (fn, args, ok) => {
                                     usedBrowserTools = true;
                                     trackBrowserStep(fn, args, ok, 0);
@@ -3604,9 +3852,7 @@ PLAN:`,
                         );
                         totalToolCalls += batchResults.length;
                         // Verify-before-done gate — same recording as the main loop site.
-                        for (const r of gateOrder(batchResults)) {
-                            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {}, r.isError);
-                        }
+                        recordBatch(batchResults);
                         for (const r of batchResults) {
                             const errorMsg = getErrorMessage(r.fnName, r.result);
                             if (errorMsg) await sendProgress(errorMsg);
@@ -3620,7 +3866,7 @@ PLAN:`,
                         continue;
                     }
                     const rawText = finalChoice.message.content || "";
-                    const text = sanitizeAgentResponse(rawText) || "(empty response)";
+                    const text = finalReplyText(rawText, channelContext) || "(empty response)";
                     // Retry if final model produced empty response after tool calls.
                     // BUT: if the prompt is already huge (>40K tokens), retrying the
                     // same prompt at the same model produces the same empty response
@@ -3660,16 +3906,17 @@ PLAN:`,
                         continue;
                     }
                     messages.push({ role: "assistant", content: text });
-                    appendTurn("assistant", text);
+                    if (ownerTurn) appendTurn("assistant", text);
                     maybeReflect();
                     if (usedBrowserTools) autoSaveSession();
                     // Credits deducted per-API-call in llm.ts
                     if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
-                    return { text, toolCalls: totalToolCalls };
+                    settleLearnings(text);
+                    return { text, toolCalls: totalToolCalls, receipt: await receiptFor(text) };
                 }
             }
 
-            let text = sanitizeAgentResponse(responseText) || "(empty response)";
+            let text = finalReplyText(responseText, channelContext) || "(empty response)";
 
             // ── Empty response retry: nudge the LLM instead of returning "(empty response)" ──
             if (
@@ -3694,7 +3941,7 @@ PLAN:`,
 
             // ── Cascade escalation: detect poor responses and re-try with a better model ──
             // Only attempt once per turn to avoid infinite loops, and only if not already on the best model
-            if (model !== MODELS.PRO && !cascadeAttempted) {
+            if (model !== MODELS.PRO && !cascadeAttempted && text !== "[NO_REPLY]") {
                 const cascadeCheck = shouldCascadeEscalate(text, rawUserMessage, model);
                 if (cascadeCheck.shouldEscalate) {
                     const nextModel = getCascadeNext(model);
@@ -3729,7 +3976,7 @@ PLAN:`,
             }
 
             messages.push({ role: "assistant", content: text });
-            appendTurn("assistant", text);
+            if (ownerTurn) appendTurn("assistant", text);
             maybeReflect();
             if (usedBrowserTools) autoSaveSession();
 
@@ -3760,7 +4007,8 @@ PLAN:`,
                     .then(({ consumeOnePending }) => consumeOnePending())
                     .catch((e: Error) => console.warn("[forge] pending consume failed:", e.message));
             }
-            return { text, toolCalls: totalToolCalls };
+            settleLearnings(text);
+            return { text, toolCalls: totalToolCalls, receipt: await receiptFor(text) };
         }
 
         // Append assistant message with tool calls
@@ -3776,10 +4024,9 @@ PLAN:`,
         }));
 
         // ── Execute tools (parallel for non-browser, sequential for browser) ──
-        const batchResults = await executeToolCallsBatch(
+        const batchResults = await runToolBatch(
             assistantMessage.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }>,
             {
-                sendProgress,
                 trackBrowserFn: (fn, args, ok) => {
                     usedBrowserTools = true;
                     trackBrowserStep(fn, args, ok, 0);
@@ -3808,9 +4055,7 @@ PLAN:`,
         // bookkeeper. Only successful (or even attempted) mutators flip
         // osStateMutated; that's the right semantics because a *failed* click
         // can still leave the UI in a half-changed state we need to verify.
-        for (const r of gateOrder(batchResults)) {
-            recordToolCallForVerifyGate(verifyGate, r.fnName, r.fnArgs || {}, r.isError);
-        }
+        recordBatch(batchResults);
 
         // Circuit breaker: tool calls completed = progress
         const batchHasSuccess = batchResults.some((r) => !r.isError);
@@ -3958,7 +4203,7 @@ PLAN:`,
                 const stuckMsg =
                     "I tried several approaches but couldn't get a useful result — the commands kept returning nothing or failing. Rather than keep retrying, here's where I got stuck: the tool calls aren't returning the data I need. Could you tell me a bit more, or try running it directly?";
                 messages.push({ role: "assistant", content: stuckMsg });
-                appendTurn("assistant", stuckMsg);
+                if (ownerTurn) appendTurn("assistant", stuckMsg);
                 // P5.2 STEP-0: genuine reasoning-failure terminal exit (gave up after
                 // sustained no-progress) → true-negative label for calibration.
                 try {
@@ -3967,7 +4212,8 @@ PLAN:`,
                     /* best-effort */
                 }
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
-                return { text: stuckMsg, toolCalls: totalToolCalls };
+                settleLearnings(stuckMsg, true);
+                return { text: stuckMsg, toolCalls: totalToolCalls, stuck: true };
             }
         }
 
@@ -3987,7 +4233,7 @@ PLAN:`,
                 const phaseCount = parsed.phases || 0;
                 const delegationText = `I've started working on your task in the background (${phaseCount} phases). Task ID: ${taskId}. I'll keep you updated on progress — you can also ask me to check anytime.`;
                 messages.push({ role: "assistant", content: delegationText });
-                appendTurn("assistant", delegationText);
+                if (ownerTurn) appendTurn("assistant", delegationText);
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
                 return { text: delegationText, toolCalls: totalToolCalls };
             } catch {
@@ -4035,7 +4281,7 @@ PLAN:`,
 1. VERIFY the result (e.g., spotify action='now_playing', os_nav to confirm state, os_visual_verify)
 2. If verification shows the task isn't done, keep working — try alternative approaches
 3. Only tell the user "done" after you have CONFIRMED the task succeeded
-Do NOT assume success from a single click or tool call.`,
+Do NOT assume success from a single click or tool call.${turnContract ? `\n${contractCheckNudge(turnContract)}` : ""}`,
             );
         }
         if (musicFastPathActive && !hasToolFailure) {

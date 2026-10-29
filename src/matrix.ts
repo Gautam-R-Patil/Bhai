@@ -7,6 +7,7 @@
 // No matrix-bot-sdk dependency — just REST calls.
 // Supports text messages only (no E2E encryption, no media).
 
+import { withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
 import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
 import { smartChunkMessage } from "./alive-ux.js";
@@ -247,8 +248,9 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
 
         await setTyping(roomId, false);
 
-        if (result.text) {
-            await sendReply(roomId, result.text);
+        // [NO_REPLY]: the agent decided no reply is needed — stay silent.
+        if (result.text && result.text.trim() !== "[NO_REPLY]") {
+            await sendReply(roomId, withStuckReplyLine(result, senderIsOwner));
         }
 
         console.log(`[MATRIX] Response sent (${result.text.length} chars, ${result.toolCalls} tool calls)`);

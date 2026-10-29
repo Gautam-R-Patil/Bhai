@@ -13,7 +13,7 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { type MediaAttachment, runAgent } from "./agent.js";
 import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
-import { isStopCommand } from "./channel-text.js";
+import { isStopCommand, STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import { getDataDir } from "./config/paths.js";
 import type { LLMClient } from "./llm.js";
 import { recall } from "./memory/sqlite.js";
@@ -342,12 +342,14 @@ function splitMessage(text: string, maxLength: number): string[] {
 
 // ── Send Message with Rate Limiting ──────────
 
-async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Promise<void> {
+/** Sends `text` (split into chunks); resolves to the key of the last chunk sent, so a caller can edit it later. */
+async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Promise<WAMessage["key"] | undefined> {
     if (!socket) return;
     if (!checkRateLimit(jid)) {
         console.warn("[WHATSAPP] Dropping message due to rate limit");
         return;
     }
+    let lastKey: WAMessage["key"] | undefined;
 
     await enforceMinInterval();
 
@@ -357,7 +359,7 @@ async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Pr
         // Only quote the original message on the FIRST chunk (not on splits)
         const opts = i === 0 && quotedMsg ? { quoted: quotedMsg } : undefined;
         try {
-            await socket.sendMessage(jid, { text: formatted }, opts);
+            lastKey = (await socket.sendMessage(jid, { text: formatted }, opts))?.key ?? lastKey;
         } catch (err) {
             console.error("[WHATSAPP] Failed to send message:", (err as Error).message);
             // Fallback: send without formatting or quoting
@@ -368,12 +370,13 @@ async function sendMessage(jid: string, text: string, quotedMsg?: WAMessage): Pr
                     .replace(/__(.+?)__/g, "$1")
                     .replace(/`([^`]+)`/g, "$1")
                     .replace(/```[\s\S]*?```/g, (m: string) => m.replace(/```\w*\n?/g, "").trim());
-                await socket.sendMessage(jid, { text: sanitizeReply(plain) });
+                lastKey = (await socket.sendMessage(jid, { text: sanitizeReply(plain) }))?.key ?? lastKey;
             } catch {
                 /* give up */
             }
         }
     }
+    return lastKey;
 }
 
 // ── Extract message text ─────────────────────
@@ -1379,9 +1382,11 @@ async function handleOwnerMessage(
                                     : null; // null = not a clear task, no acknowledgment
 
     // Send task acknowledgment IMMEDIATELY (not after a delay), then resume typing indicator
+    let preAck: Promise<WAMessage["key"] | undefined> | undefined; // later edited into the agent's contract line
     if (taskMsg) {
         progressSent = true;
-        sendMessage(jid, taskMsg)
+        preAck = sendMessage(jid, taskMsg).catch(() => undefined);
+        preAck
             .then(() => {
                 // Resume typing indicator after acknowledgment so user still sees "typing..."
                 socket?.sendPresenceUpdate("composing", jid).catch(() => {});
@@ -1409,6 +1414,17 @@ async function handleOwnerMessage(
 
         const progressCallback = async (msg: string) => {
             console.log(`  [WA] [progress] ${msg}`);
+            // The turn's contract line: edit the quick ack into it (one ack, not two), else send it.
+            if (!msg.startsWith("[ACK] ")) return;
+            const contract = msg.slice(6);
+            const ackKey = await preAck;
+            try {
+                if (ackKey && socket)
+                    await socket.sendMessage(jid, { text: markdownToWhatsApp(contract), edit: ackKey });
+                else await sendMessage(jid, contract);
+            } catch {
+                /* non-fatal: the reply still arrives */
+            }
         };
 
         // Extract media from the original message if present
@@ -1469,7 +1485,7 @@ async function handleOwnerMessage(
         ownerConversations.set(jid, history);
         lastConvoActivity.set(jid, Date.now());
 
-        const responseText = result.text;
+        const responseText = withStuckReplyLine(result, true);
         console.log(`[WA] Response: ${responseText.substring(0, 200)}...`);
 
         if (responseText.trim() === "[NO_REPLY]") {
@@ -1489,8 +1505,10 @@ async function handleOwnerMessage(
 
         // Voice note response: if incoming was a voice note and response is short, reply with audio
         const wasVoiceNote = message?.message?.audioMessage?.ptt === true;
-        if (wasVoiceNote && responseText.length < 300) {
-            await sendVoiceReply(jid, responseText);
+        if (wasVoiceNote && result.text.length < 300) {
+            await sendVoiceReply(jid, result.text);
+            // The handoff line is for reading, not hearing: send it as text.
+            if (result.stuck) await sendMessage(jid, STUCK_REPLY_LINE);
         } else {
             const bubbles = splitIntoBubbles(responseText);
             for (let i = 0; i < bubbles.length; i++) {
@@ -1501,6 +1519,13 @@ async function handleOwnerMessage(
                 }
                 await sendMessage(jid, bubbles[i], i === 0 && shouldQuote ? message : undefined);
             }
+        }
+        // Done comes with the receipt: the screenshot taken after the last action.
+        if (result.receipt) {
+            const { imageBase64, mimeType } = result.receipt;
+            await socket
+                ?.sendMessage(jid, { image: Buffer.from(imageBase64, "base64"), mimetype: mimeType })
+                .catch((err: Error) => console.warn("[WA] Failed to send receipt:", err.message));
         }
 
         // Response sent — stop typing indicator
@@ -1670,7 +1695,8 @@ ${persona.systemPrompt}`;
 
         // Voice note response: if incoming was a voice note and response is short, reply with audio
         const wasVoiceNote = message?.message?.audioMessage?.ptt === true;
-        if (wasVoiceNote && result.text && result.text.length < 300) {
+        // ([NO_REPLY] falls through to sendTypingThenMessage, which stays silent.)
+        if (wasVoiceNote && result.text && result.text.trim() !== "[NO_REPLY]" && result.text.length < 300) {
             await sendVoiceReply(jid, result.text);
         } else {
             // Only quote-reply when the contact's message was itself a reply (swipe-reply)
@@ -2085,7 +2111,9 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
     initWhatsAppUsers();
 
     // Register the relay sender so ask_owner tool can forward questions to owners
-    registerOwnerRelaySender((jid, text) => sendMessage(jid, text));
+    registerOwnerRelaySender(async (jid, text) => {
+        await sendMessage(jid, text);
+    });
 
     // Parse allowed JIDs from environment
     const jidsRaw = process.env.WHATSAPP_ALLOWED_JIDS;
@@ -2206,6 +2234,10 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
             // Initialize multi-user system on connection
             initWhatsAppUsers();
+
+            // The desktop builds a wa.me link to this number for owner sign-up.
+            const selfNumber = (sock.user?.id || "").split(/[:@]/)[0];
+            if (/^\d+$/.test(selfNumber)) console.log(`##ATLAS_WA_SELF##${selfNumber}##END_SELF##`);
 
             // First-time setup: generate OTP for owner registration
             if (getOwners().length === 0) {

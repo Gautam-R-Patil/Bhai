@@ -7,6 +7,7 @@ import { encryptedFetch } from "../crypto-transport.js";
 import { getSessionToken } from "../session.js";
 import { getLocation } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
+import { baseUrlHostMatches } from "../utils/atomic-io.js";
 
 // One log line per engine and failure kind — a silent `return []` hid that
 // Tavily/Exa had no API key, so every search quietly ran on Bing scraping.
@@ -61,6 +62,42 @@ async function searchClaudeLite(query: string): Promise<SearchResult[]> {
     }
 }
 
+// ── Parallel Search (proxied via Convex; the key never leaves the server) ──
+
+async function searchParallelLite(query: string): Promise<SearchResult[]> {
+    try {
+        const sessionToken = await getSessionToken();
+        if (!sessionToken) {
+            engineFailed("parallel", "no session");
+            return [];
+        }
+        const response = await encryptedFetch(`${getConvexSiteUrl()}/api/search/parallel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ query, maxResults: 8, country: searchLocale().country }),
+            signal: AbortSignal.timeout(12000),
+        });
+        if (!response.ok) {
+            engineFailed("parallel", `HTTP ${response.status} ${(await response.text().catch(() => "")).slice(0, 120)}`);
+            return [];
+        }
+        const data = (await response.json()) as {
+            results?: Array<{ url: string; title: string; snippet?: string; page_age?: string | null }>;
+        };
+        return (data.results || [])
+            .filter((r) => r.url && r.title)
+            .map((r) => ({
+                url: r.url,
+                title: r.title,
+                snippet: htmlText(r.snippet || "").substring(0, 300),
+                ...(r.page_age ? { age: r.page_age } : {}),
+            }));
+    } catch (err) {
+        engineFailed("parallel", (err as Error).message);
+        return [];
+    }
+}
+
 // ── Web Search Tool ───────────────────────────
 // Lightweight, fetch-only search. NO Playwright, NO headless browser.
 // Uses DuckDuckGo Lite + Brave as fast fallbacks via plain HTTP.
@@ -84,20 +121,32 @@ function randomUA(): string {
     return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+/** Scraped HTML → plain text: tags dropped, entities ("Tom &amp; Jerry", "&#39;") decoded, spaces collapsed. */
+export function htmlText(html: string): string {
+    return html
+        .replace(/<\/?(?:b|strong|em|i|span|mark)\b[^>]*>/gi, "") // engines bold query words mid-word: <b>iPhone</b>s
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+            if (e[0] !== "#") return ENTITIES[e.toLowerCase()] ?? m;
+            const code = e[1] === "x" || e[1] === "X" ? Number.parseInt(e.slice(2), 16) : Number(e.slice(1));
+            return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+        })
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 // ── DuckDuckGo Lite (fastest, lightest) ───────
 
 async function searchDDGLite(query: string): Promise<SearchResult[]> {
     try {
         const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-
         const response = await fetch(url, {
             headers: { "User-Agent": randomUA() },
             redirect: "follow",
-            signal: controller.signal,
+            // Covers the body read too: a cleared timer let one stalled engine hang the whole search.
+            signal: AbortSignal.timeout(8000),
         });
-        clearTimeout(timeout);
 
         const html = await response.text();
 
@@ -114,18 +163,13 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
         const snippets: string[] = [];
         let match;
         while ((match = snippetPattern.exec(html)) !== null) {
-            snippets.push(
-                match[1]
-                    .replace(/<[^>]+>/g, " ")
-                    .replace(/\s+/g, " ")
-                    .trim(),
-            );
+            snippets.push(htmlText(match[1]));
         }
 
         let i = 0;
         while ((match = linkPattern.exec(html)) !== null && results.length < 15) {
             let resultUrl = match[1];
-            const title = match[2].replace(/<[^>]+>/g, "").trim();
+            const title = htmlText(match[2]);
 
             // Decode DDG redirect URL
             if (resultUrl.includes("uddg=")) {
@@ -150,7 +194,7 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
             i = 0;
             while ((match = fallbackLink.exec(html)) !== null && results.length < 15) {
                 let resultUrl = match[1];
-                const title = match[2].replace(/<[^>]+>/g, "").trim();
+                const title = htmlText(match[2]);
                 if (resultUrl.includes("uddg=")) {
                     try {
                         resultUrl = decodeURIComponent(resultUrl.split("uddg=")[1].split("&")[0]);
@@ -174,9 +218,6 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
 async function searchBraveLite(query: string): Promise<SearchResult[]> {
     try {
         const url = `https://search.brave.com/search?q=${encodeURIComponent(query)}&source=web`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-
         const response = await fetch(url, {
             headers: {
                 "User-Agent": randomUA(),
@@ -184,96 +225,49 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
                 "Accept-Language": "en-US,en;q=0.9",
             },
             redirect: "follow",
-            signal: controller.signal,
+            // Covers the body read too: a cleared timer let one stalled engine hang the whole search.
+            signal: AbortSignal.timeout(8000),
         });
-        clearTimeout(timeout);
 
         if (response.status !== 200) return [];
 
-        const html = await response.text();
-        if (html.includes("captcha") || html.includes("rate limit")) return [];
-
-        const snippetPattern = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-        const results: SearchResult[] = [];
-        const seenUrls = new Set<string>();
-
-        let match;
-        while ((match = snippetPattern.exec(html)) !== null && results.length < 15) {
-            const url = match[1];
-            const content = match[2];
-
-            const titleMatch = content.match(/<div[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-            const title = titleMatch
-                ? titleMatch[1].replace(/<[^>]+>/g, "").trim()
-                : content.replace(/<[^>]+>/g, "").trim();
-
-            if (url.startsWith("http") && !url.includes("brave.com") && title.length > 5 && !seenUrls.has(url)) {
-                seenUrls.add(url);
-
-                const afterLink = html.substring(match.index + match[0].length, match.index + match[0].length + 1500);
-                const snippetMatch = afterLink.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-                const snippet = snippetMatch
-                    ? snippetMatch[1]
-                          .replace(/<[^>]+>/g, "")
-                          .replace(/\s+/g, " ")
-                          .trim()
-                    : "";
-
-                if (snippet.length > 10) {
-                    results.push({ url, title, snippet: snippet.substring(0, 300) });
-                }
-            }
-        }
-
-        return results;
+        // No "page mentions captcha" check: Brave's normal results page carries the string
+        // "Switch to traditional captcha", so that check dropped every Brave result. A real
+        // challenge page has no external result links, and parses to nothing anyway.
+        return parseBraveHtml(await response.text());
     } catch {
         return [];
     }
 }
 
-// ── Google via fetch (no JS rendering, works for simple queries) ──
+/** Results from a Brave Search results page (web results; Brave's own links skipped). */
+export function parseBraveHtml(html: string): SearchResult[] {
+    const snippetPattern = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const results: SearchResult[] = [];
+    const seenUrls = new Set<string>();
 
-async function searchGoogleLite(query: string): Promise<SearchResult[]> {
-    try {
-        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10&hl=en`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
+    let match;
+    while ((match = snippetPattern.exec(html)) !== null && results.length < 15) {
+        const url = match[1];
+        const content = match[2];
 
-        const response = await fetch(url, {
-            headers: {
-                "User-Agent": randomUA(),
-                Accept: "text/html,application/xhtml+xml",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-            redirect: "follow",
-            signal: controller.signal,
-        });
-        clearTimeout(timeout);
+        const titleMatch = content.match(/<div[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        const title = htmlText(titleMatch ? titleMatch[1] : content);
 
-        if (response.status !== 200) return [];
+        if (url.startsWith("http") && !baseUrlHostMatches(url, "brave.com") && title.length > 5 && !seenUrls.has(url)) {
+            seenUrls.add(url);
 
-        const html = await response.text();
-        if (html.includes("detected unusual traffic") || html.includes("sorry/index")) return [];
+            const afterLink = html.substring(match.index + match[0].length, match.index + match[0].length + 1500);
+            const snippetMatch = afterLink.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+            const snippet = snippetMatch ? htmlText(snippetMatch[1]) : "";
 
-        const results: SearchResult[] = [];
-        const seenUrls = new Set<string>();
-
-        // Match Google result links with h3 titles
-        const resultPattern = /<a\s+href="\/url\?q=(https?:\/\/[^&"]+)[^"]*"[^>]*>[\s\S]*?<h3[^>]*>([\s\S]*?)<\/h3>/gi;
-        let match;
-        while ((match = resultPattern.exec(html)) !== null && results.length < 15) {
-            const resultUrl = decodeURIComponent(match[1]);
-            const title = match[2].replace(/<[^>]+>/g, "").trim();
-            if (!seenUrls.has(resultUrl) && !resultUrl.includes("google.com")) {
-                seenUrls.add(resultUrl);
-                results.push({ url: resultUrl, title, snippet: "" });
+            if (snippet.length > 10) {
+                results.push({ url, title, snippet: snippet.substring(0, 300) });
             }
         }
-
-        return results;
-    } catch {
-        return [];
     }
+
+    return results;
 }
 
 // ── Tavily Search (proxied via Convex) ──────
@@ -366,23 +360,18 @@ async function searchBingLite(query: string): Promise<SearchResult[]> {
             // Bing uses h2 > a for result links
             const h2LinkM = block.match(/<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
             if (!h2LinkM) continue;
-            const title = h2LinkM[2].replace(/<[^>]+>/g, "").trim();
+            const title = htmlText(h2LinkM[2]);
             if (title.length < 3) continue;
 
             // The h2 link is a bing.com/ck/a redirect; the real URL is in its `u`
             // param ("a1" + base64url). The <cite> text is display-only and
             // often just the domain, so it is not used.
             const url = decodeBingUrl(h2LinkM[1].replace(/&amp;/g, "&"));
-            if (url.includes("bing.com") || seenUrls.has(url)) continue;
+            if (baseUrlHostMatches(url, "bing.com") || seenUrls.has(url)) continue;
             seenUrls.add(url);
 
             const snippetM = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-            const snippet = snippetM
-                ? snippetM[1]
-                      .replace(/<[^>]+>/g, "")
-                      .replace(/&nbsp;/g, " ")
-                      .trim()
-                : "";
+            const snippet = snippetM ? htmlText(snippetM[1]) : "";
             results.push({ url, title, snippet: snippet.substring(0, 300) });
         }
         return results;
@@ -396,7 +385,7 @@ export function decodeBingUrl(href: string): string {
     try {
         const u = new URL(href, "https://www.bing.com");
         const enc = u.searchParams.get("u");
-        if (u.hostname.endsWith("bing.com") && enc && enc.startsWith("a1")) {
+        if (baseUrlHostMatches(u.href, "bing.com") && enc?.startsWith("a1")) {
             const decoded = Buffer.from(enc.slice(2).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
             if (/^https?:\/\//.test(decoded)) return decoded;
         }
@@ -421,14 +410,57 @@ const terms = (t: string): string[] =>
  * how many of the query's meaningful words a result mentions. Results that
  * mention none are dropped once at least two relevant ones remain.
  */
+// Tracking params that never change which page a URL points at — stripped so
+// the same result from two engines doesn't survive dedup as two rows.
+const TRACKING_PARAM = /^(?:utm_|ga_|mc_|_hs|pk_|piwik_)|^(?:fbclid|gclid|dclid|msclkid|yclid|igshid|mkt_tok|ref|ref_src|ref_url|source|spm|_ga)$/i;
+
+/**
+ * A dedup key that treats the same page the same across engines: http/https,
+ * a leading www., a trailing slash and a #fragment don't matter, and tracking
+ * query params are dropped while meaningful ones (?id=5) are kept and sorted.
+ * The displayed URL is untouched — only the key is canonical.
+ */
+export function canonicalUrl(raw: string): string {
+    try {
+        const u = new URL(raw);
+        const host = u.hostname.toLowerCase().replace(/^www\./, "");
+        const path = u.pathname.replace(/\/+$/, "") || "/";
+        const params = [...u.searchParams.entries()]
+            .filter(([k]) => !TRACKING_PARAM.test(k))
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        const search = params.length ? `?${params.map(([k, v]) => `${k}=${v}`).join("&")}` : "";
+        return `${host}${path}${search}`;
+    } catch {
+        return raw.trim().toLowerCase();
+    }
+}
+
+/**
+ * Share of the query's meaningful words the best result mentions (1 when the query has none).
+ * Scraped engines throttling a script answer only part of a query ("best laptop for
+ * programming" → pages about "best"): low coverage says the results are off-topic.
+ */
+export function bestCoverage(query: string, results: SearchResult[]): number {
+    const q = [...new Set(terms(query))];
+    if (!q.length || !results.length) return results.length ? 1 : 0;
+    const covered = (r: SearchResult) => {
+        const hay = terms(`${r.title} ${r.snippet} ${r.url}`);
+        return q.filter((t) => hay.some((h) => h === t || (h.length > 3 && t.length > 3 && (h.startsWith(t) || t.startsWith(h)))))
+            .length;
+    };
+    return Math.max(...results.map(covered)) / q.length;
+}
+
 export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResult[] {
     const seen = new Set<string>();
     const merged: SearchResult[] = [];
     for (let i = 0; lists.some((l) => i < l.length); i++) {
         for (const l of lists) {
             const r = l[i];
-            if (r && !seen.has(r.url)) {
-                seen.add(r.url);
+            if (!r) continue;
+            const key = canonicalUrl(r.url);
+            if (!seen.has(key)) {
+                seen.add(key);
                 merged.push(r);
             }
         }
@@ -450,14 +482,16 @@ export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResu
 // ── Lightweight multi-engine (fetch-only, parallel) ───────────
 
 async function lightweightSearch(query: string): Promise<{ results: SearchResult[]; engine: string; empty: string[] }> {
-    const names = ["claude", "tavily", "exa", "brave", "duckduckgo", "google", "bing"];
+    // No Google scraper: google.com/search now serves a JavaScript-only page, so it never
+    // returned a result — it only sent Google a scraping request from the owner's IP.
+    const names = ["parallel", "claude", "tavily", "exa", "brave", "duckduckgo", "bing"];
     const lists = await Promise.all([
+        searchParallelLite(query),
         searchClaudeLite(query),
         searchTavilyLite(query),
         searchExaLite(query),
         searchBraveLite(query),
         searchDDGLite(query),
-        searchGoogleLite(query),
         searchBingLite(query),
     ]);
     const used = names.filter((_, i) => lists[i].length > 0);
@@ -476,7 +510,7 @@ export const webSearch: ToolDefinition = {
         function: {
             name: "web_search",
             description:
-                "Search the web for information. Uses multiple search engines (Google, Brave, DuckDuckGo) with automatic fallback. Returns top results with titles, snippets, and URLs. This is a FAST, lightweight search — no browser is launched.",
+                "Search the web for information. Uses multiple search engines with automatic fallback. Returns top results with titles, snippets, and URLs. This is a FAST, lightweight search — no browser is launched.",
             parameters: {
                 type: "object",
                 properties: {
@@ -495,12 +529,18 @@ export const webSearch: ToolDefinition = {
         try {
             const { results, engine, empty } = await lightweightSearch(query);
             const capped = results.slice(0, numResults);
+            const offTopic = capped.length > 0 && terms(query).length >= 2 && bestCoverage(query, capped) < 0.5;
 
             return JSON.stringify({
                 success: true,
                 query,
                 engine_used: engine,
                 ...(empty.length ? { engines_without_results: empty } : {}),
+                ...(offTopic
+                    ? {
+                          note: "These results barely match the query (search engines may be limiting automated requests). Don't rely on them: try a more specific query, or search in the browser.",
+                      }
+                    : {}),
                 results: capped,
                 count: capped.length,
             });

@@ -7,7 +7,7 @@ import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import Anthropic from "@anthropic-ai/sdk";
 import { toClaudeRequest, toOpenAIResponse } from "./claude";
-import { callGrok, isGrokModel } from "./grok";
+import { callAzure, isAzureModel } from "./grok";
 import { decodeBase64, STT_CREDIT_COST, STT_MAX_AUDIO_BYTES, sttConfigFromEnv, transcribeWithProvider } from "./stt";
 import {
   generateServerKeyPair,
@@ -167,6 +167,8 @@ async function buildResponse(
 // mapping is unit-testable without a Convex harness.
 import { getCreditCost } from "./credit_cost.js";
 import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
+import { isBotUsername, managedBotLink } from "./telegramManaged.js";
+import { isEmail, MAX_RECIPIENTS_PER_EMAIL, parseRecipients, SEND_RECIPIENTS_PER_DAY } from "./bhaiMailHelpers.js";
 
 // ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
 // Isolated subsystem — no coupling to session/credit machinery. Lives next
@@ -631,6 +633,8 @@ http.route({
             platform,
             skillSlugs,
             userId: account.otplessUserId,
+            // A guest's/contact's turn never gets the owner's tone or personal learnings.
+            guest: body.guest === true,
           }
         );
 
@@ -667,10 +671,10 @@ http.route({
     //    (prompt caching breakpoints are placed by the translator).
     const claudeParams = toClaudeRequest(body, messages);
 
-    // 7. Call Claude (or Grok for unhinged mode, falling back to Claude Sonnet)
+    // 7. Call Claude (or an Azure model: Grok, GPT-6; falling back to Claude Sonnet)
     try {
       const anthropic = new Anthropic({ apiKey: anthropicKey });
-      let responseData = isGrokModel(model) ? await callGrok(body, messages) : null;
+      let responseData = isAzureModel(model) ? await callAzure(body, messages) : null;
       if (!responseData) try {
         const message = await anthropic.beta.messages.stream(claudeParams).finalMessage();
         responseData = toOpenAIResponse(message);
@@ -2048,7 +2052,7 @@ http.route({
                 /* refund best-effort */
             }
             return await buildResponse(
-                { error: String(err?.message ?? err).slice(0, 300) },
+                { error: (typeof err?.message === "string" ? err.message : "web search failed").slice(0, 300) },
                 502,
                 encrypted,
                 account.sharedKey,
@@ -2100,6 +2104,76 @@ http.route({
 
       const data = await response.json();
       return await buildResponse(data, response.ok ? 200 : response.status, encrypted, account.sharedKey, request);
+    } catch (err: any) {
+      return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey, request);
+    }
+  }),
+});
+
+// POST /api/search/parallel — Parallel Search proxy (PARALLEL_API_KEY in Convex env only).
+// Only a bounded query, a country code and a result count are forwarded; the reply is
+// trimmed to what web_search uses.
+http.route({
+  path: "/api/search/parallel",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const query = typeof body.query === "string" ? body.query.trim().slice(0, 400) : "";
+    if (!query) {
+      return await buildResponse({ error: "query is required" }, 400, encrypted, account.sharedKey, request);
+    }
+    const country = typeof body.country === "string" && /^[A-Za-z]{2}$/.test(body.country) ? body.country.toLowerCase() : undefined;
+    const maxResults = Math.min(Math.max(Number(body.maxResults) || 8, 1), 15);
+
+    const key = process.env.PARALLEL_API_KEY;
+    if (!key) {
+      return await buildResponse({ error: "Parallel not configured" }, 500, encrypted, account.sharedKey, request);
+    }
+
+    try {
+      const response = await fetch("https://api.parallel.ai/v1/search", {
+        method: "POST",
+        headers: { "x-api-key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objective: query,
+          search_queries: [query],
+          mode: "fast",
+          advanced_settings: {
+            max_results: maxResults,
+            excerpt_settings: { max_chars_per_result: 600 },
+            ...(country ? { location: country } : {}),
+          },
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = (await response.json()) as {
+        results?: Array<{ url?: string; title?: string; publish_date?: string | null; excerpts?: string[] }>;
+        error?: unknown;
+      };
+      if (!response.ok) {
+        return await buildResponse({ error: `Parallel HTTP ${response.status}` }, response.status, encrypted, account.sharedKey, request);
+      }
+      const results = (data.results ?? [])
+        .filter((r) => typeof r.url === "string" && typeof r.title === "string")
+        .map((r) => ({
+          url: r.url,
+          title: r.title,
+          // Excerpts are markdown: keep the words, drop link targets, images and heading marks.
+          snippet: (r.excerpts ?? [])
+            .join(" ")
+            .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+            .replace(/^#+\s*/gm, "")
+            .replace(/[*_`>]+/g, "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 600),
+          page_age: r.publish_date ?? null,
+        }));
+      return await buildResponse({ results }, 200, encrypted, account.sharedKey, request);
     } catch (err: any) {
       return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey, request);
     }
@@ -2383,6 +2457,9 @@ http.route({
     if (hfToken) secrets.HF_TOKEN = hfToken;
 
     // CAPTCHA solving keys — stored in Convex, never in the app bundle
+    const nocaptchaKey = process.env.NOCAPTCHAAI_API_KEY;
+    if (nocaptchaKey) secrets.NOCAPTCHAAI_API_KEY = nocaptchaKey;
+
     const nopechaKey = process.env.NOPECHA_API_KEY;
     if (nopechaKey) secrets.NOPECHA_API_KEY = nopechaKey;
 
@@ -3822,6 +3899,186 @@ http.route({
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// One-tap Telegram bots (convex/telegramManaged.ts)
+// ══════════════════════════════════════════════════════════════════════════
+
+const jsonReply = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+async function telegramCall(token: string, method: string, params: Record<string, unknown>): Promise<any> {
+  const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return await res.json().catch(() => ({ ok: false }));
+}
+
+// Desktop: "Create my Telegram bot" → the link to open.
+http.route({
+  path: "/api/telegram/managed/claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const manager = process.env.TELEGRAM_MANAGER_BOT_USERNAME;
+    if (!manager || !process.env.TELEGRAM_MANAGER_BOT_TOKEN) return jsonReply({ error: "not_configured" }, 503);
+    const body = await request.json().catch(() => ({}));
+    if (!isBotUsername(body.username)) return jsonReply({ error: "bad_username" }, 400);
+    await ctx.runMutation(internal.telegramManaged.claim, {
+      otplessUserId: validation.account.otplessUserId,
+      username: body.username,
+    });
+    return jsonReply({ link: managedBotLink(manager, body.username) });
+  }),
+});
+
+// Desktop polls this until the user has tapped Create; the token is handed over once.
+http.route({
+  path: "/api/telegram/managed/collect",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const body = await request.json().catch(() => ({}));
+    if (!isBotUsername(body.username)) return jsonReply({ error: "bad_username" }, 400);
+    const result = await ctx.runMutation(internal.telegramManaged.collect, {
+      otplessUserId: validation.account.otplessUserId,
+      username: body.username,
+    });
+    return jsonReply(result);
+  }),
+});
+
+// Telegram → manager bot updates (setWebhook with secret_token).
+http.route({
+  path: "/api/telegram/manager-webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const token = process.env.TELEGRAM_MANAGER_BOT_TOKEN;
+    const secret = process.env.TELEGRAM_MANAGER_WEBHOOK_SECRET;
+    if (!token || !secret || request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== secret) {
+      return new Response("forbidden", { status: 403 });
+    }
+    const update = await request.json().catch(() => null);
+    const created = update?.managed_bot;
+    if (created?.bot?.id && isBotUsername(created.bot.username) && created.user?.id) {
+      // Only bots someone claimed from Bhai get their token fetched.
+      if (await ctx.runQuery(internal.telegramManaged.isPending, { username: created.bot.username })) {
+        const got = await telegramCall(token, "getManagedBotToken", { user_id: created.bot.id });
+        if (got.ok && typeof got.result === "string") {
+          // Telegram itself keeps strangers out; Bhai's allowlist is the second lock.
+          await telegramCall(token, "setManagedBotAccessSettings", { user_id: created.bot.id, is_access_restricted: true });
+          await ctx.runMutation(internal.telegramManaged.fulfil, {
+            username: created.bot.username,
+            token: got.result,
+            ownerId: String(created.user.id),
+            ownerName: [created.user.first_name, created.user.last_name].filter(Boolean).join(" "),
+          });
+        }
+      }
+    } else if (update?.message?.chat?.id && typeof update.message.text === "string" && update.message.text.startsWith("/start")) {
+      await telegramCall(token, "sendMessage", {
+        chat_id: update.message.chat.id,
+        text: "Hi! I make personal Bhai bots. Open the Bhai app → Channels → Telegram → Create my Telegram bot.",
+      });
+    }
+    return new Response("ok");
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Bhai's own email (convex/bhaiMail.ts)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Desktop: give this account its <name>.bhai@ address (idempotent).
+http.route({
+  path: "/api/mail/claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    if (!process.env.BHAI_MAIL_USER || !process.env.BHAI_MAIL_PASS) return jsonReply({ error: "not_configured" }, 503);
+    const body = await request.json().catch(() => ({}));
+    if (!isEmail(body.ownerEmail)) return jsonReply({ error: "bad_email" }, 400);
+    const address = await ctx.runMutation(internal.bhaiMail.claimAddress, {
+      otplessUserId: validation.account.otplessUserId,
+      ownerEmail: body.ownerEmail,
+    });
+    return jsonReply({ address });
+  }),
+});
+
+// Bot: the owner's waiting mail.
+http.route({
+  path: "/api/mail/inbox",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    let encrypted = false;
+    try { encrypted = (await parseRequestBody(request, account.sharedKey)).encrypted; } catch { /* empty body */ }
+    const messages = await ctx.runQuery(internal.bhaiMail.inboxFor, { otplessUserId: account.otplessUserId });
+    return await buildResponse({ messages }, 200, encrypted, account.sharedKey, request);
+  }),
+});
+
+// Bot: done with these messages.
+http.route({
+  path: "/api/mail/ack",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const ids = Array.isArray(body?.ids) ? body.ids.filter((x: unknown) => typeof x === "string") : [];
+    await ctx.runMutation(internal.bhaiMail.ack, { otplessUserId: account.otplessUserId, ids });
+    return await buildResponse({ ok: true }, 200, encrypted, account.sharedKey, request);
+  }),
+});
+
+// Bot: send an email from the user's Bhai address. No "to" = the owner.
+// Anyone can be written to, so recipients are capped per email and per day.
+http.route({
+  path: "/api/mail/send",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const reply = (data: unknown, status = 200) => buildResponse(data, status, encrypted, account.sharedKey, request);
+    const mine = await ctx.runQuery(internal.bhaiMail.addressFor, { otplessUserId: account.otplessUserId });
+    if (!mine) return await reply({ ok: false, error: "no_address" }, 404);
+    const to = parseRecipients(body?.to);
+    const cc = parseRecipients(body?.cc);
+    if (!to || !cc) return await reply({ ok: false, error: "bad_recipient" }, 400);
+    const recipients = to.length ? to : [mine.ownerEmail];
+    if (recipients.length + cc.length > MAX_RECIPIENTS_PER_EMAIL) {
+      return await reply({ ok: false, error: `at most ${MAX_RECIPIENTS_PER_EMAIL} recipients per email` }, 400);
+    }
+    const text = typeof body?.text === "string" ? body.text.slice(0, 50_000) : "";
+    if (!text.trim()) return await reply({ ok: false, error: "empty" }, 400);
+    const fits = await ctx.runMutation(internal.bhaiMail.reserveSend, {
+      otplessUserId: account.otplessUserId,
+      recipients: recipients.length + cc.length,
+    });
+    if (!fits) return await reply({ ok: false, error: `daily limit of ${SEND_RECIPIENTS_PER_DAY} recipients reached` }, 429);
+    const result = await ctx.runAction(internal.bhaiMailNode.deliver, {
+      replyTo: mine.address,
+      to: recipients,
+      ...(cc.length ? { cc } : {}),
+      subject: typeof body?.subject === "string" && body.subject.trim() ? body.subject.slice(0, 300) : "From Bhai",
+      text,
+      ...(typeof body?.inReplyTo === "string" ? { inReplyTo: body.inReplyTo.slice(0, 500) } : {}),
+    });
+    return await reply(result, result.ok ? 200 : 502);
   }),
 });
 

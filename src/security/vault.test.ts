@@ -76,6 +76,17 @@ describe("vault: the model sees labels and tokens, never values", () => {
         expect(listVault("zomato")).toHaveLength(1);
     });
 
+    it("vault_list finds an entry by the URL or phrase the model has, not only its label", () => {
+        for (const q of [
+            "https://www.zomato.com/login",
+            "zomato.com/login?next=/",
+            "www.zomato.com",
+            "log in to Zomato",
+        ])
+            expect(listVault(q).map((r) => r.id)).toEqual(["zomato"]);
+        expect(listVault("netflix.com")).toEqual([]);
+    });
+
     it("a saved value in a tool result or log line comes back as its token", () => {
         expect(protect(`{"typed":"${PASSWORD}"}`)).toBe('{"typed":"{{vault:zomato.password}}"}');
         expect(protect(`Authorization key ${KEY} ok`)).not.toContain(KEY);

@@ -331,7 +331,7 @@ A registry (`src/harness/registry.ts`) catalogs 30+ tunable dimensions (numeric 
 
 ### Prerequisites
 
-- **Node.js >= 20**
+- **Node.js 20.19+ or 22.12+** (older 20.x/22.x silently skip Vitest's native bundler binding, so tests can't start)
 - **Rust toolchain** — required to build the native module; JS fallback is available but slower
 - **Docker** — optional, for sandboxed tool execution
 - **Swift** — macOS-only, for the OCR and CoreLocation helpers (skipped automatically elsewhere)
@@ -463,7 +463,7 @@ data/
 | Vision-nav models | OmniParser (captions) + UI-TARS (grounding) via Ollama; Qwen3.7-plus / Qwen3-VL-235B cloud-grounding fallback |
 | Desktop | Electron 40+ with `electron-builder`, `bytenode` protected modules |
 | Telegram | `grammy` 1.35 |
-| Discord | `discord.js` 14 + `@discordjs/voice` |
+| Discord | `discord.js` 14 |
 | Slack | `@slack/bolt` 4 (Socket Mode) |
 | Matrix | Matrix JS client |
 | WhatsApp | `@whiskeysockets/baileys` 7 |

@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     body.client_name.length < 1 ||
     body.client_name.length > 200 ||
     typeof body.contact_email !== "string" ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.contact_email)
+    !/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(body.contact_email)
   ) {
     return NextResponse.json({ error: "invalid_client_fields" }, { status: 400 });
   }

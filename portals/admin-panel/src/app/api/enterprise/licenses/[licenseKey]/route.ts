@@ -6,7 +6,7 @@ import {
   type UpdateEnterpriseLicensePatch,
 } from "@/lib/mcp-admin";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+\.[^\s@]+$/;
 
 export async function DELETE(
   request: NextRequest,

@@ -110,6 +110,16 @@ export const startHandoff = internalMutation({
   },
 });
 
+// Uniform 000000-999999: draws at or above 4_294_000_000 (the largest multiple
+// of 1e6 below 2^32) are redrawn, so the modulo carries no bias.
+function sixDigitCode(): string {
+  for (;;) {
+    const n = crypto.getRandomValues(new Uint32Array(1))[0];
+    if (n >= 4_294_000_000) continue;
+    return String(n % 1_000_000).padStart(6, "0");
+  }
+}
+
 // Browser tab parks the token. Refused when the window stopped polling (row
 // expired) or a token is already parked. Returns the code to show.
 export const completeHandoff = internalMutation({
@@ -117,7 +127,7 @@ export const completeHandoff = internalMutation({
   handler: async (ctx, { nonce, token }): Promise<{ code: string } | null> => {
     const row = await getHandoff(ctx, nonce);
     if (!row || row.expiresAt < Date.now() || row.token) return null;
-    const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
+    const code = sixDigitCode();
     await ctx.db.patch(row._id, { token, code, expiresAt: Date.now() + CODE_TTL_MS });
     return { code };
   },

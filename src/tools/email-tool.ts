@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { sendBhaiMail } from "../bhai-mail.js";
 import { sendEmailFromAtlas } from "../email.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
@@ -13,7 +14,7 @@ export const emailSend: ToolDefinition = {
         function: {
             name: "email_send",
             description:
-                "Send an email from Bhai's email account (ai@codingdesk.info). " +
+                "Send an email from Bhai's own email address. " +
                 "Use this for sending emails, reports, notifications, or any email communication. " +
                 "If the user wants to send from THEIR OWN email, use the browser tools to open their webmail instead.",
             parameters: {
@@ -56,6 +57,11 @@ export const emailSend: ToolDefinition = {
             return JSON.stringify({ error: "Missing required fields: 'to' and 'subject'" });
         }
 
+        // No mailbox of the owner's connected but Bhai has its own address: send from that.
+        if (!process.env.EMAIL_USER && process.env.BHAI_MAIL_ADDRESS) {
+            if (bcc) return JSON.stringify({ error: "Bhai's own email can't BCC; put them in cc or send separately." });
+            return JSON.stringify(await sendBhaiMail({ to, cc, subject, text: body }), null, 2);
+        }
         const result = await sendEmailFromAtlas(to, subject, body, { cc, bcc });
         return JSON.stringify(result, null, 2);
     },

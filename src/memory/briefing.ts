@@ -14,7 +14,10 @@
 import type { LLMClient } from "../llm.js";
 
 // ── Toggle: switch between LLM briefing and raw injection ──
-export const USE_MEMORY_BRIEFING = true;
+// Off by default: the briefing call sat on the reply's critical path (3-4s) to
+// save ~1.2K input tokens of raw memory, which is capped at 8K chars anyway.
+// ATLAS_MEMORY_BRIEFING=true brings it back.
+export const USE_MEMORY_BRIEFING = process.env.ATLAS_MEMORY_BRIEFING === "true";
 /**
  * Raw memory under this many chars is injected as-is: a few thousand extra
  * input tokens cost less than a briefing call (one more per-call credit and

@@ -25,6 +25,6 @@ describe("browser_switch_tab in Chrome mode", () => {
         expect(sendBridgeCommand).toHaveBeenCalledWith("close_tab", { tabId: 12 });
         expect(closed.tabs).toHaveLength(1);
         await browserSwitchTab.handler({ tab_index: 0 });
-        expect(sendBridgeCommand).toHaveBeenCalledWith("switch_tab", { tabId: 11 });
+        expect(sendBridgeCommand).toHaveBeenCalledWith("switch_tab", { tabId: 11, focus: true });
     });
 });

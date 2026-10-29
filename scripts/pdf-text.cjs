@@ -35,6 +35,10 @@ try {
     /* no watchdog — the parent deadline still protects */
 }
 
+// Same result as s.replace(/\s+/g, " "), but V8 keeps that replace's result at
+// ~16x its length: 2M chars of collected text held ~30MB of heap instead of ~2MB.
+const collapse = (s) => s.split(/\s+/).join(" ");
+
 process.once("message", async (m) => {
     try {
         const { getDocumentProxy } = await import("unpdf");
@@ -50,10 +54,10 @@ process.once("message", async (m) => {
                 .filter((it) => it.str != null)
                 .map((it) => it.str + (it.hasEOL ? "\n" : ""))
                 .join("");
-            text += (i > 1 ? " " : "") + pageText.replace(/\s+/g, " ");
+            text += (i > 1 ? " " : "") + collapse(pageText);
             page.cleanup();
         }
-        process.send({ ok: true, text: text.replace(/\s+/g, " ").slice(0, MAX_TEXT) });
+        process.send({ ok: true, text: collapse(text).slice(0, MAX_TEXT) });
     } catch (e) {
         process.send({ ok: false, error: String((e && e.message) || e).slice(0, 300) });
     }

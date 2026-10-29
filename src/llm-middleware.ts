@@ -65,6 +65,8 @@ export interface ChatParams {
     _queryEmbedding?: Float32Array | null;
     /** Internal: whether this is a thinking/reasoning call */
     _isThinking?: boolean;
+    /** Internal: a helper call (classifier, HyDE…) whose "user" text isn't the owner's */
+    _lean?: boolean;
 }
 
 export type LLMMiddleware = (
@@ -168,8 +170,13 @@ export function createLanguageMiddleware(): LLMMiddleware {
     return async (params, next) => {
         try {
             const { updateSessionLanguage, getLanguageInstruction } = await import("./language.js");
+            const { callerIsOwner } = await import("./tools/cron-tool.js");
+            // The session language is the owner's. A guest's/contact's turn neither sets it
+            // nor gets it, and a helper call's "user" text (an English prompt) never sets it.
+            const owner = callerIsOwner();
+            if (owner === false) return next(params);
             const lastUserMsg = [...params.messages].reverse().find(m => m.role === "user");
-            if (lastUserMsg && typeof lastUserMsg.content === "string") {
+            if (owner === true && !params._lean && lastUserMsg && typeof lastUserMsg.content === "string") {
                 updateSessionLanguage(lastUserMsg.content);
             }
             const instruction = getLanguageInstruction();

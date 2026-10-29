@@ -20,6 +20,7 @@ import { createLLMClient } from "./llm.js";
 import { initLocationService, onLocationChange, refreshLocation } from "./location/index.js";
 import { startNetworkWatcher, stopNetworkWatcher } from "./location/network-watcher.js";
 import { closeMatrix, initMatrix, sendMatrixProactiveMessage } from "./matrix.js";
+import { closeBhaiMail, initBhaiMail } from "./bhai-mail.js";
 import { closeMCPServers, initMCPServers } from "./mcp/client.js";
 import { initCounterfactualMemory } from "./memory/counterfactual.js";
 import { embedText, isReady as isEmbeddingsReady, warmup as warmupEmbeddings } from "./memory/embeddings.js";
@@ -77,6 +78,7 @@ import {
     rotateAuditLog,
     setBrandAuditLLM,
     setCampaignPlannerLLM,
+    setCaptchaLLM,
     setCodeActionExecutor,
     setCodeActionLLM,
     setComputerUseLLM,
@@ -123,6 +125,7 @@ setCodeActionExecutor(executeTool); // Inject tool executor for code_execute san
 setComputerUseLLM(llm); // Inject into computer use agent tool
 setSmartClickLLM(llm); // Inject into os_smart_click cloud-grounding cascade tier
 setSiteMintLLM(llm); // Inject into the Site Skill Minter (site_skill_mint)
+setCaptchaLLM(llm); // Inject into the picture-CAPTCHA vision solver
 setMemoryLLM(llm); // Inject into memory for smart write decisions
 setPresentationLLM(llm); // Inject into presentation generator
 setIngestLLM(llm); // Inject into PDF → JSON ingestion (vision-LLM fallback)
@@ -210,6 +213,17 @@ async function boot() {
     try {
         // Memory
         const memDb = await initMemoryDB();
+        // Once per install: mask secrets in conversation text saved before at-rest masking.
+        setImmediate(() => {
+            import("./memory/at-rest-scrub.js")
+                .then(async ({ scrubSecretsAtRest }) => {
+                    const { getRawDb } = await import("./memory/sqlite.js");
+                    const raw = getRawDb();
+                    const n = raw ? scrubSecretsAtRest(raw) : null;
+                    if (n) console.log(`🔐 Masked secrets saved before at-rest masking: ${JSON.stringify(n)}`);
+                })
+                .catch((err) => console.warn("[memory] at-rest scrub skipped:", (err as Error).message));
+        });
         initKnowledgeGraph(memDb);
         initCredibilityModel(memDb);
         initIdentityDB(memDb);
@@ -439,6 +453,8 @@ async function boot() {
             .catch((e) => console.warn("[BOOT] Overlay:", (e as Error).message)),
         // Email channel (IMAP listener + SMTP sender)
         initEmail(llm, config).catch((e) => console.warn("[BOOT] Email:", (e as Error).message)),
+        // Bhai's own email (<name>.bhai@xagilab.com) — only if BHAI_MAIL_ADDRESS is set
+        Promise.resolve().then(() => initBhaiMail(llm)),
         // Slack bot (Socket Mode — only if SLACK_BOT_TOKEN is set)
         initSlack(llm).catch((e) => console.warn("[BOOT] Slack:", (e as Error).message)),
         // WhatsApp channel (Baileys QR pairing — only if WHATSAPP_ALLOWED_JIDS is set)
@@ -686,10 +702,8 @@ async function boot() {
                 const obs = getObserver();
                 if (obs) {
                     const { intentFromThought } = await import("./proactive/intent-from-thought.js");
+                    // No push here: dispatch.ts pushes what is actually delivered.
                     obs.enqueue(intentFromThought(message, { hourNow: new Date().getHours() }));
-                    if (getSubscriptionCount() > 0) {
-                        sendPushNotification("Bhai", message.substring(0, 180)).catch(() => {});
-                    }
                     return;
                 }
             } catch (err) {
@@ -730,9 +744,6 @@ async function boot() {
                     sendOne(c).catch((err) => {
                         console.log(`proactive dispatch failed (${c}):`, (err as Error).message);
                     });
-                if (getSubscriptionCount() > 0) {
-                    sendPushNotification("Bhai", message.substring(0, 180)).catch(() => {});
-                }
             } catch (err) {
                 console.log("[proactive] Composer fallback also failed — staying silent:", (err as Error).message);
             }
@@ -1259,6 +1270,7 @@ async function boot() {
         closeOverlayChat();
         closeSlack();
         closeMatrix();
+        closeBhaiMail();
         await closeDiscord();
         await closeWhatsApp();
         await closeEmail();

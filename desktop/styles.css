@@ -2983,6 +2983,15 @@ body.theme-dark .installed-item {
 
 .advanced-toggle { font-size: 12px; color: rgba(255,255,255,0.4); cursor: pointer; display: flex; align-items: center; gap: 4px; margin: 8px 0; user-select: none; }
 .advanced-toggle:hover { color: rgba(255,255,255,0.6); }
+.ch-advanced { margin-top: 12px; }
+.ch-hint { font-size: 11px; color: var(--text-muted); font-weight: 400; margin-left: 8px; }
+.copy-inline-btn { font-size: 11px; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.copy-inline-btn:hover { color: var(--text-primary); }
+.ch-advanced > summary { list-style: none; }
+.ch-advanced > summary::-webkit-details-marker { display: none; }
+.ch-advanced > summary::before { content: "\25B8  "; }
+.ch-advanced[open] > summary::before { content: "\25BE  "; }
+.ch-advanced[open] > summary { margin-bottom: 8px; }
 .advanced-fields { display: none; margin-top: 8px; }
 .advanced-fields.visible { display: block; }
 
@@ -5437,7 +5446,7 @@ body.hig .channel-status-dot.disconnected { box-shadow: none; background: var(--
 body.hig .channel-status-dot.connecting { box-shadow: none; }
 
 /* ── Store ───────────────────────────────────────────────────────── */
-body.hig .store-toolbar { padding: 0 24px 8px; gap: 8px; }
+body.hig .store-toolbar { padding: 0 28px 8px; gap: 8px; } /* 28px: same edges as .tab-header */
 body.hig .store-search { padding: 0 8px; height: 28px; gap: 6px; border-radius: 6px; background: var(--fill-quaternary); border: 0; }
 body.hig .store-search:focus-within { box-shadow: 0 0 0 3px var(--accent-ring); }
 body.hig .store-search svg { width: 14px; height: 14px; color: var(--text-muted); }
@@ -6074,3 +6083,157 @@ body.hig .chats-empty { margin: auto; padding: 24px; text-align: center; font-si
 @media (max-width: 820px) {
     body.hig .chats-layout { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 34%) minmax(0, 1fr); }
 }
+
+/* ═══════════════════════════════════════════════
+   Vault — dedicated page (Logins / API keys / Cards / UPI)
+   ═══════════════════════════════════════════════ */
+/* The page is this tab's scroll container, padded exactly like its siblings
+   (.account-content, .store-content …) so everything lines up with the title.
+   Children are capped at a readable width and stay left-aligned with it. */
+.vault-page {
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 14px;
+    padding: 0 24px 32px;
+}
+body.hig .vault-page { padding: 4px 28px 32px; }
+.vault-page > * { width: 100%; max-width: 760px; box-sizing: border-box; }
+.vault-hero { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.vault-intro { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); margin: 0; max-width: 640px; }
+.vault-trust { display: flex; flex-wrap: wrap; gap: 6px; }
+.vault-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px 3px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 550; line-height: 16px; color: var(--text-secondary);
+    background: var(--fill-quaternary, rgba(127, 127, 127, 0.12));
+    border: 1px solid var(--separator, var(--border));
+}
+.vault-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-success, #34c759); }
+
+.vault-lock {
+    display: flex; gap: 12px; padding: 14px 16px; border-radius: 12px;
+    border: 1px solid var(--separator, var(--border)); background: var(--fill-quaternary, var(--bg-secondary));
+}
+.vault-lock-icon { font-size: 18px; line-height: 1; margin-top: 2px; }
+.vault-lock-body { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.vault-lock-row { display: flex; gap: 8px; }
+.vault-lock-row .clean-input { flex: 1; }
+
+/* Each kind is a card: icon + title + what Bhai may do with it, then its entries. */
+.vault-section {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 14px 16px; border-radius: 14px;
+    background: var(--bg-group, var(--fill-quaternary, rgba(127, 127, 127, 0.08)));
+    border: 1px solid var(--separator, var(--border));
+}
+.vault-section-head { display: flex; align-items: center; gap: 12px; }
+.vault-section-icon {
+    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--accent-tint); color: var(--accent-primary);
+}
+.vault-section-title { flex: 1; min-width: 0; }
+.vault-section-sub { margin: 2px 0 0; font-size: 12px; line-height: 1.4; color: var(--text-secondary); }
+.vault-section-head h3 {
+    margin: 0; display: flex; align-items: center;
+    font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary);
+}
+.vault-count {
+    margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; line-height: 16px; color: var(--text-secondary);
+    background: var(--fill-quaternary, rgba(127, 127, 127, 0.14));
+}
+.vault-count:empty { display: none; }
+.vault-add {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    height: 28px; padding: 0 12px; border-radius: 8px; border: 0;
+    background: var(--bg-control, rgba(127, 127, 127, 0.18)); color: var(--text-primary);
+    box-shadow: 0 0 0 0.5px var(--separator-strong, transparent);
+    font: inherit; font-size: 12.5px; font-weight: 600; line-height: 1; cursor: pointer;
+    transition: background .15s, color .15s;
+}
+.vault-add:hover { background: var(--accent-tint); color: var(--accent-primary); }
+/* An empty card already offers "Add your first …" — one add control at a time. */
+.vault-section:has(.vault-empty) .vault-add { display: none; }
+.vault-add:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); }
+
+.vault-list { display: flex; flex-direction: column; gap: 2px; }
+/* Rows bleed 8px past the column so the icon lines up with the heading while
+   the hover fill still has breathing room on both sides. */
+.vault-row {
+    display: flex; align-items: center; gap: 12px;
+    margin: 0 -8px; padding: 8px; border-radius: 10px;
+    transition: background .12s;
+}
+.vault-row:hover, .vault-row:focus-within { background: var(--fill-quaternary, var(--bg-secondary)); }
+.vault-row-icon {
+    flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--fill-quaternary, var(--bg-secondary)); color: var(--text-secondary);
+}
+.vault-row-main { flex: 1; min-width: 0; }
+.vault-row-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vault-row-detail { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; margin-top: 1px; font-variant-numeric: tabular-nums; }
+.vault-row-actions { flex: 0 0 auto; display: flex; gap: 6px; opacity: 0; transition: opacity .12s; }
+.vault-row:hover .vault-row-actions, .vault-row:focus-within .vault-row-actions,
+.vault-row:has(.vault-reveal) .vault-row-actions { opacity: 1; }
+/* "Show": each field labelled, secrets copyable, until Hide or 20s. */
+.vault-row-detail:has(.vault-reveal) { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.vault-reveal { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.vault-reveal-k { color: var(--text-muted, var(--text-secondary)); }
+.vault-reveal code {
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-primary);
+    padding: 1px 6px; border-radius: 5px; background: var(--fill-quaternary, rgba(127, 127, 127, 0.12));
+    overflow-wrap: anywhere; user-select: all;
+}
+.vault-copy {
+    border: 0; padding: 1px 7px; border-radius: 5px; cursor: pointer;
+    font: inherit; font-size: 11px; font-weight: 600;
+    background: var(--accent-tint); color: var(--accent-text, var(--accent-primary));
+}
+.vault-copy:hover { filter: brightness(1.08); }
+.vault-del:hover { color: var(--accent-danger); border-color: var(--accent-danger); }
+.vault-empty {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 9px 12px; border-radius: 10px; cursor: pointer;
+    border: 1px dashed var(--separator-strong, var(--border)); background: transparent;
+    font: inherit; font-size: 13px; color: var(--text-secondary); text-align: left;
+    transition: border-color .15s, color .15s, background .15s;
+}
+.vault-empty:hover { border-color: var(--accent-primary); color: var(--accent-primary); background: var(--accent-tint); }
+.vault-empty:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); }
+.vault-empty-plus { font-size: 15px; line-height: 1; }
+
+/* Add / Edit modal. The card is OPAQUE (bg-window, lifted a touch) so the page
+   behind never shows through the form; the page itself is dimmed and blurred. */
+.vault-modal-bg {
+    position: fixed; inset: 0; z-index: 9998;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    background: rgba(0, 0, 0, 0.45);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+body.hig .vault-modal-bg { background: rgba(20, 10, 4, 0.42); }
+.vault-modal {
+    width: 100%; max-width: 440px; max-height: 86vh; overflow-y: auto; box-sizing: border-box;
+    display: flex; flex-direction: column; gap: 18px;
+    padding: 22px 24px 20px;
+    background-color: var(--bg-window, #1d1714);
+    background-image: linear-gradient(rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.045));
+    border: 1px solid var(--separator, var(--border));
+    border-radius: 16px;
+    box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.6), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+}
+.vault-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.vault-modal-head h3 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary); }
+.vault-modal-x {
+    flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--fill-quaternary, rgba(127, 127, 127, 0.14)); color: var(--text-secondary);
+    font-size: 12px; line-height: 1; cursor: pointer;
+}
+.vault-modal-x:hover { color: var(--text-primary); }
+.vault-modal-body { display: flex; flex-direction: column; gap: 14px; }
+.vault-field { display: flex; flex-direction: column; gap: 6px; }
+.vault-field > span { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.vault-field .clean-input { width: 100%; box-sizing: border-box; }
+.vault-modal .input-hint:empty { display: none; }
+.vault-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }

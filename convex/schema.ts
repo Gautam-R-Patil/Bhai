@@ -425,4 +425,58 @@ export default defineSchema({
     .index("by_user", ["otplessUserId"])
     .index("by_user_authoredAt", ["otplessUserId", "authoredAt"])
     .index("by_user_slug_authoredAt", ["otplessUserId", "slug", "authoredAt"]),
+
+  // One-tap Telegram bot creation (convex/telegramManaged.ts). Short-lived:
+  // a row is deleted once the desktop collects the token, or after 30 min.
+  telegram_bot_claims: defineTable({
+    otplessUserId: v.string(),
+    username: v.string(), // suggested bot username, lower-case
+    status: v.union(v.literal("pending"), v.literal("ready")),
+    token: v.optional(v.string()),
+    ownerId: v.optional(v.string()),
+    ownerName: v.optional(v.string()),
+  })
+    .index("by_username", ["username"])
+    .index("by_otplessUserId", ["otplessUserId"]),
+
+  // Bhai's own email (convex/bhaiMail.ts): one row per user's .bhai address.
+  bhai_mail_addresses: defineTable({
+    otplessUserId: v.string(),
+    address: v.string(), // <name>.bhai@<domain>, lower-case
+    ownerEmail: v.string(), // mail from here is the owner (full Bhai); anyone else gets guest mode
+    lastInboundAt: v.number(), // last mail from the owner
+    othersDay: v.optional(v.string()), // YYYY-MM-DD of othersCount
+    othersCount: v.optional(v.number()), // non-owner mail queued that day (capped)
+  })
+    .index("by_address", ["address"])
+    .index("by_otplessUserId", ["otplessUserId"]),
+
+  // Mail waiting for a user's Bhai; deleted when the Bhai acks it.
+  bhai_mail_inbox: defineTable({
+    otplessUserId: v.string(),
+    messageId: v.string(),
+    from: v.optional(v.string()),
+    fromName: v.optional(v.string()),
+    fromOwner: v.optional(v.boolean()),
+    automated: v.optional(v.boolean()), // newsletter/auto-reply: never answered
+    subject: v.string(),
+    text: v.string(),
+    receivedAt: v.number(),
+  })
+    .index("by_otplessUserId", ["otplessUserId"])
+    .index("by_messageId", ["messageId"]),
+
+  // Who each Bhai emailed, for the daily recipient cap.
+  bhai_mail_sends: defineTable({
+    otplessUserId: v.string(),
+    at: v.number(),
+    recipients: v.number(),
+  }).index("by_otplessUserId_and_at", ["otplessUserId", "at"]),
+
+  // Where the catch-all mailbox poll got to (one row, name "inbox").
+  bhai_mail_cursor: defineTable({
+    name: v.string(),
+    uidValidity: v.number(),
+    lastUid: v.number(),
+  }).index("by_name", ["name"]),
 });

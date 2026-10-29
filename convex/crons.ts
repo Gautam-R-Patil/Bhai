@@ -43,4 +43,8 @@ crons.daily(
     {},
 );
 
+// Bhai's own email: read the catch-all mailbox. No-op until BHAI_MAIL_USER
+// and BHAI_MAIL_PASS are set.
+crons.interval("bhai mail poll", { minutes: 1 }, internal.bhaiMailNode.poll, {});
+
 export default crons;

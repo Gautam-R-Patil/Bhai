@@ -14,9 +14,10 @@ import { createRequire as _bridgeCreateRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
-import { getDataDir } from "../../config/paths.js";
+import { getDataDir, getScriptsDir } from "../../config/paths.js";
 import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
-import { isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
+import { bhaiExtensionIds, isForeignExtensionOrigin } from "../../security/extension-origin.js";
+import { isBrowserPageLoad, isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
 import { resetBackend } from "./browser-backend.js";
 import type { ChromeBridgeCommand, ChromeBridgeEvent, ChromeBridgeResponse, ChromeTabInfo } from "./types.js";
 
@@ -245,6 +246,13 @@ function removeDiscoveryFile(): void {
 
 // ── Register Native Messaging Host ───────────
 
+// Once Bhai's extension has fetched its token over native messaging (scoped to this OS user)
+// and connected with it, /discover stops handing tokens to any local caller that asks.
+// Delete this file to go back to HTTP discovery.
+const NATIVE_OK_FILE = path.join(homedir(), ".atlas", "bridge-native-ok");
+let nativeHostRegistered = false;
+export const discoverServesTokens = (): boolean => !(nativeHostRegistered && fs.existsSync(NATIVE_OK_FILE));
+
 async function registerNativeMessagingHost(_port: number): Promise<void> {
     try {
         // Write the native host script next to the discovery file
@@ -293,13 +301,28 @@ function sendMessage(msg) {
 `;
         fs.writeFileSync(hostScriptPath, hostScript, { mode: 0o755 });
 
+        // Chrome starts a native host with a minimal PATH (no node there, and a packaged
+        // install may have none at all): a launcher runs the host with Bhai's own runtime.
+        const ids = bhaiExtensionIds();
+        if (!ids) return; // Chrome rejects wildcard origins, so without Bhai's ID there's nothing to register
+        let hostPath = hostScriptPath;
+        if (process.platform !== "win32") {
+            const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+            hostPath = path.join(homedir(), ".atlas", "atlas-bridge-host");
+            fs.writeFileSync(
+                hostPath,
+                `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${q(process.execPath)} ${q(hostScriptPath)}\n`,
+                { mode: 0o755 },
+            );
+        }
+
         // Write the native messaging host manifest
         const manifest = {
             name: "com.atlas.bridge",
             description: "Bhai Browser Bridge — auto-discovery for Chrome extension",
-            path: hostScriptPath,
+            path: hostPath,
             type: "stdio",
-            allowed_origins: ["chrome-extension://*/"],
+            allowed_origins: [...ids].map((id) => `chrome-extension://${id}/`),
         };
 
         // macOS: ~/Library/Application Support/Google/Chrome/NativeMessagingHosts/
@@ -361,6 +384,7 @@ function sendMessage(msg) {
         }
 
         fs.writeFileSync(path.join(manifestDir, "com.atlas.bridge.json"), JSON.stringify(manifest, null, 2));
+        nativeHostRegistered = true;
     } catch (err) {
         // Native messaging registration is non-fatal — HTTP discovery is the primary method
         console.warn("⚠️  Could not register native messaging host (non-fatal):", (err as Error).message);
@@ -405,7 +429,10 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             // the web-origin block is the protection that matters.)
             const origin = (req.headers.origin as string | undefined) || "";
             const isWebOrigin = origin.startsWith("http://") || origin.startsWith("https://");
-            if (isWebOrigin) {
+            // ...and so does another extension: only Bhai's own may read the token. A browser
+            // page load (top-level navigation sends no Origin) would show it as page text the
+            // agent's own browser tools can read — e.g. a web page sending Bhai here.
+            if (isWebOrigin || isForeignExtensionOrigin(origin) || isBrowserPageLoad(req.headers)) {
                 res.writeHead(403, { "Content-Type": "application/json" });
                 res.end(
                     JSON.stringify({
@@ -414,13 +441,11 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
                 );
                 return;
             }
-            const discovery = {
-                port,
-                token: bridgeToken,
-                wsUrl: `ws://127.0.0.1:${port}`,
-                pid: process.pid,
-                overlay: getOverlayInfo(),
-            };
+            // After the extension has connected over native messaging, tokens stay off HTTP:
+            // a no-Origin GET can come from any local process, not only the extension.
+            const discovery = discoverServesTokens()
+                ? { port, token: bridgeToken, wsUrl: `ws://127.0.0.1:${port}`, pid: process.pid, overlay: getOverlayInfo() }
+                : { port, wsUrl: `ws://127.0.0.1:${port}`, pid: process.pid, native: true };
             const discoverHeaders: Record<string, string> = {
                 "Content-Type": "application/json",
                 "Cache-Control": "no-store",
@@ -471,7 +496,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
         // CORS preflight for /discover — only echo the requesting extension origin.
         if (req.method === "OPTIONS") {
             const origin = (req.headers.origin as string | undefined) || "";
-            const isExtension = origin.startsWith("chrome-extension://");
+            const isExtension = origin.startsWith("chrome-extension://") && !isForeignExtensionOrigin(origin);
             const allowOrigin = isExtension ? origin : "null";
             const headers: Record<string, string> = {
                 "Access-Control-Allow-Origin": allowOrigin,
@@ -508,9 +533,13 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     wss = new WebSocketServer({ noServer: true });
 
     httpServer.on("upgrade", (req, socket, head) => {
-        // Only the extension (chrome-extension:// origin) or a local CLI (no
-        // Origin) may connect — never a web page, rebound hostname or not.
-        if (!isLoopbackHost(req.headers.host, port) || isWebOrigin(req.headers.origin)) {
+        // Only Bhai's extension (its chrome-extension:// origin) or a local CLI (no
+        // Origin) may connect — never a web page or another extension.
+        if (
+            !isLoopbackHost(req.headers.host, port) ||
+            isWebOrigin(req.headers.origin) ||
+            isForeignExtensionOrigin(req.headers.origin)
+        ) {
             socket.destroy();
             return;
         }
@@ -601,6 +630,51 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     });
 }
 
+// ── Extension updates ────────────────────────
+// Chrome runs an unpacked extension from memory, so an update installed with Bhai
+// (new files under a running Chrome) stays unused until it reloads. An extension
+// older than the copy shipped beside Bhai is asked to reload itself, once per
+// version per run (a copy that can't update, e.g. from the store, can't loop).
+
+const reloadAsked = new Set<string>();
+
+function shippedExtensionVersion(): string | null {
+    const scripts = getScriptsDir(); // <repo>/scripts in dev, <Resources>/bot/scripts packaged
+    for (const dir of [path.join(scripts, "..", "chrome-extension"), path.join(scripts, "..", "..", "chrome-extension")]) {
+        try {
+            const v = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")).version;
+            if (typeof v === "string") return v;
+        } catch {
+            /* not this one */
+        }
+    }
+    return null;
+}
+
+/** True when dotted version `a` is newer than `b` ("1.0.10" > "1.0.9"). */
+export function isNewerVersion(a: string, b: string): boolean {
+    const x = a.split(".").map(Number);
+    const y = b.split(".").map(Number);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+        const d = (x[i] || 0) - (y[i] || 0);
+        if (d) return d > 0;
+    }
+    return false;
+}
+
+function askOutdatedExtensionToReload(ws: WebSocket, running: unknown): void {
+    const shipped = shippedExtensionVersion();
+    if (!shipped) return;
+    if (typeof running !== "string") {
+        console.log(`🔌 Chrome extension is older than ${shipped}: reload it once in chrome://extensions to update it`);
+        return;
+    }
+    if (!isNewerVersion(shipped, running) || reloadAsked.has(shipped)) return;
+    reloadAsked.add(shipped);
+    console.log(`🔌 Chrome extension ${running} → ${shipped}: asking it to reload`);
+    ws.send(JSON.stringify({ type: "reload" }));
+}
+
 // ── Message Handler ──────────────────────────
 
 function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, authTimer: NodeJS.Timeout): void {
@@ -616,7 +690,16 @@ function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, aut
             // Reset the browser backend so auto-mode picks up the extension
             resetBackend();
             notifyEvent({ type: "extension_connected", data: {} });
-            console.log("🔌 Chrome extension authenticated ✓");
+            console.log(`🔌 Chrome extension authenticated ✓${msg.native === true ? " (native messaging)" : ""}`);
+            if (msg.native === true && !fs.existsSync(NATIVE_OK_FILE)) {
+                try {
+                    fs.writeFileSync(NATIVE_OK_FILE, new Date().toISOString(), { mode: 0o600 });
+                    console.log("🔌 Bridge tokens now go out only over native messaging; /discover no longer serves them");
+                } catch {
+                    /* keep serving them */
+                }
+            }
+            askOutdatedExtensionToReload(ws, msg.version);
         } else {
             ws.send(JSON.stringify({ type: "auth_failed", error: "Invalid token" }));
             ws.close(4003, "Invalid token");
@@ -670,9 +753,8 @@ export async function sendBridgeCommand(
     }
 
     // Rate limit check (native or skip)
-    if (native && !native.checkBridgeRateLimit(type)) {
-        throw new Error(`Rate limit exceeded for command: ${type}`);
-    }
+    // The rate limit (30/s per command type) is checked once, inside native.validateBridgeCommand
+    // below; checking here too counted every command twice (an effective 15/s).
 
     const effectiveTimeout = timeoutMs || OPERATION_TIMEOUTS[type] || DEFAULT_COMMAND_TIMEOUT_MS;
 

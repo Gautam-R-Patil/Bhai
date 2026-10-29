@@ -7,6 +7,7 @@ import {
     osComputerAction,
     xdotoolCombo,
     ydotoolKeyArgs,
+    zoomRect,
 } from "../os-computer-action.js";
 
 describe("key names map to real keys on every platform", () => {
@@ -100,5 +101,28 @@ describe("os_computer_action — input validation (no OS dispatch)", () => {
     it("rejects wait beyond 60s (foot-gun guard)", async () => {
         const result = JSON.parse(await osComputerAction.handler({ action: "wait", durationMs: 120_000 } as any));
         expect(result.success).toBe(false);
+    });
+});
+
+describe("zoom crops the region a click would use", () => {
+    // A Retina external monitor to the right of the laptop, focused.
+    const dims = { width: 1920, height: 1080, scale: 2, monitorId: "ext", originX: 1470, originY: 0 };
+
+    it("percent resolves on the focused monitor, in screen points", async () => {
+        const r = await zoomRect({ action: "zoom", region: [0.25, 0.5, 0.75, 1], coordSystem: "percent" }, dims);
+        expect(r.x).toBeGreaterThanOrEqual(1470); // not the laptop's display
+        expect(r.x).toBeCloseTo(1470 + 480, -1);
+        expect(r.w).toBeCloseTo(960, -1);
+        expect(r.y + r.h).toBeLessThanOrEqual(1080);
+    });
+
+    it("image coords from a downscaled screenshot scale back to points, like a click", async () => {
+        // The screenshot action reported imageWidth 1568 for this 1920-pt monitor.
+        const r = await zoomRect(
+            { action: "zoom", region: [0, 0, 784, 441], coordSystem: "image", imageWidth: 1568 },
+            dims,
+        );
+        expect(r).toMatchObject({ x: 1470, y: 0 });
+        expect(r.w).toBeCloseTo(960, -1); // half the image = half the monitor, not 784 raw pixels
     });
 });

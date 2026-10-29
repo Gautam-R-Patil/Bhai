@@ -23,6 +23,11 @@ export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promis
     return _callerStorage.run(ctx, fn);
 }
 
+/** The current turn's caller: true owner, false guest/contact, undefined outside any turn (background work). */
+export function callerIsOwner(): boolean | undefined {
+    return _callerStorage.getStore()?.isOwner;
+}
+
 /** Legacy setter preserved for callers that can't wrap — always overwrites
  * nothing (ALS-scoped reads ignore it). Kept as a no-op so existing call
  * sites don't break while we roll the ALS wrapper out. */

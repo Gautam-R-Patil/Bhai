@@ -30,6 +30,7 @@ async function runJXA(script: string, timeout = 15000): Promise<string> {
 
 // Simple HTML→Markdown conversion for note bodies
 function htmlToMarkdown(html: string): string {
+    // &amp; is decoded last, so "&amp;lt;" stays the literal text "&lt;"
     return html
         .replace(/<br\s*\/?>/gi, "\n")
         .replace(/<\/p>/gi, "\n\n")
@@ -53,12 +54,12 @@ function htmlToMarkdown(html: string): string {
         .replace(/<ul[^>]*>|<\/ul>|<ol[^>]*>|<\/ol>/gi, "")
         .replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, "[$2]($1)")
         .replace(/<[^>]+>/g, "")
-        .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
         .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
 }

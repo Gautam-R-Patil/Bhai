@@ -4,7 +4,33 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChatCompletionMessageParam } from "../llm.js";
-import { compressToolHistory } from "./context-pruning.js";
+import { avoidToolOrphan, compressToolHistory } from "./context-pruning.js";
+
+describe("avoidToolOrphan — never start `recent` on an orphaned tool response", () => {
+    const a = (id: string): ChatCompletionMessageParam =>
+        ({ role: "assistant", tool_calls: [{ id, type: "function", function: { name: "read", arguments: "{}" } }] }) as ChatCompletionMessageParam;
+    const t = (id: string): ChatCompletionMessageParam => ({ role: "tool", tool_call_id: id, content: "r" });
+    const u: ChatCompletionMessageParam = { role: "user", content: "hi" };
+
+    it("advances past leading tool responses so the recent half starts on a non-tool message", () => {
+        // split=1 lands on the first tool response, orphaning it from a(…) in the old half.
+        const msgs = [a("c1"), t("c1"), t("c1"), u];
+        const split = avoidToolOrphan(msgs, 1);
+        expect(split).toBe(3);
+        expect(msgs.slice(split)[0].role).not.toBe("tool");
+    });
+
+    it("leaves a split that already starts on a user/assistant message untouched", () => {
+        const msgs = [a("c1"), t("c1"), u, a("c2"), t("c2")];
+        expect(avoidToolOrphan(msgs, 2)).toBe(2); // on the user
+        expect(avoidToolOrphan(msgs, 3)).toBe(3); // on the assistant
+    });
+
+    it("clamps to the end when the tail is all tool responses", () => {
+        const msgs = [a("c1"), t("c1"), t("c1")];
+        expect(avoidToolOrphan(msgs, 1)).toBe(3);
+    });
+});
 
 // compressToolHistory only touches messages BEFORE the most-recent user turn.
 // Every fixture therefore ends with a trailing user message that acts as the

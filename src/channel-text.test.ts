@@ -1,15 +1,29 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
 import { smartChunkMessage } from "./alive-ux.js";
-import { chunkMarkdownForTelegram, isStopCommand, markdownToPlainText, markdownToTelegramHtml } from "./channel-text.js";
+import {
+    chunkMarkdownForTelegram,
+    isStopCommand,
+    isStuckReplyPhrase,
+    markdownToPlainText,
+    markdownToTelegramHtml,
+    STUCK_REPLY_LINE,
+    stuckCallbackMessage,
+    stuckKeyboard,
+    takeStuckMarker,
+    withStuckReplyLine,
+} from "./channel-text.js";
 
 const fenceCount = (s: string) => s.split("\n").filter((l) => l.trimStart().startsWith("```")).length;
 
 describe("markdownToTelegramHtml", () => {
     it("leaves python code untouched by inline rules", () => {
-        const md = "Here:\n```python\nclass A:\n    def __init__(self):\n        # comment\n        x = 1 < 2 and **kw\n```\nDone **bold**";
+        const md =
+            "Here:\n```python\nclass A:\n    def __init__(self):\n        # comment\n        x = 1 < 2 and **kw\n```\nDone **bold**";
         const html = markdownToTelegramHtml(md);
-        expect(html).toContain('<pre><code class="language-python">class A:\n    def __init__(self):\n        # comment\n        x = 1 &lt; 2 and **kw</code></pre>');
+        expect(html).toContain(
+            '<pre><code class="language-python">class A:\n    def __init__(self):\n        # comment\n        x = 1 &lt; 2 and **kw</code></pre>',
+        );
         expect(html).not.toContain("<u>");
         expect(html).toContain("Done <b>bold</b>");
     });
@@ -18,13 +32,17 @@ describe("markdownToTelegramHtml", () => {
         const md = "Use `Map<string, __T__>` and\n```ts\nconst a: Array<number> = [];\n// - not a bullet\n```";
         const html = markdownToTelegramHtml(md);
         expect(html).toContain("<code>Map&lt;string, __T__&gt;</code>");
-        expect(html).toContain('<pre><code class="language-ts">const a: Array&lt;number&gt; = [];\n// - not a bullet</code></pre>');
+        expect(html).toContain(
+            '<pre><code class="language-ts">const a: Array&lt;number&gt; = [];\n// - not a bullet</code></pre>',
+        );
     });
 
     it("handles fences without language, one-line fences and unclosed fences", () => {
         expect(markdownToTelegramHtml("```\n# x\n```")).toBe("<pre># x</pre>");
         expect(markdownToTelegramHtml("```print(1)```")).toBe("<pre>print(1)</pre>");
-        expect(markdownToTelegramHtml("```js\nlet a = 1")).toBe('<pre><code class="language-js">let a = 1</code></pre>');
+        expect(markdownToTelegramHtml("```js\nlet a = 1")).toBe(
+            '<pre><code class="language-js">let a = 1</code></pre>',
+        );
     });
 
     it("leaves a stray ``` in prose literal instead of swallowing the rest", () => {
@@ -35,7 +53,7 @@ describe("markdownToTelegramHtml", () => {
     });
 
     it("still formats prose", () => {
-        expect(markdownToTelegramHtml("# Title\n- item\n[a](https://x.y/?a=1&b=\"2\")")).toBe(
+        expect(markdownToTelegramHtml('# Title\n- item\n[a](https://x.y/?a=1&b="2")')).toBe(
             '<b>Title</b>\n• item\n<a href="https://x.y/?a=1&amp;b=&quot;2&quot;">a</a>',
         );
     });
@@ -96,12 +114,143 @@ describe("chunkMarkdownForTelegram", () => {
 });
 
 describe("isStopCommand", () => {
-    it.each(["stop", "Stop!!", "/stop", "/stop@BhaiBot", "  cancel ", "please stop", "don't continue", "Ruk jao", "bas", "wait, stop", "never mind.", "stop bhai", "Bhai stop!", "cancel it", "cancel that", "stop everything", "stop the task", "abort task", "bas yaar", "leave it bhai", "leave it yaar", "never mind bhai"])(
-        "matches %s",
-        (t) => expect(isStopCommand(t)).toBe(true),
-    );
-    it.each(["quite", "can't stop laughing", "stop the music in the kitchen", "bus stop near me?", "cancel my 3pm meeting", "abortion law", "basically", "don't stop", "bhai", "stop the music please now", "it"])(
-        "ignores %s",
-        (t) => expect(isStopCommand(t)).toBe(false),
-    );
+    it.each([
+        "stop",
+        "Stop!!",
+        "/stop",
+        "/stop@BhaiBot",
+        "  cancel ",
+        "please stop",
+        "don't continue",
+        "Ruk jao",
+        "bas",
+        "wait, stop",
+        "never mind.",
+        "stop bhai",
+        "Bhai stop!",
+        "cancel it",
+        "cancel that",
+        "stop everything",
+        "stop the task",
+        "abort task",
+        "bas yaar",
+        "leave it bhai",
+        "leave it yaar",
+        "never mind bhai",
+    ])("matches %s", (t) => expect(isStopCommand(t)).toBe(true));
+    it.each([
+        "quite",
+        "can't stop laughing",
+        "stop the music in the kitchen",
+        "bus stop near me?",
+        "cancel my 3pm meeting",
+        "abortion law",
+        "basically",
+        "don't stop",
+        "bhai",
+        "stop the music please now",
+        "it",
+    ])("ignores %s", (t) => expect(isStopCommand(t)).toBe(false));
+});
+
+describe("stuck-report handoff", () => {
+    it("builds one row of three buttons with stuck:<action> data", () => {
+        expect(stuckKeyboard().inline_keyboard).toEqual([
+            [
+                { text: "I'll take over", callback_data: "stuck:takeover" },
+                { text: "Retry", callback_data: "stuck:retry" },
+                { text: "Skip", callback_data: "stuck:skip" },
+            ],
+        ]);
+    });
+
+    it("maps each button to the message it sends as the user", () => {
+        expect(stuckCallbackMessage("stuck:retry")).toBe("Try that again, with a different approach this time.");
+        expect(stuckCallbackMessage("stuck:skip")).toBe("Skip that part and carry on with the rest.");
+        expect(stuckCallbackMessage("stuck:takeover")).toBe(
+            "I'll take it from here myself. Tell me exactly where you stopped so I can continue.",
+        );
+    });
+
+    it("offers reply phrases no stop handler swallows", () => {
+        for (const phrase of ["retry it", "skip it", "I'll take over"]) expect(isStopCommand(phrase)).toBe(false);
+    });
+
+    it("ignores unknown or foreign callback data", () => {
+        expect(stuckCallbackMessage("stuck:toString")).toBeUndefined();
+        expect(stuckCallbackMessage("stuck:")).toBeUndefined();
+        expect(stuckCallbackMessage("cmd:retry")).toBeUndefined();
+    });
+
+    it("appends the plain reply line only to a stuck report for the owner", () => {
+        expect(withStuckReplyLine({ text: "Need your OTP.", stuck: true }, true)).toBe(
+            `Need your OTP.\n\n${STUCK_REPLY_LINE}`,
+        );
+        expect(STUCK_REPLY_LINE).toBe("Reply: retry it · skip it · I'll take over");
+        expect(withStuckReplyLine({ text: "Done, it's in Sent." }, true)).toBe("Done, it's in Sent.");
+        expect(withStuckReplyLine({ text: "Need the owner's OTP.", stuck: true }, false)).toBe("Need the owner's OTP.");
+    });
+
+    it("recognizes exactly the reply line's phrases", () => {
+        for (const q of ["retry it", "Skip it.", "I'll take over", "I’ll take over!"])
+            expect(isStuckReplyPhrase(q), q).toBe(true);
+        for (const q of ["skip", "retry", "retry it later", "Reply: retry it"])
+            expect(isStuckReplyPhrase(q), q).toBe(false);
+    });
+});
+
+describe("takeStuckMarker", () => {
+    it("keeps the closing markdown of the word before an inline marker", () => {
+        expect(takeStuckMarker("Blocked on **OTP**[[STUCK]]")).toEqual({ text: "Blocked on **OTP**", stuck: true });
+        expect(takeStuckMarker("Run `npm i`[[STUCK]]")).toEqual({ text: "Run `npm i`", stuck: true });
+        expect(takeStuckMarker("Report\n`[[STUCK]]`")).toEqual({ text: "Report", stuck: true });
+        expect(takeStuckMarker("Report\n__[[STUCK]]__")).toEqual({ text: "Report", stuck: true });
+    });
+    it("strips the marker on its own line and flags the reply stuck", () => {
+        expect(takeStuckMarker("Done: drafted it.\nBlocked: Gmail wants an OTP.\n\n[[STUCK]]")).toEqual({
+            text: "Done: drafted it.\nBlocked: Gmail wants an OTP.",
+            stuck: true,
+        });
+    });
+
+    it("catches spaced, bold and trailing variants", () => {
+        for (const marker of [
+            "[[ stuck ]]",
+            "**[[STUCK]]**",
+            "  [[Stuck]]  ",
+            "`[[STUCK]]`",
+            "_[[STUCK]]_",
+            "*[[STUCK]]*",
+            "__[[STUCK]]__",
+        ]) {
+            expect(takeStuckMarker(`Need your sign-in.\n${marker}\n\nThen I'll finish.`)).toEqual({
+                text: "Need your sign-in.\n\nThen I'll finish.",
+                stuck: true,
+            });
+        }
+        expect(takeStuckMarker("Need your sign-in. [[STUCK]]")).toEqual({ text: "Need your sign-in.", stuck: true });
+    });
+
+    it("strips a marker followed by more text and still flags the reply stuck", () => {
+        expect(takeStuckMarker("Blocked: Gmail wants your OTP. [[STUCK]]\nPing me when you have it.")).toEqual({
+            text: "Blocked: Gmail wants your OTP.\nPing me when you have it.",
+            stuck: true,
+        });
+        expect(takeStuckMarker("Need your OTP.\n[[STUCK]] — waiting on you")).toEqual({
+            text: "Need your OTP.\n— waiting on you",
+            stuck: true,
+        });
+    });
+
+    it("leaves a normal reply untouched, even when it quotes a [STUCK] label", () => {
+        const text = "All done — it's in Sent.  \n";
+        expect(takeStuckMarker(text)).toEqual({ text, stuck: false });
+        expect(takeStuckMarker("I got stuck in traffic").stuck).toBe(false);
+        for (const quoted of [
+            "Open issues:\n- [STUCK] CI flaky on main\n- Fix login",
+            "[Stuck]\nPayment webhook retries",
+        ]) {
+            expect(takeStuckMarker(quoted)).toEqual({ text: quoted, stuck: false });
+        }
+    });
 });

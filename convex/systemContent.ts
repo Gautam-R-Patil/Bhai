@@ -126,8 +126,9 @@ export const assembleSystemPrompt = internalQuery({
     skillSlugs: v.array(v.string()),     // Skill slugs selected by client tool-router
     userId: v.optional(v.string()),      // For fetching user's installed store skills
     inSpecMode: v.optional(v.boolean()), // Client-side plan-mode state flag for spec prompt inclusion
+    guest: v.optional(v.boolean()),      // A non-owner's turn (contact, group, web widget)
   },
-  handler: async (ctx, { platform, skillSlugs, userId, inSpecMode }) => {
+  handler: async (ctx, { platform, skillSlugs, userId, inSpecMode, guest }) => {
     // 1. Fetch all system prompts.
     //    THIS RUNS ON EVERY LLM REQUEST — it's the hottest Convex path in
     //    the proxy. The 100-row cap is safe given the known seeded set of
@@ -279,7 +280,9 @@ export const assembleSystemPrompt = internalQuery({
     // 6. Append per-user bot-authored addenda. These layer on top of core
     //    prompts + skills, scoped to this user only, written by the agent
     //    itself via the nightly self-improvement synthesis pass.
-    if (userId) {
+    //    Never on a guest's turn: the Settings tone (unhinged is 18+, owner-only)
+    //    and the learnings about the owner are the owner's alone.
+    if (userId && !guest) {
       const addenda = await ctx.db
         .query("user_prompt_addenda")
         .withIndex("by_user_active", (q) => q.eq("otplessUserId", userId).eq("isActive", true))

@@ -12,8 +12,9 @@ import { join } from "node:path";
 import { transcribeBuffer } from "../../voice/transcribe.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
-import { getActiveExtensionTab, sendBridgeCommand } from "./chrome-bridge.js";
-import { ATLAS_HUD_JS, getActivePage, touchBrowserActivity } from "./core.js";
+import { chromeDriver } from "./captcha-chrome.js";
+import { type CaptchaDriver, playwrightDriver, solveWithVision } from "./captcha-vision.js";
+import { getActivePage, touchBrowserActivity } from "./core.js";
 import { isNativeBrowserAvailable } from "./native-browser.js";
 
 // Try to use Rust-native CAPTCHA classifier for speed
@@ -28,7 +29,19 @@ try {
     /* native not available */
 }
 
-export type CaptchaType = "recaptcha-v2" | "recaptcha-v3" | "hcaptcha" | "turnstile" | "none";
+export type CaptchaType =
+    | "recaptcha-v2"
+    | "recaptcha-v3"
+    | "hcaptcha"
+    | "turnstile"
+    // Form-style checks Bhai reads and fills itself (captcha-forms.ts)
+    | "image-text"
+    | "text-question"
+    | "click-image"
+    | "rotate"
+    // A vendor Bhai can't solve itself (siteKey holds its name): detected so it goes to the owner
+    | "other"
+    | "none";
 
 // ─── Convex-backed key loader ─────────────────────────────────────────────
 // CAPTCHA API keys are stored as Convex environment variables (never bundled
@@ -39,7 +52,12 @@ let _captchaKeysFetchInFlight: Promise<void> | null = null;
 async function ensureCaptchaKeys(): Promise<void> {
     if (_captchaKeysFetched) return;
     // Skip Convex fetch if any solving key already present locally
-    if (process.env.NOPECHA_API_KEY || process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY) {
+    if (
+        process.env.NOCAPTCHAAI_API_KEY ||
+        process.env.NOPECHA_API_KEY ||
+        process.env.CAPTCHA_API_KEY ||
+        process.env.TWO_CAPTCHA_API_KEY
+    ) {
         _captchaKeysFetched = true;
         return;
     }
@@ -68,6 +86,10 @@ async function ensureCaptchaKeys(): Promise<void> {
             // Only mark fetched on success so a transient failure (no session
             // yet, network blip) doesn't disable key loading for the process.
             _captchaKeysFetched = true;
+            if (secrets.NOCAPTCHAAI_API_KEY && !process.env.NOCAPTCHAAI_API_KEY) {
+                process.env.NOCAPTCHAAI_API_KEY = secrets.NOCAPTCHAAI_API_KEY;
+                console.log("  🔑 CAPTCHA: NOCAPTCHAAI_API_KEY loaded from Convex");
+            }
             if (secrets.NOPECHA_API_KEY && !process.env.NOPECHA_API_KEY) {
                 process.env.NOPECHA_API_KEY = secrets.NOPECHA_API_KEY;
                 console.log("  🔑 CAPTCHA: NOPECHA_API_KEY loaded from Convex");
@@ -106,7 +128,13 @@ export async function detectCaptcha(
                 /* javascript-obfuscator:enable */ undefined,
             )) as string;
             const result = nativeClassifyCaptcha(html);
-            if (result.kind === "none" && result.confidence === 0) {
+            // The classifier only knows the big widgets: trust its "none" only when the page
+            // doesn't so much as mention a check (Enterprise, text and vendor CAPTCHAs).
+            const mentions =
+                /captcha|geetest|arkose|funcaptcha|awswaf|turnstile|challenge-form|cf-chl-widget|cf-challenge|just a moment|attention required|checking your browser|verify you are human/i.test(
+                    html,
+                );
+            if (result.kind === "none" && result.confidence === 0 && !mentions) {
                 return { type: "none", siteKey: null }; // definitively no CAPTCHA
             }
         } catch {
@@ -157,8 +185,75 @@ export async function detectCaptcha(
             if (rcV3) {
                 return { type: "recaptcha-v3", siteKey: rcV3.match(/render=([^&]+)/)?.[1] ?? null };
             }
-            // Any other reCAPTCHA widget (invisible v2, a challenge frame)
-            if (rcFrames.length || rcWidget) return rcV2;
+            // Invisible v2: only its picture challenge, once it pops up, needs anyone. Until then
+            // it's like v3 (and often passes by itself), so it's reported as that.
+            const challengeUp = rcFrames.some((f) => {
+                const r = f.getBoundingClientRect();
+                return (
+                    (f.getAttribute("src") ?? "").includes("/bframe") &&
+                    r.width > 100 &&
+                    r.bottom > 0 &&
+                    getComputedStyle(f).visibility !== "hidden"
+                );
+            });
+            if (challengeUp) return rcV2;
+            if (rcFrames.length || rcWidget) return { type: "recaptcha-v3", siteKey: rcV2.siteKey };
+            // Cloudflare's full-page check. Only its own titles: "please wait" etc. are ordinary loading pages.
+            if (
+                /^(just a moment|attention required|checking your browser|verify you are human)/i.test(document.title) ||
+                document.querySelector("#challenge-form,#challenge-stage,[id^='cf-chl-widget'],.cf-challenge")
+            ) {
+                return { type: "turnstile", siteKey: null };
+            }
+            // Vendors Bhai can't solve itself: detected so they reach the owner, never missed.
+            const vendors: [string, string][] = [
+                ["geetest", "[class*='geetest_'],[class^='geetest'],iframe[src*='geetest']"],
+                ["arkose", "iframe[src*='arkoselabs'],iframe[src*='funcaptcha'],[id*='funcaptcha']"],
+                ["aws-waf", "awswaf-captcha,iframe[src*='awswaf'],[id*='aws-waf']"],
+                ["mtcaptcha", ".mtcaptcha,iframe[src*='mtcaptcha']"],
+                ["keycaptcha", "[id*='keycaptcha'],[class*='keycaptcha'],iframe[src*='keycaptcha']"],
+                ["lemin", "[id^='lemin-cropped-captcha'],iframe[src*='leminnow']"],
+                ["friendly-captcha", ".frc-captcha"],
+                ["yandex-smartcaptcha", ".smart-captcha,iframe[src*='smartcaptcha']"],
+                ["solvemedia", "[id*='adcopy'],iframe[src*='solvemedia']"],
+            ];
+            const vendor = vendors.find(([, sel]) => document.querySelector(sel));
+            if (vendor) return { type: "other", siteKey: vendor[0] };
+            // Form-style checks: an image named captcha, a field for the answer, rotate buttons.
+            // No named helper functions in here: the bundler wraps them in a __name() the page lacks.
+            const field = Array.from(document.querySelectorAll("input")).find((i) => {
+                const r = i.getBoundingClientRect();
+                return (
+                    /^(text|)$/i.test(i.type || "") &&
+                    /captcha|verification code|security code|enter the (characters|code|text)/i.test(
+                        `${i.name} ${i.id} ${i.placeholder || ""} ${i.labels?.[0]?.textContent || ""}`,
+                    ) &&
+                    r.width > 20 &&
+                    r.height > 10
+                );
+            });
+            const img = Array.from(document.images).find((i) => {
+                const r = i.getBoundingClientRect();
+                // In a form and not a logo: sites (and CAPTCHA vendors) show "captcha" logos everywhere.
+                return (
+                    /captcha/i.test(`${i.src} ${i.id} ${i.className} ${i.alt}`) &&
+                    !/logo|icon/i.test(`${i.alt} ${i.className}`) &&
+                    !!i.closest("form") &&
+                    r.width > 20 &&
+                    r.height > 10
+                );
+            });
+            // No token shows a form check is done: its field holds an answer, or the image is the one
+            // Bhai answered (captcha-forms marks it; a reload or a new image clears that).
+            if (field ? !!field.value : img?.getAttribute("data-bhai-answered") === img?.src) {
+                return { type: "none", siteKey: null };
+            }
+            if (img && document.querySelector("button[class*='rotate' i],[class*='rotate' i] button")) {
+                return { type: "rotate", siteKey: null };
+            }
+            if (img && field) return { type: "image-text", siteKey: null };
+            if (field) return { type: "text-question", siteKey: null };
+            if (img) return { type: "click-image", siteKey: null };
             return { type: "none", siteKey: null };
         },
         /* javascript-obfuscator:enable */ undefined,
@@ -196,8 +291,81 @@ export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | nu
     }
 }
 
-export const CAPTCHA_HINT =
-    "A human-verification check (CAPTCHA) is on this page. Don't tick or solve it yourself: call browser_wait_for_human so the owner can do it, then continue the task.";
+// ─── The CAPTCHA pipeline ─────────────────────
+// The agent never deals with CAPTCHAs. After any page action, a check on the page
+// goes here: Bhai's solvers, then (only if they can't) the owner, while the agent's
+// tool call simply waits. The agent gets the page back, or one line saying the owner
+// still has to finish it. ATLAS_NO_CAPTCHA_AUTO=true skips the solvers: every
+// check goes straight to the owner.
+
+type CaptchaOutcome = { present: false } | { present: true; cleared: boolean; detail: Record<string, unknown> };
+
+// A page the pipeline just gave up on (solvers and owner both): later steps on it go
+// straight to "the owner has to do it" instead of re-running solvers and another
+// ~5 min wait for each step. Cleared, the entry goes; it expires after GAVE_UP_MS.
+const gaveUp = new Map<string, number>();
+const GAVE_UP_MS = 180_000;
+const pageKey = (page: unknown) => {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return String((page as any).url?.() ?? "").split("#")[0];
+    } catch {
+        return "";
+    }
+};
+
+export async function clearCaptchaIfAny(page: unknown, signal?: AbortSignal): Promise<CaptchaOutcome> {
+    const type = await quickCaptchaCheck(page);
+    const key = pageKey(page);
+    if (!type) {
+        gaveUp.delete(key);
+        return { present: false };
+    }
+    const since = gaveUp.get(key);
+    if (since && Date.now() - since < GAVE_UP_MS)
+        return { present: true, cleared: false, detail: { status: "still_waiting" } };
+    console.log(`  🧩 CAPTCHA pipeline: ${type} on the page, taking over`);
+    const raw =
+        process.env.ATLAS_NO_CAPTCHA_AUTO === "true"
+            ? await (await import("./human-handoff.js")).browserWaitForHuman.handler({ _signal: signal })
+            : await browserHandleCaptcha.handler({ _signal: signal });
+    const detail = JSON.parse(raw) as Record<string, unknown>;
+    const cleared = detail.success === true;
+    console.log(`  🧩 CAPTCHA pipeline: ${cleared ? `cleared (${detail.method ?? detail.status})` : "not cleared"}`);
+    if (cleared) gaveUp.delete(key);
+    else if (detail.status !== "cancelled" && key) gaveUp.set(key, Date.now());
+    return { present: true, cleared, detail };
+}
+
+/** A browser tool's result after the pipeline had its turn: nothing about CAPTCHAs in it. */
+export async function captchaAfterAction(result: string, signal?: AbortSignal): Promise<string> {
+    const outcome = await getActivePage()
+        .then((page) => clearCaptchaIfAny(page, signal))
+        .catch(() => ({ present: false }) as const);
+    if (!outcome.present) return result;
+    let obj: Record<string, unknown>;
+    try {
+        obj = JSON.parse(result);
+    } catch {
+        obj = { result };
+    }
+    if (outcome.cleared) {
+        // A challenge page (Cloudflare's 403/503) is gone once cleared: not a failed load.
+        if (typeof obj.error === "string" && /HTTP (403|429|503)/.test(obj.error)) {
+            delete obj.error;
+            obj.success = true;
+        }
+        obj.page_note =
+            "The page changed after this step (Bhai finished an automatic step on it). Scan it again before relying on the element list above.";
+    } else {
+        obj.error ??= "This page is waiting on the owner.";
+        obj.owner_needed =
+            outcome.detail.status === "cancelled"
+                ? "Stopped by the owner."
+                : "This page has a step only the owner can finish (they were asked and it's still open). Don't try that step yourself: stop and send the stuck report (what's blocked, and that the owner has to finish it in the browser), ending with [[STUCK]] on its own line.";
+    }
+    return JSON.stringify(obj);
+}
 
 // ─── Solver (2captcha) ────────────────────────
 
@@ -306,27 +474,58 @@ async function injectToken(page: any, type: CaptchaType, token: string): Promise
     );
 }
 
-// ─── Turnstile: try passive wait first ────────
+// ─── Turnstile: passive wait, then one real click ──
+// The pass signal is the token Turnstile writes into input[name="cf-turnstile-response"]
+// (light DOM). Its iframe is often inside a closed shadow root, and it stays visible
+// ("Success!") after an interactive pass, so neither "no iframe" nor "iframe hidden"
+// means passed. The widget box (or iframe) gives where to click.
+const TURNSTILE_JS = `(() => {
+  const tok = [...document.querySelectorAll('input[name="cf-turnstile-response"]')].some((e) => !!e.value);
+  // The first one with a box: [id*=turnstile] also matches Cloudflare's <script id="cf-turnstile-script…">.
+  const w = [...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"],.cf-turnstile,[data-cf-turnstile],#cf-turnstile,div[id*="turnstile" i],#challenge-stage')].find((e) => e.getBoundingClientRect().width > 30);
+  const field = document.querySelector('input[name="cf-turnstile-response"]');
+  const r = w && w.getBoundingClientRect();
+  // An empty response field means the widget is still there even if its box can't be found.
+  return { tok, present: !!w || !!field, box: r && r.width > 30 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null };
+})()`;
+type TurnstileState = { tok: boolean; present: boolean; box: { x: number; y: number; w: number; h: number } | null };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function waitForTurnstilePassive(page: any, timeoutMs = 25000): Promise<boolean> {
-    try {
-        // With good stealth, Cloudflare Turnstile often auto-passes without any interaction
-        await page.waitForFunction(
-            /* javascript-obfuscator:disable */ () => {
-                const frame = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
-                if (!frame) return true; // no Turnstile present
-                const s = window.getComputedStyle(frame as Element);
-                // Frame becomes hidden when challenge passes
-                return s.display === "none" || s.visibility === "hidden" || s.opacity === "0";
-            },
-            /* javascript-obfuscator:enable */ undefined, // Playwright signature is (fn, arg, options)
-            { timeout: timeoutMs, polling: 1000 },
-        );
-        return true;
-    } catch {
-        return false;
+async function turnstilePassed(page: any, timeoutMs: number): Promise<boolean> {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+        const s = (await page.evaluate(TURNSTILE_JS).catch(() => null)) as TurnstileState | null;
+        if (s?.tok || (s && !s.present)) return true; // a token, or the widget went away with the page moving on
+        touchBrowserActivity();
+        await new Promise((r) => setTimeout(r, 500));
     }
+    return false;
+}
+
+/**
+ * Real (trusted) input for the page: Playwright's own in the built-in browser, CDP
+ * through the extension in the owner's Chrome (the bridge's click_at is synthetic,
+ * which widgets ignore and which can't reach into their frames).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function captchaDriver(page: any): CaptchaDriver | null {
+    return getCurrentMode() === "chrome" ? chromeDriver(page) : playwrightDriver(page);
+}
+
+/** "passive" when Turnstile let the browser through, "click" after ticking its box, else null. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function solveTurnstile(page: any): Promise<"passive" | "click" | null> {
+    if (await turnstilePassed(page, 6000)) return "passive";
+    const d = captchaDriver(page);
+    if (!d) return null;
+    const s = (await page.evaluate(TURNSTILE_JS).catch(() => null)) as TurnstileState | null;
+    if (!s?.box) return null;
+    // The box sits ~30px in from the widget's left edge, centred in its 65px-high strip.
+    const x = s.box.x + 30;
+    const y = s.box.y + Math.min(s.box.h, 65) / 2;
+    await d.move(x, y, 8);
+    await d.click(x, y);
+    return (await turnstilePassed(page, 15000)) ? "click" : null;
 }
 
 // ─── Audio CAPTCHA Bypass (free, no API key) ──────────────────────────────
@@ -475,6 +674,81 @@ async function solveAudioCaptcha(page: any): Promise<string | null> {
     }
 }
 
+// ─── NoCaptchaAI (token solver — set NOCAPTCHAAI_API_KEY) ────────────────
+// Its token API only covers Turnstile; hCaptcha/reCAPTCHA are image-grid tasks there.
+// ponytail: Turnstile only, add ReCaptchaV2Image/PopularCaptchaImage grid solving if those sites matter.
+
+const NOCAPTCHA_TYPE_MAP: Partial<Record<CaptchaType, string>> = {
+    turnstile: "AntiTurnstileTaskProxyLess",
+};
+
+export async function solveViaNoCaptchaAI(type: CaptchaType, siteKey: string, pageUrl: string): Promise<string | null> {
+    const apiKey = process.env.NOCAPTCHAAI_API_KEY;
+    if (!apiKey) return null;
+
+    const taskType = NOCAPTCHA_TYPE_MAP[type];
+    if (!taskType) return null;
+
+    try {
+        const taskBody = { type: taskType, websiteURL: pageUrl, websiteKey: siteKey };
+        const submitRes = await fetch("https://api.nocaptchaai.com/createTask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clientKey: apiKey, task: taskBody }),
+        });
+        if (!submitRes.ok) {
+            console.warn(`  ⚠️ NoCaptchaAI submit HTTP ${submitRes.status}`);
+            return null;
+        }
+        const submitData = (await submitRes.json()) as {
+            errorId?: number;
+            taskId?: string;
+            error?: string;
+            errorDescription?: string;
+        };
+        if (submitData.errorId) {
+            console.warn(
+                `  ⚠️ NoCaptchaAI submit error: ${submitData.errorDescription ?? submitData.error ?? submitData.errorId}`,
+            );
+            return null;
+        }
+        const taskId = submitData.taskId;
+        if (!taskId) return null;
+
+        // Poll for result (max 120s, 3s intervals)
+        for (let i = 0; i < 40; i++) {
+            await new Promise((r) => setTimeout(r, 3000));
+            const pollRes = await fetch("https://api.nocaptchaai.com/getTaskResult", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ clientKey: apiKey, taskId }),
+            });
+            if (!pollRes.ok) continue;
+            const pollData = (await pollRes.json()) as {
+                status?: string;
+                solution?: { token?: string };
+                errorId?: number;
+            };
+            if (pollData.status === "ready") {
+                const token = pollData.solution?.token;
+                if (token) {
+                    console.log(`  🟢 NoCaptchaAI: solved ${type} (${(i + 1) * 3}s)`);
+                    return token;
+                }
+            }
+            if (pollData.status === "failed" || (pollData.errorId && pollData.errorId > 0)) {
+                console.warn(`  ⚠️ NoCaptchaAI: task failed`);
+                return null;
+            }
+        }
+        console.warn("  ⚠️ NoCaptchaAI: timeout waiting for solution");
+        return null;
+    } catch (err) {
+        console.warn(`  ⚠️ NoCaptchaAI error: ${(err as Error).message}`);
+        return null;
+    }
+}
+
 // ─── NopeCHA (free tier: 100 solves/day, no signup) ──────────────────────
 // Handles reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile.
 // Set NOPECHA_API_KEY env var (get from nopecha.com — free plan available).
@@ -549,20 +823,50 @@ async function solveViaNopeCHA(type: CaptchaType, siteKey: string, pageUrl: stri
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function handleCaptchaIfPresent(
     page: any,
+    opts: { signal?: AbortSignal } = {},
 ): Promise<{ handled: boolean; type: CaptchaType; method: string }> {
     // Ensure CAPTCHA keys are loaded from Convex (if not already in process.env)
     await ensureCaptchaKeys();
 
     const info = await detectCaptcha(page);
     if (info.type === "none") return { handled: true, type: "none", method: "none" };
+    if (await captchaSolved(page)) return { handled: true, type: info.type, method: "already_solved" };
 
     console.log(`  🤖 CAPTCHA detected: ${info.type} (sitekey: ${info.siteKey?.substring(0, 20) ?? "unknown"})`);
 
-    // ── Tier 1: Turnstile passive stealth (often auto-passes with good stealth) ──
+    // ── Tier 1: Turnstile: a passive pass (common with good stealth), else one real click ──
     if (info.type === "turnstile") {
-        const passed = await waitForTurnstilePassive(page, 20000);
-        if (passed) return { handled: true, type: "turnstile", method: "passive_stealth" };
+        const how = await solveTurnstile(page);
+        if (how)
+            return {
+                handled: true,
+                type: "turnstile",
+                method: how === "passive" ? "passive_stealth" : "turnstile_click",
+            };
     }
+
+    // ── Form-style checks: read the image / question with the vision models and fill it in ──
+    if (
+        info.type === "image-text" ||
+        info.type === "text-question" ||
+        info.type === "click-image" ||
+        info.type === "rotate"
+    ) {
+        const driver = captchaDriver(page);
+        const { solveFormCaptcha } = await import("./captcha-forms.js");
+        const solved =
+            !!driver &&
+            (await solveFormCaptcha(page, info.type, driver).catch((e: unknown) => {
+                console.warn(`  🧩 CAPTCHA (${info.type}) solver failed: ${(e as Error)?.message ?? e}`);
+                return false;
+            }));
+        if (solved) {
+            return { handled: true, type: info.type, method: "vision_form" };
+        }
+        return { handled: false, type: info.type, method: "unsolved" };
+    }
+    // A vendor Bhai can't solve: straight to the owner.
+    if (info.type === "other") return { handled: false, type: info.type, method: "unsolved" };
 
     // ── Tier 2: reCAPTCHA v2 audio bypass (free, no API key needed) ──────────
     if (info.type === "recaptcha-v2") {
@@ -575,7 +879,24 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 3: NopeCHA (free 100/day — set NOPECHA_API_KEY) ─────────────────
+    // ── Tier 3: picture grid via vision models (built-in browser or the owner's Chrome) ──
+    if (info.type === "hcaptcha" || info.type === "recaptcha-v2") {
+        const driver = captchaDriver(page) ?? undefined;
+        if (driver && (await solveWithVision(page, captchaSolved, { signal: opts.signal, driver }))) {
+            return { handled: true, type: info.type, method: "vision" };
+        }
+    }
+
+    // ── Tier 4: NoCaptchaAI (set NOCAPTCHAAI_API_KEY) ─────────────────────────
+    if (info.siteKey && process.env.NOCAPTCHAAI_API_KEY) {
+        const token = await solveViaNoCaptchaAI(info.type, info.siteKey, page.url());
+        if (token) {
+            await injectToken(page, info.type, token);
+            return { handled: true, type: info.type, method: "nocaptchaai" };
+        }
+    }
+
+    // ── Tier 5: NopeCHA (free 100/day — set NOPECHA_API_KEY) ─────────────────
     if (info.siteKey && process.env.NOPECHA_API_KEY) {
         const token = await solveViaNopeCHA(info.type, info.siteKey, page.url());
         if (token) {
@@ -584,7 +905,7 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 4: 2captcha (paid fallback — set CAPTCHA_API_KEY or TWO_CAPTCHA_API_KEY) ──
+    // ── Tier 6: 2captcha (paid fallback — set CAPTCHA_API_KEY or TWO_CAPTCHA_API_KEY) ──
     if (info.siteKey && (process.env.CAPTCHA_API_KEY || process.env.TWO_CAPTCHA_API_KEY)) {
         const token = await solve2captcha(info.type, info.siteKey, page.url());
         if (token) {
@@ -593,71 +914,13 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 5: human handoff — surface the page and wait for the user ──
-    if (await handOffToHuman(page)) return { handled: true, type: info.type, method: "human" };
-
+    // Unsolved: the tool handler hands it to the owner (human-handoff.ts).
     return { handled: false, type: info.type, method: "unsolved" };
 }
 
-// ─── Human Handoff ────────────────────────────
-
-/**
- * Poll the detector until the CAPTCHA is gone or timeoutMs elapses. Detection
- * errors (page mid-navigation right after the user solves) count as "not yet".
- */
-export async function waitForCaptchaCleared(
-    page: unknown,
-    timeoutMs: number,
-    intervalMs = 2000,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    detect: (page: any) => Promise<CaptchaInfo> = detectCaptcha,
-): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        touchBrowserActivity(); // keep the idle-close timer from killing the browser mid-wait
-        await new Promise((r) => setTimeout(r, intervalMs));
-        const info = await detect(page).catch(() => null);
-        if (info?.type === "none") return true;
-    }
-    return false;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function handOffToHuman(page: any): Promise<boolean> {
-    const raw = process.env.ATLAS_CAPTCHA_HANDOFF_MS;
-    const timeoutMs = raw ? Number(raw) : 300_000;
-    if (!(timeoutMs > 0)) return false; // ATLAS_CAPTCHA_HANDOFF_MS=0 disables the handoff
-
-    console.log(`  🙋 CAPTCHA: handing off to user (waiting up to ${Math.round(timeoutMs / 1000)}s)`);
-    try {
-        if (getCurrentMode() === "chrome") {
-            const tab = await getActiveExtensionTab();
-            if (tab?.id) await sendBridgeCommand("switch_tab", { tabId: tab.id, focus: true });
-        } else {
-            await page.bringToFront?.();
-        }
-    } catch {
-        /* best effort */
-    }
-    const banner = (label: string, done: boolean) =>
-        page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`).catch(() => {});
-    await banner("⏸ Bhai paused — please solve the CAPTCHA, I'll continue automatically", false);
-    import("../platform-bridge.js")
-        .then(({ showNotification }) =>
-            showNotification(
-                "Bhai needs your help",
-                "Please solve the CAPTCHA in the browser — I'll continue automatically.",
-            ),
-        )
-        .catch(() => {});
-
-    const cleared = await waitForCaptchaCleared(page, timeoutMs);
-    await banner("", true);
-    console.log(`  🙋 CAPTCHA handoff: ${cleared ? "cleared by user ✓" : "timed out"}`);
-    return cleared;
-}
-
 // ─── Tool Definition ──────────────────────────
+
+const TOOL_BUDGET_S = 570; // solvers plus the owner's wait: under ~10 min in all
 
 export const browserHandleCaptcha: ToolDefinition = {
     schema: {
@@ -665,18 +928,16 @@ export const browserHandleCaptcha: ToolDefinition = {
         function: {
             name: "browser_handle_captcha",
             description:
-                "Detect and solve CAPTCHA challenges on the current page. Waterfall: 1) Cloudflare Turnstile — passive wait; 2) reCAPTCHA v2 — audio challenge; 3) NopeCHA API (NOPECHA_API_KEY); 4) 2captcha API (CAPTCHA_API_KEY); 5) if all fail, hands off to the user — brings the page to the front, notifies them, and waits (up to ~5 min) until they solve it, then returns success with method 'human'. If it returns requires_user:true, do NOT retry — tell the user the page needs a manual CAPTCHA solve. Call this when a page is blocked by a CAPTCHA before proceeding.",
-            parameters: {
-                type: "object",
-                properties: {},
-                required: [],
-            },
+                "Hand a CAPTCHA / human-verification check on the current page (\"I'm not a robot\", hCaptcha, reCAPTCHA, Cloudflare Turnstile) to Bhai's separate CAPTCHA pipeline, which the owner set up for this. You don't solve or click the check yourself: call this, the pipeline completes it with its own models (Turnstile wait and click, reCAPTCHA audio, picture grids and drag puzzles read by vision, solver APIs) and gives control back to you. On success, continue the original task from the step you were on. Only if the pipeline can't does it hand the check to the owner: it brings the tab up, messages them on this channel and waits (up to ~5 min). If it returns requires_user:true, do NOT call it again in a loop: tell the owner the page is still waiting on them.",
+            parameters: { type: "object", properties: {}, required: [] },
         },
     },
-    async handler() {
+    async handler(input) {
+        const start = Date.now();
         try {
             const page = await getActivePage();
-            const result = await handleCaptchaIfPresent(page);
+            const signal = input._signal as AbortSignal | undefined;
+            const result = await handleCaptchaIfPresent(page, { signal });
             if (result.type === "none") {
                 return JSON.stringify({ success: true, captcha_present: false });
             }
@@ -686,20 +947,22 @@ export const browserHandleCaptcha: ToolDefinition = {
                     captcha_present: true,
                     captcha_type: result.type,
                     method: result.method,
-                    message: `CAPTCHA solved via ${result.method}. You may now proceed.`,
+                    message: `CAPTCHA solved via ${result.method}. Continue the task.`,
                 });
             }
-            // `error` makes the agent loop count this as a failure; requires_user
-            // tells it retrying won't help.
+            // Lazy: human-handoff.ts imports this module.
+            const { browserWaitForHuman } = await import("./human-handoff.js");
+            // The owner's wait: ATLAS_CAPTCHA_HANDOFF_MS when set, never past the pipeline's budget.
+            const left = Math.floor(TOOL_BUDGET_S - (Date.now() - start) / 1000);
+            const configured = Number(process.env.ATLAS_CAPTCHA_HANDOFF_MS) / 1000;
+            const timeout_s = configured > 0 ? Math.min(left, configured) : left;
+            const out = JSON.parse(await browserWaitForHuman.handler({ timeout_s, _signal: signal }));
             return JSON.stringify({
-                success: false,
-                error: `CAPTCHA (${result.type}) not solved: automatic solvers failed and the user did not solve it in time.`,
-                requires_user: true,
+                ...out,
                 captcha_present: true,
                 captcha_type: result.type,
-                method: result.method,
-                message:
-                    "Stop retrying this page. Ask the user to solve the CAPTCHA in the browser, then continue. (Auto-solving needs NOPECHA_API_KEY or CAPTCHA_API_KEY.)",
+                method: "human",
+                auto_solve: "failed",
             });
         } catch (err) {
             return JSON.stringify({ error: `CAPTCHA handler failed: ${(err as Error).message}` });

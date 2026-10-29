@@ -258,8 +258,9 @@ async function fetchPageContentOnce(url: string): Promise<string> {
         linksByUrl.set(url, extractOutboundLinks(html, url));
 
         const text = tagsToText(stripTagBlocks(html, ["script", "style", "nav", "footer", "header"]))
-            .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+            .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<")
             .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+            .replace(/&amp;/g, "&") // last, so "&amp;lt;" stays the literal "&lt;"
             .replace(/[ \t]+/g, " ")
             .replace(/\n{3,}/g, "\n\n")
             .trim();

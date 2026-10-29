@@ -10,6 +10,24 @@
  * them from `width` to the screen), black label box at (x-1,0)..(x+len*7+3,13).
  */
 
+import { createHash } from "node:crypto";
+
+/**
+ * Clean copies of recent gridded screenshots, by hash of the gridded JPEG: the grid
+ * is for the model, the owner's receipt should show just the screen.
+ * ponytail: keeps the last 8; a turn whose screenshot is pushed out by 8 newer ones
+ * (concurrent turns) would pass the gridded frame through. Tag frames if that bites.
+ */
+const cleanCopies = new Map<string, Promise<Buffer | null>>();
+const keyOf = (jpeg: Buffer) => createHash("sha1").update(jpeg).digest("base64");
+
+/** A screenshot (base64) without the grid gridScreenshot drew on it; others pass through. null if the clean copy failed. */
+export async function withoutGrid(base64: string): Promise<string | null> {
+    const clean = cleanCopies.get(keyOf(Buffer.from(base64, "base64")));
+    if (!clean) return base64;
+    return (await clean)?.toString("base64") ?? null;
+}
+
 /** The grid as an SVG the size of the resized image. Exported for tests. */
 export function buildGridSvg(w: number, h: number, gridPx: number): string {
     const parts: string[] = [];
@@ -58,13 +76,20 @@ export async function gridScreenshot(
         const img = () => sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } });
         try {
             const svg = Buffer.from(buildGridSvg(info.width, info.height, gridPx));
-            return {
-                buf: await img()
-                    .composite([{ input: svg }])
+            const buf = await img()
+                .composite([{ input: svg }])
+                .jpeg({ quality: 85 })
+                .toBuffer();
+            // Encoded off the hot path; only a receipt ever waits for it.
+            cleanCopies.set(
+                keyOf(buf),
+                img()
                     .jpeg({ quality: 85 })
-                    .toBuffer(),
-                mime: "image/jpeg",
-            };
+                    .toBuffer()
+                    .catch(() => null),
+            );
+            if (cleanCopies.size > 8) cleanCopies.delete(cleanCopies.keys().next().value as string);
+            return { buf, mime: "image/jpeg" };
         } catch {
             return { buf: await img().jpeg({ quality: 85 }).toBuffer(), mime: "image/jpeg" };
         }

@@ -12,5 +12,9 @@ describe("isScreenQuery", () => {
         for (const q of ["What's 17 times 23?", "what's the capital of France?", "how are you doing today?", "Write a haiku about monsoon rain.", "what do you think about pizza"]) {
             expect(isScreenQuery(q), q).toBe(false);
         }
+    });    it("leaves a stuck report's handoff replies to the agent", () => {
+        for (const q of ["retry it", "Skip it.", "I'll take over", "I’ll take over!"]) {
+            expect(isScreenQuery(q), q).toBe(false);
+        }
     });
 });

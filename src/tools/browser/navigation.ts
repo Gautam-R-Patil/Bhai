@@ -10,7 +10,7 @@ import { getCachedActions, markActionFailed, replayActions, shouldReplayActions 
 import { withAgentUIHidden } from "./agent-cursor.js";
 import { checkAuthWall } from "./auth-wall.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
-import { CAPTCHA_HINT, quickCaptchaCheck } from "./captcha.js";
+import { quickCaptchaCheck } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
     buildElementsText,
@@ -141,10 +141,6 @@ export const browserNavigate: ToolDefinition = {
             // Clear HUD once page is ready
             await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
 
-            const captchaType = navError ? null : await quickCaptchaCheck(page);
-            const captchaFields = captchaType
-                ? { captcha_detected: true, captcha_type: captchaType, hint: CAPTCHA_HINT }
-                : {};
             if (!navError && page.url().startsWith("chrome-error://"))
                 navError = "browser error page (site unreachable)";
             if (!navError && status !== null && BLOCKING_STATUSES.has(status)) navError = `HTTP ${status}`;
@@ -153,7 +149,6 @@ export const browserNavigate: ToolDefinition = {
                     error: `Navigation failed: ${navError}`,
                     url: page.url(),
                     ...(status !== null ? { status } : {}),
-                    ...captchaFields,
                     ...takePageEvents(),
                 });
             }
@@ -166,7 +161,8 @@ export const browserNavigate: ToolDefinition = {
             }
 
             // Login/OTP wall: may import the user's Chrome session and reload — before the scan.
-            const authFields = captchaType ? {} : await checkAuthWall(page);
+            // Not on a CAPTCHA page: the pipeline gets that one first, after this tool returns.
+            const authFields = (await quickCaptchaCheck(page)) ? {} : await checkAuthWall(page);
 
             const title = await page.title();
             const url = page.url();
@@ -197,7 +193,6 @@ export const browserNavigate: ToolDefinition = {
                     ? { timed_out: true, note: `Page did not finish loading within ${timeout}ms; it may be partial.` }
                     : {}),
                 ...(waitForTimedOut ? { wait_for_timed_out: true } : {}),
-                ...captchaFields,
                 ...authFields,
                 ...takePageEvents(),
                 tip: "Read interactive_elements_text to find the label ID, then use browser_click_at with the label to click.",
@@ -432,8 +427,15 @@ async function switchTabInChrome(input: Record<string, unknown>): Promise<string
     let tabs = await list();
     const at = (i: unknown) => (typeof i === "number" ? tabs[i] : undefined);
     if (typeof input.close_tab_index === "number" || input.close_active) {
+        // "The active tab" is the focused window's: every window has an active tab, so
+        // tabs.find(t => t.active) could close the owner's tab in another window.
+        const current = input.close_active
+            ? ((await sendBridgeCommand("get_active_tab", {}).catch(() => null)) as { id?: number } | null)
+            : null;
         const target =
-            typeof input.close_tab_index === "number" ? at(input.close_tab_index) : tabs.find((t) => t.active);
+            typeof input.close_tab_index === "number"
+                ? at(input.close_tab_index)
+                : tabs.find((t) => t.id === current?.id);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
         await sendBridgeCommand("close_tab", { tabId: target.id });
         tabs = await list();
@@ -452,7 +454,9 @@ async function switchTabInChrome(input: Record<string, unknown>): Promise<string
     if (typeof input.tab_index === "number") {
         const target = at(input.tab_index);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
-        await sendBridgeCommand("switch_tab", { tabId: target.id });
+        // focus: a tab in another window must also bring that window forward, or the next
+        // command (which acts on the focused window's tab) still hits the old one.
+        await sendBridgeCommand("switch_tab", { tabId: target.id, focus: true });
         return JSON.stringify({
             success: true,
             action: "switched",

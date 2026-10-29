@@ -180,6 +180,11 @@ contextBridge.exposeInMainWorld("atlas", {
 
     // ── Channel Setup Helpers ────────────────────────
     testChannel: (channel, params) => ipcRenderer.invoke(`channel:test-${channel}`, params),
+    telegramWaitOwner: (token) => ipcRenderer.invoke("channel:telegram-wait-owner", { token }),
+    clipboardToken: (kind) => ipcRenderer.invoke("channel:clipboard-token", kind),
+    bhaiMailClaim: (ownerEmail) => ipcRenderer.invoke("channel:bhai-mail-claim", { ownerEmail }),
+    telegramManagedStart: () => ipcRenderer.invoke("channel:telegram-managed-start"),
+    telegramManagedWait: (username) => ipcRenderer.invoke("channel:telegram-managed-wait", { username }),
     getChannelStatuses: () => ipcRenderer.invoke("channel:status-all"),
 
     // ── WhatsApp QR ──────────────────────────────────
@@ -198,7 +203,7 @@ contextBridge.exposeInMainWorld("atlas", {
     vault: {
         list: () => ipcRenderer.invoke("vault:list"),
         save: (entry, password) => ipcRenderer.invoke("vault:save", entry, password),
-        remove: (id) => ipcRenderer.invoke("vault:delete", id),
+        remove: (id, password) => ipcRenderer.invoke("vault:delete", id, password),
         reveal: (id, password) => ipcRenderer.invoke("vault:reveal", id, password),
         setPassword: (password, oldPassword) => ipcRenderer.invoke("vault:set-password", password, oldPassword),
         submitCvv: (id, cvv) => ipcRenderer.invoke("vault:cvv-submit", id, cvv),

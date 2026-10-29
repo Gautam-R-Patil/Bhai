@@ -8,6 +8,7 @@
 
 import { getRawDb } from "./sqlite.js";
 import { generateUUID } from "../utils/uuid.js";
+import { protect } from "../security/pii-vault.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -189,8 +190,9 @@ export function touchSession(_userMessage: string): {
 export function appendTurn(role: "user" | "assistant", content: string): void {
     if (!currentSession) return;
 
-    // Truncate very long content for the buffer
-    const truncated = content.length > 500 ? content.substring(0, 497) + "..." : content;
+    // Masked before it's cut (a half-cut value would slip past) and persisted.
+    const safe = protect(content, { credentials: true });
+    const truncated = safe.length > 500 ? safe.substring(0, 497) + "..." : safe;
 
     currentSession.recent_turns.push({
         role,

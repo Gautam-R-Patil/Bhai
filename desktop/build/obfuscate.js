@@ -45,7 +45,7 @@ const OBFUSCATION_OPTIONS = {
     simplify: true,
     splitStrings: true,
     splitStringsChunkLength: 10,
-    transformObjectKeys: true,
+    transformObjectKeys: false, // with controlFlowFlattening it breaks class-field object literals (see protect-source.js)
     unicodeEscapeSequence: false,
 
     // Target Node.js

@@ -36,8 +36,12 @@ export default defineConfig({
         ],
         environment: "node",
         testTimeout: 30_000,
-        // Closing Chromium or an HTTP server can take >10s on a Windows runner.
-        hookTimeout: 30_000,
+        // Closing Chromium or an HTTP server can take >10s on a Windows runner —
+        // and a beforeAll/afterAll timeout is NOT covered by `retry` (that re-runs
+        // test bodies, not hooks), so a slow Chromium launch/close on a saturated
+        // CI runner reds the whole file with no second chance. Give hooks 60s in
+        // CI; keep 30s locally so a genuinely hung hook still fails fast.
+        hookTimeout: process.env.CI ? 60_000 : 30_000,
         // CI only: absorb transient timing/resource flakes. A large pool of
         // tests assert hard wall-clock deadlines, drive real headless Chromium,
         // or kill a child by RSS/deadline — all deterministic on a quiet machine

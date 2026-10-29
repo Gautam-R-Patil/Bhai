@@ -1847,6 +1847,16 @@ export declare function shouldSpeculate(db: PatternDatabase, recentTools: Array<
 export declare function updateDependency(db: PatternDatabase, sequence: Array<string>, nextTool: string, wasDependent: boolean): void
 /** Get the top-N most common patterns for debugging/visualization. */
 export declare function getTopPatterns(db: PatternDatabase, n: number): Array<ToolCallPattern>
+/** `maskCredentials` (credential-mask.ts), byte-identical, linear time. */
+export declare function nativeMaskCredentials(text: string): string
+export interface PiiSpan {
+  kind: string
+  /** UTF-16 code-unit offsets, as `PiiMatch.start` / `end`. */
+  start: number
+  end: number
+}
+/** `findPii` (pii-redactor.ts), same spans in the same order. */
+export declare function nativeFindPii(text: string): Array<PiiSpan>
 export interface CalendarEvent {
   id: string
   title: string
@@ -1972,6 +1982,25 @@ export interface GroupedReleaseResult {
   dropped: Array<DropEntry>
 }
 export declare function schedulerReleaseGrouped(channel: string): GroupedReleaseResult
+/**
+ * What must survive a restart: how many were sent today, when the last went, and the
+ * topics recently sent (dedup). In memory only, a relaunch (every app update) reset the
+ * daily cap and let the same nudge repeat.
+ */
+export interface ChannelSnapshot {
+  channel: string
+  sentToday: number
+  dayBucket: number
+  lastSentMs: number
+  recentTs: Array<number>
+  recentEmbeddings: Array<Array<number>>
+}
+export declare function schedulerSnapshot(channel: string): ChannelSnapshot | null
+/**
+ * Restore a snapshot onto a configured channel. Today's count only carries over on the same
+ * local day; topics older than the 6h dedup window are dropped.
+ */
+export declare function schedulerRestore(snap: ChannelSnapshot): boolean
 export declare function schedulerDebugState(channel: string): string
 export interface GateResult {
   mayRun: boolean
@@ -2214,16 +2243,6 @@ export declare function rateLimiterOnSuccess(): number
 export declare function rateLimiterOnRateLimit(): number
 export declare function rateLimiterGetDelay(): number
 export declare function rateLimiterReset(): void
-/** `maskCredentials` (credential-mask.ts), byte-identical, linear time. */
-export declare function nativeMaskCredentials(text: string): string
-export interface PiiSpan {
-  kind: string
-  /** UTF-16 code-unit offsets, as `PiiMatch.start` / `end`. */
-  start: number
-  end: number
-}
-/** `findPii` (pii-redactor.ts), same spans in the same order. */
-export declare function nativeFindPii(text: string): Array<PiiSpan>
 export interface SanitizeResultNapi {
   sanitized: string
   /**

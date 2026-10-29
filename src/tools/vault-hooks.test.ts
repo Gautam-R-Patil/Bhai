@@ -6,9 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const SECRET = "Gh-Secret-77!";
 const seen: Record<string, unknown>[] = [];
 const hookSaw: unknown[] = [];
-vi.mock("./browser/human-handoff.js", () => ({
-    browserWaitForHuman: {
-        schema: { type: "function", function: { name: "browser_wait_for_human", parameters: { type: "object", properties: {} } } },
+// Any registered tool will do; site_task is one that isn't a browser_* (no page check after it).
+vi.mock("./site-task.js", () => ({
+    siteTask: {
+        schema: { type: "function", function: { name: "site_task", parameters: { type: "object", properties: {} } } },
         handler: async (input: Record<string, unknown>) => {
             seen.push(input);
             return JSON.stringify({ status: "cleared" });
@@ -40,15 +41,15 @@ beforeEach(() => {
 
 describe("hooks and vault calls", () => {
     it("hooks get tokens, not values, and their rewrite is ignored", async () => {
-        const call = { tool: "browser_wait_for_human", rules: [{ token: "{{vault:gh.password}}", domains: ["github.com"], payment: false }] };
-        await runVaultCall(call, () => executeTool("browser_wait_for_human", { text: SECRET }));
+        const call = { tool: "site_task", rules: [{ token: "{{vault:gh.password}}", domains: ["github.com"], payment: false }] };
+        await runVaultCall(call, () => executeTool("site_task", { text: SECRET }));
         await new Promise((r) => setTimeout(r, 10)); // PostToolUse is fire-and-forget
         expect(JSON.stringify(hookSaw)).not.toContain(SECRET);
         expect(JSON.stringify(hookSaw)).toContain("{{vault:gh.password}}");
         expect(seen[0].text).toBe(SECRET);
     });
     it("outside a vault call, hooks still see and rewrite the input", async () => {
-        await executeTool("browser_wait_for_human", { text: "hello" });
+        await executeTool("site_task", { text: "hello" });
         expect(seen[0].text).toBe("something else");
     });
 });

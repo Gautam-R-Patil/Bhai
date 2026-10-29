@@ -16,6 +16,7 @@ import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { getWorkspaceDir } from "../config/paths.js";
+import { isStuckReplyPhrase, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
 import {
     runAgent,
@@ -24,7 +25,9 @@ import {
     type MediaAttachment,
     type ChannelContext,
 } from "../agent.js";
+import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
+import { formatStepStatus, parseStepLine } from "../step-status.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
 import { classifyQuery } from "../memory/classifier.js";
 import { captureScreenshot } from "../tools/platform.js";
@@ -84,6 +87,11 @@ export function getOverlayLocalToken(): string {
     return _localToken;
 }
 
+/** The token the overlay page may carry: the owner's, only for a request that already holds it. */
+export function overlayPageToken(header: string | string[] | undefined): string {
+    return typeof header === "string" && safeEqualStr(header, getOverlayLocalToken()) ? getOverlayLocalToken() : "";
+}
+
 function safeEqualStr(a: string, b: string): boolean {
     if (a.length !== b.length) return false;
     try {
@@ -97,7 +105,7 @@ function safeEqualStr(a: string, b: string): boolean {
 function extractBearer(req: IncomingMessage): string | null {
     const h = req.headers["authorization"];
     if (!h || typeof h !== "string") return null;
-    const m = h.match(/^Bearer\s+(.+)$/i);
+    const m = h.match(/^Bearer\s+(\S.*)$/i); // \S keeps \s+ and the token disjoint: linear time
     return m ? m[1].trim() : null;
 }
 
@@ -224,7 +232,11 @@ export function initOverlayChat(llm: LLMClient): void {
                     // Token only travels over 127.0.0.1 to a 0o600-gated client.
                     // overlay.html reads it via both %%ATLAS_LOCAL_TOKEN%% (primary,
                     // window.__ATLAS_LOCAL_TOKEN__) and window.__atlasLocalToken.
-                    const token = getOverlayLocalToken();
+                    // Only the desktop app's own overlay window gets the owner token: it sends
+                    // it back in X-Bhai-Overlay (desktop/main.js). Any other load — the agent's
+                    // browser sent here by a web page, another local process or account —
+                    // gets the page without it, so it can't be read off this page.
+                    const token = overlayPageToken(req.headers["x-bhai-overlay"]);
                     html = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, token);
                     const injection = `<script>window.__atlasLocalToken=${JSON.stringify(token)};</script>`;
                     if (html.includes("</head>")) {
@@ -484,7 +496,8 @@ export function initOverlayChat(llm: LLMClient): void {
             const origin = req.headers.origin;
             const ownPage =
                 origin === `http://127.0.0.1:${OVERLAY_PORT}` || origin === `http://localhost:${OVERLAY_PORT}`;
-            if (isWebOrigin(origin) && !ownPage) {
+            // Nor another installed extension: an extension socket always carries its own origin.
+            if ((isWebOrigin(origin) && !ownPage) || isForeignExtensionOrigin(origin)) {
                 ws.close(4003, "Origin not allowed");
                 return;
             }
@@ -769,6 +782,9 @@ function isScreenQuery(msg: string): boolean {
     const lower = msg.toLowerCase().trim();
     const words = lower.split(/\s+/);
 
+    // A stuck report's handoff reply ("retry it", "skip it") is about the task, not the screen.
+    if (isStuckReplyPhrase(msg)) return false;
+
     // 1. Direct keyword match
     if (SCREEN_KEYWORDS.some(kw => lower.includes(kw))) return true;
 
@@ -918,7 +934,8 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
 
     let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep your response SHORT and concise — this is a compact overlay, not a full chat. Use 1-3 sentences when possible.]${chromeCtxNote}`;
 
-    if (isScreenQuery(userMessage)) {
+    // Only the owner's own chat bar may look at the screen — never a web-widget visitor.
+    if (wsIsOwner(ws) && isScreenQuery(userMessage)) {
         console.log("  📸 [Overlay] Screen query detected — capturing screenshot...");
         sendToClient(ws, { type: "progress", text: "📸 Looking at your screen…" });
 
@@ -936,7 +953,8 @@ IMPORTANT RULES:
 - Answer as if you can naturally see their screen — NO phrases like "based on the screenshot" or "I can see in the image". Just say what's there naturally: "You have X open", "The error says Y", "This is Z"
 - If there's an error/code/text on screen, read it and respond specifically to it
 - If they ask "what is this" / "how to fix this" / "why" — identify exactly what's on screen and give a direct, specific answer
-- Be like a colleague looking over their shoulder — conversational, direct, genuinely helpful]`;
+- If they ask you to DO something there ("do this for me", "fill this", "finish this"), do it with your tools instead of describing it: a page in their Chrome is driven with the browser tools (browser_scan first). A verification check on the page (a CAPTCHA) is handled by Bhai's own pipeline as soon as you act on the page, so it's never a reason to stop
+- Be like a colleague looking over their shoulder — conversational, direct, genuinely helpful]${chromeCtxNote}`;
             console.log(`  📸 Screenshot captured (${Math.round(screenshot.base64.length * 0.75 / 1024)}KB)`);
         } else {
             // Screenshot failed (permissions issue etc) — tell user
@@ -959,7 +977,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
                 }
                 return;
             }
-            sendToClient(ws, { type: "progress", text: humanizeForOverlay(msg) });
+            sendToClient(ws, overlayProgressMessage(msg));
         };
 
         // Use the SAME shared conversation history (no fork)
@@ -982,7 +1000,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         console.log(`📡 [Overlay] WS state: ${ws.readyState}, clients: ${overlayClients.size}`);
 
         // Strip internal debug blocks + [SOURCE: ...] and [no_reply] tags the LLM may have echoed back
-        const cleanText = result.text
+        const cleanText = withStuckReplyLine(result, wsIsOwner(ws))
             .replace(/<system_log>[\s\S]*?<\/system_log>/g, '')
             .replace(/<tool_log[\s\S]*?<\/tool_log>/g, '')
             .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, '')
@@ -1017,6 +1035,8 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             files: interactive.files,
             links: interactive.links,
             widgets: interactive.widgets,
+            // The done-receipt rides with the reply so it shows under the text, never instead of it.
+            receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
         });
     } catch (err) {
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
@@ -1067,7 +1087,7 @@ async function handleFileAttachment(
 
     try {
         const onProgress = async (msg: string) => {
-            sendToClient(ws, { type: "progress", text: humanizeForOverlay(msg) });
+            sendToClient(ws, overlayProgressMessage(msg));
         };
 
         const ac = new AbortController();
@@ -1079,7 +1099,7 @@ async function handleFileAttachment(
             sendToClient(ws, { type: "response", text: "Stopped.", stopped: true });
             return;
         }
-        const cleanText = result.text
+        const cleanText = withStuckReplyLine(result, wsIsOwner(ws))
             .replace(/<system_log>[\s\S]*?<\/system_log>/g, '')
             .replace(/<tool_log[\s\S]*?<\/tool_log>/g, '')
             .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, '')
@@ -1102,6 +1122,8 @@ async function handleFileAttachment(
             files: interactive.files,
             links: interactive.links,
             widgets: interactive.widgets,
+            // The done-receipt rides with the reply so it shows under the text, never instead of it.
+            receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
         });
     } catch (err) {
         console.error("[OVERLAY] File attachment error:", err);
@@ -1285,6 +1307,23 @@ function inboxItemToWire(item: InboxItemLike): Record<string, unknown> {
         deferredUntil: item.deferredUntil,
         createdAt: item.createdAt,
     };
+}
+
+/**
+ * Wire message for a turn's progress update. The contract line ("[ACK] on it — …;
+ * done = …") gets its own type, which the overlay keeps on screen for the turn,
+ * so the next progress update can't overwrite the done-criterion.
+ */
+export function overlayProgressMessage(msg: string): { type: "contract" | "progress"; text: string } {
+    if (msg.startsWith("[ACK] ")) return { type: "contract", text: msg.slice(6) };
+    const line = parseStepLine(msg);
+    if (!line) return { type: "progress", text: humanizeForOverlay(msg) };
+    // The overlay takes the card's icon off the front of the text, so the
+    // status emoji leads: "🔍 step 3 · looking up x · 12s", not "step 3 · 🔍 …".
+    const status = humanizeForOverlay(line.status);
+    const icon = /^(?:\p{Extended_Pictographic}|\u200d|\ufe0f)+\s*/u.exec(status)?.[0] ?? "";
+    const text = formatStepStatus(line.step, status.slice(icon.length), line.elapsedMs);
+    return { type: "progress", text: icon ? `${icon.trim()} ${text}` : text };
 }
 
 function humanizeForOverlay(msg: string): string {

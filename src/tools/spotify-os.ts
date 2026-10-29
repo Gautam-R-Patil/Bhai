@@ -103,14 +103,24 @@ export async function ensureSpotifyAppRunning(): Promise<boolean> {
 
 // ── Launch a spotify: URI (the core Free-tier play mechanism) ──
 
+// Spotify URIs and open.spotify.com links only use these characters. Anything
+// else (& | ^ % " spaces) is rejected because Windows hands the URI to
+// `cmd.exe /c start`, which would parse it as more commands. A share link's
+// query (?si=…&pi=…) is tracking only, so it is dropped rather than rejected.
+const SPOTIFY_URI_RE = /^(?:spotify:[A-Za-z0-9:._-]+|https:\/\/open\.spotify\.com\/[A-Za-z0-9/._-]*)$/;
+
+export function checkedSpotifyUri(uri: string): string {
+    const bare = uri.trim().split(/[?#]/)[0];
+    if (!SPOTIFY_URI_RE.test(bare)) throw new Error(`Invalid Spotify URI: ${uri}`);
+    return bare;
+}
+
 /**
  * Open a spotify: URI (spotify:track:ID, spotify:album:ID, spotify:playlist:ID, spotify:artist:ID).
  * The desktop app focuses and plays that exact item. Works on Free and Premium accounts.
  */
 export async function osLaunchUri(uri: string): Promise<void> {
-    if (!uri.startsWith("spotify:") && !uri.startsWith("https://open.spotify.com/")) {
-        throw new Error(`Invalid Spotify URI: ${uri}`);
-    }
+    uri = checkedSpotifyUri(uri);
     if (IS_MAC) {
         await execFileAsync("open", [uri], { timeout: 5000 });
         return;
@@ -134,9 +144,7 @@ export async function osLaunchUri(uri: string): Promise<void> {
 // on mac. Windows/Linux URI handlers do forward to the running instance, so
 // `start`/`xdg-open` work there.
 export async function osPlayTrackByUri(uri: string): Promise<void> {
-    if (!uri.startsWith("spotify:") && !uri.startsWith("https://open.spotify.com/")) {
-        throw new Error(`Invalid Spotify URI: ${uri}`);
-    }
+    uri = checkedSpotifyUri(uri);
     if (IS_MAC) {
         const escaped = uri.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
         await runAS(`tell application "Spotify" to play track "${escaped}"`);

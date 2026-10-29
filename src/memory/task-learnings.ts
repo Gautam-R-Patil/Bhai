@@ -35,7 +35,14 @@ export interface TaskLearning {
     timesReinforced: number;
     lastSeen: string;
     clickStrategies?: ClickStrategy[];  // in-task learnt click offsets per (app, element) pair
+    /** ISO time of the last verified win that (re)wrote whatWorked. */
+    lastVerifiedAt?: string;
 }
+
+/** Recall skips playbooks scored below this (replays kept failing). Reflection's failure lessons stay visible. */
+export const MIN_RECALL_SCORE = 0.4;
+/** Verified-win playbooks share the 200-entry store but never hold more than this. */
+const MAX_PLAYBOOKS = 80;
 
 interface LearningsStore {
     learnings: TaskLearning[];
@@ -53,7 +60,8 @@ export function initTaskLearnings(): void {
     try {
         if (fs.existsSync(STORE_PATH)) {
             store = JSON.parse(fs.readFileSync(STORE_PATH, "utf-8"));
-            counter = store.learnings.length;
+            // Pruning leaves gaps, so start past the highest id, not the count: ids must stay unique.
+            counter = Math.max(0, ...store.learnings.map((l) => Number(l.id.replace(/^learn_/, "")) || 0));
             console.log(`🧠 Task learnings loaded: ${store.learnings.length} entries`);
         }
     } catch {
@@ -77,16 +85,21 @@ export function upsertLearning(
     whatFailed: string[],
     tips: string[],
     successScore: number,
+    // A verified win: its ordered steps replace whatWorked (a recipe, not a pile of hints).
+    verifiedAt?: string,
 ): TaskLearning {
     const patternLower = taskPattern.toLowerCase();
     const contextLower = context.toLowerCase();
 
-    // Try to merge into an existing entry for the same task + context
+    // Try to merge into an existing entry for the same task + context. A playbook
+    // also merges into one with the same recipe, however the owner worded the task.
+    const sameSteps = (l: TaskLearning) =>
+        !!verifiedAt && !!l.lastVerifiedAt && l.whatWorked.join("|") === whatWorked.slice(0, 12).join("|");
     const existing = store.learnings.find(
         (l) =>
             l.category === category &&
-            l.taskPattern.toLowerCase() === patternLower &&
-            l.context.toLowerCase() === contextLower,
+            l.context.toLowerCase() === contextLower &&
+            (l.taskPattern.toLowerCase() === patternLower || sameSteps(l)),
     );
 
     if (existing) {
@@ -101,11 +114,14 @@ export function upsertLearning(
             return combined.slice(-10); // cap at 10 per list
         };
 
-        existing.whatWorked = merge(existing.whatWorked, whatWorked);
+        existing.whatWorked = verifiedAt ? whatWorked.slice(0, 12) : merge(existing.whatWorked, whatWorked);
+        if (verifiedAt) existing.lastVerifiedAt = verifiedAt;
         existing.whatFailed = merge(existing.whatFailed, whatFailed);
         existing.tips = merge(existing.tips, tips);
-        // Running average for success score
-        existing.successScore = (existing.successScore * existing.timesReinforced + successScore) / (existing.timesReinforced + 1);
+        // Running average for success score; a fresh verified win resets it, so a demoted playbook can return.
+        existing.successScore = verifiedAt
+            ? successScore
+            : (existing.successScore * existing.timesReinforced + successScore) / (existing.timesReinforced + 1);
         existing.timesReinforced++;
         existing.lastSeen = new Date().toISOString();
 
@@ -119,15 +135,22 @@ export function upsertLearning(
         category,
         taskPattern,
         context,
-        whatWorked: whatWorked.slice(-10),
+        whatWorked: verifiedAt ? whatWorked.slice(0, 12) : whatWorked.slice(-10),
         whatFailed: whatFailed.slice(-10),
         tips: tips.slice(-10),
         successScore,
         timesReinforced: 1,
         lastSeen: new Date().toISOString(),
+        ...(verifiedAt ? { lastVerifiedAt: verifiedAt } : {}),
     };
 
     store.learnings.push(entry);
+    // Playbooks evict only playbooks, so a busy week of GUI tasks can't push out reflection's lessons.
+    const playbooks = store.learnings.filter((l) => l.lastVerifiedAt);
+    if (verifiedAt && playbooks.length > MAX_PLAYBOOKS) {
+        const oldest = playbooks.reduce((a, b) => (a.lastSeen <= b.lastSeen ? a : b));
+        store.learnings = store.learnings.filter((l) => l !== oldest);
+    }
     // Keep store bounded (newest wins if over cap)
     if (store.learnings.length > 200) {
         store.learnings.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
@@ -149,6 +172,7 @@ export function recallLearnings(task: string, category?: LearningCategory): Task
 
     for (const entry of store.learnings) {
         if (category && entry.category !== category) continue;
+        if (entry.lastVerifiedAt && entry.successScore < MIN_RECALL_SCORE) continue;
 
         let score = 0;
         const patternLower = entry.taskPattern.toLowerCase();
@@ -184,9 +208,11 @@ export function recallLearnings(task: string, category?: LearningCategory): Task
 
 // ── Context Snippet for Agent ─────────────────
 
-export function getTaskLearningsContext(task: string, category?: LearningCategory): string {
+/** `injected` collects the ids shown, so a turn that then fails can demote them. */
+export function getTaskLearningsContext(task: string, category?: LearningCategory, injected?: Set<string>): string {
     const matches = recallLearnings(task, category);
     if (matches.length === 0) return "";
+    for (const m of matches) injected?.add(m.id);
 
     const lines: string[] = [];
     lines.push(
@@ -201,6 +227,25 @@ export function getTaskLearningsContext(task: string, category?: LearningCategor
     }
 
     return lines.join("\n");
+}
+
+// ── Demote ────────────────────────────────────
+
+/**
+ * A turn replayed these playbooks and still failed: record it and lower their score.
+ * Only playbooks (entries with lastVerifiedAt) are replayed recipes; reflection lessons are left alone.
+ */
+export function demoteLearnings(ids: Iterable<string>, now = new Date()): void {
+    const wanted = new Set(ids);
+    let changed = false;
+    for (const l of store.learnings) {
+        if (!wanted.has(l.id) || !l.lastVerifiedAt) continue;
+        l.whatFailed = [...l.whatFailed, `replay failed ${now.toISOString().slice(0, 10)}`].slice(-10);
+        l.successScore = Math.max(0, Math.round((l.successScore - 0.3) * 100) / 100);
+        changed = true;
+        console.log(`[LEARNINGS] Demoted: "${l.taskPattern}" → ${l.successScore}`);
+    }
+    if (changed) save();
 }
 
 // ── All learnings (for introspection) ─────────

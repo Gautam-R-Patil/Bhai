@@ -1,6 +1,6 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
-// browser_wait_for_human: detect → bring the tab up → ask the owner → poll
+// The owner hand-off (browser_handle_captcha's last step): detect → bring the tab up → ask the owner → poll
 // until the check is gone. It must never reach a solver (2captcha, NopeCHA,
 // the audio path): the browser core, bridge and channel are fakes here.
 

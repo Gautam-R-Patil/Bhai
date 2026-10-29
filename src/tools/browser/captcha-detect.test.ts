@@ -112,6 +112,86 @@ describe("quickCaptchaCheck", () => {
     });
 });
 
+describe("Cloudflare interstitial detection", () => {
+    // The detector's Cloudflare check uses #id selectors, [id^="..."] and .class
+    // which the shared matches() helper doesn't handle.  A self-contained querySelector
+    // that covers the patterns the detector actually uses.
+    function cfMatch(el: El, part: string): boolean {
+        const s = part.trim();
+        if (s.startsWith("#")) return el.attrs.id === s.slice(1);
+        if (s.startsWith(".")) return (el.attrs.class ?? "").split(/\s+/).includes(s.slice(1));
+        const prefix = s.match(/^\[(\w[\w-]*)(?:\^=)"?([^"'\]]+)"?\]$/);
+        if (prefix) return (el.attrs[prefix[1]] ?? "").startsWith(prefix[2]);
+        const contains = s.match(/^\[(\w[\w-]*)(?:\*=)"?([^"'\]]+)"?\]$/);
+        if (contains) return (el.attrs[contains[1]] ?? "").includes(contains[2]);
+        return matches(el, s);
+    }
+
+    function cfPageWithTitle(title: string, els: El[] = []) {
+        const wrap = (el: El) => ({
+            tagName: el.tag.toUpperCase(),
+            getAttribute: (n: string) => el.attrs[n] ?? null,
+            dataset: {},
+            offsetParent: null,
+        });
+        const all = (sel: string) =>
+            els.filter((e) => sel.split(",").some((s) => cfMatch(e, s))).map(wrap);
+        return {
+            evaluate: async (fn: unknown) => {
+                const g = globalThis as Record<string, unknown>;
+                g.document = {
+                    title,
+                    querySelectorAll: all,
+                    querySelector: (sel: string) => all(sel)[0] ?? null,
+                    scripts: [],
+                    images: [],
+                    // What the native fast-negative reads: a real page's markup carries its title and ids.
+                    documentElement: {
+                        innerHTML: `<title>${title}</title>${els.map((e) => `<${e.tag} id="${e.attrs.id ?? ""}" class="${e.attrs.class ?? ""}">`).join("")}`,
+                    },
+                };
+                try {
+                    return typeof fn === "function" ? fn() : new Function(`return (${fn})`)();
+                } finally {
+                    delete g.document;
+                }
+            },
+        };
+    }
+
+    for (const title of [
+        "Just a moment...",
+        "Attention Required! | Cloudflare",
+        "Checking your browser before accessing",
+        "Verify you are human",
+    ]) {
+        it(`detects Cloudflare by title: "${title}"`, async () => {
+            const info = await detectCaptcha(cfPageWithTitle(title) as never);
+            expect(info.type).toBe("turnstile");
+        });
+    }
+
+    it("leaves an ordinary 'Please wait' loading page alone", async () => {
+        expect((await detectCaptcha(cfPageWithTitle("Please wait while we load your dashboard") as never)).type).toBe(
+            "none",
+        );
+    });
+
+    it("detects Cloudflare by #challenge-form element", async () => {
+        const info = await detectCaptcha(
+            cfPageWithTitle("Some Page", [{ tag: "div", attrs: { id: "challenge-form" } }]) as never,
+        );
+        expect(info.type).toBe("turnstile");
+    });
+
+    it("detects Cloudflare by .cf-challenge element", async () => {
+        const info = await detectCaptcha(
+            cfPageWithTitle("Some Page", [{ tag: "div", attrs: { class: "cf-challenge" } }]) as never,
+        );
+        expect(info.type).toBe("turnstile");
+    });
+});
+
 describe("v3 bound to a button (Google's documented v3 pattern)", () => {
     const page = fakePage([
         { tag: "script", attrs: { src: "https://www.google.com/recaptcha/api.js?render=SITEKEY" } },

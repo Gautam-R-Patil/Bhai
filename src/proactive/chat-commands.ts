@@ -24,7 +24,7 @@
 // falls through to runAgent — keeps tests that only exercise the posture
 // commands from needing to wire the new deps.
 
-import { loadProactiveConfig, setPosture, type Posture } from "./config.js";
+import { loadProactiveConfig, setPosture, setQuiet, type Posture } from "./config.js";
 import type { Channel } from "./intent.js";
 import type { MonitorRule, MonitorStore } from "./monitors/monitor-store.js";
 import type { ParseResult } from "./monitors/monitor-parser.js";
@@ -74,6 +74,11 @@ export async function tryProactiveCommand(
     // `shut up` / `bhai shut up` / `bhai, shut up` / `be quiet`
     if (/^(bhai,?\s+)?shut up$/.test(lower) || /^(bhai,?\s+)?be quiet$/.test(lower)) {
         process.env.ATLAS_PROACTIVE_DISABLE = "true";
+        try {
+            setQuiet(opts.configPath, true); // survives a restart (it used to resume on its own)
+        } catch {
+            /* still quiet for this run */
+        }
         return { reply: "Going quiet. Say 'bhai resume' when you want me back." };
     }
 
@@ -84,6 +89,11 @@ export async function tryProactiveCommand(
         && !/^(bhai,?\s+)?resume\s+monitor/i.test(lower)
     ) {
         delete process.env.ATLAS_PROACTIVE_DISABLE;
+        try {
+            setQuiet(opts.configPath, false);
+        } catch {
+            /* resumed for this run */
+        }
         return { reply: "Resuming proactive messages." };
     }
 

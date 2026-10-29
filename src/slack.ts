@@ -8,9 +8,11 @@
 // formats with Block Kit, and processes file uploads.
 
 import type { App, SayFn } from "@slack/bolt";
+import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
 import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
 import { classifyQuery } from "./memory/classifier.js";
+import { mapStepStatus, parseStepLine } from "./step-status.js";
 
 // -- State ------------------------------------------------
 
@@ -142,6 +144,16 @@ export async function initSlack(llm: LLMClient): Promise<void> {
 
 // -- Core Message Handler ---------------------------------
 
+/**
+ * Outside a DM Slack only hands Bhai @mentions, so a bare "retry it" typed in
+ * the thread would never arrive: there the stuck report asks for a mention.
+ */
+const STUCK_MENTION_LINE = STUCK_REPLY_LINE.replace("Reply:", "@mention me with:");
+export function slackStuckReplyText(res: { text: string; stuck?: boolean }, toOwner: boolean, channel: string): string {
+    if (channel.startsWith("D")) return withStuckReplyLine(res, toOwner);
+    return res.stuck && toOwner ? `${res.text}\n\n${STUCK_MENTION_LINE}` : res.text;
+}
+
 async function handleSlackMessage(
     llm: LLMClient,
     text: string,
@@ -171,7 +183,20 @@ async function handleSlackMessage(
             // Skip internal thinking progress
             if (msg.startsWith("[THINKING] ")) return;
 
-            const progressText = msg.replace(/<[^>]+>/g, "").substring(0, 100);
+            // The turn's contract line gets its own thread message: the status
+            // message below is truncated and overwritten, which would lose "done = …".
+            if (msg.startsWith("[ACK] ")) {
+                try {
+                    await say({ text: msg.slice(6), thread_ts: threadTs });
+                } catch {
+                    /* non-fatal */
+                }
+                return;
+            }
+
+            // Trim the status, not the line, so a step line keeps its elapsed time.
+            const cap = parseStepLine(msg) ? 80 : 100;
+            const progressText = mapStepStatus(msg, (m) => m.replace(/<[^>]+>/g, "").substring(0, cap));
             if (!progressText) return;
 
             try {
@@ -197,7 +222,7 @@ async function handleSlackMessage(
         const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, { channel: "slack", userId: slackUserId || "", userName: undefined, isOwner: senderIsOwner });
 
         // Clean the response
-        const cleanText = result.text
+        const cleanText = slackStuckReplyText(result, senderIsOwner, channel)
             .replace(/<system_log>[\s\S]*?<\/system_log>/g, "")
             .replace(/<tool_log[\s\S]*?<\/tool_log>/g, "")
             .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, "")

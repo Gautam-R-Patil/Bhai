@@ -22,7 +22,7 @@ export interface AuthSignals {
 }
 
 export const AUTH_HINT =
-    "This page needs the user to sign in / enter a code. Don't type credentials or codes yourself: ask the user to sign in in the browser window, wait for them to say done, then browser_scan and continue.";
+    "This page needs the user to sign in / enter a code. Don't type credentials or codes yourself: stop and send the stuck report (what's blocked, and that the user has to sign in in the browser window), ending with [[STUCK]] on its own line. When they say done, browser_scan and continue.";
 
 /** Which wall the page signals, if any. */
 export function classifyAuthWall(s: AuthSignals): AuthWallKind | null {

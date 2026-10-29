@@ -4,6 +4,7 @@
 
 import { setCredential, validateCredential } from "../credential-manager.js";
 import { navigateToUrl } from "./browser-helper.js";
+import { newOAuthState } from "../../security/oauth-state.js";
 import { startOAuthCallback } from "./oauth-callback.js";
 import { deliverToActiveChannel } from "../../tools/channel-send.js";
 
@@ -46,11 +47,12 @@ export async function completeRedditOAuth(
   clientSecret: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const state = newOAuthState();
     const authUrl =
       `https://www.reddit.com/api/v1/authorize` +
       `?client_id=${encodeURIComponent(clientId)}` +
       `&response_type=code` +
-      `&state=atlas-${brandId}` +
+      `&state=${state}` +
       `&redirect_uri=${encodeURIComponent(REDDIT_REDIRECT_URI)}` +
       `&duration=permanent` +
       `&scope=${encodeURIComponent(REDDIT_SCOPES)}`;
@@ -61,7 +63,7 @@ export async function completeRedditOAuth(
     );
 
     const [callbackResult] = await Promise.all([
-      startOAuthCallback(REDDIT_CALLBACK_PORT),
+      startOAuthCallback(REDDIT_CALLBACK_PORT, state),
       navigateToUrl(authUrl),
     ]);
 

@@ -2,7 +2,6 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { checkConsent } from "../security/consent.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import { homedir } from "node:os";
@@ -11,9 +10,16 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 import { currentSwarmRun, currentSwarmStep, isPaymentCall, outsideSwarm, shellText, swarmGate } from "../agents/swarm-context.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
+import { checkConsent } from "../security/consent.js";
+import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
 import { sideloadSkillTool } from "../store/sideload.js";
-import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
-import { contactLookupTool, getWhatsAppStatus, whatsappGroupInfoTool, whatsappSendTool, whatsappStickerTool } from "../whatsapp.js";
+import {
+    contactLookupTool,
+    getWhatsAppStatus,
+    whatsappGroupInfoTool,
+    whatsappSendTool,
+    whatsappStickerTool,
+} from "../whatsapp.js";
 import {
     appManager,
     calendarTool,
@@ -28,6 +34,8 @@ import { askOwnerTool } from "./ask-owner.js";
 import { audioVisualize } from "./audio-visualize.js";
 import { blenderScript } from "./blender.js";
 import { brandAudit } from "./brand-audit.js";
+import { captchaAfterAction } from "./browser/captcha.js";
+import { getActivePage } from "./browser/core.js";
 import {
     browserAnalyze,
     browserBack,
@@ -38,7 +46,6 @@ import {
     browserClose,
     browserDrag,
     browserExtract,
-    browserHandleCaptcha,
     browserHoldClick,
     browserHover,
     browserKeyboard,
@@ -60,7 +67,6 @@ import {
     browserType,
     browserUploadFile,
     browserVideoControl,
-    browserWaitForHuman,
     browserWait,
     openCliTools,
 } from "./browser/index.js";
@@ -115,6 +121,7 @@ import { documentTools, initDocumentTools } from "./document.js";
 import { emailSend } from "./email-tool.js";
 import { compressFiles, fileMetadata, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
 import { deleteFile, listDirectory } from "./files.js";
+import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { generateImage } from "./generate-image.js";
 import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
 import { gifSearch } from "./gif-search.js";
@@ -171,19 +178,19 @@ import {
     traitUpdate,
 } from "./memory-tools.js";
 import { coreMemoryAppend, coreMemoryDelete, coreMemoryRead, coreMemoryReplace } from "./memory-tools-advanced.js";
-import { sessionSearch } from "./session-search.js";
 import { osComputerAction } from "./os-computer-action.js";
 import { osGround, osVisualize } from "./os-grounding.js";
 import { osClickId, osInspect } from "./os-inspect.js";
 import { osSmartClick, setSmartClickLLM } from "./os-smart-click.js";
-import { siteTask } from "./site-task.js";
+import { sessionSearch } from "./session-search.js";
 import { approveSiteSkillTool, setSiteMintLLM, siteSkillMintTool } from "./site-skill-mint.js";
-import { getActivePage } from "./browser/core.js";
-import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
+import { siteTask } from "./site-task.js";
 import { maskKnownValues } from "../security/pii-vault.js";
 import { vaultCall } from "../security/vault.js";
 import { vaultAuthorizePayment, vaultList } from "./vault.js";
-export { setSmartClickLLM, setSiteMintLLM };
+
+export { setCaptchaLLM } from "./browser/captcha-vision.js";
+export { setSiteMintLLM, setSmartClickLLM };
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { platformInfoTool } from "./platform-info.js";
 import { createPresentation, exportPresentation, listPresentations, modifyPresentation } from "./presentation/index.js";
@@ -191,6 +198,7 @@ import { repoMapTool } from "./repo-map.js";
 import { cancelTask, listTasks, scheduleTask, setReminder } from "./scheduled.js";
 import { validateToolInput } from "./schema-validator.js";
 import { sendFileTool } from "./send-file.js";
+import { duplicateSend, holdSend, RESEND_PARAM, SEND_TOOLS, sendClaim } from "./send-ledger.js";
 import { shellExec } from "./shell.js";
 import { shellCheckProcess, shellExecBackground, shellKillProcess, shellWaitProcess } from "./shell-monitor.js";
 import { socialPost } from "./social-post.js";
@@ -315,7 +323,8 @@ registry.set(coreMemoryAppend.schema.function.name, coreMemoryAppend);
 registry.set(coreMemoryDelete.schema.function.name, coreMemoryDelete);
 
 // Self-improvement (local draft buffer; synthesized nightly to server)
-import { selfImprovementDraft, selfImprovementListDrafts, selfImprovementDiscardDraft } from "./self-improvement.js";
+import { selfImprovementDiscardDraft, selfImprovementDraft, selfImprovementListDrafts } from "./self-improvement.js";
+
 registry.set(selfImprovementDraft.schema.function.name, selfImprovementDraft);
 registry.set(selfImprovementListDrafts.schema.function.name, selfImprovementListDrafts);
 registry.set(selfImprovementDiscardDraft.schema.function.name, selfImprovementDiscardDraft);
@@ -526,8 +535,6 @@ registry.set(browserParallelActions.schema.function.name, browserParallelActions
 registry.set(browserSetMode.schema.function.name, browserSetMode);
 registry.set(browserChromeStatus.schema.function.name, browserChromeStatus);
 registry.set(browserVideoControl.schema.function.name, browserVideoControl);
-registry.set(browserHandleCaptcha.schema.function.name, browserHandleCaptcha);
-registry.set(browserWaitForHuman.schema.function.name, browserWaitForHuman);
 // OpenCLI batch tools
 for (const tool of openCliTools) registry.set(tool.schema.function.name, tool);
 
@@ -640,6 +647,12 @@ try {
 
 // ── Exports ───────────────────────────────────
 
+// The send tools take resend: true when the user explicitly asks to send the same thing again.
+for (const n of SEND_TOOLS) {
+    const props = registry.get(n)?.schema.function.parameters?.properties as Record<string, unknown> | undefined;
+    if (props) props.resend = RESEND_PARAM;
+}
+
 /**
  * Whether a tool should be OFFERED to the agent right now. The Baileys WhatsApp
  * channel (whatsapp_send/_sticker/_group_info) only works when connected
@@ -683,7 +696,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_click: 15_000,
     browser_type: 30_000, // long text + submit + page-ready can take a while
     vault_authorize_payment: 150_000, // waits up to 2 min for the owner's CVV
-    site_task: 180_000, // up to 40 steps; a cut-off checkout would keep running unseen
+    site_task: 600_000, // up to 40 steps, plus the CAPTCHA pipeline (and the owner's ~5 min); a cut-off checkout would keep running unseen
     site_skill_mint: 600_000, // start returns at once; a safety net
     // AX dump + activation + capture + grounding (+ one Sonnet re-ground). The
     // handler stops itself at 40s so it never clicks after we report a timeout.
@@ -692,8 +705,6 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_scan: 20_000,
     browser_screenshot: 15_000,
     // Covers the solver tiers plus the human hand-off wait (ATLAS_CAPTCHA_HANDOFF_MS, 5 min).
-    browser_handle_captcha: 330_000,
-    browser_wait_for_human: 330_000, // the owner's ~5 min to tick a CAPTCHA box
     // Shell/system tools - variable execution time
     shell: 60_000, // Shell commands can take a while
     run_code: 30_000,
@@ -771,12 +782,49 @@ const turnSignal = new AsyncLocalStorage<AbortSignal | undefined>();
 export function withTurnSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
     return turnSignal.run(signal, fn);
 }
+// Browser tools that don't act on the open page: no CAPTCHA check after them.
+const NO_PAGE_CHECK = new Set([
+    "browser_chrome_status",
+    "browser_set_mode",
+    "browser_close",
+    "browser_save_strategy",
+    "browser_recall_strategy",
+    "browser_cache_actions",
+    "browser_batch_fetch",
+    "browser_connect_electron",
+    "browser_network_requests",
+    "browser_intercept_read",
+    "browser_handle_captcha",
+    "browser_wait_for_human",
+]);
 // Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
-const STOPPABLE_TOOLS = new Set(["browser_wait_for_human"]);
+const STOPPABLE_TOOLS = new Set(["site_task"]);
 
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
+
+    // Idempotent sends (send-ledger.ts): a retry never delivers the same message to the
+    // same recipient twice within 10 minutes, unless the call says resend: true (the user
+    // asked to send it again). Refused here, before any consent prompt, and checked
+    // again as the send starts, which catches a parallel twin.
+    const { resend, ...withoutResend } = input;
+    const send = sendClaim(name, withoutResend);
+    if (send) {
+        input = withoutResend;
+        const dup = duplicateSend(send, resend === true);
+        if (dup) {
+            auditLog({
+                tool: name,
+                args: input,
+                success: false,
+                cached: false,
+                durationMs: 0,
+                error: "duplicate_send",
+            });
+            return dup;
+        }
+    }
 
     // Inside a swarm run, external side effects need the owner's OK for the
     // step (agents/swarm-context.ts); the gate also stands in for the per-call
@@ -944,7 +992,15 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // An allowed side effect runs outside the swarm's stores: background work it
         // starts (a long task's phases) must not inherit the step's grant.
         const run = () => tool.handler(effectiveInput);
-        const result = await executeWithTimeout(swarm === "allow" ? outsideSwarm(run) : run(), timeout, name);
+        const dup = send && duplicateSend(send, resend === true);
+        if (dup) return dup;
+        const pending = swarm === "allow" ? outsideSwarm(run) : run();
+        if (send) holdSend(send, pending);
+        let result = await executeWithTimeout(pending, timeout, name);
+        // CAPTCHAs never reach the agent: a check this step left on the page goes to the
+        // CAPTCHA pipeline (solvers, then the owner) while this call waits, outside the
+        // tool's own timeout; Stop still ends it.
+        if (name.startsWith("browser_") && !NO_PAGE_CHECK.has(name)) result = await captchaAfterAction(result, stop);
         const durationMs = Date.now() - startTime;
 
         // Cache the result if eligible
@@ -969,7 +1025,12 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // without one the recorder finds the commit itself (recorder.ts commitEvent).
         if (name.startsWith("browser_") && tracing()) {
             const consented = confirmCheck.needsConfirmation;
-            await getActivePage().then((p) => drainTrace(p, { consented }), () => null).catch(() => null);
+            await getActivePage()
+                .then(
+                    (p) => drainTrace(p, { consented }),
+                    () => null,
+                )
+                .catch(() => null);
         }
 
         // PostToolUse hooks — side effects only. Fire-and-forget; don't await

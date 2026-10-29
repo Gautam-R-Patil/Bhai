@@ -106,7 +106,10 @@ export const StepResultSchema = z
 export type SiteAction = z.infer<typeof ActionSchema>;
 export type StepResult = z.infer<typeof StepResultSchema>;
 
+// The deadline bounds the skill's code (its load and step), not starting Node:
+// a fresh child gets bootMs to say it's up, then the deadline starts.
 const deadlineMs = () => Number(process.env.ATLAS_SITE_SKILL_DEADLINE_MS ?? 5000);
+const bootMs = () => Number(process.env.ATLAS_SITE_SKILL_BOOT_MS ?? 30000);
 
 function shimPath(): string {
     return (
@@ -117,6 +120,7 @@ function shimPath(): string {
 
 export class SkillHost {
     private child: ChildProcess | undefined;
+    private booted: ChildProcess | undefined;
     private seq = 0;
     readonly spawned: ChildProcess[] = []; // for tests: no orphans
 
@@ -131,6 +135,9 @@ export class SkillHost {
             stdio: ["ignore", "ignore", "ignore", "ipc"],
         });
         child.on("error", () => {}); // reported through "exit"
+        child.on("message", (m: { ready?: boolean }) => {
+            if (m?.ready) this.booted = child;
+        });
         this.spawned.push(child);
         return child;
     }
@@ -154,12 +161,18 @@ export class SkillHost {
                 if (this.child === child) this.child = undefined;
                 done({ fail: { reason } });
             };
-            const timer = setTimeout(() => kill("skill_timeout"), deadlineMs());
+            const stepTimer = () => setTimeout(() => kill("skill_timeout"), deadlineMs());
+            let timer = this.booted === child ? stepTimer() : setTimeout(() => kill("skill_boot_timeout"), bootMs());
             const onExit = () => {
                 if (this.child === child) this.child = undefined;
                 done({ fail: { reason: "skill_crashed" } });
             };
-            const onMessage = (m: { id?: number; ok?: boolean; kind?: string; result?: unknown }) => {
+            const onMessage = (m: { id?: number; ok?: boolean; kind?: string; result?: unknown; ready?: boolean }) => {
+                if (m?.ready) {
+                    clearTimeout(timer);
+                    timer = stepTimer();
+                    return;
+                }
                 if (m?.id !== id) return;
                 if (!m.ok) return done({ fail: { reason: m.kind === "load_error" ? "skill_load_error" : "skill_error" } });
                 const parsed = StepResultSchema.safeParse(m.result);

@@ -348,16 +348,24 @@ type Msg = {
 };
 
 /**
+ * What may be written to disk (conversation archive, session buffer): masked like
+ * the model's view, plus credentials in every message — the owner's "my password
+ * is …" included. Handles mean nothing after a restart, so no value is at rest.
+ */
+export const protectForDisk = <M extends Msg>(messages: M[]): M[] => protectMessages(messages, { allCredentials: true });
+
+/**
  * protect() over the text of every message (image parts are left alone). The
  * credential policy applies to tool results from pages, email, apps and the
  * web — not to code-tool results, nor to what the owner or Bhai wrote (a pasted
  * snippet must reach the model as written).
  */
-export function protectMessages<M extends Msg>(messages: M[]): M[] {
+export function protectMessages<M extends Msg>(messages: M[], opts: { allCredentials?: boolean } = {}): M[] {
     const toolName = new Map<string, string>();
     for (const m of messages) for (const c of m.tool_calls ?? []) if (c.id && c.function?.name) toolName.set(c.id, c.function.name);
     return messages.map((m) => {
-        const credentials = m.role === "tool" && !CODE_TOOLS.has(toolName.get(m.tool_call_id ?? "") ?? "");
+        const credentials =
+            opts.allCredentials || (m.role === "tool" && !CODE_TOOLS.has(toolName.get(m.tool_call_id ?? "") ?? ""));
         if (typeof m.content === "string") return { ...m, content: protect(m.content, { credentials }) };
         if (Array.isArray(m.content)) {
             return {

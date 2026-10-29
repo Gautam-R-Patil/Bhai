@@ -133,7 +133,7 @@ async function runMacOSVision(imagePath: string): Promise<OCRResult> {
         use framework "Vision"
         use framework "AppKit"
 
-        set imagePath to "${imagePath.replace(/"/g, '\\"')}"
+        set imagePath to "${imagePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"
         set imageURL to current application's NSURL's fileURLWithPath:imagePath
         set img to current application's NSImage's alloc()'s initWithContentsOfURL:imageURL
 

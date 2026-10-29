@@ -36,8 +36,7 @@ export {
     switchToPlaywright,
 } from "./browser-backend.js";
 // Export CAPTCHA handler
-export { browserHandleCaptcha, detectCaptcha, handleCaptchaIfPresent } from "./captcha.js";
-export { browserWaitForHuman } from "./human-handoff.js";
+export { detectCaptcha, handleCaptchaIfPresent } from "./captcha.js";
 // Export Chrome backend
 export { ChromeExtensionBackend, ChromePageProxy } from "./chrome-backend.js";
 // Export Chrome bridge
@@ -201,8 +200,6 @@ export async function closeBrowser(): Promise<void> {
 // ── Default Export: All Tool Definitions ────────
 
 import { browserMultiAction, browserParallelActions, browserParallelTabs } from "./advanced.js";
-import { browserHandleCaptcha } from "./captcha.js";
-import { browserWaitForHuman } from "./human-handoff.js";
 import {
     browserAnalyze,
     browserCacheActions,
@@ -258,10 +255,6 @@ export const browserTools = [
     browserScrollElement,
     // Video control (YouTube, Vimeo, HTML5 video)
     browserVideoControl,
-    // CAPTCHA solving
-    browserHandleCaptcha,
-    // Human-verification handoff (the owner ticks it; Bhai waits)
-    browserWaitForHuman,
     // Extraction
     browserAnalyze,
     browserRunJs,

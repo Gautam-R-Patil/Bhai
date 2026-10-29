@@ -116,27 +116,49 @@ export function updateSelfState(updates: Partial<Omit<SelfState, "user_id" | "up
 /**
  * Called after each session ends to adjust self-state based on session metrics.
  */
+/**
+ * Pure per-session deltas for the self-state, factored out so the dynamics are
+ * testable without the DB. Note confDelta: confidence in the user model does
+ * NOT only ever rise — a frustrated or stressed session is direct evidence the
+ * model is off, so it pulls back. Without this, confidence saturated at 1.0 and
+ * getSelfStateSnippet injected "high confidence — personalize confidently"
+ * permanently, regardless of whether Bhai actually read the user right.
+ */
+export function computeSelfStateDeltas(
+    turnCount: number,
+    emotionalTone: EmotionalTone,
+    currentMode: EngagementMode,
+): { energyDelta: number; confDelta: number; depthDelta: number; mode: EngagementMode } {
+    // Energy decays with long sessions, recovers on short ones.
+    const energyDelta = turnCount > 20 ? -0.05 : turnCount > 10 ? -0.02 : 0.03;
+
+    // Confidence tracks whether the session went well, not just how long it ran.
+    const misread = emotionalTone === "frustrated" || emotionalTone === "stressed";
+    const confDelta = misread ? -0.04 : Math.min(0.02, 0.005 * turnCount);
+
+    // Relationship depth grows with engagement.
+    const depthDelta = turnCount > 5 ? 0.01 : 0.005;
+
+    // Engagement mode from tone.
+    let mode: EngagementMode = currentMode;
+    if (emotionalTone === "driven" || emotionalTone === "excited") mode = "focused";
+    else if (emotionalTone === "curious") mode = "exploratory";
+    else if (emotionalTone === "stressed" || emotionalTone === "frustrated") mode = "supportive";
+
+    return { energyDelta, confDelta, depthDelta, mode };
+}
+
 export function updateSelfStateFromSession(
     turnCount: number,
     emotionalTone: EmotionalTone,
     userId = DEFAULT_USER
 ): SelfState {
     const current = getSelfState(userId);
-
-    // Energy decays with long sessions, recovers on short ones
-    const energyDelta = turnCount > 20 ? -0.05 : turnCount > 10 ? -0.02 : 0.03;
-
-    // Confidence builds slowly with interaction
-    const confDelta = Math.min(0.02, 0.005 * turnCount);
-
-    // Relationship depth grows with engagement
-    const depthDelta = turnCount > 5 ? 0.01 : 0.005;
-
-    // Determine engagement mode from tone
-    let mode: EngagementMode = current.engagement_mode;
-    if (emotionalTone === "driven" || emotionalTone === "excited") mode = "focused";
-    else if (emotionalTone === "curious") mode = "exploratory";
-    else if (emotionalTone === "stressed" || emotionalTone === "frustrated") mode = "supportive";
+    const { energyDelta, confDelta, depthDelta, mode } = computeSelfStateDeltas(
+        turnCount,
+        emotionalTone,
+        current.engagement_mode,
+    );
 
     return updateSelfState({
         energy_level: current.energy_level + energyDelta,

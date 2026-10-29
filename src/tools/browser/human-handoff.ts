@@ -1,8 +1,8 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
-// browser_wait_for_human: a page shows a human-verification check (reCAPTCHA,
-// hCaptcha, Turnstile, a Cloudflare interstitial). Bhai never ticks or solves
-// it. It brings the tab to the front, asks the owner on the channel the task
+// The CAPTCHA pipeline's last step, once Bhai's own solvers failed on a
+// human-verification check (reCAPTCHA, hCaptcha, Turnstile, a Cloudflare
+// interstitial). It brings the tab to the front, asks the owner on the channel the task
 // came from (plus a desktop notification), then polls until the check is gone
 // so the task carries on. Uses the detector from captcha.ts only — no solver.
 
@@ -29,7 +29,10 @@ function pinnedTab(tabId: number, url: () => string) {
         evaluate: (fn: ((...a: unknown[]) => unknown) | string, ...args: unknown[]) =>
             sendBridgeCommand(
                 "execute_js",
-                { code: typeof fn === "function" ? `(${fn})(${args.map((a) => JSON.stringify(a)).join(", ")})` : fn, tabId },
+                {
+                    code: typeof fn === "function" ? `(${fn})(${args.map((a) => JSON.stringify(a)).join(", ")})` : fn,
+                    tabId,
+                },
                 15000,
             ),
     };
@@ -76,9 +79,21 @@ export async function waitForHuman(
         await nap(Math.min(intervalMs, Math.max(0, deadline - Date.now())), signal);
         if (signal?.aborted) return "cancelled";
         const info = await detect(page).catch(() => null);
-        if (info?.type === "none" || info?.type === "recaptcha-v3") return "cleared"; // v3 left alone is invisible
         const s = await pageState(page);
-        if (s?.solved || (s && startUrl && s.href !== startUrl)) return "cleared";
+        const why =
+            info?.type === "none"
+                ? "no check on the page"
+                : info?.type === "recaptcha-v3" // v3 left alone is invisible
+                  ? "only invisible v3 left"
+                  : s?.solved
+                    ? "the widget holds a token"
+                    : s && startUrl && s.href !== startUrl
+                      ? `the page moved on (${s.href.slice(0, 80)})`
+                      : null;
+        if (why) {
+            console.log(`  🙋 Human check cleared: ${why}`);
+            return "cleared";
+        }
     }
     return "timeout";
 }
@@ -120,7 +135,7 @@ async function tellOwner(ask: string): Promise<string | null> {
 
 const DEFAULT_TIMEOUT_S = 300;
 const MIN_TIMEOUT_S = 15; // a model-supplied 1s would give the owner no time at all
-const MAX_TIMEOUT_S = 300; // TOOL_TIMEOUTS.browser_wait_for_human leaves headroom over this
+const MAX_TIMEOUT_S = 300; // inside the pipeline's budget (captcha.ts TOOL_BUDGET_S) with the solvers' time
 
 export const browserWaitForHuman: ToolDefinition = {
     schema: {
@@ -128,7 +143,7 @@ export const browserWaitForHuman: ToolDefinition = {
         function: {
             name: "browser_wait_for_human",
             description:
-                "Hand a human-verification check (\"I'm not a robot\" box, reCAPTCHA, hCaptcha, Cloudflare/Turnstile \"verify you are human\") to the owner and WAIT for them to do it. Bhai never ticks or solves these itself. This brings the tab to the front, messages the owner on this channel with a one-line ask, then polls (about every 2s, up to ~5 min) until the check is gone. On status 'cleared', carry on with the original task from where you stopped. On 'timeout', tell the owner the page is still waiting on them and stop.",
+                "Not offered to the model: the owner hand-off step of the CAPTCHA pipeline. Brings the tab up, messages the owner, and polls until the check is gone.",
             parameters: {
                 type: "object",
                 properties: {
@@ -156,7 +171,8 @@ export const browserWaitForHuman: ToolDefinition = {
                     status: "cleared",
                     captcha_present: !!info && info.type !== "none",
                     ...(info && info.type !== "none" ? { captcha_type: info.type } : {}),
-                    message: "No human check is waiting on the owner here (none, invisible, or already done). Continue the task.",
+                    message:
+                        "No human check is waiting on the owner here (none, invisible, or already done). Continue the task.",
                 });
             }
             const envMs = process.env.ATLAS_CAPTCHA_HANDOFF_MS;
@@ -166,7 +182,8 @@ export const browserWaitForHuman: ToolDefinition = {
                     status: "disabled",
                     requires_user: true,
                     captcha_type: info.type,
-                    message: "Tell the owner this page needs a human-verification check they must do themselves, and stop here.",
+                    message:
+                        "Tell the owner this page needs a human-verification check they must do themselves, and stop here.",
                 });
             }
 
@@ -192,7 +209,8 @@ export const browserWaitForHuman: ToolDefinition = {
             const channel = await tellOwner(ask);
 
             const raw = Number(input.timeout_s ?? (Number(envMs) / 1000 || DEFAULT_TIMEOUT_S));
-            const timeoutMs = Math.min(Math.max(raw > 0 ? raw : DEFAULT_TIMEOUT_S, MIN_TIMEOUT_S), MAX_TIMEOUT_S) * 1000;
+            const timeoutMs =
+                Math.min(Math.max(raw > 0 ? raw : DEFAULT_TIMEOUT_S, MIN_TIMEOUT_S), MAX_TIMEOUT_S) * 1000;
             console.log(
                 `  🙋 Human check (${info.type}) on ${site}: waiting up to ${Math.round(timeoutMs / 1000)}s for the owner`,
             );
@@ -223,7 +241,7 @@ export const browserWaitForHuman: ToolDefinition = {
             // Bhai's own browser window may be out of the owner's reach (they're on their phone).
             const reopenHint =
                 mode !== "chrome" && isExtensionConnected()
-                    ? ` If they can't get to Bhai's browser window, offer to reopen ${startUrl ?? "this page"} in their own Chrome (browser_set_mode mode='chrome', then browser_navigate) and call browser_wait_for_human again.`
+                    ? ` If they can't get to Bhai's browser window, offer to reopen ${startUrl ?? "this page"} in their own Chrome (browser_set_mode mode='chrome', then browser_navigate) and try that step again.`
                     : "";
             return JSON.stringify({
                 error: `The owner didn't complete the human check on ${site} within ${Math.round(timeoutMs / 1000)}s.`,

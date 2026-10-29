@@ -21,6 +21,16 @@ describe("parseBraveResults", () => {
         expect(first?.snippet).toContain("ALPHA");
         expect(second?.snippet).toContain("BETA");
         // The nav link is not a snippet block, so it is not emitted as a result.
-        expect(results.some((r) => r.url.includes("nav.example.com"))).toBe(false);
+        expect(results.some((r) => r.url === "https://nav.example.com/login")).toBe(false);
+    });
+
+    it("drops Brave's own links by hostname, not by substring", () => {
+        const html = `
+            <div class="snippet"><a href="https://search.brave.com/settings">Brave Search Settings Page</a>
+                <p>Internal Brave page that must not be emitted.</p></div>
+            <div class="snippet"><a href="https://example.com/?ref=brave.com">External Result Title Here</a>
+                <p>An external page that merely mentions brave.com in its query.</p></div>`;
+
+        expect(parseBraveResults(html).map((r) => r.url)).toEqual(["https://example.com/?ref=brave.com"]);
     });
 });

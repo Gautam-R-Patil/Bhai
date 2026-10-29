@@ -15,6 +15,7 @@ import { OAuth2Client } from "google-auth-library";
 import type { calendar_v3 } from "googleapis";
 import { getDataDir } from "../config/paths.js";
 import { getTimezone } from "../location/index.js";
+import { newOAuthState, oauthStateMatches } from "../security/oauth-state.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
@@ -167,7 +168,20 @@ let activeCallbackServer: Server | null = null;
  * Start a temporary local HTTP server to capture the OAuth callback automatically.
  * Returns a promise that resolves with the auth result.
  */
-function startOAuthCallbackServer(): Promise<{ success: boolean; email?: string; error?: string }> {
+const escapeHtml = (s: string) =>
+    s.replace(
+        /[&<>"']/g,
+        (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string,
+    );
+
+/**
+ * Catches Google's redirect on 127.0.0.1 only. A request without this flow's
+ * `state` (another site, a LAN host) is ignored, not taken as the answer:
+ * otherwise anyone could abort the sign-in or slip in their own account's code.
+ */
+function startOAuthCallbackServer(
+    expectedState: string,
+): Promise<{ success: boolean; email?: string; error?: string }> {
     // Kill any existing server
     if (activeCallbackServer) {
         try {
@@ -200,7 +214,7 @@ function startOAuthCallbackServer(): Promise<{ success: boolean; email?: string;
             <div style="text-align:center">
                 <h1 style="font-size:3em;margin-bottom:0.2em">✅</h1>
                 <h2>Account Connected!</h2>
-                <p style="font-size:1.2em;opacity:0.9">${email}</p>
+                <p style="font-size:1.2em;opacity:0.9">${escapeHtml(email)}</p>
                 <p style="opacity:0.5;margin-top:2em">You can close this tab now.</p>
                 <script>setTimeout(()=>window.close(),3000)</script>
             </div></body></html>`;
@@ -210,7 +224,7 @@ function startOAuthCallbackServer(): Promise<{ success: boolean; email?: string;
             <div style="text-align:center">
                 <h1 style="font-size:3em;margin-bottom:0.2em">❌</h1>
                 <h2>Connection Failed</h2>
-                <p style="opacity:0.8">${msg}</p>
+                <p style="opacity:0.8">${escapeHtml(msg)}</p>
                 <p style="opacity:0.5;margin-top:2em">You can close this tab.</p>
             </div></body></html>`;
 
@@ -218,6 +232,12 @@ function startOAuthCallbackServer(): Promise<{ success: boolean; email?: string;
             const url = new URL(req.url || "/", `http://localhost:${OAUTH_CALLBACK_PORT}`);
             const code = url.searchParams.get("code");
             const error = url.searchParams.get("error");
+
+            if ((code || error) && !oauthStateMatches(url.searchParams.get("state"), expectedState)) {
+                res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+                res.end("This sign-in link doesn't match the one Bhai started.");
+                return;
+            }
 
             if (error) {
                 res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -254,7 +274,7 @@ function startOAuthCallbackServer(): Promise<{ success: boolean; email?: string;
             }
         });
 
-        server.listen(OAUTH_CALLBACK_PORT, () => {
+        server.listen(OAUTH_CALLBACK_PORT, "127.0.0.1", () => {
             console.log(`🔐 OAuth callback server listening on port ${OAUTH_CALLBACK_PORT}`);
         });
 
@@ -327,14 +347,16 @@ export const googleAccounts: ToolDefinition = {
                     });
                 }
 
+                const state = newOAuthState();
                 const authUrl = client.generateAuthUrl({
                     access_type: "offline",
                     scope: SCOPES,
                     prompt: "consent",
+                    state,
                 });
 
                 // Start callback server to auto-capture the code
-                const authPromise = startOAuthCallbackServer();
+                const authPromise = startOAuthCallbackServer(state);
 
                 // Open browser for auth
                 await execFileAsync("open", [authUrl], { timeout: 5000 }).catch(() => {});

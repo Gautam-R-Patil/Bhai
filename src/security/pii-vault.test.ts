@@ -1,6 +1,15 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { maskKnownValues, protect, protectMessages, REVEAL_TOOLS, reveal, revealArgs, setSecrets } from "./pii-vault.js";
+import {
+    maskKnownValues,
+    protect,
+    protectForDisk,
+    protectMessages,
+    REVEAL_TOOLS,
+    reveal,
+    revealArgs,
+    setSecrets,
+} from "./pii-vault.js";
 
 describe("PII vault", () => {
     it("the model sees handles; only typing tools get the value back", () => {
@@ -66,5 +75,20 @@ describe("PII vault masks a known value in its encoded forms", () => {
         } finally {
             setSecrets(new Map());
         }
+    });
+});
+
+// Last: it registers handles, which would renumber the tests above.
+describe("PII vault: disk", () => {
+    it("what goes to disk carries no card, code or owner-typed password", () => {
+        const msgs = [
+            { role: "user", content: "log into netflix, password: Tr0ub4dor&3x and pay with 4111 1111 1111 1111" },
+            { role: "assistant", content: "Done. Your OTP 482913 worked." },
+        ];
+        const stored = JSON.stringify(protectForDisk(msgs));
+        for (const v of ["Tr0ub4dor&3x", "4111 1111 1111 1111", "482913"]) expect(stored).not.toContain(v);
+        expect(stored).toContain("log into netflix"); // the rest stays readable for session search
+        // The model's view still keeps what the owner wrote as written (a pasted snippet).
+        expect(JSON.stringify(protectMessages(msgs))).toContain("Tr0ub4dor&3x");
     });
 });

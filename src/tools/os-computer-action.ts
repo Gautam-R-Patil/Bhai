@@ -115,44 +115,54 @@ export const osComputerAction: ToolDefinition = {
 };
 
 /**
- * Crop a region of the current screen at full resolution and return it as base64,
- * so a VLM/grounder can read small dense UI (Figma/Canva toolbars, tiny menu
- * items) that it would otherwise miss in a downscaled full-screen frame. Mirrors
- * Anthropic's computer_20251124 `zoom`. Region is [x0,y0,x1,y1]; percent (default,
- * 0..1) is scaled to the captured image, screen/image are treated as pixels.
+ * The zoom region as a screen rect: each corner resolved exactly like a click
+ * (percent / image + imageWidth / screen → screen points on the focused monitor).
+ * It used to crop the main display's raw capture instead, so on Retina an image or
+ * screen region cropped about half the intended area, its offset was in physical
+ * pixels (clicks from it landed 2x off), and percent zoomed a different monitor.
+ */
+export async function zoomRect(
+    act: Extract<ComputerAction, { action: "zoom" }>,
+    dims: ScreenDimensions,
+): Promise<{ x: number; y: number; w: number; h: number }> {
+    const [x0, y0, x1, y1] = act.region;
+    const a = await resolveCoord([x0, y0], act, dims);
+    const b = await resolveCoord([x1, y1], act, dims);
+    return {
+        x: Math.min(a.x, b.x),
+        y: Math.min(a.y, b.y),
+        w: Math.max(1, Math.abs(b.x - a.x)),
+        h: Math.max(1, Math.abs(b.y - a.y)),
+    };
+}
+
+/**
+ * Capture a region of the screen at full resolution and return it as base64, so a
+ * VLM/grounder can read small dense UI (Figma/Canva toolbars, tiny menu items) that
+ * it would otherwise miss in a downscaled full-screen frame. Mirrors Anthropic's
+ * computer_20251124 `zoom`. Region is [x0,y0,x1,y1] in the action's coordSystem.
  */
 async function executeZoom(
-    region: [number, number, number, number],
-    coordSystem?: string,
+    act: Extract<ComputerAction, { action: "zoom" }>,
+    dims?: ScreenDimensions,
 ): Promise<Record<string, unknown>> {
-    const shot = await takeScreenshot();
+    const d = dims ?? (await getScreenDimensions({ focusedWindow: true, force: true }));
+    const rect = await zoomRect(act, d);
+    // macOS captures exactly these points at full pixel density; Linux has no region
+    // capture, so crop its full shot (root pixels = screen coords).
+    let shot = await captureRegion(rect);
+    if (!shot) shot = await cropToRect(await takeScreenshot(), rect, isWayland());
+    if (!shot) return { action: "zoom", error: "could_not_capture_region" };
     const sharp = (await import("sharp")).default;
     const meta = await sharp(shot).metadata();
-    const imgW = meta.width || 0;
-    const imgH = meta.height || 0;
-    if (!imgW || !imgH) return { action: "zoom", error: "could_not_read_screenshot_dimensions" };
-
-    let [x0, y0, x1, y1] = region;
-    if (!coordSystem || coordSystem === "percent") {
-        x0 *= imgW;
-        x1 *= imgW;
-        y0 *= imgH;
-        y1 *= imgH;
-    }
-    // Normalize + clamp to image bounds.
-    const left = Math.max(0, Math.min(imgW - 1, Math.round(Math.min(x0, x1))));
-    const top = Math.max(0, Math.min(imgH - 1, Math.round(Math.min(y0, y1))));
-    const width = Math.max(1, Math.min(imgW - left, Math.round(Math.abs(x1 - x0))));
-    const height = Math.max(1, Math.min(imgH - top, Math.round(Math.abs(y1 - y0))));
-
-    const cropped = await sharp(shot).extract({ left, top, width, height }).png().toBuffer();
+    const imageWidth = meta.width || rect.w;
     return {
         action: "zoom",
-        zoomed_base64: cropped.toString("base64"),
-        cropRegionPx: { left, top, width, height },
-        imageWidth: width,
-        imageHeight: height,
-        note: "Cropped region at full resolution. Read this image to locate small UI, then click using the original screen coords (cropRegionPx gives the offset).",
+        zoomed_base64: (await sharp(shot).png().toBuffer()).toString("base64"),
+        region: rect,
+        imageWidth,
+        imageHeight: meta.height || rect.h,
+        note: `Screen points (${rect.x},${rect.y}) to (${rect.x + rect.w},${rect.y + rect.h}) at full resolution. To click something seen here: x = ${rect.x} + px × ${rect.w}/${imageWidth} (same for y with ${rect.y}, ${rect.h}), coordSystem "screen".`,
     };
 }
 
@@ -258,7 +268,7 @@ export async function executeStructuredAction(
             };
         }
         case "zoom":
-            return await executeZoom(act.region, act.coordSystem);
+            return await executeZoom(act, dims);
         default: {
             const _exhaustive: never = act;
             throw new Error(`Unhandled action: ${JSON.stringify(_exhaustive)}`);

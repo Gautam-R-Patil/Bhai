@@ -349,7 +349,7 @@ CRITICAL RULES:
     lines.push("|------|------|---------------|------------|--------|");
     for (const c of validatedContacts) {
         const cells = [c.name, c.role, c.outreach_path, c.confidence, c.source_url]
-            .map(v => String(v ?? "").replace(/\|/g, "\\|").replace(/\n/g, " "));
+            .map(v => String(v ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " "));
         lines.push(`| ${cells.join(" | ")} |`);
     }
     if (notes) lines.push("", `**Notes:** ${notes}`);

@@ -1,6 +1,6 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { decodeBingUrl, mergeAndRank } from "./web-search.js";
+import { bestCoverage, canonicalUrl, decodeBingUrl, htmlText, mergeAndRank, parseBraveHtml } from "./web-search.js";
 
 const r = (title: string, url: string, snippet = "") => ({ title, url, snippet });
 
@@ -37,5 +37,84 @@ describe("web search ranking", () => {
         const enc = Buffer.from(target).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
         expect(decodeBingUrl(`https://www.bing.com/ck/a?!&&p=abc&u=a1${enc}&ntb=1`)).toBe(target);
         expect(decodeBingUrl("https://example.com/page")).toBe("https://example.com/page");
+        // Only bing.com itself (or a subdomain) is unwrapped, not a lookalike host
+        const fake = `https://notbing.com/ck/a?u=a1${enc}`;
+        expect(decodeBingUrl(fake)).toBe(fake);
+    });
+});
+
+describe("canonicalUrl — dedup key", () => {
+    it("treats http/https, www., a trailing slash and a #fragment as the same page", () => {
+        const k = canonicalUrl("https://www.example.com/page/");
+        expect(canonicalUrl("http://example.com/page")).toBe(k);
+        expect(canonicalUrl("https://example.com/page#section")).toBe(k);
+        expect(canonicalUrl("https://www.example.com/page")).toBe(k);
+    });
+    it("drops tracking params but keeps and sorts meaningful ones", () => {
+        expect(canonicalUrl("https://x.com/p?utm_source=ig&fbclid=abc")).toBe(canonicalUrl("https://x.com/p"));
+        expect(canonicalUrl("https://x.com/p?b=2&a=1")).toBe(canonicalUrl("https://x.com/p?a=1&b=2"));
+        // a genuinely different page (different id) stays different
+        expect(canonicalUrl("https://x.com/p?id=5")).not.toBe(canonicalUrl("https://x.com/p?id=6"));
+    });
+    it("falls back to the raw string for a non-URL", () => {
+        expect(canonicalUrl("not a url")).toBe("not a url");
+    });
+});
+
+describe("web search dedup across engines", () => {
+    const r = (title: string, url: string, snippet = "") => ({ title, url, snippet });
+    it("collapses the same page arriving from two engines with different URL forms", () => {
+        const a = [r("GSMArena review", "https://www.gsmarena.com/nothing_ear_a-review.php?utm_source=ig")];
+        const b = [r("GSMArena review", "http://gsmarena.com/nothing_ear_a-review.php/")];
+        const out = mergeAndRank("nothing ear review", [a, b]);
+        expect(out).toHaveLength(1);
+        // the first (higher-ranked engine's) URL is the one kept and shown
+        expect(out[0].url).toBe("https://www.gsmarena.com/nothing_ear_a-review.php?utm_source=ig");
+    });
+});
+
+describe("htmlText", () => {
+    it("decodes entities and drops tags from scraped titles and snippets", () => {
+        expect(htmlText("Tom &amp; Jerry &#8211; it&#39;s &quot;back&quot;&nbsp;now")).toBe(
+            'Tom & Jerry – it\'s "back" now',
+        );
+        expect(htmlText("caf&#xE9; &lt;3")).toBe("café <3");
+        expect(htmlText("<div>Best</div><div>phones</div>")).toBe("Best phones");
+    });
+    it("keeps a bolded word whole and leaves unknown entities alone", () => {
+        expect(htmlText("Apple <b>iPhone</b>s compared")).toBe("Apple iPhones compared");
+        expect(htmlText("a &bogus; b &#0; c")).toBe("a &bogus; b &#0; c");
+    });
+});
+
+describe("parseBraveHtml", () => {
+    it("reads results from a normal page, which mentions 'captcha' in its UI strings", () => {
+        const html = `<script>{"Switch to traditional captcha":"Switch to traditional CAPTCHA"}</script>
+            <a href="https://search.brave.com/settings">Settings and more</a>
+            <a href="https://www.rtings.com/laptop/best/programming"><div class="title svelte-1">The 4 Best Laptops For Programming &amp; Coding</div></a>
+            <div class="snippet-content content svelte-2">1 week ago - The best laptop for programming we've tested is…</div>`;
+        expect(parseBraveHtml(html)).toEqual([
+            {
+                url: "https://www.rtings.com/laptop/best/programming",
+                title: "The 4 Best Laptops For Programming & Coding",
+                snippet: "1 week ago - The best laptop for programming we've tested is…",
+            },
+        ]);
+    });
+
+    it("a challenge page yields nothing", () => {
+        expect(parseBraveHtml("<title>Captcha - Brave Search</title><form>verify you are human</form>")).toEqual([]);
+    });
+});
+
+describe("bestCoverage", () => {
+    const r = (title: string) => ({ title, url: "https://x.example/", snippet: "" });
+    it("flags results that answer only part of the query", () => {
+        // A throttled engine answering just "best".
+        expect(bestCoverage("best laptop for programming 2026", [r("BEST Definition & Meaning")])).toBe(0);
+        expect(
+            bestCoverage("best laptop for programming 2026", [r("The 4 Best Laptops For Programming of 2026")]),
+        ).toBe(1);
+        expect(bestCoverage("weather in mumbai today", [r("Ghaziabad Hourly Weather")])).toBeLessThan(0.5);
     });
 });

@@ -208,5 +208,5 @@
         app: { getVersion: async () => "0.2.0-demo" },
     };
 
-    console.log("%c[demo] window.atlas mocked — step preset: " + step, "color:#c471ed;font-weight:600");
+    console.log("%c[demo] window.atlas mocked — step preset: %s", "color:#c471ed;font-weight:600", step);
 })();

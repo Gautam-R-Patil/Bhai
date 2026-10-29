@@ -42,10 +42,34 @@ const HEARTBEAT_INTERVAL = 20000; // 20s keep-alive (within MV3 30s limit)
 const DISCOVERY_INTERVAL = 5000;
 const MAX_DISCOVERY_INTERVAL = 60000;
 
-// Pin the active tab at the start of a command to prevent race conditions
-// when the user manually switches tabs during command execution
-async function withActiveTab(fn) {
+// ── Bhai's tab ── (agent-tab:start)
+// The tab Bhai works in. Pinned at a task's first command and kept while commands keep
+// coming; after 2 min idle the next task starts on whatever tab is in front. Only Bhai
+// moves it (a new tab, switch_tab). Before, every command re-read "the active tab", so the
+// owner clicking another tab mid-task sent Bhai's next click or typing into that tab.
+let agentTabId = null;
+let agentTabAt = 0;
+const AGENT_TAB_IDLE_MS = 120000;
+function pinAgentTab(id) {
+  agentTabId = id ?? null;
+  agentTabAt = Date.now();
+}
+async function agentTab() {
+  if (agentTabId !== null && Date.now() - agentTabAt < AGENT_TAB_IDLE_MS) {
+    const t = await chrome.tabs.get(agentTabId).catch(() => null);
+    if (t?.id) {
+      agentTabAt = Date.now();
+      return t;
+    }
+  }
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  pinAgentTab(tab?.id);
+  return tab;
+}
+// (agent-tab:end)
+
+async function withActiveTab(fn) {
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
   return fn(tab.id);
 }
@@ -76,7 +100,8 @@ function connect() {
     console.log("[ATLAS Bridge] Connected to Bhai bridge");
     connectionAttempts = 0;
     reconnectDelay = 1000;
-    ws.send(JSON.stringify({ type: "auth", token: authToken }));
+    // The version lets Bhai ask an outdated copy (an update installed under a running Chrome) to reload.
+    ws.send(JSON.stringify({ type: "auth", token: authToken, version: chrome.runtime.getManifest().version, native: discoveredVia === "native" }));
     startHeartbeat();
     updateBadge(true);
   };
@@ -313,6 +338,13 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Bhai shipped a newer copy of this extension: load it (the socket reconnects after).
+  if (msg.type === "reload") {
+    console.log("[ATLAS Bridge] Reloading to pick up the updated extension");
+    chrome.runtime.reload();
+    return;
+  }
+
   // Heartbeat ping from server
   if (msg.type === "ping") {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -343,7 +375,7 @@ function handleOverlayMessage(msg) {
     return;
   }
 
-  if (msg.type === "progress" || msg.type === "thinking" || msg.type === "thinking_content") {
+  if (msg.type === "progress" || msg.type === "contract" || msg.type === "thinking" || msg.type === "thinking_content") {
     chrome.runtime.sendMessage({
       type: "atlas_progress",
       text: msg.text || "",
@@ -523,6 +555,14 @@ async function handleCommand(cmd) {
         result = await rawCDP(payload);
         break;
 
+      case "captcha_frames":
+        result = await captchaFrames();
+        break;
+
+      case "mouse_path":
+        result = await mousePath(payload);
+        break;
+
       case "get_cookies":
         result = await getCookies(payload);
         break;
@@ -550,7 +590,7 @@ function sendResponse(id, success, data, error) {
 // ── Command Implementations ──────────────────
 
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab) return null;
   return {
     id: tab.id,
@@ -559,6 +599,9 @@ async function getActiveTab() {
     url: tab.url || "",
     active: true,
     windowId: tab.windowId,
+    // A click that starts a navigation: Bhai waits for it instead of reporting the old page.
+    status: tab.status || "",
+    pendingUrl: tab.pendingUrl || "",
   };
 }
 
@@ -575,9 +618,9 @@ async function getAllTabs() {
 }
 
 async function scanElements(payload) {
-  // Use lastFocusedWindow (not currentWindow) so we get the browser window,
-  // not the DevTools or extension popup which may be focused instead.
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  // Bhai's tab (agentTab: pinned, else the last-focused browser window's active tab —
+  // not DevTools or the extension popup).
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
   const results = await chrome.scripting.executeScript({
@@ -617,121 +660,123 @@ async function scanElements(payload) {
   return { elements: labeled };
 }
 
-function detectSpecialEditors() {
-  const editors = [];
-  const ts = Date.now();
-
-  // ── Code Editors ──
-
-  // Monaco Editor (VS Code, Scaler, GitHub editor, etc.)
-  document.querySelectorAll('.monaco-editor').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-monaco-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, atlasId, editorType: 'monaco' });
-  });
-
-  // CodeMirror 6
-  document.querySelectorAll('.cm-editor').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-cm6-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror6' });
-  });
-
-  // CodeMirror 5 (skip if already detected as CM6)
-  document.querySelectorAll('.CodeMirror').forEach((el, i) => {
-    if (el.closest('.cm-editor')) return;
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-cm5-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror5' });
-  });
-
-  // Ace Editor
-  document.querySelectorAll('.ace_editor').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-ace-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, atlasId, editorType: 'ace' });
-  });
-
-  // ── Rich Text Editors ──
-
-  // Quill
-  document.querySelectorAll('.ql-editor[contenteditable]').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-quill-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, atlasId, editorType: 'quill' });
-  });
-
-  // TinyMCE
-  document.querySelectorAll('.tox-tinymce').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-tinymce-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, atlasId, editorType: 'tinymce' });
-  });
-
-  // ProseMirror (also covers Tiptap which extends it)
-  document.querySelectorAll('.ProseMirror[contenteditable]').forEach((el, i) => {
-    const isTiptap = !!el.closest('.tiptap') || el.classList.contains('tiptap');
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const type = isTiptap ? 'tiptap' : 'prosemirror';
-    const label = isTiptap ? 'Tiptap' : 'ProseMirror';
-    const atlasId = `atlas-editor-${type}-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: `Rich Text Editor (${label})`, score: 25, atlasId, editorType: type });
-  });
-
-  // Slate
-  document.querySelectorAll('[data-slate-editor]').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-slate-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, atlasId, editorType: 'slate' });
-  });
-
-  // Draft.js
-  document.querySelectorAll('.DraftEditor-root').forEach((el, i) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 50 || rect.height < 50) return;
-    const x = Math.round(rect.left + rect.width / 2);
-    const y = Math.round(rect.top + rect.height / 2);
-    const atlasId = `atlas-editor-draftjs-${ts}-${i}`;
-    el.setAttribute('data-atlas-id', atlasId);
-    editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, atlasId, editorType: 'draftjs' });
-  });
-
-  return editors;
-}
-
 function scanPageElements() {
+  // Runs inside the page (executeScript serializes only this function), so its
+  // helpers must live in here too: an outside helper is a ReferenceError there.
+  function detectSpecialEditors() {
+    const editors = [];
+    const ts = Date.now();
+
+    // ── Code Editors ──
+
+    // Monaco Editor (VS Code, Scaler, GitHub editor, etc.)
+    document.querySelectorAll('.monaco-editor').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-monaco-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, atlasId, editorType: 'monaco' });
+    });
+
+    // CodeMirror 6
+    document.querySelectorAll('.cm-editor').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-cm6-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror6' });
+    });
+
+    // CodeMirror 5 (skip if already detected as CM6)
+    document.querySelectorAll('.CodeMirror').forEach((el, i) => {
+      if (el.closest('.cm-editor')) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-cm5-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror5' });
+    });
+
+    // Ace Editor
+    document.querySelectorAll('.ace_editor').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-ace-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, atlasId, editorType: 'ace' });
+    });
+
+    // ── Rich Text Editors ──
+
+    // Quill
+    document.querySelectorAll('.ql-editor[contenteditable]').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-quill-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, atlasId, editorType: 'quill' });
+    });
+
+    // TinyMCE
+    document.querySelectorAll('.tox-tinymce').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-tinymce-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, atlasId, editorType: 'tinymce' });
+    });
+
+    // ProseMirror (also covers Tiptap which extends it)
+    document.querySelectorAll('.ProseMirror[contenteditable]').forEach((el, i) => {
+      const isTiptap = !!el.closest('.tiptap') || el.classList.contains('tiptap');
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const type = isTiptap ? 'tiptap' : 'prosemirror';
+      const label = isTiptap ? 'Tiptap' : 'ProseMirror';
+      const atlasId = `atlas-editor-${type}-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: `Rich Text Editor (${label})`, score: 25, atlasId, editorType: type });
+    });
+
+    // Slate
+    document.querySelectorAll('[data-slate-editor]').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-slate-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, atlasId, editorType: 'slate' });
+    });
+
+    // Draft.js
+    document.querySelectorAll('.DraftEditor-root').forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      const atlasId = `atlas-editor-draftjs-${ts}-${i}`;
+      el.setAttribute('data-atlas-id', atlasId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, atlasId, editorType: 'draftjs' });
+    });
+
+    return editors;
+  }
+
   const els = Array.from(document.querySelectorAll("*"));
 
   const activeModals = els.filter((el) => {
@@ -937,11 +982,52 @@ function showAtlasHUD(tabId, label, done = false) {
   }).catch(() => {});
 }
 
+// A real click through CDP: trusted input the page can't tell from a person's,
+// that lands in iframes too, and that page scripts can't break (the synthetic
+// path below runs in the page and dies with whatever the page or another
+// extension has patched). False when the debugger can't attach (chrome:// pages).
+async function cdpClick(tabId, payload) {
+  try {
+    await holdCDP(tabId);
+  } catch {
+    return false;
+  }
+  const x = Number(payload.x) || 0, y = Number(payload.y) || 0;
+  const button = payload.button === "right" ? "right" : payload.button === "middle" ? "middle" : "left";
+  const buttons = button === "left" ? 1 : button === "right" ? 2 : 4;
+  const modifiers = (payload.modifiers || []).reduce((m, k) => m | ({ Alt: 1, Control: 2, Meta: 4, Shift: 8 }[k] || 0), 0);
+  const send = (type, extra) => chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", { type, x, y, modifiers, ...extra });
+  await send("mouseMoved", { button: "none", buttons: 0 });
+  for (let c = 1; c <= (payload.doubleClick ? 2 : 1); c++) {
+    await send("mousePressed", { button, buttons, clickCount: c });
+    await send("mouseReleased", { button, buttons: 0, clickCount: c });
+  }
+  return true;
+}
+
 async function clickAt(payload) {
   return withActiveTab(async (tabId) => {
     injectAtlasVisuals(tabId);
     const elementLabel = payload.elementLabel || '';
     if (elementLabel) showAtlasHUD(tabId, `🖱 Clicking "${elementLabel.substring(0, 30)}"`);
+
+    if (await cdpClick(tabId, payload)) {
+      // The click indicator only; the click itself already happened.
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: (x, y) => {
+          const ring = document.createElement('div');
+          ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid rgba(59,130,246,.9);pointer-events:none;z-index:2147483646;animation:atlasRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
+          const dot = document.createElement('div');
+          dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:#3b82f6;pointer-events:none;z-index:2147483647;animation:atlasDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
+          [ring, dot].forEach(e => document.body.appendChild(e));
+          setTimeout(() => [ring, dot].forEach(e => e.remove()), 650);
+        },
+        args: [payload.x, payload.y],
+      }).catch(() => {});
+      if (elementLabel) showAtlasHUD(tabId, '', true);
+      return { success: true, method: "cdp" };
+    }
 
     const results = await chrome.scripting.executeScript({
       target: { tabId },
@@ -1317,9 +1403,7 @@ async function scroll(payload) {
 async function executeJS(payload) {
   // Optional tabId pins the script to one tab (the human-check wait watches the
   // tab the check is on, even if the user switches tabs). Default: the active tab.
-  const [tab] = payload.tabId != null
-    ? [await chrome.tabs.get(payload.tabId)]
-    : await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = payload.tabId != null ? await chrome.tabs.get(payload.tabId) : await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
   // Use CDP Runtime.evaluate — this runs in the page context and bypasses
@@ -1328,13 +1412,15 @@ async function executeJS(payload) {
   // because `new Function()` is equivalent to `eval()` which requires unsafe-eval.
   let result;
   try {
-    await chrome.debugger.attach({ tabId: tab.id }, "1.3").catch(() => {});
+    // Reuse a session rawCDP holds open (a CAPTCHA solve); otherwise attach just for this call.
+    const held = cdpSessions.has(tab.id);
+    if (!held) await chrome.debugger.attach({ tabId: tab.id }, "1.3").catch(() => {});
     result = await chrome.debugger.sendCommand(
       { tabId: tab.id },
       "Runtime.evaluate",
       { expression: payload.code, returnByValue: true, awaitPromise: true }
     );
-    chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
+    if (!held) chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
   } catch (cdpErr) {
     // CDP unavailable — try ISOLATED world as last resort. `code` is an
     // expression, so wrap it in `return (...)` or the result is always undefined;
@@ -1368,20 +1454,115 @@ async function executeJS(payload) {
 // Raw CDP passthrough for nativeType, setFileInput, and other CDP methods.
 // Allowlisted to prevent arbitrary CDP abuse.
 const CDP_ALLOWED_METHODS = new Set([
-  'Input.insertText', 'Input.dispatchKeyEvent',
+  'Input.insertText', 'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent',
   'DOM.setFileInputFiles', 'DOM.getBoxModel', 'DOM.getContentQuads',
   'Page.captureScreenshot', 'Network.enable', 'Network.disable',
   'Accessibility.getFullAXTree',
 ]);
 
+// One debugger session per tab while CDP calls keep coming (a CAPTCHA solve sends
+// dozens of mouse events), dropped after a quiet spell so Chrome's "debugging this
+// browser" bar doesn't stay up.
+const cdpSessions = new Map(); // tabId -> idle-detach timer
+const CDP_IDLE_MS = 15000;
+chrome.debugger.onDetach.addListener((source) => {
+  clearTimeout(cdpSessions.get(source.tabId));
+  cdpSessions.delete(source.tabId);
+});
+
+async function holdCDP(tabId) {
+  if (!cdpSessions.has(tabId)) {
+    try {
+      await chrome.debugger.attach({ tabId }, "1.3");
+    } catch (e) {
+      if (!/already attached/i.test(String(e && e.message))) throw e;
+    }
+  }
+  clearTimeout(cdpSessions.get(tabId));
+  cdpSessions.set(tabId, setTimeout(() => {
+    cdpSessions.delete(tabId);
+    chrome.debugger.detach({ tabId }).catch(() => {});
+  }, CDP_IDLE_MS));
+}
+
 async function rawCDP(payload) {
   if (!CDP_ALLOWED_METHODS.has(payload.method)) {
     throw new Error(`CDP method not allowed: ${payload.method}`);
   }
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
+  await holdCDP(tab.id);
   const result = await chrome.debugger.sendCommand({ tabId: tab.id }, payload.method, payload.params || {});
   return result || { success: true };
+}
+
+// A whole mouse gesture (move / click / drag) as trusted CDP input in one bridge
+// call: one round trip instead of one per event, and paced here, not over the socket.
+async function mousePath(payload) {
+  const events = Array.isArray(payload.events) ? payload.events.slice(0, 200) : [];
+  const tab = await agentTab();
+  if (!tab || !tab.id) throw new Error("No active tab");
+  await holdCDP(tab.id);
+  for (const e of events) {
+    if (!["mouseMoved", "mousePressed", "mouseReleased"].includes(e.type)) continue;
+    await chrome.debugger.sendCommand({ tabId: tab.id }, "Input.dispatchMouseEvent", {
+      type: e.type, x: Number(e.x) || 0, y: Number(e.y) || 0,
+      button: e.button || "left", buttons: e.buttons || 0, clickCount: e.clickCount || 0,
+    });
+    if (e.delayMs > 0) await new Promise((r) => setTimeout(r, Math.min(e.delayMs, 2000)));
+  }
+  return { success: true, events: events.length };
+}
+
+// The CAPTCHA widget frames (reCAPTCHA anchor/bframe, hCaptcha checkbox/challenge)
+// read from inside, for Bhai's picture-CAPTCHA solver. A fixed function, not eval:
+// those frames' CSP forbids eval. Rects are in each frame's own viewport; Bhai maps
+// them onto the page with the iframe's box. Keep the selectors in step with
+// src/tools/browser/captcha-vision.ts.
+async function captchaFrames() {
+  const tab = await agentTab();
+  if (!tab || !tab.id) throw new Error("No active tab");
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id, allFrames: true },
+    func: () => {
+      const href = location.href;
+      const kind = /\/recaptcha\/.*bframe|hcaptcha.*frame=challenge/.test(href) ? "challenge"
+        : /\/recaptcha\/.*anchor|hcaptcha.*frame=checkbox/.test(href) ? "checkbox" : null;
+      if (!kind) return null;
+      const rect = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 8 && r.height > 8 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null;
+      };
+      const all = (sels) => {
+        for (const s of sels) {
+          const rs = Array.from(document.querySelectorAll(s)).map(rect).filter(Boolean);
+          if (rs.length) return rs;
+        }
+        return [];
+      };
+      const tds = Array.from(document.querySelectorAll("td.rc-imageselect-tile"));
+      const settled = tds.every((td) => {
+        if (td.classList.contains("rc-imageselect-dynamic-selected")) return false;
+        const img = td.querySelector("img"), ov = td.querySelector(".rc-image-tile-overlay");
+        return !!img && img.complete && img.naturalWidth > 0 && (!ov || Number(getComputedStyle(ov).opacity) === 0);
+      });
+      const dos = document.querySelector(".rc-doscaptcha-header-text");
+      const prompt = document.querySelector(".rc-imageselect-desc-wrapper,.rc-imageselect-desc-no-canonical,.prompt-text,h2");
+      const canvases = all(["canvas"]).sort((a, b) => b.w * b.h - a.w * a.h);
+      return {
+        kind, vw: innerWidth, vh: innerHeight,
+        tiles: all(["td.rc-imageselect-tile", ".task-image", ".task-grid .task", ".challenge-view .task"]),
+        submit: all(["#recaptcha-verify-button", ".button-submit"])[0] || null,
+        tick: all(["#recaptcha-anchor", "#checkbox"])[0] || null,
+        canvas: canvases[0] || null,
+        header: all([".challenge-header"])[0] || null,
+        instruction: ((prompt && prompt.innerText) || "").trim(),
+        settled,
+        blocked: !!dos && dos.offsetParent !== null,
+      };
+    },
+  });
+  return results.map((r) => r.result).filter(Boolean);
 }
 
 // The cookies Chrome would send to ONE http(s) URL, so Bhai's own browser can
@@ -1397,9 +1578,10 @@ async function getCookies(payload) {
 
 async function navigate(payload) {
   if (payload.newTab) {
-    await chrome.tabs.create({ url: payload.url, active: true });
+    const created = await chrome.tabs.create({ url: payload.url, active: true });
+    pinAgentTab(created?.id);
   } else {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = await agentTab();
     if (!tab || !tab.id) throw new Error("No active tab");
     await chrome.tabs.update(tab.id, { url: payload.url });
   }
@@ -1407,7 +1589,7 @@ async function navigate(payload) {
 }
 
 async function goBack() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
   await chrome.tabs.goBack(tab.id);
   return { success: true };
@@ -1420,7 +1602,13 @@ async function captureScreenshot(payload) {
   // Bhai's own cursor / glow / pill (src/tools/browser/agent-cursor.ts) must
   // never reach its vision or OCR: hide the host for the capture. ISOLATED
   // world shares the DOM and needs no debugger attach.
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
+  // Chrome captures only a window's visible tab: if the owner switched tabs in Bhai's
+  // window, bring Bhai's tab back to front (another window is left alone).
+  if (tab?.id && !tab.active) {
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 150));
+  }
   const overlay = (hide) => !tab?.id ? Promise.resolve(false) : chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (id, hide) => {
@@ -1434,7 +1622,7 @@ async function captureScreenshot(payload) {
   const hidden = await overlay(true);
   let dataUrl;
   try {
-    dataUrl = await chrome.tabs.captureVisibleTab(null, { format, quality });
+    dataUrl = await chrome.tabs.captureVisibleTab(tab && tab.windowId != null ? tab.windowId : null, { format, quality });
   } finally {
     if (hidden) await overlay(false);
   }
@@ -1446,6 +1634,7 @@ async function captureScreenshot(payload) {
 async function switchTab(payload) {
   if (payload.tabId) {
     const tab = await chrome.tabs.update(payload.tabId, { active: true });
+    pinAgentTab(payload.tabId);
     // focus:true also raises the window (CAPTCHA human handoff)
     if (payload.focus && tab?.windowId !== undefined) {
       await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
@@ -1457,17 +1646,56 @@ async function switchTab(payload) {
 async function closeTab(payload) {
   if (payload.tabId) {
     await chrome.tabs.remove(payload.tabId);
+    if (payload.tabId === agentTabId) pinAgentTab(null);
   } else {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = await agentTab();
     if (tab && tab.id) {
       await chrome.tabs.remove(tab.id);
+      pinAgentTab(null);
     }
   }
   return { success: true };
 }
 
+// Real key presses through CDP: a synthetic KeyboardEvent never submits a form on
+// Enter, moves focus on Tab or types into fields, because browsers ignore untrusted
+// key events for those. False when the debugger can't attach or the key is unknown.
+const CDP_KEYS = {
+  Enter: [13, "\r"], Tab: [9], Escape: [27], Backspace: [8], Delete: [46], Insert: [45],
+  ArrowUp: [38], ArrowDown: [40], ArrowLeft: [37], ArrowRight: [39],
+  Home: [36], End: [35], PageUp: [33], PageDown: [34], " ": [32, " "], Space: [32, " "],
+  Control: [17], Shift: [16], Alt: [18], Meta: [91],
+};
+async function cdpKey(tabId, key, mods, action) {
+  let code = key, keyCode, text = "";
+  const modifiers = (mods || []).reduce((m, k) => m | ({ Alt: 1, Control: 2, Meta: 4, Shift: 8 }[k] || 0), 0);
+  if (CDP_KEYS[key]) {
+    [keyCode, text = ""] = CDP_KEYS[key];
+    if (key === " " || key === "Space") code = "Space";
+  } else if (typeof key === "string" && key.length === 1) {
+    keyCode = key.toUpperCase().charCodeAt(0);
+    code = /[a-z]/i.test(key) ? `Key${key.toUpperCase()}` : /\d/.test(key) ? `Digit${key}` : "";
+    text = modifiers & 6 ? "" : key; // Ctrl/Cmd shortcuts don't type their letter
+  } else {
+    return false;
+  }
+  try {
+    await holdCDP(tabId);
+  } catch {
+    return false;
+  }
+  const base = { key: key === "Space" ? " " : key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers };
+  const send = (type, extra) => chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", { type, ...base, ...extra });
+  if (action !== "up") await send(text ? "keyDown" : "rawKeyDown", text ? { text, unmodifiedText: text } : {});
+  if (action !== "down") await send("keyUp", {});
+  return true;
+}
+
 async function keyboard(payload) {
   return withActiveTab(async (tabId) => {
+    if (await cdpKey(tabId, payload.key, payload.modifiers || [], payload.action || "press")) {
+      return { success: true, method: "cdp" };
+    }
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (key, modifiers, keyAction) => {
@@ -1542,7 +1770,7 @@ async function hover(payload) {
 }
 
 async function selectOption(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
   await chrome.scripting.executeScript({
@@ -1563,7 +1791,7 @@ async function selectOption(payload) {
 }
 
 async function waitFor(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
   const timeout = payload.timeout || 10000;
@@ -1709,7 +1937,32 @@ async function autoDiscover() {
   }
 }
 
+// How the token was obtained, told to the bridge on auth: once it has seen native messaging
+// work, it stops handing tokens out over HTTP (any local process can GET /discover).
+let discoveredVia = "";
+
+function nativeConfig() {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" }, (resp) => {
+        resolve(chrome.runtime.lastError ? null : resp);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 async function _autoDiscover() {
+  // Native messaging first: Chrome only starts the host for this extension, as this OS user.
+  const native = await nativeConfig();
+  if (native?.success && native.token) {
+    console.log("[ATLAS Bridge] Discovered via native messaging");
+    discoveredVia = "native";
+    applyDiscovery(native);
+    return true;
+  }
+
   try {
     const res = await fetch(discoveryUrl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1717,6 +1970,7 @@ async function _autoDiscover() {
 
     if (config.token && config.wsUrl) {
       console.log("[ATLAS Bridge] Auto-discovered Bhai server");
+      discoveredVia = "http";
       applyDiscovery(config);
       return true;
     }
@@ -1727,32 +1981,9 @@ async function _autoDiscover() {
     console.warn("[ATLAS Bridge] /discover fetch failed:", err && err.message ? err.message : String(err));
   }
 
-  // Try native messaging as fallback
-  try {
-    const response = await new Promise((resolve, reject) => {
-      chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" }, (resp) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(resp);
-        }
-      });
-    });
-
-    if (response && response.success && response.token) {
-      console.log("[ATLAS Bridge] Auto-discovered via native messaging");
-      applyDiscovery(response);
-      return true;
-    }
-  } catch {
-    // Native messaging not available
-  }
-
   // No fallback to the overlay port. 18792 is the overlay chat server — it
   // speaks a different protocol AND requires ?localToken= auth that this
-  // extension does not hold. Connecting there used to silently fail with
-  // ERR_CONNECTION_REFUSED-style errors when the bot wasn't fully booted,
-  // and surface as 4001 closes after. Keep retrying /discover at 18800.
+  // extension does not hold. Keep retrying discovery.
   return false;
 }
 

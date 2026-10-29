@@ -22,7 +22,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
   reviewer: ["approve_apps", "view_analytics"],
 };
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+\.[^\s@]+$/;
 
 export async function POST(request: NextRequest) {
   const g = await guard(request, { permission: "manage_admins", maxBodyBytes: 4096 });

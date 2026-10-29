@@ -10,6 +10,9 @@
 
 import type * as accounts from "../accounts.js";
 import type * as appRuntime from "../appRuntime.js";
+import type * as bhaiMail from "../bhaiMail.js";
+import type * as bhaiMailHelpers from "../bhaiMailHelpers.js";
+import type * as bhaiMailNode from "../bhaiMailNode.js";
 import type * as claude from "../claude.js";
 import type * as contact from "../contact.js";
 import type * as credit_cost from "../credit_cost.js";
@@ -32,6 +35,7 @@ import type * as store_storage from "../store/storage.js";
 import type * as store_submissions from "../store/submissions.js";
 import type * as stt from "../stt.js";
 import type * as systemContent from "../systemContent.js";
+import type * as telegramManaged from "../telegramManaged.js";
 import type * as userAddenda from "../userAddenda.js";
 import type * as waitlist from "../waitlist.js";
 import type * as waitlistMailer from "../waitlistMailer.js";
@@ -45,6 +49,9 @@ import type {
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   appRuntime: typeof appRuntime;
+  bhaiMail: typeof bhaiMail;
+  bhaiMailHelpers: typeof bhaiMailHelpers;
+  bhaiMailNode: typeof bhaiMailNode;
   claude: typeof claude;
   contact: typeof contact;
   credit_cost: typeof credit_cost;
@@ -67,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   "store/submissions": typeof store_submissions;
   stt: typeof stt;
   systemContent: typeof systemContent;
+  telegramManaged: typeof telegramManaged;
   userAddenda: typeof userAddenda;
   waitlist: typeof waitlist;
   waitlistMailer: typeof waitlistMailer;

@@ -1,17 +1,20 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
-// Stop must reach browser_wait_for_human wherever it runs: called from a
-// sub-agent or swarm under the turn (no explicit signal), or after a
-// PreToolUse hook rewrote its input.
+// Stop must reach site_task (its CAPTCHA pipeline can wait on the owner) wherever it
+// runs: called from a sub-agent or swarm under the turn (no explicit signal), or after
+// a PreToolUse hook rewrote its input.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const seen: Record<string, unknown>[] = [];
 const hook = { rewrite: false };
-vi.mock("./browser/human-handoff.js", () => ({
-    browserWaitForHuman: {
-        schema: { type: "function", function: { name: "browser_wait_for_human", parameters: { type: "object", properties: {} } } },
+vi.mock("./site-task.js", () => ({
+    siteTask: {
+        schema: {
+            type: "function",
+            function: { name: "site_task", parameters: { type: "object", properties: { action: { type: "string" } } } },
+        },
         handler: async (input: Record<string, unknown>) => {
             seen.push(input);
-            return JSON.stringify({ status: "cleared" });
+            return JSON.stringify({ status: "done" });
         },
     },
 }));
@@ -35,7 +38,7 @@ describe("turn signal", () => {
         // A sub-agent's executeTool call carries no signal of its own.
         await withTurnSignal(ctl.signal, async () => {
             await Promise.resolve();
-            return executeTool("browser_wait_for_human", {});
+            return executeTool("site_task", { action: "resume" });
         });
         expect(seen[0]._signal).toBe(ctl.signal);
     });
@@ -43,13 +46,13 @@ describe("turn signal", () => {
     it("survives a PreToolUse hook that rewrites the input", async () => {
         hook.rewrite = true;
         const ctl = new AbortController();
-        await executeTool("browser_wait_for_human", { _signal: ctl.signal });
+        await executeTool("site_task", { action: "resume", _signal: ctl.signal });
         expect(seen[0]._signal).toBe(ctl.signal);
     });
 
     it("ignores a fake _signal in the model's arguments", async () => {
         const ctl = new AbortController();
-        await withTurnSignal(ctl.signal, () => executeTool("browser_wait_for_human", { _signal: {} }));
+        await withTurnSignal(ctl.signal, () => executeTool("site_task", { action: "resume", _signal: {} }));
         expect(seen[0]._signal).toBe(ctl.signal);
     });
 });

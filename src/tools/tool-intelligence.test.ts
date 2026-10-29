@@ -9,12 +9,33 @@ import {
     getCached,
     getToolAnalytics,
     isCacheable,
+    isErrorResult,
     isDestructiveHotkey,
     recordToolUsage,
     requiresConfirmation,
     resetRateLimits,
     setCache,
 } from "./tool-intelligence.js";
+
+describe("tool-intelligence — error results are not cached", () => {
+    beforeEach(() => clearCache());
+
+    it("isErrorResult flags {error} and {success:false}, not successes or plain text", () => {
+        expect(isErrorResult('{"error":"network timeout"}')).toBe(true);
+        expect(isErrorResult('{"success":false,"reason":"x"}')).toBe(true);
+        expect(isErrorResult('{"success":true,"data":1}')).toBe(false);
+        expect(isErrorResult('{"results":[]}')).toBe(false);
+        expect(isErrorResult("plain text result")).toBe(false);
+    });
+
+    it("setCache stores a success but refuses an error, so a retry re-runs", () => {
+        const args = { query: "weather" };
+        setCache("web_search", args, '{"error":"Search failed: network timeout"}');
+        expect(getCached("web_search", args)).toBeNull(); // the failure was NOT pinned
+        setCache("web_search", args, '{"results":["ok"]}');
+        expect(getCached("web_search", args)).toBe('{"results":["ok"]}');
+    });
+});
 
 describe("tool-intelligence — result cache", () => {
     beforeEach(() => clearCache());

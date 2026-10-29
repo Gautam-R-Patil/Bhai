@@ -5,8 +5,9 @@
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename as nodeBasename } from "node:path";
-import { Bot, GrammyError, InlineKeyboard } from "grammy";
+import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import {
+    type AgentResponse,
     type ChannelContext,
     clearConversation,
     getConversationCount,
@@ -36,6 +37,9 @@ import {
     isStopCommand,
     markdownToPlainText,
     markdownToTelegramHtml,
+    stuckCallbackMessage,
+    stuckKeyboard,
+    withStuckReplyLine,
 } from "./channel-text.js";
 import { getThinkingLevel, handleCommand, initCommands } from "./commands/index.js";
 import { getConvexSiteUrl } from "./config/keys.js";
@@ -46,6 +50,7 @@ import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { getSessionToken } from "./session.js";
+import { mapStepStatus, parseStepLine, STEP_HEARTBEAT_MS } from "./step-status.js";
 import { batchKey } from "./telegram-batch.js";
 import {
     clearDeepResearchProgress,
@@ -130,6 +135,84 @@ async function sendTelegramMarkdown(
         last = { messageId: sent?.message_id, md: chunk.md };
     }
     return last;
+}
+
+/** A stuck report gets one-tap handoff buttons only in the owner's private chat. */
+function wantsStuckButtons(res: { stuck?: boolean }, senderIsOwner: boolean, chatType?: string): boolean {
+    return res.stuck === true && senderIsOwner && chatType === "private";
+}
+
+/**
+ * Put the I'll take over / Retry / Skip buttons under the report's last bubble. If that edit fails
+ * (or nothing was sent), they go out under a short follow-up instead, so they are never silently lost.
+ */
+async function attachStuckKeyboard(
+    api: Bot["api"],
+    chatId: number,
+    messageId: number | undefined,
+    lastEditAt = 0,
+): Promise<void> {
+    const reply_markup = stuckKeyboard();
+    if (messageId) {
+        // Telegram throttles rapid edits of one message — keep them ≥1s apart
+        const wait = lastEditAt + 1000 - Date.now();
+        if (wait > 0) await sleep(wait);
+        try {
+            await withTelegramRetry(() => api.editMessageReplyMarkup(chatId, messageId, { reply_markup }));
+            return;
+        } catch (err) {
+            console.warn("[TELEGRAM] Failed to attach stuck keyboard, sending it separately:", (err as Error).message);
+        }
+    }
+    // As a reply to the report, so a tap still carries the report as its reply context.
+    const reply_parameters = messageId ? { message_id: messageId, allow_sending_without_reply: true } : undefined;
+    await withTelegramRetry(() => api.sendMessage(chatId, "What next?", { reply_markup, reply_parameters })).catch(
+        (err: Error) => console.warn("[TELEGRAM] Failed to send stuck keyboard:", err.message),
+    );
+}
+
+/**
+ * Done comes with the receipt: the screenshot taken after the last action, right after
+ * the reply and threaded like it. No caption: the photo never claims more than the reply.
+ */
+async function sendReceipt(
+    api: Bot["api"],
+    chatId: number,
+    receipt: AgentResponse["receipt"],
+    opts: { reply_parameters?: { message_id: number } } = {},
+): Promise<void> {
+    if (!receipt) return;
+    const photo = new InputFile(
+        Buffer.from(receipt.imageBase64, "base64"),
+        `receipt.${receipt.mimeType.split("/")[1] || "png"}`,
+    );
+    await withTelegramRetry(() => api.sendPhoto(chatId, photo, opts)).catch((err: Error) =>
+        console.warn("[TELEGRAM] Failed to send receipt:", err.message),
+    );
+}
+
+/** Send a media or voice turn's reply as bubbles; a stuck report gets the handoff buttons or the reply line. */
+async function replyInBubbles(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ctx: any,
+    result: Pick<AgentResponse, "text" | "stuck" | "receipt">,
+    senderIsOwner: boolean,
+): Promise<void> {
+    const buttons = wantsStuckButtons(result, senderIsOwner, ctx.chat?.type);
+    const bubbles = splitIntoBubbles(buttons ? result.text : withStuckReplyLine(result, senderIsOwner));
+    let lastId: number | undefined;
+    for (let i = 0; i < bubbles.length; i++) {
+        const bubble = bubbles[i];
+        if (i > 0) {
+            await ctx.replyWithChatAction("typing");
+            const delay = Math.min(600, Math.max(300, bubble.length * 2));
+            await new Promise((r) => setTimeout(r, delay));
+        }
+        const sent = await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
+        lastId = sent.messageId ?? lastId;
+    }
+    if (buttons) await attachStuckKeyboard(ctx.api, ctx.chat.id, lastId);
+    await sendReceipt(ctx.api, ctx.chat.id, result.receipt);
 }
 
 // ── Inline Keyboards ─────────────────────────
@@ -567,7 +650,20 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             }
         }
 
-        // ── Buffer message and debounce ──
+        bufferMessage(ctx, chatId, triggerMessageId, userMessage, replyToText, replyToAuthor);
+    });
+
+    // ── Buffer a message from the sender of `ctx` and debounce ──
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function bufferMessage(
+        ctx: any,
+        chatId: number,
+        triggerMessageId: number,
+        userMessage: string,
+        replyToText?: string,
+        replyToAuthor?: string,
+    ) {
+        const bufKey = batchKey(chatId, ctx.from?.id);
         const existing = messageBuffer.get(bufKey);
         if (existing) {
             // Add to buffer and reset timer
@@ -594,7 +690,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 ctx: ctx as never,
             });
         }
-    });
+    }
 
     // ── Process buffered messages ───────────────────
     // eslint-disable-next-line @typescript-eslint/no-floating-promises, @typescript-eslint/no-explicit-any
@@ -656,13 +752,6 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 try {
                     const { recordUserEngagement } = await import("./proactive/inner-thoughts.js");
                     recordUserEngagement(true);
-                } catch {
-                    /* non-fatal */
-                }
-                try {
-                    const { recordResponse } = await import("./proactive/notification-tracker.js");
-                    // Find the most recent unresponded notification and mark as engaged
-                    recordResponse(0, "engaged", 1);
                 } catch {
                     /* non-fatal */
                 }
@@ -759,6 +848,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                 let agentMessage = combinedMessage;
                 let modelHint: "simple" | "complex" | undefined;
+                let quickAckId: number | undefined; // the quick ack, later edited into the agent's contract line
                 if (isAck) {
                     console.log(`  💬 Short ack detected — injecting context note to prevent task restart`);
                     agentMessage =
@@ -775,7 +865,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     modelHint = complexity;
                     if (ack) {
                         console.log(`  💬 LLM classified as task — ack: "${ack}"`);
-                        await ctx.reply(ack);
+                        quickAckId = (await ctx.reply(ack)).message_id;
                     }
                     console.log(`  🧠 Model routing: ${complexity}`);
                 }
@@ -786,6 +876,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 // tool milestone updates. Deleted before the real answer arrives.
                 let statusMessageId: number | null = null;
                 let lastStatusText = "";
+                let lastStatusAt = 0; // when a tool/step status last landed
                 let statusTimeout: ReturnType<typeof setTimeout> | null = null;
                 let pendingStatus: string | null = null;
                 let statusCleared = false; // ← Race condition guard
@@ -801,6 +892,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     thinkingTimer = setInterval(
                         async () => {
                             if (controller.signal.aborted || statusCleared) return;
+                            // A fresh step line says what's actually running; filler never covers it.
+                            // Once it goes quiet (the batch ended, a long model call runs), rotate again.
+                            if (parseStepLine(lastStatusText) && Date.now() - lastStatusAt < STEP_HEARTBEAT_MS + 5000)
+                                return;
 
                             const elapsed = Date.now() - statusStartTime;
 
@@ -886,6 +981,12 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         return;
                     }
 
+                    // ── Ack: the turn's contract line replaces the quick ack ──
+                    if (msg.startsWith("[ACK] ")) {
+                        await sendContractLine(bot.api, chatId, quickAckId, msg.slice(6));
+                        return;
+                    }
+
                     // ── Live Thinking Display ──
                     // Replace the fake rotating phrases with real model reasoning
                     if (msg.startsWith("[THINKING] ")) {
@@ -923,7 +1024,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                     console.log(`  📊 [progress] ${msg}`);
 
-                    const humanized = humanizeProgress(msg);
+                    const humanized = mapStepStatus(msg, humanizeProgress);
                     if (!humanized || statusCleared) return;
 
                     if (!statusMessageId) {
@@ -943,6 +1044,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                                         } else {
                                             statusMessageId = sent.message_id;
                                             lastStatusText = pendingStatus!;
+                                            lastStatusAt = Date.now();
                                             startThinkingRotation();
                                         }
                                     } catch {
@@ -958,6 +1060,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                             try {
                                 await bot.api.editMessageText(chatId, statusMessageId, humanized);
                                 lastStatusText = humanized;
+                                lastStatusAt = Date.now();
                             } catch {
                                 /* message may have been deleted */
                             }
@@ -1039,7 +1142,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 clearLongTaskProgress();
 
                 clearTimeout(thinkingFallback);
-                if (controller.signal.aborted) {
+                // Aborted, or the agent decided no reply is needed: stay silent.
+                if (controller.signal.aborted || response.text.trim() === "[NO_REPLY]") {
                     await clearStatusMessage();
                     return;
                 }
@@ -1052,8 +1156,11 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                 // ── Response-time awareness ──────────────────────────────────
                 // If the response took a while, acknowledge it naturally using alive-ux
-                let responseText = response.text;
-                const timeAck = getResponseTimeAck(taskDurationMs, response.toolCalls > 0);
+                // A stuck report gets one-tap handoff buttons in the owner's private chat, else the plain reply line.
+                const stuckButtons = wantsStuckButtons(response, senderIsOwner, ctx.chat?.type);
+                let responseText = stuckButtons ? response.text : withStuckReplyLine(response, senderIsOwner);
+                // No "finally!"/"phew" in front of a stuck report: it reads as success.
+                const timeAck = response.stuck ? null : getResponseTimeAck(taskDurationMs, response.toolCalls > 0);
                 if (timeAck) {
                     const lowerResp = responseText.toLowerCase();
                     if (
@@ -1076,7 +1183,12 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
                 const replyOpts = shouldFork ? { reply_parameters: { message_id: triggerMessageId } } : {};
                 const reply: TelegramReply = (text, opts) => ctx.reply(text, opts);
-                const track = (id: number) => botMessageToTask.set(id, taskId);
+                let lastSentId: number | undefined;
+                let lastEditAt = 0;
+                const track = (id: number) => {
+                    botMessageToTask.set(id, taskId);
+                    lastSentId = id;
+                };
 
                 if (useStreaming) {
                     // Send first bubble immediately, then append the rest by editing it in place
@@ -1086,7 +1198,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         replyOpts,
                         track,
                     );
-                    let lastEditAt = Date.now();
+                    lastEditAt = Date.now();
 
                     for (let i = 1; i < bubbles.length; i++) {
                         const delay = Math.min(600, Math.max(200, bubbles[i].length * 1.5));
@@ -1144,6 +1256,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         await sendTelegramMarkdown(reply, bubble, replyOpts, track);
                     }
                 }
+                if (stuckButtons) await attachStuckKeyboard(ctx.api, chatId, lastSentId, lastEditAt);
+                await sendReceipt(ctx.api, chatId, response.receipt, replyOpts);
             } catch (err) {
                 if (!controller.signal.aborted) {
                     console.error("❌ Agent error:", err);
@@ -1268,6 +1382,20 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 console.log("[TG] inbox callback failed (non-fatal):", (err as Error).message);
                 await ctx.answerCallbackQuery({ text: "error" });
             }
+            return;
+        }
+
+        // ── Stuck-report handoff: stuck:takeover|retry|skip → that user's next message ──
+        if (data.startsWith("stuck:")) {
+            // A tap queued while the bot was down is "too old" to answer; still run the turn.
+            await ctx.answerCallbackQuery().catch(() => {});
+            await ctx.editMessageReplyMarkup().catch(() => {});
+            const message = stuckCallbackMessage(data);
+            const stuckMsg = ctx.callbackQuery.message;
+            // Carry the report as reply context, so an old or concurrent tap answers this report, not the latest turn.
+            // Buttons under the "What next?" fallback reply to the report: carry that instead.
+            const reportText = stuckMsg?.reply_to_message?.text ?? stuckMsg?.text;
+            if (message && chatId && stuckMsg) bufferMessage(ctx, chatId, stuckMsg.message_id, message, reportText);
             return;
         }
 
@@ -1601,11 +1729,13 @@ async function handleMediaMessage(
 
         // ── Send one natural acknowledgement before work starts ──
         const { ack: mediaAck } = await classifyAndAck(llm, caption);
-        if (mediaAck) await ctx.reply(mediaAck);
+        const mediaAckId: number | undefined = mediaAck ? (await ctx.reply(mediaAck)).message_id : undefined;
 
-        // Progress is silent on Telegram — only logged to console.
+        // Progress is silent on Telegram — only logged to console — except the
+        // turn's contract line, which replaces the quick ack.
         const progressCallback = async (msg: string) => {
             console.log(`  📊 [progress] ${msg}`);
+            if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, mediaAckId, msg.slice(6));
         };
 
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config);
@@ -1635,16 +1765,7 @@ async function handleMediaMessage(
             return;
         }
 
-        const bubbles = splitIntoBubbles(result.text);
-        for (let i = 0; i < bubbles.length; i++) {
-            const bubble = bubbles[i];
-            if (i > 0) {
-                await ctx.replyWithChatAction("typing");
-                const delay = Math.min(600, Math.max(300, bubble.length * 2));
-                await new Promise((r) => setTimeout(r, delay));
-            }
-            await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
-        }
+        await replyInBubbles(ctx, result, senderIsOwner);
     } catch (err) {
         console.error("❌ Media processing error:", err);
         const errorType = categorizeError(err as Error);
@@ -1760,6 +1881,7 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
 
         const progressCallback = async (msg: string) => {
             console.log(`  📊 [progress] ${msg}`);
+            if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, undefined, msg.slice(6));
         };
 
         const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config);
@@ -1789,16 +1911,7 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
         }
 
         // Send response
-        const bubbles = splitIntoBubbles(result.text);
-        for (let i = 0; i < bubbles.length; i++) {
-            const bubble = bubbles[i];
-            if (i > 0) {
-                await ctx.replyWithChatAction("typing");
-                const delay = Math.min(600, Math.max(300, bubble.length * 2));
-                await new Promise((r) => setTimeout(r, delay));
-            }
-            await sendTelegramMarkdown((text, opts) => ctx.reply(text, opts), bubble);
-        }
+        await replyInBubbles(ctx, result, senderIsOwner);
     } catch (err) {
         console.error("❌ Audio processing error:", err);
         const errorType = categorizeError(err as Error);
@@ -1809,6 +1922,24 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
 }
 
 // ── Helpers ───────────────────────────────────
+
+/**
+ * Delivers the agent's contract line ("on it — …; done = …"): edits the quick
+ * ack already sent into it, so the user sees one ack, or sends it if none was.
+ */
+async function sendContractLine(
+    api: Bot["api"],
+    chatId: number,
+    quickAckId: number | undefined,
+    text: string,
+): Promise<void> {
+    try {
+        if (quickAckId) await api.editMessageText(chatId, quickAckId, text);
+        else await api.sendMessage(chatId, text);
+    } catch {
+        /* non-fatal: the reply still arrives */
+    }
+}
 
 /**
  * Uses a fast LLM call to intelligently:

@@ -237,8 +237,6 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "browser_chrome_status",
             "browser_click",
             "browser_video_control",
-            "browser_handle_captcha",
-            "browser_wait_for_human",
             "browser_batch_fetch",
             "browser_auto_scroll",
             "browser_network_requests",
@@ -604,16 +602,28 @@ Rules:
 - "run npm install" = shell, NOT media
 - IMPORTANT: When the user names a desktop app the agent must DRIVE (open, click, type in, switch to) — e.g. "open WhatsApp and send …", "click the Send button in Photoshop", "switch to Figma and …" — include BOTH "app_management" AND "os_control" in addition to any messaging category. Protocol tools like whatsapp_send/imessage_send work for contacts the bot already has on file; UI-driving the actual desktop app needs os_smart_click + app_manager.
 - IMPORTANT: Use the conversation context to resolve ambiguous references. If the user was just discussing a website, "open file manager" likely means a button ON that website (browser), not the OS file manager (app_management). A follow-up like "yes do it" or "try again" continues the task in the conversation, with that task's categories.
+- The context may say what the user is looking at (a screenshot of their screen, a web page open in their Chrome). "this", "here", "it" then point at that: asking to DO something with it ("do this for me", "fill this in", "finish it") means acting on it, so a page in their Chrome is browser, a desktop app is os_control + app_management. Only asking what it is or how it works is chat.
 - "tier": "chat" when the reply needs NO tools — small talk, opinions, advice, writing, math, explaining, or answering from the conversation so far or general knowledge (categories: []). "simple" for one quick action or lookup. "standard" for a normal task with a few tool calls. "complex" for long multi-step work, coding, deep research, or anything needing careful reasoning.
 - "multi_step": true only when the task needs several dependent steps (find X, then do Y with it).
-- Anything about current or live information (weather, news, prices, what's on screen, files, apps) is NOT chat.${recentContext}${historyContext}
+- Anything about current or live information (weather, news, prices, what's on screen, files, apps) is NOT chat.
+- The user turn may start with the recently used tools and the recent conversation, then the message to route.
 
 Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_tools":["tool1"],"confidence":0.9,"tier":"simple","multi_step":false}`;
 
     try {
         const response = await beforeDeadline(
             routerLLM.chat({
-                messages: [{ role: "user", content: message }],
+                // The per-call context goes in the user turn: the system prompt stays byte-identical
+                // between calls, so the provider serves it from its prompt cache (faster first token).
+                messages: [
+                    {
+                        role: "user",
+                        content:
+                            recentContext || historyContext
+                                ? `${`${recentContext}${historyContext}`.trim()}\n\nMESSAGE TO ROUTE:\n${message}`
+                                : message,
+                    },
+                ],
                 systemPrompt,
                 modelOverride: MODELS.GPT41_NANO,
                 lean: true,

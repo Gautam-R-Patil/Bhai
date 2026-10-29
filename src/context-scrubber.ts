@@ -28,13 +28,38 @@ const MIN_FENCE_LEN = 32;
 
 export function wrapUntrustedToolResult(toolName: string, body: string): string {
     if (typeof body !== "string") return body;
-    const trimmed = body.trim();
-    if (trimmed.length < MIN_FENCE_LEN) return body;
-    // Idempotent: don't double-wrap an already-fenced payload.
-    if (trimmed.includes(UNTRUSTED_RESULT_OPEN)) return body;
-    const deSpoofed = body.replace(SPOOF_TAG_RE, "");
+    if (body.trim().length < MIN_FENCE_LEN) return body;
+    // Strip every framing tag the payload carries, to a FIXPOINT. Two reasons a
+    // single pass is unsafe, both attacker-reachable from web/file/MCP content:
+    //   1. Reconstitution — stripping an inner tag can rejoin its neighbours into
+    //      a fresh one: "</untrusted-<untrusted-tool-result>tool-result>" becomes
+    //      a valid "</untrusted-tool-result>" that a one-shot replace leaves behind.
+    //   2. We must NOT early-return when the body merely contains our open tag:
+    //      that let any page disable fencing for its whole result by including the
+    //      literal string. Always strip, then always wrap.
+    // Idempotent for OUR OWN output only: the body must be the EXACT wrapper
+    // shape (note, one open tag, inner, one close — anchored) AND its inner must
+    // carry no framing tags. A substring check (the old `includes(OPEN)`) was
+    // attacker-triggerable; this isn't, because crafted content that reproduces
+    // the shape with a hidden inner tag fails the SPOOF_TAG check and falls
+    // through to a full re-wrap.
+    const already = body.match(ALREADY_WRAPPED_RE);
+    if (already && already[1].match(SPOOF_TAG_RE) === null) return body;
+    let deSpoofed = body;
+    for (let prev = ""; prev !== deSpoofed; ) {
+        prev = deSpoofed;
+        deSpoofed = deSpoofed.replace(SPOOF_TAG_RE, "");
+    }
     return `${UNTRUSTED_NOTE}\n${UNTRUSTED_RESULT_OPEN} tool="${toolName}"\n${deSpoofed}\n${UNTRUSTED_RESULT_CLOSE}`;
 }
+
+// Our exact wrapper shape, anchored: note, open tag with a tool attribute, the
+// inner body (captured), then the close at the very end. Used only to keep
+// wrap(wrap(x)) === wrap(x); the inner is re-checked for framing tags before we
+// trust it, so an attacker can't use this to smuggle instructions past the fence.
+const ALREADY_WRAPPED_RE = new RegExp(
+    `^${escapeRegex(UNTRUSTED_NOTE)}\\n${escapeRegex(UNTRUSTED_RESULT_OPEN)} tool="[^"\\n]*"\\n([\\s\\S]*)\\n${escapeRegex(UNTRUSTED_RESULT_CLOSE)}$`,
+);
 
 // Fence by default: any tool output may carry text someone else wrote (a web
 // page, an email, a file in a cloned repo, curl output, a deep-research report,

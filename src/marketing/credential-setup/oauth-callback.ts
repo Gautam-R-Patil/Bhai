@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { createServer } from "node:http";
+import { oauthStateMatches } from "../../security/oauth-state.js";
 
 export type OAuthCallbackResult = { code: string } | { error: string };
 
@@ -20,18 +21,20 @@ const errorHTML = (msg: string) => `
 <div style="text-align:center">
   <h1 style="font-size:3em;margin-bottom:0.2em">❌</h1>
   <h2>Connection Failed</h2>
-  <p style="opacity:0.8">${msg}</p>
+  <p style="opacity:0.8">${msg.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)}</p>
   <p style="opacity:0.5;margin-top:2em">You can close this tab.</p>
 </div></body></html>`;
 
 /**
- * Start a temporary local HTTP server on the given port.
- * Waits for GET /?code=xxx or /?error=xxx.
+ * Start a temporary HTTP server on 127.0.0.1:port.
+ * Waits for GET /?code=xxx or /?error=xxx carrying this flow's `state` (newOAuthState());
+ * requests without it are ignored, so a stray page can't abort or hijack the sign-in.
  * Resolves with {code} on success or {error} on failure/timeout.
  * Auto-closes after receiving the first result.
  */
 export function startOAuthCallback(
   port: number,
+  expectedState: string,
   timeoutMs = 300_000
 ): Promise<OAuthCallbackResult> {
   return new Promise((resolve) => {
@@ -53,6 +56,12 @@ export function startOAuthCallback(
       const url = new URL(req.url ?? "/", `http://localhost:${port}`);
       const code = url.searchParams.get("code");
       const error = url.searchParams.get("error");
+
+      if ((code || error) && !oauthStateMatches(url.searchParams.get("state"), expectedState)) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("This sign-in link doesn't match the one Bhai started.");
+        return;
+      }
 
       if (error) {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -83,7 +92,7 @@ export function startOAuthCallback(
       resolve({ error: `Callback server error on port ${port}: ${err.message}` });
     });
 
-    server.listen(port, () => {
+    server.listen(port, "127.0.0.1", () => {
       console.log(`🔐 OAuth callback server listening on port ${port}`);
     });
   });

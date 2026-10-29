@@ -34,7 +34,6 @@ triggers:
 |---|---|
 | **Design tools (Figma, Canva, Miro)** | `browser_scan(visual:true)` → click by (x,y) coordinates |
 | Video player control (YouTube, Vimeo, HTML5) | `browser_video_control` |
-| CAPTCHA / "I'm not a robot" blocking the page | `browser_wait_for_human` (the owner ticks it; then proceed) |
 | Cookie/consent banner blocking | Auto-handled — popup guard fires on every page load |
 | Hover-hidden controls (nav dropdowns, video bars) | `browser_hover` with `wait_for` + `rescan:true` |
 | Scan page + reveal hidden controls in one call | `browser_scan` with `hover_at` |
@@ -149,7 +148,7 @@ browser_multi_action(actions: [
 - `js_eval`: run arbitrary JavaScript, e.g. `code: "return document.title"`
 - `wait_for_opacity`: wait until element CSS opacity ≥ threshold
 
-For complex reasoning + dynamic pages — use sequential tool calls with intermediate `browser_scan` to verify state.
+For complex reasoning + dynamic pages — use sequential tool calls and read each result's element list to verify state (`browser_scan` only for a fresh look or `visual=true`).
 
 ## Direct JavaScript Execution
 
@@ -177,19 +176,6 @@ After key actions, verify they worked:
 - After seeking: `browser_video_control(action: "get_info")` → check `currentTime ≈ target`
 - After clicking: check returned `interactive_elements_text` for state change
 - After form fill: `browser_run_js(code: "return document.querySelector('input').value")`
-
-## CAPTCHA Handling
-
-If a page shows a human-verification check ("I'm not a robot", reCAPTCHA, hCaptcha, Cloudflare Turnstile):
-1. Never tick or solve it yourself. Call `browser_wait_for_human`: it brings the tab up, asks the owner for a quick tap, and waits (~5 min) until the check is gone
-2. On `status: "cleared"`, carry on with the original task from where you stopped
-3. On `status: "timeout"`, tell the owner the page is still waiting for them and stop
-
-```
-browser_wait_for_human()
-→ { success: true, status: "cleared", captcha_type: "recaptcha-v2", site: "example.com" }
-→ now navigate/click as normal
-```
 
 ## Cookie Banners & Popups
 
@@ -228,8 +214,8 @@ browser_run_js(code: "document.querySelector('#onetrust-accept-btn-handler')?.cl
 - `browser_navigate("https://google.com")` → `browser_type` on search box → Enter
 
 **Forms:**
-- `browser_multi_action` with navigate → type → select → keyboard Enter
+- `browser_multi_action` with navigate → type → select, then submit with `browser_click_at` (or `browser_type` with `press_enter=true`)
 
-**Login flows:**
-- `browser_scan` → identify username/password labels → `browser_type` for each → click submit
+**Login / OTP walls:**
+- Never type passwords or one-time codes yourself. Send the stuck report asking the owner to sign in in the browser window (ending with [[STUCK]]); once they're in, `browser_scan` and continue
 - Never guess coordinates — always use labels from `browser_scan`

@@ -33,6 +33,12 @@ async function runAS(script: string, timeout = 10000): Promise<string> {
     }
 }
 
+// Escape for an AppleScript string literal: backslashes first, then quotes,
+// so a trailing backslash in the input cannot end the literal early.
+function asStr(s: string): string {
+    return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 async function runJXA(script: string, timeout = 10000): Promise<string> {
     const tmpFile = join(tmpdir(), `atlas_app_${Date.now()}.js`);
     try {
@@ -141,7 +147,7 @@ end tell`);
                     // Search in Music library and play first match
                     const result = await runAS(`
 tell application "Music"
-    set results to (search playlist "Library" for "${query.replace(/"/g, '\\"')}")
+    set results to (search playlist "Library" for "${asStr(query)}")
     if (count of results) > 0 then
         play item 1 of results
         set t to name of current track
@@ -375,7 +381,7 @@ export const remindersTool: ToolDefinition = {
                     if (!title) return JSON.stringify({ error: "Provide 'title' for the reminder." });
                     const dueDate = input.due_date as string;
                     const listName = (input.list_name as string) || "";
-                    const escaped = (s: string) => s.replace(/"/g, '\\"');
+                    const escaped = asStr;
 
                     let script: string;
                     if (dueDate) {
@@ -383,7 +389,7 @@ export const remindersTool: ToolDefinition = {
 tell application "Reminders"
     ${listName ? `set targetList to list "${escaped(listName)}"` : "set targetList to default list"}
     tell targetList
-        set newReminder to make new reminder with properties {name:"${escaped(title)}", due date:date "${dueDate}"}
+        set newReminder to make new reminder with properties {name:"${escaped(title)}", due date:date "${asStr(dueDate)}"}
     end tell
     return name of newReminder
 end tell`;
@@ -405,7 +411,7 @@ end tell`;
                     const listName = (input.list_name as string) || "";
                     const result = await runAS(`
 tell application "Reminders"
-    ${listName ? `set targetList to list "${listName.replace(/"/g, '\\"')}"` : "set targetList to default list"}
+    ${listName ? `set targetList to list "${asStr(listName)}"` : "set targetList to default list"}
     set output to ""
     repeat with r in (reminders of targetList whose completed is false)
         set dueStr to ""
@@ -429,7 +435,7 @@ end tell`);
                 case "complete": {
                     const reminderName = input.reminder_name as string;
                     if (!reminderName) return JSON.stringify({ error: "Provide 'reminder_name' to complete." });
-                    const escaped = reminderName.replace(/"/g, '\\"');
+                    const escaped = asStr(reminderName);
                     await runAS(`
 tell application "Reminders"
     set targetReminders to (reminders whose name is "${escaped}" and completed is false)
@@ -471,14 +477,14 @@ end tell`);
                     const newDueDate = (input.due_date as string) || "";
                     if (!newTitle && !newDueDate)
                         return JSON.stringify({ error: "Provide 'title' and/or 'due_date' to update." });
-                    const escapedName = reminderName.replace(/"/g, '\\"');
+                    const escapedName = asStr(reminderName);
                     let editScript = `
 tell application "Reminders"
     set targetReminders to (reminders whose name is "${escapedName}" and completed is false)
     if (count of targetReminders) > 0 then
         set r to item 1 of targetReminders`;
-                    if (newTitle) editScript += `\n        set name of r to "${newTitle.replace(/"/g, '\\"')}"`;
-                    if (newDueDate) editScript += `\n        set due date of r to date "${newDueDate}"`;
+                    if (newTitle) editScript += `\n        set name of r to "${asStr(newTitle)}"`;
+                    if (newDueDate) editScript += `\n        set due date of r to date "${asStr(newDueDate)}"`;
                     editScript += `
         return name of r
     else
@@ -496,7 +502,7 @@ end tell`;
                     if (!reminderName) return JSON.stringify({ error: "Provide 'reminder_name' to delete." });
                     await runAS(`
 tell application "Reminders"
-    set targetReminders to (reminders whose name is "${reminderName.replace(/"/g, '\\"')}")
+    set targetReminders to (reminders whose name is "${asStr(reminderName)}")
     if (count of targetReminders) > 0 then
         delete item 1 of targetReminders
     end if
@@ -529,7 +535,7 @@ end tell`);
                     if (!listName) return JSON.stringify({ error: "Provide 'list_name' for the new list." });
                     await runAS(`
 tell application "Reminders"
-    make new list with properties {name:"${listName.replace(/"/g, '\\"')}"}
+    make new list with properties {name:"${asStr(listName)}"}
 end tell`);
                     return JSON.stringify({ success: true, action: "create_list", list: listName });
                 }
@@ -539,7 +545,7 @@ end tell`);
                     if (!listName) return JSON.stringify({ error: "Provide 'list_name' to delete." });
                     await runAS(`
 tell application "Reminders"
-    delete list "${listName.replace(/"/g, '\\"')}"
+    delete list "${asStr(listName)}"
 end tell`);
                     return JSON.stringify({ success: true, action: "delete_list", list: listName });
                 }
@@ -550,7 +556,7 @@ end tell`);
                     if (!listName || !newName) return JSON.stringify({ error: "Provide 'list_name' and 'new_name'." });
                     await runAS(`
 tell application "Reminders"
-    set name of list "${listName.replace(/"/g, '\\"')}" to "${newName.replace(/"/g, '\\"')}"
+    set name of list "${asStr(listName)}" to "${asStr(newName)}"
 end tell`);
                     return JSON.stringify({ success: true, action: "rename_list", from: listName, to: newName });
                 }
@@ -611,8 +617,8 @@ export const messagesTool: ToolDefinition = {
                     const text = input.text as string;
                     if (!to) return JSON.stringify({ error: "Provide 'to' (phone number or email)." });
                     if (!text) return JSON.stringify({ error: "Provide 'text' for the message." });
-                    const escapedText = text.replace(/"/g, '\\"');
-                    const escapedTo = to.replace(/"/g, '\\"');
+                    const escapedText = asStr(text);
+                    const escapedTo = asStr(to);
 
                     await runAS(
                         `
@@ -735,9 +741,7 @@ JSON.stringify({ w: bounds.width || 1440, h: bounds.height || 900 });`).catch(()
 
             // Menu bar height offset
             const menuBarH = 25;
-            const appTarget = app
-                ? `tell process "${app.replace(/"/g, '\\"')}"`
-                : `tell (first process whose frontmost is true)`;
+            const appTarget = app ? `tell process "${asStr(app)}"` : `tell (first process whose frontmost is true)`;
 
             let bounds: { x: number; y: number; w: number; h: number };
 
@@ -965,7 +969,9 @@ export const appManager: ToolDefinition = {
         try {
             // Windows: use PowerShell for app management
             if (IS_WIN) {
-                const safeName = app ? app.replace(/"/g, "") : "";
+                // PowerShell single-quoted literal: no $() or backtick expansion; ' (and its
+                // smart-quote forms, which PowerShell also treats as quotes) is doubled.
+                const psName = `'${(app ?? "").replace(/['\u2018\u2019\u201A\u201B]/g, "''")}'`;
                 switch (action) {
                     case "list": {
                         const result = await runPowerShellInline(
@@ -987,14 +993,14 @@ export const appManager: ToolDefinition = {
                     case "quit":
                         if (!app) return JSON.stringify({ error: "Provide 'app' name to quit." });
                         await runPowerShellInline(
-                            `Stop-Process -Name "${safeName}" -ErrorAction SilentlyContinue`,
+                            `Stop-Process -Name ${psName} -ErrorAction SilentlyContinue`,
                             5000,
                         );
                         return JSON.stringify({ success: true, action: "quit", app });
                     case "force_quit":
                         if (!app) return JSON.stringify({ error: "Provide 'app' name to force quit." });
                         await runPowerShellInline(
-                            `Stop-Process -Name "${safeName}" -Force -ErrorAction SilentlyContinue`,
+                            `Stop-Process -Name ${psName} -Force -ErrorAction SilentlyContinue`,
                             5000,
                         );
                         return JSON.stringify({ success: true, action: "force_quit", app });
@@ -1003,7 +1009,7 @@ export const appManager: ToolDefinition = {
                         return JSON.stringify({ success: false, error: `${action} is not supported on Windows.` });
                     case "activate":
                         if (!app) return JSON.stringify({ error: "Provide 'app' name to activate." });
-                        await runPowerShellInline(`Start-Process "${safeName}" -ErrorAction SilentlyContinue`, 5000);
+                        await runPowerShellInline(`Start-Process ${psName} -ErrorAction SilentlyContinue`, 5000);
                         return JSON.stringify({ success: true, action: "activate", app });
                     default:
                         return JSON.stringify({ error: `Unknown action: ${action}` });
@@ -1029,7 +1035,7 @@ JSON.stringify(apps);`);
                 case "quit": {
                     if (!app) return JSON.stringify({ error: "Provide 'app' name to quit." });
                     await runAS(`
-tell application "${app.replace(/"/g, '\\"')}" to quit`);
+tell application "${asStr(app)}" to quit`);
                     return JSON.stringify({ success: true, action: "quit", app });
                 }
 
@@ -1043,7 +1049,7 @@ tell application "${app.replace(/"/g, '\\"')}" to quit`);
                     if (!app) return JSON.stringify({ error: "Provide 'app' name to hide." });
                     await runAS(`
 tell application "System Events"
-    set visible of process "${app.replace(/"/g, '\\"')}" to false
+    set visible of process "${asStr(app)}" to false
 end tell`);
                     return JSON.stringify({ success: true, action: "hide", app });
                 }
@@ -1052,7 +1058,7 @@ end tell`);
                     if (!app) return JSON.stringify({ error: "Provide 'app' name to unhide." });
                     await runAS(`
 tell application "System Events"
-    set visible of process "${app.replace(/"/g, '\\"')}" to true
+    set visible of process "${asStr(app)}" to true
 end tell`);
                     return JSON.stringify({ success: true, action: "unhide", app });
                 }

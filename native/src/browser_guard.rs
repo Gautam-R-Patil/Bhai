@@ -736,7 +736,11 @@ pub fn get_stealth_init_script(session_seed: u32) -> String {
     );
     ['getEntries','getEntriesByType','getEntriesByName'].forEach(m => {{
       if (performance[m]) {{
-        performance[m] = {v_disguis}(function(...a) {{ return _CDPfilter(_origGetEntries.apply?.(performance,...a)||[]); }}, m);
+        // Each method wraps its own original, and apply takes the arguments as one
+        // array: `apply(performance, ...a)` threw on every call, which crashed scripts
+        // that read entries (hCaptcha never drew its checkbox).
+        const _orig = performance[m];
+        performance[m] = {v_disguis}(function(...a) {{ return _CDPfilter(_orig.apply(performance, a) || []); }}, m);
       }}
     }});
   }}
@@ -754,9 +758,12 @@ pub fn get_stealth_init_script(session_seed: u32) -> String {
     Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {{
       get: {v_disguis}(function() {{
         const cw = _origCWDesc.get.call(this);
-        if (cw && !cw.chrome) {{
-          try {{ Object.defineProperty(cw, 'chrome', {{value:{v_chrome},writable:true,configurable:true}}); }} catch(_) {{}}
-        }}
+        // Reading any property of a cross-origin frame's window throws SecurityError, so the
+        // check lives inside the try: outside it, this getter threw for every cross-origin
+        // iframe and broke widgets that talk to theirs (hCaptcha never drew its checkbox).
+        try {{
+          if (cw && !cw.chrome) Object.defineProperty(cw, 'chrome', {{value:{v_chrome},writable:true,configurable:true}});
+        }} catch(_) {{}}
         return cw;
       }}, 'get contentWindow'), configurable:true
     }});
