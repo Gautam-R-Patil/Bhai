@@ -51,23 +51,16 @@ export function _resetPhraseHistory(): void {
 
 // ── Time-of-Day Awareness ──────────────────────────
 
-export function getTimeContext(): { period: "night" | "earlyMorning" | "morning" | "afternoon" | "evening" | "lateNight"; hour: number; greeting: string } {
+export function getTimeContext(): { period: "night" | "earlyMorning" | "morning" | "afternoon" | "evening" | "lateNight"; hour: number } {
     const now = new Date();
     const hour = parseInt(now.toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: getTimezone() }));
 
-    if (hour >= 0 && hour < 5) {
-        return { period: "lateNight", hour, greeting: pickPhrase("greeting", ["hey night owl", "still up?", "burning the midnight oil", "you're up late", "late night vibes"]) };
-    } else if (hour >= 5 && hour < 7) {
-        return { period: "earlyMorning", hour, greeting: pickPhrase("greeting", ["early bird!", "you're up early", "morning sunshine", "rise and shine", "early start today"]) };
-    } else if (hour >= 7 && hour < 12) {
-        return { period: "morning", hour, greeting: pickPhrase("greeting", ["morning!", "hey there", "good morning", "what's up", "yo"]) };
-    } else if (hour >= 12 && hour < 17) {
-        return { period: "afternoon", hour, greeting: pickPhrase("greeting", ["hey", "what's good", "afternoon", "sup", "hey there"]) };
-    } else if (hour >= 17 && hour < 21) {
-        return { period: "evening", hour, greeting: pickPhrase("greeting", ["evening!", "hey", "winding down?", "how's the evening", "what's up"]) };
-    } else {
-        return { period: "night", hour, greeting: pickPhrase("greeting", ["hey", "night mode", "still at it?", "evening", "what's up"]) };
-    }
+    if (hour >= 0 && hour < 5) return { period: "lateNight", hour };
+    if (hour >= 5 && hour < 7) return { period: "earlyMorning", hour };
+    if (hour >= 7 && hour < 12) return { period: "morning", hour };
+    if (hour >= 12 && hour < 17) return { period: "afternoon", hour };
+    if (hour >= 17 && hour < 21) return { period: "evening", hour };
+    return { period: "night", hour };
 }
 
 // ── Thinking Indicators (varied, natural) ──────────
@@ -92,9 +85,7 @@ const THINKING_PHRASES = {
         "needs a proper look",
         "bear with me",
         "thinking it through",
-        "ho jayega, hold on",
         "mapping it out",
-        "shades on, deep dive",
         "finding another way",
     ],
     quick: [
@@ -103,7 +94,6 @@ const THINKING_PHRASES = {
         "got it",
         "yep",
         "on it",
-        "chalo",
     ]
 };
 
@@ -275,23 +265,6 @@ export function categorizeError(error: Error | string): keyof typeof ERROR_MESSA
     return "unknown";
 }
 
-// ── Acknowledgment Phrases (task received) ──────────
-
-const TASK_ACKS = {
-    search: ["looking", "searching", "finding that", "on it"],
-    browse: ["opening", "going there", "checking it out", "pulling up"],
-    code: ["running", "on it", "doing that", "executing"],
-    file: ["checking", "opening", "looking", "got it"],
-    research: ["diving in", "researching", "looking into it", "exploring"],
-    creative: ["working on it", "creating", "making that", "on it"],
-    general: ["on it", "got it", "doing that", "sec"],
-};
-
-export function getTaskAck(taskType: keyof typeof TASK_ACKS = "general"): string {
-    const pool = TASK_ACKS[taskType] || TASK_ACKS.general;
-    return pickPhrase(`ack_${taskType}`, pool);
-}
-
 // ── Wait/Delay Acknowledgments ──────────────────────
 
 const WAIT_PHRASES = {
@@ -310,7 +283,6 @@ const WAIT_PHRASES = {
     long: [   // > 30 seconds
         "taking a while, sorry",
         "still at it",
-        "arre, stubborn one",
         "not giving up",
     ],
     timeout_warning: [
@@ -332,65 +304,9 @@ export function getWaitPhrase(elapsedMs: number): string {
     }
 }
 
-// ── Response Time Acknowledgments ──────────────────
-
-export function getResponseTimeAck(durationMs: number, hadToolCalls: boolean): string | null {
-    // Don't acknowledge fast responses or pure text (no tool) responses
-    if (durationMs < 15000 || !hadToolCalls) return null;
-
-    if (durationMs < 30000) {
-        return pickPhrase("response_time", [
-            "took a sec — ",
-            "sorry for the wait — ",
-            "okay — ",
-        ]);
-    } else if (durationMs < 60000) {
-        return pickPhrase("response_time", [
-            "that took a while — ",
-            "finally — ",
-            "sorry that was slow — ",
-        ]);
-    } else {
-        return pickPhrase("response_time", [
-            "took forever, sorry — ",
-            "finally! — ",
-            "phew — ",
-        ]);
-    }
-}
-
-// ── Casual Phrases (human filler) ────────────────────
-
-const CASUAL_INTROS = [
-    "so",
-    "okay",
-    "alright",
-    "well",
-    "here's the thing",
-    "",  // sometimes no intro is more natural
-    "",
-];
-
-const CASUAL_OUTROS = [
-    "anything else?",
-    "need more?",
-    "that help?",
-    "all good?",
-    "",  // sometimes ending without a question is more natural
-    "",
-];
-
-export function getCasualIntro(): string {
-    return pickPhrase("casual_intro", CASUAL_INTROS);
-}
-
-export function getCasualOutro(): string {
-    return pickPhrase("casual_outro", CASUAL_OUTROS);
-}
-
 // ── Voice Feedback Stages ────────────────────────────
 
-export const VOICE_STAGES = {
+const VOICE_STAGES = {
     listening: ["🎤 listening", "🎤 go ahead", "🎤 hearing you"],
     processing: ["processing", "working on it", "analyzing"],
     transcribing: ["transcribing", "converting", "writing it down"],
@@ -400,45 +316,6 @@ export const VOICE_STAGES = {
 
 export function getVoiceStagePhrase(stage: keyof typeof VOICE_STAGES): string {
     return pickPhrase(`voice_${stage}`, VOICE_STAGES[stage]);
-}
-
-// ── Proactive Message Personality ────────────────────
-
-export function getProactivePrefix(type: "reminder" | "checkIn" | "suggestion" | "alert"): string {
-    const prefixes = {
-        reminder: ["hey", "btw", "don't forget", "quick —"],
-        checkIn: ["hey", "yo", "sup"],
-        suggestion: ["random thought —", "btw", "might help —", "idea —"],
-        alert: ["heads up", "yo", "quick"],
-    };
-    return pickPhrase(`proactive_${type}`, prefixes[type]);
-}
-
-// ── Session/Context Warnings ─────────────────────────
-
-export function getSessionWarning(minutesRemaining: number): string {
-    if (minutesRemaining <= 5) {
-        return pickPhrase("session_warn", [
-            "btw context resets soon — say something to keep it",
-            "heads up, about to lose our thread — reply to keep it",
-            "chat memory refreshing soon, reply to save context",
-        ]);
-    }
-    return pickPhrase("session_warn", [
-        "fyi we lose context if you step away for a bit",
-        "context times out after inactivity btw",
-    ]);
-}
-
-// ── Memory Transparency ──────────────────────────────
-
-export function getMemoryAck(action: "stored" | "recalled" | "forgot"): string {
-    const phrases = {
-        stored: ["noted", "got it", "remembered", "saved"],
-        recalled: ["you mentioned", "from before —", "I remember —"],
-        forgot: ["cleared", "forgot that", "removed"],
-    };
-    return pickPhrase(`memory_${action}`, phrases[action]);
 }
 
 // ── Smart Message Chunking ───────────────────────────
@@ -526,10 +403,4 @@ export function smartChunkMessage(text: string, maxLength: number): string[] {
     }
 
     return chunks;
-}
-
-// ── Reset/Clear (for testing or conversation reset) ──
-
-export function resetPhraseHistory(): void {
-    recentPhrases.clear();
 }

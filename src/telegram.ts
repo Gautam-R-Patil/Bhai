@@ -28,7 +28,6 @@ import {
     categorizeError,
     getErrorMessage,
     getProgressMessage,
-    getResponseTimeAck,
     getThinkingPhrase,
     getVoiceStagePhrase,
     getWaitPhrase,
@@ -1174,24 +1173,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     console.log(`   (${response.toolCalls} tool call(s))`);
                 }
 
-                // ── Response-time awareness ──────────────────────────────────
-                // If the response took a while, acknowledge it naturally using alive-ux
                 // A stuck report gets one-tap handoff buttons in the owner's private chat, else the plain reply line.
                 const stuckButtons = wantsStuckButtons(response, senderIsOwner, ctx.chat?.type);
-                let responseText = stuckButtons ? response.text : withStuckReplyLine(response, senderIsOwner);
-                // No "finally!"/"phew" in front of a stuck report: it reads as success.
-                const timeAck = response.stuck ? null : getResponseTimeAck(taskDurationMs, response.toolCalls > 0);
-                if (timeAck) {
-                    const lowerResp = responseText.toLowerCase();
-                    if (
-                        !lowerResp.startsWith("sorry") &&
-                        !lowerResp.startsWith("apolog") &&
-                        !lowerResp.startsWith("that took") &&
-                        !lowerResp.startsWith("took")
-                    ) {
-                        responseText = timeAck + responseText;
-                    }
-                }
+                const responseText = stuckButtons ? response.text : withStuckReplyLine(response, senderIsOwner);
 
                 // Split into human-like multiple messages at paragraph breaks
                 await clearStatusMessage();

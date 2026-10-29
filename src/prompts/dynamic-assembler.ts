@@ -16,8 +16,6 @@ import { getPersonaIdentityLine } from "./persona-bias.js";
 export interface PromptContext {
     taskType: "chat" | "coding" | "research" | "browsing" | "system" | "planning" | "tool_use";
     userEmotionalState?: string;
-    relationshipDepth?: number;
-    preferredLength?: "terse" | "normal" | "detailed";
     activeSkills?: string[];
     hour?: number;
     isProactive?: boolean;
@@ -36,32 +34,12 @@ interface PromptModule {
 
 const MODULES: PromptModule[] = [
     {
-        name: "tone_terse",
-        condition: (ctx) => ctx.preferredLength === "terse",
-        content: "Be extremely concise. Short sentences. No filler. Skip pleasantries.",
-        priority: 8,
-        tokenEstimate: 20,
-    },
-    {
-        name: "tone_detailed",
-        condition: (ctx) => ctx.preferredLength === "detailed",
-        content: "Provide thorough explanations with examples. The user appreciates depth.",
-        priority: 8,
-        tokenEstimate: 20,
-    },
-    {
         name: "tone_empathetic",
-        condition: (ctx) => ctx.userEmotionalState === "stressed" || ctx.userEmotionalState === "frustrated",
+        // Confused gets no steer: "shorter, fix first" is the opposite of what it needs.
+        condition: (ctx) => ["stressed", "frustrated", "angry"].includes(ctx.userEmotionalState ?? ""),
         // identity.md: "Calm, then fix … get SHORTER". Sympathy paragraphs read as stalling.
         content: "They're under pressure: be shorter and steadier, fix first, at most one line of acknowledgement.",
         priority: 9,
-        tokenEstimate: 25,
-    },
-    {
-        name: "tone_casual",
-        condition: (ctx) => (ctx.relationshipDepth || 0) > 0.7,
-        content: "You have a close relationship with this user. Be casual, use their style, joke where appropriate.",
-        priority: 7,
         tokenEstimate: 25,
     },
     {
@@ -116,15 +94,8 @@ const MODULES: PromptModule[] = [
         // No "suggest rest" and no "it's late" here: injected every turn, either
         // one nagged on every reply. identity.md allows one remark per night and
         // late-night-nudge.ts mutes the rest.
-        content: "Keep responses brief.",
+        content: "Keep it short unless they asked for detail.",
         priority: 6,
-        tokenEstimate: 20,
-    },
-    {
-        name: "morning_energy",
-        condition: (ctx) => (ctx.hour ?? 12) >= 6 && (ctx.hour ?? 12) < 10,
-        content: "It's morning. Be calm and forward-looking. Surface priorities for the day if relevant.",
-        priority: 5,
         tokenEstimate: 20,
     },
     {

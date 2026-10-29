@@ -2680,46 +2680,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                         /* persona injection is best-effort — skip on read failure */
                     }
                 }
-                let _relationshipDepth: number | undefined;
-                let _preferredLength: "terse" | "normal" | "detailed" | undefined;
-                try {
-                    const relMod = await import("./memory/relationship.js");
-                    _relationshipDepth = relMod.getRelationshipState().depth_score;
-                    const persMod = await import("./setup/personality-sync.js");
-                    _preferredLength = persMod.getPreferredLength();
-                } catch {
-                    /* best-effort — the tone/relationship modules just stay off */
-                }
                 const dynCtx = buildDynamicContextReminder(rawUserMessage, {
                     hour: localHour,
                     persona: _personaForCtx,
-                    relationshipDepth: _relationshipDepth,
-                    preferredLength: _preferredLength,
                 });
                 if (dynCtx) parts.push(dynCtx);
             } catch {
                 /* dynamic context is a nicety — never block the turn */
-            }
-
-            // ── Casual-chat nudge: when the user is in short-message mode,
-            // suppress the model's reflexive interrogation. Looks at the last
-            // 3 user messages — if all are ≤ 5 words, signal casual mode.
-            try {
-                const userMsgs = messages.filter((m) => m.role === "user").slice(-3);
-                if (userMsgs.length >= 2) {
-                    const wordCounts = userMsgs.map((m) => {
-                        const content = typeof m.content === "string" ? m.content : "";
-                        return content.trim().split(/\s+/).filter(Boolean).length;
-                    });
-                    const allShort = wordCounts.every((c) => c > 0 && c <= 5);
-                    if (allShort) {
-                        parts.push(
-                            "[chat is casual — drop interrogation patterns. NO 'what're you working on?' / 'what's on your mind?' / 'what's next?' style follow-ups. End with a statement or short reaction. Only ask a question if you genuinely need information to act.]",
-                        );
-                    }
-                }
-            } catch {
-                /* nudge is a hint, never block */
             }
 
             // ── Credit awareness context ──
@@ -2782,11 +2749,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── Onboarding nudge for first-time users ──
             if (isFirstTime) {
-                parts.push(`🆕 FIRST-TIME USER — you have zero memory. This is your very first chat with this person.
-- Introduce yourself casually ONCE: "hey! I'm Bhai 👋" — keep it short and warm.
-- Naturally get to know them through conversation (name, what they do, what they're building). DON'T interrogate.
-- Save info as you learn it: identity_update for name/role/company, trait_update for preferences.
-- After this chat, you'll remember everything. Never re-introduce or re-ask.`);
+                parts.push(
+                    "🆕 FIRST-TIME USER: memory is empty. Follow FIRST-TIME USERS in your identity; save what they tell you with identity_update / trait_update.",
+                );
             }
 
             parts.push(...(await codingPartsPromise));
@@ -2897,10 +2862,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 console.warn("[AGENT] research status snippet failed:", (err as Error).message);
             }
 
-            // For simple casual messages, add a nudge for extra natural tone
+            // Preset-neutral: identity §3/§4 already carry the casual register.
             if (modelHint === "simple") {
-                const casualNudge = `\n\n[CASUAL MODE — this is a simple/casual message. Respond like you're texting a close friend. Be spontaneous, not formulaic. Don't pad your response. If 2 words is enough, send 2 words. Match their energy exactly. Don't try to be impressive or add observations just to fill space.]`;
-                activeInjection = (activeInjection || "") + casualNudge;
+                activeInjection = `${activeInjection || ""}\n\n[simple message: answer in as few words as it needs; no padding, no follow-up question unless you need one to act]`;
             }
 
             // Record user turn in session buffer. Use the sanitized text —

@@ -243,12 +243,3 @@ export function getToneReminder(): string | null {
     return activePreset ? (TONE_REMINDERS[activePreset] ?? null) : null;
 }
 
-/** Map the active preset to the dynamic-assembler length hint (terse presets
- *  → "terse"; everything else → "normal"). Lets the tone_terse module fire. */
-export function presetToPreferredLength(preset: string | null): "terse" | "normal" | "detailed" {
-    return preset === "direct_terse" || preset === "professional_concise" ? "terse" : "normal";
-}
-
-export function getPreferredLength(): "terse" | "normal" | "detailed" {
-    return presetToPreferredLength(activePreset);
-}

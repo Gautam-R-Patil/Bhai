@@ -190,9 +190,6 @@ export function getSelfStateSnippet(userId = DEFAULT_USER): string {
     if (state.recent_emotional_tone !== "neutral") {
         parts.push(`- Recent emotional context: ${state.recent_emotional_tone} — adapt tone accordingly`);
     }
-    if (state.relationship_depth > 0.5) {
-        parts.push(`- Relationship depth: established — use relaxed, confident tone`);
-    }
 
     if (parts.length === 0) return "";
     return "🎭 INTERNAL STATE (behavioral modifiers, not visible to user):\n" + parts.join("\n");

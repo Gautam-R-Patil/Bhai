@@ -13,21 +13,9 @@ import type { Persona } from "./persona-bias.js";
 export interface DynamicContextOpts {
     hour?: number;
     isProactive?: boolean;
-    relationshipDepth?: number;
     activeSkills?: string[];
-    preferredLength?: "terse" | "normal" | "detailed";
     persona?: Persona;          // W2: piped through to PromptContext.persona
 }
-
-// Map the emotion-detector's primary label into the slots dynamic-assembler's
-// tone_empathetic module expects. Everything unmapped falls through as-is so
-// downstream modules can still read it without breaking.
-const EMOTION_TO_PROMPT_STATE: Record<string, string> = {
-    frustrated: "frustrated",
-    angry: "frustrated",
-    stressed: "stressed",
-    confused: "stressed",
-};
 
 export function buildDynamicContextReminder(
     userMessage: string,
@@ -35,16 +23,12 @@ export function buildDynamicContextReminder(
 ): string {
     const hour = opts.hour ?? new Date().getHours();
     const emotion = userMessage ? detectEmotion(userMessage) : null;
-    const primary = emotion?.primary ?? "neutral";
-
     const ctx: PromptContext = {
         taskType: detectTaskType(userMessage ?? ""),
-        userEmotionalState: EMOTION_TO_PROMPT_STATE[primary] ?? primary,
+        userEmotionalState: emotion?.primary ?? "neutral",
         hour,
         isProactive: opts.isProactive,
-        relationshipDepth: opts.relationshipDepth,
         activeSkills: opts.activeSkills,
-        preferredLength: opts.preferredLength,
         persona: opts.persona,    // W2
     };
 

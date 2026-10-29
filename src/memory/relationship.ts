@@ -140,12 +140,6 @@ export function getRelationshipSnippet(userId = DEFAULT_USER): string {
 
     const parts: string[] = [];
 
-    if (state.trust_score > 0.7) {
-        parts.push("- High trust established — use confident, relaxed tone");
-    } else if (state.trust_score > 0.4) {
-        parts.push("- Building trust — be helpful and precise");
-    }
-
     if (state.engagement_streak > 5) {
         parts.push(`- Active streak: ${state.engagement_streak} days`);
     }
