@@ -180,7 +180,8 @@ export const browserClickAt: ToolDefinition = {
                 if (handle) {
                     try {
                         // Hybrid Action: Try to use the native DOM handle first for maximum stability
-                        await handle.scrollIntoViewIfNeeded();
+                        // Bounded: an aria-ref Locator whose element is gone waits (30s default) instead of failing.
+                        await handle.scrollIntoViewIfNeeded({ timeout: 1000 });
                         await agentCursor(page, handle, input.double_click ? "double" : "click");
 
                         if (input.double_click) {
@@ -191,6 +192,8 @@ export const browserClickAt: ToolDefinition = {
                         executionMethod = "element_handle";
                     } catch (handleErr) {
                         const errMsg = (handleErr as Error).message;
+                        // A Locator matching nothing now (page changed since the scan) is a stale label.
+                        const gone = typeof handle.count === "function" && (await handle.count().catch(() => 1)) === 0;
                         if (errMsg.includes("intercepts pointer events") || errMsg.includes("overlay")) {
                             await attemptRecovery();
                             try {
@@ -206,9 +209,9 @@ export const browserClickAt: ToolDefinition = {
                                 await page.waitForTimeout(150);
                                 await (input.double_click ? page.mouse.dblclick(x, y) : page.mouse.click(x, y));
                             }
-                        } else if (errMsg.includes("detached") || errMsg.includes("not visible")) {
+                        } else if (gone || /detached|not attached|not visible/.test(errMsg)) {
                             return JSON.stringify({
-                                error: `Target option vanished or detached. The dropdown or modal may have closed unexpectedly before the click triggered. Re-click the dropdown to open it before trying again.`,
+                                error: `Target vanished or detached: the page changed since the scan, or a dropdown/modal closed before the click. Run browser_scan for fresh labels (re-open the dropdown first if it closed).`,
                                 raw_error: errMsg,
                             });
                         } else {
@@ -240,11 +243,12 @@ export const browserClickAt: ToolDefinition = {
             const allPages = context.pages();
             if (allPages.length > tabCountBefore) {
                 const newIdx = allPages.length - 1;
+                const opener = page;
                 page = allPages[newIdx];
                 await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
                 await waitForPageReady(page, 1500);
                 await page.bringToFront().catch(() => {});
-                setActivePageIndex(newIdx);
+                setActivePageIndex(newIdx, { page, opener }); // closing it (or it closing itself) returns to the opener
                 stateTransitions.new_tab = `The click opened a new tab; switched to it (tab ${newIdx}). browser_switch_tab with close_active:true returns to the previous tab.`;
             }
 
@@ -292,8 +296,9 @@ export const browserClickAt: ToolDefinition = {
             } catch {
                 /* non-fatal */
             }
-            armDialogAccept(false);
             return JSON.stringify({ error: `Click failed: ${(err as Error).message}`, ...takePageEvents() });
+        } finally {
+            armDialogAccept(false); // early returns (stale label, loop, vanished target) included
         }
     },
 };
@@ -692,8 +697,8 @@ export const browserType: ToolDefinition = {
                     await agentCursor(page, el.handle ?? el, "click");
                     if (el.handle) {
                         try {
-                            await el.handle.focus();
-                            await el.handle.click();
+                            await el.handle.focus({ timeout: 1000 }); // bounded: a stale aria-ref waits otherwise
+                            await el.handle.click({ timeout: 2000 });
                         } catch {
                             await page.mouse.click(el.x, el.y);
                         }
@@ -720,27 +725,32 @@ export const browserType: ToolDefinition = {
             // Press special key
             if (input.key && !secret) {
                 await page.keyboard.press(input.key as string);
-            } else if (input.text) {
-                await agentCursor(page, null, "type");
-                if (secret) {
-                    // Replaced by default, as before (a vault field is a plain input).
-                    const clear = input.clear_first !== false;
-                    if (clear) {
-                        await page.keyboard.press("ControlOrMeta+a");
-                        await page.waitForTimeout(50);
-                    }
-                    const refused = await typeVaultText(page, input.text as string, clear);
-                    if (refused) return JSON.stringify({ error: refused });
-                } else {
-                    // Replace only a plain field's value by default: select-all in a
-                    // Docs/Notion editor would select (and overwrite) the whole document.
-                    const focus = await page.evaluate(FOCUS_KIND_JS).catch(() => "other");
-                    const clear = input.clear_first === true || (input.clear_first !== false && focus === "field");
-                    if (getCurrentMode() === "chrome") {
-                        // The extension types in one shot; it clears itself (synthetic Ctrl+A selects nothing).
-                        await page.keyboard.type(input.text as string, { clear });
+            } else {
+                if (input.text) {
+                    await agentCursor(page, null, "type");
+                    if (secret) {
+                        // Replaced by default, as before (a vault field is a plain input).
+                        const clear = input.clear_first !== false;
+                        if (clear) {
+                            await page.keyboard.press("ControlOrMeta+a");
+                            await page.waitForTimeout(50);
+                        }
+                        const refused = await typeVaultText(page, input.text as string, clear);
+                        if (refused) return JSON.stringify({ error: refused });
                     } else {
-                        await typeHumanLike(page, input.text as string, clear);
+                        // Replace only a plain field's value by default: select-all in a
+                        // Docs/Notion editor would select (and overwrite) the whole document.
+                        const focus = await page.evaluate(FOCUS_KIND_JS).catch(() => "other");
+                        // "unknown" (cross-origin iframe, closed shadow root): the old default, replace.
+                        const clear =
+                            input.clear_first === true ||
+                            (input.clear_first !== false && (focus === "field" || focus === "unknown"));
+                        if (getCurrentMode() === "chrome") {
+                            // The extension types in one shot; it clears itself (synthetic Ctrl+A selects nothing).
+                            await page.keyboard.type(input.text as string, { clear });
+                        } else {
+                            await typeHumanLike(page, input.text as string, clear);
+                        }
                     }
                 }
                 if (input.press_enter) {
@@ -769,6 +779,7 @@ export const browserType: ToolDefinition = {
                     : input.text
                       ? { typed_chars: String(input.text).length }
                       : {}),
+                ...(!(input.key && !secret) && input.press_enter ? { pressed_enter: true } : {}),
                 url: page.url(),
                 ...takePageEvents(),
                 interactive_elements_text: buildElementsText(),
@@ -779,11 +790,23 @@ export const browserType: ToolDefinition = {
     },
 };
 
-// What has focus (through same-origin iframes): a plain text field, a rich/contenteditable editor, or other.
-const FOCUS_KIND_JS = `(() => {
+// What has focus (through same-origin iframes and open shadow roots): a plain text
+// field, a rich/contenteditable editor, other, or unknown (focus can't be inspected).
+export const FOCUS_KIND_JS = `(() => {
   let a = document.activeElement;
-  while (a && a.tagName === "IFRAME") { try { a = a.contentDocument.activeElement; } catch { break; } }
+  for (;;) {
+    if (a && a.shadowRoot && a.shadowRoot.activeElement) { a = a.shadowRoot.activeElement; continue; }
+    if (a && a.tagName === "IFRAME") {
+      let d = null;
+      try { d = a.contentDocument; } catch {}
+      if (!d) return "unknown";
+      a = d.activeElement;
+      continue;
+    }
+    break;
+  }
   if (!a) return "other";
+  if (a.tagName.includes("-") && !a.shadowRoot && !a.isContentEditable) return "unknown";
   if (a.tagName === "TEXTAREA") return "field";
   if (a.tagName === "INPUT") return /^(text|search|email|url|tel|password|number)$/.test(a.type) ? "field" : "other";
   return a.isContentEditable ? "editable" : "other";
@@ -1159,6 +1182,7 @@ export const browserScrollElement: ToolDefinition = {
                     node.scrollIntoView({ behavior: "smooth", block: b as ScrollLogicalPosition });
                 },
                 /* javascript-obfuscator:enable */ block,
+                { timeout: 2000 }, // Locator handles wait for a gone element instead of failing
             );
 
             await settleAfterAction(page, undefined);

@@ -11,8 +11,9 @@ because Chrome warns on unrecognized (`_`-prefixed) manifest keys.
   `Page.captureScreenshot`, `Accessibility.getFullAXTree`). Cannot drop without
   losing AX-tree extraction + CSP-safe JS injection.
 
-- **`cookies`** — `get_cookies {domain}` returns the cookies of ONE site (that
-  domain and its subdomains; a dotless/empty domain is refused). Bhai asks only
+- **`cookies`** — `get_cookies {url}` returns the cookies Chrome would send to
+  ONE http(s) URL (Chrome's public-suffix rules scope them; anything else is
+  refused). Bhai asks only
   when its own Playwright browser hits a login/OTP wall on that site, so it can
   continue in the user's existing session instead of asking them to sign in again.
 

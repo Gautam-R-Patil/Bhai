@@ -783,11 +783,11 @@ export async function getActiveExtensionTab(): Promise<ChromeTabInfo | null> {
 }
 
 /**
- * The user's Chrome cookies for one site (domain and its subdomains). The
- * extension refuses an empty or dotless domain, so this never dumps the jar.
+ * The user's Chrome cookies that Chrome would send to this http(s) URL — one
+ * site, scoped by Chrome's own public-suffix rules. Never the whole jar.
  */
-export async function getExtensionCookies(domain: string): Promise<unknown[]> {
-    const result = await sendBridgeCommand("get_cookies", { domain });
+export async function getExtensionCookies(url: string): Promise<unknown[]> {
+    const result = await sendBridgeCommand("get_cookies", { url });
     return Array.isArray(result) ? result : [];
 }
 

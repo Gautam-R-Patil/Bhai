@@ -104,9 +104,25 @@ export function resetBrowserContext(): void {
 
 // ── Active page tracker ───────────────────────
 let activePageIndex = 0;
+// A tab followed after a click (target=_blank, OAuth/payment popup) and the tab
+// that opened it: once it closes (itself, or via close_active) the opener is active
+// again — not whichever tab is now last.
+let followedTab: { page: Page; opener: Page } | null = null;
 
-export function setActivePageIndex(idx: number): void {
+/** Any explicit switch forgets a followed tab; pass `followed` when following one. */
+export function setActivePageIndex(idx: number, followed?: { page: Page; opener: Page }): void {
     activePageIndex = idx;
+    followedTab = followed ?? null;
+}
+
+/** The tracked active tab among the context's open `pages` (non-empty). */
+export function pickActivePage(pages: Page[]): Page {
+    if (followedTab?.page.isClosed()) {
+        const i = pages.indexOf(followedTab.opener);
+        if (i >= 0) activePageIndex = i;
+        followedTab = null;
+    }
+    return pages[Math.min(activePageIndex, pages.length - 1)];
 }
 
 export function getActivePageIndex(): number {
@@ -358,8 +374,7 @@ export async function getActivePage(): Promise<Page> {
     _scheduleIdleClose();
     const pages = context.pages();
     if (pages.length === 0) return await context.newPage();
-    const idx = Math.min(activePageIndex, pages.length - 1);
-    return pages[idx];
+    return pickActivePage(pages);
 }
 
 // ── Form State Snapshot (OpenCLI getFormStateJs) ─────────────────────────────

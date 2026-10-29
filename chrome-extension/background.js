@@ -1384,12 +1384,15 @@ async function rawCDP(payload) {
   return result || { success: true };
 }
 
-// Cookies for ONE site (domain + subdomains) so Bhai's own browser can reuse the
-// user's session after hitting a login wall. Never the whole jar.
+// The cookies Chrome would send to ONE http(s) URL, so Bhai's own browser can
+// reuse the user's session after hitting a login wall. Scoping by URL lets
+// Chrome's public-suffix rules decide: a bare `domain` like "vercel.app" would
+// return every *.vercel.app site's cookies. Never the whole jar.
 async function getCookies(payload) {
-  const domain = String(payload.domain || "").replace(/^\./, "");
-  if (!domain.includes(".")) throw new Error("get_cookies needs a site domain");
-  return await chrome.cookies.getAll({ domain });
+  let url;
+  try { url = new URL(String(payload.url || "")); } catch { url = null; }
+  if (!url || !/^https?:$/.test(url.protocol)) throw new Error("get_cookies needs an http(s) url");
+  return await chrome.cookies.getAll({ url: url.href });
 }
 
 async function navigate(payload) {
@@ -1482,13 +1485,24 @@ async function keyboard(payload) {
         } else if (keyAction === "up") {
           target.dispatchEvent(new KeyboardEvent("keyup", opts));
         } else {
-          const notCancelled = target.dispatchEvent(new KeyboardEvent("keydown", opts));
-          target.dispatchEvent(new KeyboardEvent("keypress", opts));
+          const downOk = target.dispatchEvent(new KeyboardEvent("keydown", opts));
+          const pressOk = target.dispatchEvent(new KeyboardEvent("keypress", opts));
           target.dispatchEvent(new KeyboardEvent("keyup", opts));
           // Synthetic key events are untrusted, so the browser's implicit form
-          // submission never runs: do it ourselves unless the page took the key.
-          if (key === "Enter" && notCancelled && target.tagName === "INPUT" && target.form) {
-            if (target.form.requestSubmit) target.form.requestSubmit(); else target.form.submit();
+          // submission never runs: do it ourselves, as the HTML spec does it,
+          // unless the page took the key (keydown or keypress).
+          const form = target.tagName === "INPUT" ? target.form : null;
+          if (key === "Enter" && downOk && pressOk && form) {
+            const fields = Array.from(form.elements);
+            const btn = fields.find((e) => e.type === "submit") || form.querySelector("input[type=image]");
+            if (btn) {
+              if (!btn.disabled) btn.click(); // the default button: its onclick runs, its name/value is sent
+            } else {
+              const blocking = /^(text|search|email|url|tel|password|date|month|week|time|datetime-local|number)$/;
+              if (fields.filter((e) => e.tagName === "INPUT" && blocking.test(e.type)).length <= 1) {
+                if (form.requestSubmit) form.requestSubmit(); else form.submit();
+              }
+            }
           }
         }
       },

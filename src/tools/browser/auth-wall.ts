@@ -27,15 +27,17 @@ export const AUTH_HINT =
 /** Which wall the page signals, if any. */
 export function classifyAuthWall(s: AuthSignals): AuthWallKind | null {
     if (s.otp) return "otp";
-    if (s.password) return "password";
     let pathname = "";
     try {
         pathname = new URL(s.url).pathname;
     } catch {
         /* not a URL */
     }
+    // A password box alone isn't a wall (a forum's header login): the page must look like one.
     const loginPage =
-        /\/(log-?in|sign-?in|signin|auth|sso|session)(\/|$)/i.test(pathname) || /\b(sign|log)\s?in\b/i.test(s.title);
+        /\/(log-?in|sign-?in|signin|auth|sso|session|password)(\/|$)/i.test(pathname) ||
+        /\b(sign|log)[\s-]?in\b|\bpassword\b/i.test(s.title);
+    if (s.password && loginPage) return "password";
     return s.loginField && loginPage ? "sign_in" : null;
 }
 
@@ -44,10 +46,22 @@ const AUTH_SIGNALS_JS = `(() => {
   const vis = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
   const inputs = Array.from(document.querySelectorAll("input")).filter(vis);
   const attrs = (el) => [el.name, el.id, el.getAttribute("aria-label"), el.placeholder].join(" ");
-  const otpRe = /\\b(otp|one[- ]?time|verification code|security code|2fa|totp|passcode)\\b/i;
+  // A card's CVV ("Security code", "Card verification code") is not an OTP. No word
+  // boundaries: cvv2, cardCvv, card_cvc, cardCode, "billing cc-csc" are all CVV fields.
+  // A bare "card" is not: "OTP sent to your card ending 4242" is a real OTP box.
+  const cvvRe = /cvv|cvc|csc|card[\\s_-]?(verification|security|code)/i;
+  const cvv = (i) => /\\bcc-/i.test(i.autocomplete || "") || cvvRe.test(attrs(i));
+  // A card-number field marks a payment form, where a bare "security code" is the CVV.
+  // Only OTHER inputs count: an OTP box labelled "...card number ending 1234" is no card field.
+  const cardNum = (j) => /\\bcc-number\\b/i.test(j.autocomplete || "") || /card[\\s_-]?num|ccnum/i.test(attrs(j));
+  const payForm = (i) => inputs.some((j) => j !== i && cardNum(j));
+  // Explicit OTP words always count; the ambiguous ones only outside a payment form.
+  const otpRe = /\\b(otp|one[- ]?time|2fa|totp|passcode)\\b/i;
+  const ambiguousRe = /\\b(verification code|security code)\\b/i;
   return {
     password: inputs.some((i) => i.type === "password"),
-    otp: inputs.some((i) => i.autocomplete === "one-time-code" || otpRe.test(attrs(i))) ||
+    otp: inputs.some((i) => i.autocomplete === "one-time-code" ||
+           (!cvv(i) && (otpRe.test(attrs(i)) || (!payForm(i) && ambiguousRe.test(attrs(i)))))) ||
          inputs.filter((i) => i.maxLength === 1).length >= 4,
     loginField: inputs.some((i) => i.type === "email" || /username/i.test(i.autocomplete || "") ||
          /^(email|username|login|user|identifier|loginfmt)$/i.test(i.name || i.id || "")),
@@ -65,13 +79,22 @@ export async function detectAuthWall(page: any): Promise<AuthWallKind | null> {
     }
 }
 
-/** Registrable-ish domain for cookie scoping (mail.google.com → google.com, x.co.uk → x.co.uk). */
-// ponytail: no public-suffix list; covers 2-letter ccTLD second levels (co.uk, com.au, co.in). Add a PSL if a site needs it.
-export function siteDomain(hostname: string): string {
-    if (/^[\d.]+$/.test(hostname) || !hostname.includes(".")) return hostname;
-    const parts = hostname.split(".");
-    const cc = parts[parts.length - 1].length === 2 && /^(co|com|net|org|gov|edu|ac)$/.test(parts[parts.length - 2]);
-    return parts.slice(cc ? -3 : -2).join(".");
+/**
+ * Whether the page's document is a form-submission result (reloading would
+ * re-POST it: a second OTP SMS, another failed login). Unknown counts as yes.
+ */
+async function fromFormSubmit(page: any): Promise<boolean> {
+    try {
+        const cdp = await page.context().newCDPSession(page);
+        try {
+            const h = await cdp.send("Page.getNavigationHistory");
+            return h.entries[h.currentIndex]?.transitionType === "form_submit";
+        } finally {
+            await cdp.detach().catch(() => {});
+        }
+    } catch {
+        return true;
+    }
 }
 
 interface ChromeCookie {
@@ -112,16 +135,23 @@ export function toPlaywrightCookies(cookies: ChromeCookie[]) {
 export async function checkAuthWall(page: any): Promise<Record<string, unknown>> {
     const kind = await detectAuthWall(page);
     if (!kind) return {};
-    if (getCurrentMode() !== "chrome" && isExtensionConnected() && typeof page.context === "function") {
+    if (
+        getCurrentMode() !== "chrome" &&
+        isExtensionConnected() &&
+        typeof page.context === "function" &&
+        !(await fromFormSubmit(page))
+    ) {
         try {
-            const domain = siteDomain(new URL(page.url()).hostname);
-            const cookies = (await getExtensionCookies(domain)) as ChromeCookie[];
+            // The cookies Chrome would send to this URL: Chrome's own public-suffix
+            // rules scope them, so a *.vercel.app page never gets its neighbours'.
+            const host = new URL(page.url()).hostname;
+            const cookies = (await getExtensionCookies(page.url())) as ChromeCookie[];
             if (cookies.length > 0) {
                 await page.context().addCookies(toPlaywrightCookies(cookies));
                 await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
                 await waitForPageReady(page);
-                console.log(`  🍪 Auth wall: imported ${cookies.length} Chrome cookies for ${domain}`);
-                if (!(await detectAuthWall(page))) return { signed_in_with_chrome_session: domain };
+                console.log(`  🍪 Auth wall: imported ${cookies.length} Chrome cookies for ${host}`);
+                if (!(await detectAuthWall(page))) return { signed_in_with_chrome_session: host };
             }
         } catch (err) {
             console.warn(`  ⚠️ Auth wall: cookie import failed: ${(err as Error).message}`);

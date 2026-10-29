@@ -16,11 +16,11 @@ import {
     buildElementsText,
     getAccessibilityTree,
     getActivePage,
-    getActivePageIndex,
     getBrowser,
     getInteractiveElements,
     getLastElementMap,
     invalidateCache,
+    pickActivePage,
     resetBrowserContext,
     setActivePageIndex,
     setLastElementMap,
@@ -35,6 +35,22 @@ const BLOCKING_STATUSES = new Set([403, 429, 503]);
 // ═══════════════════════════════════════════════
 // TOOL: Navigate
 // ═══════════════════════════════════════════════
+
+/**
+ * Add the semantic tree after the element list, only in the room the agent's
+ * result cap leaves (agent.ts TOOL_RESULT_LIMITS: navigate 4000, scan 6000;
+ * past that it truncates or offloads): the clickable labels must survive.
+ */
+export function addTreeWithinBudget(result: Record<string, unknown>, tree: string, limit: number): void {
+    // Screenshots become image parts before the cap, so they don't count.
+    const room = limit - JSON.stringify({ ...result, screenshot_base64: undefined }).length - 60;
+    if (!tree || room < 300) return;
+    let t = tree.slice(0, room);
+    for (let over = JSON.stringify(t).length - room; over > 0; over = JSON.stringify(t).length - room) {
+        t = t.slice(0, t.length - over); // JSON escapes (\n, \") make it longer than its length
+    }
+    result.accessibility_tree = t.length < tree.length ? `${t}\n…(truncated)` : t;
+}
 
 export const browserNavigate: ToolDefinition = {
     schema: {
@@ -204,10 +220,6 @@ export const browserNavigate: ToolDefinition = {
                     "⚠️ Few interactive elements detected — the page may still be loading or the scan ran early. Re-run browser_scan (optionally visual:true) before deciding it's element-less.";
             }
 
-            if (accessibilityTree) {
-                result.accessibility_tree = accessibilityTree;
-            }
-
             // Check action cache — if we have a high-success cached sequence for this URL,
             // inform the agent so it can use browser_replay_actions instead of re-analyzing
             try {
@@ -226,6 +238,7 @@ export const browserNavigate: ToolDefinition = {
             }
 
             result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
+            addTreeWithinBudget(result, accessibilityTree, 4000);
             return JSON.stringify(result);
         } catch (err) {
             return JSON.stringify({ error: `Navigation failed: ${(err as Error).message}` });
@@ -330,14 +343,6 @@ export const browserScan: ToolDefinition = {
                 result.tip = `🎨 DESIGN APP (${url.split("/")[2]}). Canvas-based — very few DOM elements. ALWAYS click by exact x,y coordinates from the screenshot, NOT by label. Common shortcuts: v=select, r=rectangle, t=text, h=pan, Escape=deselect. browser_scan(visual:true) before every action.`;
             }
 
-            // Include accessibility tree if available (compact semantic page view)
-            if (accessibilityTree) {
-                result.accessibility_tree = accessibilityTree;
-                if (!isDesignApp)
-                    result.tip =
-                        "Read accessibility_tree for a compact semantic view of the page. Use interactive_elements_text labels for clicking.";
-            }
-
             // Visual mode: attach screenshot. Auto-enabled for design tools and sparse DOM pages.
             if (doVisual) {
                 try {
@@ -364,6 +369,7 @@ export const browserScan: ToolDefinition = {
             }
 
             result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
+            addTreeWithinBudget(result, accessibilityTree, 6000);
             return JSON.stringify(result);
         } catch (err) {
             return JSON.stringify({ error: `DOM Scan failed: ${(err as Error).message}` });
@@ -504,9 +510,10 @@ export const browserSwitchTab: ToolDefinition = {
                 const page = await getActivePage();
                 await page.close();
                 const newPages = context.pages();
-                const newIdx = Math.min(getActivePageIndex(), newPages.length - 1);
+                const next = pickActivePage(newPages); // a followed tab's opener, else clamp
+                const newIdx = newPages.indexOf(next);
                 setActivePageIndex(newIdx);
-                await newPages[newIdx].bringToFront();
+                await next.bringToFront();
                 return JSON.stringify({
                     success: true,
                     action: "closed_active",
@@ -586,18 +593,20 @@ export const browserSwitchTab: ToolDefinition = {
                 });
             }
 
-            // No action specified — list tabs
+            // No action specified — list tabs. Resolve the active tab the way the next
+            // action will (a closed followed popup → its opener), not the raw index.
+            const activeIdx = pages.indexOf(pickActivePage(pages));
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const tabList = await Promise.all(
                 pages.map(async (p: any, i: number) => ({
                     index: i,
                     title: await p.title(),
                     url: p.url(),
-                    active: i === getActivePageIndex(),
+                    active: i === activeIdx,
                 })),
             );
 
-            return JSON.stringify({ tabs: tabList, active_tab: getActivePageIndex(), open_tabs: pages.length });
+            return JSON.stringify({ tabs: tabList, active_tab: activeIdx, open_tabs: pages.length });
         } catch (err) {
             return JSON.stringify({ error: `Tab switch failed: ${(err as Error).message}` });
         }
