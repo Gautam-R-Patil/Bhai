@@ -99,6 +99,10 @@ contextBridge.exposeInMainWorld("atlas", {
     getSettings: () => ipcRenderer.invoke("settings:get"),
     saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
     chooseSettingsWorkspace: () => ipcRenderer.invoke("settings:choose-workspace"),
+    getIntegrations: () => ipcRenderer.invoke("settings:integrations"),
+    testGithubToken: (token) => ipcRenderer.invoke("settings:test-github", token),
+    googleDisconnect: (email) => ipcRenderer.invoke("settings:google-disconnect", email),
+    openWorkspace: () => ipcRenderer.invoke("settings:open-workspace"),
     openDataDir: () => ipcRenderer.invoke("settings:open-data-dir"),
     openLogsDir: () => ipcRenderer.invoke("settings:open-logs-dir"),
 

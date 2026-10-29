@@ -304,25 +304,14 @@
             <div class="tab-content" id="tab-settings">
                 <div class="tab-header">
                     <h2 class="tab-title">Settings</h2>
-                    <button class="btn btn-primary btn-sm" id="saveSettingsBtn" onclick="saveSettings()">
-                        Save Changes
-                    </button>
                 </div>
 
                 <div class="settings-scroll">
 
-                    <!-- ═════════ APP ═════════ -->
-                    <div class="settings-group-heading">App</div>
+                    <!-- ═════════ GENERAL ═════════ -->
+                    <div class="settings-group-heading">General</div>
 
-                    <!-- Appearance Section -->
                     <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🎨</span>
-                            <div>
-                                <h3 class="pref-section-title">Appearance</h3>
-                                <p class="pref-section-desc">Customize visual appearance</p>
-                            </div>
-                        </div>
                         <div class="pref-items">
                             <div class="pref-select-group">
                                 <span class="pref-select-label">Theme</span>
@@ -357,101 +346,48 @@
                                     </button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Startup Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🚀</span>
-                            <div>
-                                <h3 class="pref-section-title">Startup</h3>
-                                <p class="pref-section-desc">Control how Bhai launches</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
                             <label class="pref-toggle">
-                                <span class="pref-toggle-label">Launch at login</span>
+                                <span class="pref-toggle-label">Open Bhai when I log in</span>
                                 <input type="checkbox" id="prefLaunchAtLogin" onchange="setPref('launchAtLogin', this.checked)">
                                 <span class="pref-toggle-switch"></span>
                             </label>
-                        </div>
-                    </div>
-
-                    <!-- Notifications Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🔔</span>
-                            <div>
-                                <h3 class="pref-section-title">Notifications</h3>
-                                <p class="pref-section-desc">Manage system notifications</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Enable notifications</span>
-                                <input type="checkbox" id="prefNotifications" onchange="setPref('notificationsEnabled', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Notify on task completion</span>
-                                <input type="checkbox" id="prefNotifyTask" onchange="setPref('notifyOnTask', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Notify on updates</span>
-                                <input type="checkbox" id="prefNotifyUpdate" onchange="setPref('notifyOnUpdate', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- Keyboard Shortcuts -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">⌨️</span>
-                            <div>
-                                <h3 class="pref-section-title">Keyboard Shortcuts</h3>
-                                <p class="pref-section-desc">Global hotkeys</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
                             <div class="pref-shortcut">
-                                <span class="pref-shortcut-label">Show/Hide Bhai</span>
+                                <span class="pref-shortcut-label">Show or hide Bhai</span>
                                 <div class="pref-shortcut-control">
                                     <kbd id="prefHotkeyShow" tabindex="0" title="Click to change" onclick="startHotkeyRecording(this)">Alt + Space</kbd>
                                     <button class="pref-hotkey-reset" id="prefHotkeyReset" onclick="resetOverlayHotkey()" title="Reset to default" style="display:none;">Reset</button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Updates Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">⬆️</span>
-                            <div>
-                                <h3 class="pref-section-title">Updates</h3>
-                                <p class="pref-section-desc">Check for new versions</p>
+                            <label class="pref-toggle">
+                                <span class="pref-toggle-label">Notifications</span>
+                                <input type="checkbox" id="prefNotifications" onchange="setPref('notificationsEnabled', this.checked)">
+                                <span class="pref-toggle-switch"></span>
+                            </label>
+                            <div class="pref-subs">
+                                <label class="pref-toggle">
+                                    <span class="pref-toggle-label">When a task finishes</span>
+                                    <input type="checkbox" id="prefNotifyTask" onchange="setPref('notifyOnTask', this.checked)">
+                                    <span class="pref-toggle-switch"></span>
+                                </label>
+                                <label class="pref-toggle">
+                                    <span class="pref-toggle-label">When an update is ready</span>
+                                    <input type="checkbox" id="prefNotifyUpdate" onchange="setPref('notifyOnUpdate', this.checked)">
+                                    <span class="pref-toggle-switch"></span>
+                                </label>
                             </div>
-                        </div>
-                        <div class="pref-items">
                             <div class="pref-update-status">
-                                <span id="prefUpdateStatus">Last checked: Never</span>
-                                <button class="btn btn-sm btn-secondary" id="checkUpdateBtn" onclick="manualCheckUpdate()">
-                                    Check Now
-                                </button>
-                            </div>
-                            <div class="pref-update-status" style="align-items:flex-start;">
                                 <div>
-                                    <div>Update channel</div>
-                                    <small style="color:var(--text-secondary);">Alpha gets new builds first. Stable only publishes tested releases.</small>
+                                    <div>Updates</div>
+                                    <small id="prefUpdateStatus" style="color:var(--text-secondary);">Last checked: Never</small>
                                 </div>
-                                <select id="prefUpdateChannel" onchange="setUpdateChannel(this.value)" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;outline:none;cursor:pointer;">
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <select id="prefUpdateChannel" onchange="setUpdateChannel(this.value)" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;outline:none;cursor:pointer;">
                                     <option value="stable">Stable</option>
                                     <option value="alpha">Alpha (early access)</option>
                                     <option value="beta">Beta</option>
                                 </select>
+                                    <button class="btn btn-sm btn-secondary" id="checkUpdateBtn" onclick="manualCheckUpdate()">Check now</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -467,49 +403,46 @@
                         </div>
                         <div class="pref-items" style="flex-direction:column;gap:8px;align-items:stretch;">
                             <div id="personalityPresets" style="display:flex;flex-direction:column;gap:8px;">
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="casual_playful" id="ppPresetCasual" style="margin-top:3px;" onchange="savePersonality()" checked>
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Casual &amp; playful</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Warm, witty, a little swag. Reacts like a close friend.</div>
+                                        <div class="pp-desc">Warm, witty, a little swag. Reacts like a close friend.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="professional_concise" id="ppPresetProfessional" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Professional &amp; concise</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Clear and to the point. No slang, minimal emoji.</div>
+                                        <div class="pp-desc">Clear and to the point. No slang, minimal emoji.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="warm_supportive" id="ppPresetWarm" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Warm &amp; supportive</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Patient and encouraging, no sarcasm. Best for stressful days.</div>
+                                        <div class="pp-desc">Patient and encouraging, no sarcasm. Best for stressful days.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="direct_terse" id="ppPresetDirect" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Direct &amp; no-nonsense</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Results first, zero fluff. Good for power users.</div>
+                                        <div class="pp-desc">Results first, zero fluff. Good for power users.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="unhinged" id="ppPresetUnhinged" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Unhinged 😈 <span style="font-size:0.8em;font-weight:600;color:var(--text-secondary);border:1px solid var(--border);border-radius:5px;padding:0 5px;margin-left:4px;">18+</span></div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">No filter: blunt opinions, swears freely, savage roasts, dirty and very dark jokes. Only with you, never your contacts. Turns serious when it really matters.</div>
+                                        <div class="pp-desc">No filter: blunt opinions, swears freely, savage roasts, dirty and very dark jokes. Only with you, never your contacts. Turns serious when it really matters.</div>
                                     </div>
                                 </label>
                             </div>
                             <label style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-                                <span style="font-size:0.9em;color:var(--text-secondary);">Custom notes (optional)</span>
-                                <textarea id="personalityNotes" rows="3" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
+                                <span style="font-size:0.9em;color:var(--text-secondary);">Anything else? (optional)</span>
+                                <textarea id="personalityNotes" oninput="onPersonalityNotesInput()" rows="3" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
                             </label>
-                            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
-                                <button class="btn btn-sm btn-secondary" id="personalitySaveBtn" onclick="savePersonality()">Save personality</button>
-                            </div>
                             <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);margin-top:4px;min-height:1em;"></div>
                         </div>
                     </div>
@@ -521,18 +454,54 @@
                     <div class="settings-section">
                         <div class="settings-section-header">
                             <span class="settings-section-icon">🐙</span>
-                            <div>
+                            <div style="flex:1;">
                                 <h3 class="settings-section-title">GitHub</h3>
-                                <p class="settings-section-desc">Personal access token for repo operations</p>
+                                <p class="settings-section-desc">Lets Bhai clone, commit, push and open pull requests on your repos</p>
                             </div>
+                            <span class="integration-state" id="ghState">Not connected</span>
                         </div>
                         <div class="settings-fields">
-                            <div class="input-group">
-                                <label class="input-label">GitHub Token</label>
-                                <input class="clean-input" type="password" id="settingGithubToken" placeholder="ghp_..."
-                                    autocomplete="off">
-                                <span class="input-hint">Optional — enables Git operations</span>
+                            <div id="ghConnected" style="display:none;">
+                                <div class="integration-row">
+                                    <span id="ghWho"></span>
+                                    <button class="btn btn-secondary btn-sm" onclick="disconnectGithub()">Disconnect</button>
+                                </div>
                             </div>
+                            <div id="ghSetup">
+                                <p class="integration-help">Create a token on GitHub (the right permissions are already ticked), copy it, and come back. Bhai picks it up and checks it.</p>
+                                <a class="wizard-link" target="_blank" href="https://github.com/settings/tokens/new?description=Bhai&scopes=repo,workflow,read:org">Create a GitHub token</a>
+                                <div class="input-group" style="margin-top:12px;">
+                                    <input class="clean-input" type="password" id="settingGithubToken" placeholder="ghp_… or github_pat_…" autocomplete="off" oninput="onGithubTokenInput()">
+                                </div>
+                            </div>
+                            <div class="channel-test-result" id="ghStatus"></div>
+                        </div>
+                    </div>
+
+                    <!-- Google Section -->
+                    <div class="settings-section">
+                        <div class="settings-section-header">
+                            <span class="settings-section-icon">📅</span>
+                            <div style="flex:1;">
+                                <h3 class="settings-section-title">Google</h3>
+                                <p class="settings-section-desc">Calendar, Gmail and Tasks</p>
+                            </div>
+                            <span class="integration-state" id="googleState">Not connected</span>
+                        </div>
+                        <div class="settings-fields" id="googleFields">
+                            <div id="googleAccounts"></div>
+                            <div style="display:flex;align-items:center;gap:12px;">
+                                <button class="google-btn btn-sm" onclick="connectGoogleAccount()" id="googleConnectBtn">
+                                    <svg viewBox="0 0 24 24" width="18" height="18">
+                                        <path fill="#4285F4" d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z" />
+                                        <path fill="#34A853" d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z" />
+                                        <path fill="#FBBC05" d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z" />
+                                        <path fill="#EA4335" d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z" />
+                                    </svg>
+                                    <span id="googleConnectLabel">Connect Google</span>
+                                </button>
+                            </div>
+                            <div class="channel-test-result" id="googleStatus"></div>
                         </div>
                     </div>
 
@@ -540,52 +509,19 @@
                     <div class="settings-section">
                         <div class="settings-section-header">
                             <span class="settings-section-icon">📁</span>
-                            <div>
-                                <h3 class="settings-section-title">Workspace</h3>
-                                <p class="settings-section-desc">Where Bhai saves files (screenshots, research,
-                                    exports)</p>
+                            <div style="flex:1;">
+                                <h3 class="settings-section-title">Workspace folder</h3>
+                                <p class="settings-section-desc">Where Bhai saves screenshots, research, documents and code</p>
                             </div>
                         </div>
                         <div class="settings-fields">
-                            <div class="input-group">
-                                <label class="input-label">Workspace Path</label>
-                                <div class="workspace-preview">
-                                    <input class="clean-input" type="text" id="settingWorkspace"
-                                        placeholder="C:\Users\You\Desktop\Bhai Files" readonly
-                                        style="flex: 1; cursor: default;">
-                                    <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Browse</button>
+                            <div class="integration-row">
+                                <code id="settingWorkspace" class="workspace-path"></code>
+                                <div style="display:flex;gap:6px;">
+                                    <button class="btn btn-secondary btn-sm" onclick="atlas.openWorkspace()">Open</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Change…</button>
+                                    <button class="btn btn-secondary btn-sm" id="workspaceResetBtn" onclick="resetWorkspace()" style="display:none;">Use default</button>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Google Section -->
-                    <div class="settings-section">
-                        <div class="settings-section-header">
-                            <span class="settings-section-icon">🔗</span>
-                            <div>
-                                <h3 class="settings-section-title">Google Account</h3>
-                                <p class="settings-section-desc">Calendar and Gmail integration</p>
-                            </div>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                <button class="google-btn btn-sm" onclick="connectGoogleAccount()"
-                                    id="googleConnectBtn">
-                                    <svg viewBox="0 0 24 24" width="18" height="18">
-                                        <path fill="#4285F4"
-                                            d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z" />
-                                        <path fill="#34A853"
-                                            d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z" />
-                                        <path fill="#FBBC05"
-                                            d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z" />
-                                        <path fill="#EA4335"
-                                            d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z" />
-                                    </svg>
-                                    Connect Google
-                                </button>
-                                <span id="googleStatus" style="font-size: 13px; color: var(--text-secondary);">Not
-                                    connected</span>
                             </div>
                         </div>
                     </div>
@@ -594,18 +530,11 @@
                     <div class="settings-group-heading">Advanced</div>
 
                     <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🔬</span>
-                            <div>
-                                <h3 class="pref-section-title">Advanced</h3>
-                                <p class="pref-section-desc">Power user features — use at your own risk</p>
-                            </div>
-                        </div>
                         <div class="pref-items">
                             <label class="pref-toggle">
                                 <div>
-                                    <span class="pref-toggle-label">Enable Sideloading</span>
-                                    <span class="pref-toggle-hint" style="display:block; font-size:11px; color:var(--text-secondary); margin-top:2px;">Allow installing skills and plugins from external ZIP files (e.g. ClawHub). Sideloaded items are unvetted and may pose security risks.</span>
+                                    <span class="pref-toggle-label">Allow sideloading</span>
+                                    <span class="pref-toggle-hint" style="display:block; font-size:11px; color:var(--text-secondary); margin-top:2px;">Install skills from ZIP files outside the Store. They aren't checked, so only use ones you trust.</span>
                                 </div>
                                 <input type="checkbox" id="prefSideloading" onchange="setPref('sideloadingEnabled', this.checked); toggleSideloadButton(this.checked);">
                                 <span class="pref-toggle-switch"></span>
@@ -620,7 +549,7 @@
                             <line x1="12" y1="16" x2="12" y2="12"></line>
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
                         </svg>
-                        Integration credentials require a restart to take effect. All values are encrypted with AES-256-GCM.
+                        Everything here saves by itself. Integration changes restart Bhai for a few seconds. Secrets are encrypted with AES-256-GCM.
                     </div>
                 </div>
             </div>
@@ -1966,75 +1895,149 @@
 
         // ── Settings ──────────────────────────────────
 
-        let currentSettings = {};
+
+        // Settings save by themselves; integration changes restart the bot so it picks them up.
+        async function restartBotForChanges(message) {
+            const status = await atlas.getBotStatus().catch(() => null);
+            if (!status || status.status !== 'running') return;
+            showToast(message || 'Saved. Restarting Bhai…');
+            await atlas.stopBot();
+            for (let i = 0; i < 15; i++) {
+                await new Promise(r => setTimeout(r, 1000));
+                const st = await atlas.getBotStatus();
+                if (st.status === 'stopped') break;
+            }
+            await atlas.startBot();
+        }
 
         async function loadSettings() {
-            const result = await atlas.getSettings();
-            if (!result.success) return;
-            currentSettings = result.settings;
-
-            document.getElementById('settingGithubToken').value = currentSettings.GITHUB_TOKEN || '';
-            document.getElementById('settingWorkspace').value = currentSettings.ATLAS_WORKSPACE || '';
-        }
-
-        async function saveSettings() {
-            const btn = document.getElementById('saveSettingsBtn');
-            btn.disabled = true;
-            btn.textContent = 'Saving...';
-
-            // Telegram credentials are managed in the Channels tab. settings:save
-            // uses saveEnvKVs (merge), so omitting these keys leaves the
-            // Channels-written values untouched. Including them with an empty
-            // fallback would silently blank a user's bot token on every save.
-            const settings = {
-                GITHUB_TOKEN: document.getElementById('settingGithubToken').value.trim(),
-                ATLAS_WORKSPACE: document.getElementById('settingWorkspace').value.trim(),
-            };
-
-            const result = await atlas.saveSettings(settings);
-
-            btn.disabled = false;
-            btn.textContent = 'Save Changes';
-
-            if (result.success) {
-                showToast('✅ Settings saved! Restart Bhai for changes to take effect.');
+            const info = await atlas.getIntegrations().catch(() => null);
+            if (!info) return;
+            // Workspace
+            document.getElementById('settingWorkspace').textContent = info.workspace;
+            document.getElementById('workspaceResetBtn').style.display = info.workspaceIsDefault ? 'none' : '';
+            // GitHub: show whose token is saved
+            if (info.githubSaved) {
+                const r = await atlas.testGithubToken('');
+                showGithub(r && r.success ? r : null, !(r && r.success) ? (r && r.message) : '');
             } else {
-                showToast('❌ Failed to save: ' + result.error);
+                showGithub(null, '');
             }
+            // Google
+            const accounts = info.googleAccounts || [];
+            document.getElementById('googleState').textContent = accounts.length ? 'Connected' : 'Not connected';
+            document.getElementById('googleState').classList.toggle('on', accounts.length > 0);
+            const list = document.getElementById('googleAccounts');
+            list.innerHTML = '';
+            for (const email of accounts) {
+                const row = document.createElement('div');
+                row.className = 'integration-row';
+                const who = document.createElement('span');
+                who.textContent = email;
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-secondary btn-sm';
+                btn.textContent = 'Disconnect';
+                btn.onclick = () => disconnectGoogle(email);
+                row.append(who, btn);
+                list.append(row);
+            }
+            document.getElementById('googleConnectLabel').textContent = accounts.length ? 'Add another account' : 'Connect Google';
+            document.getElementById('googleConnectBtn').style.display = info.googleAvailable ? '' : 'none';
+            const comingSoon = !info.googleAvailable && !accounts.length;
+            if (comingSoon) document.getElementById('googleState').textContent = 'Coming soon';
+            document.getElementById('googleFields').style.display = comingSoon ? 'none' : '';
         }
 
+        // ── GitHub ──
+        function showGithub(user, problem) {
+            const state = document.getElementById('ghState');
+            document.getElementById('ghConnected').style.display = user ? 'block' : 'none';
+            document.getElementById('ghSetup').style.display = user ? 'none' : 'block';
+            state.textContent = user ? 'Connected' : 'Not connected';
+            state.classList.toggle('on', !!user);
+            if (user) document.getElementById('ghWho').textContent = '@' + user.login + (user.name ? ' (' + user.name + ')' : '');
+            setStatus(document.getElementById('ghStatus'), problem ? problem + ' Paste a new token below.' : '', 'error');
+        }
+
+        let ghTimer = null;
+        function onGithubTokenInput() {
+            clearTimeout(ghTimer);
+            ghTimer = setTimeout(connectGithub, 500);
+        }
+
+        async function connectGithub() {
+            const token = fieldVal('settingGithubToken');
+            const st = document.getElementById('ghStatus');
+            if (!token) return setStatus(st, '', '');
+            if (!/^(ghp_|github_pat_|gho_)/.test(token)) return setStatus(st, 'GitHub tokens start with ghp_ or github_pat_.', 'error');
+            setStatus(st, 'Checking…', 'loading');
+            const r = await atlas.testGithubToken(token);
+            if (token !== fieldVal('settingGithubToken')) return;
+            if (!r || !r.success) return setStatus(st, (r && r.message) || 'GitHub rejected this token.', 'error');
+            const saved = await atlas.saveSettings({ GITHUB_TOKEN: token });
+            if (!saved || !saved.success) return setStatus(st, "Couldn't save the token.", 'error');
+            document.getElementById('settingGithubToken').value = '';
+            showGithub(r, '');
+            await restartBotForChanges('GitHub connected. Restarting Bhai…');
+        }
+
+        async function disconnectGithub() {
+            await atlas.saveSettings({ GITHUB_TOKEN: '' });
+            showGithub(null, '');
+            await restartBotForChanges('GitHub disconnected. Restarting Bhai…');
+        }
+
+        // ── Workspace ──
         async function chooseWorkspace() {
             const result = await atlas.chooseSettingsWorkspace();
-            if (!result.canceled && result.path) {
-                document.getElementById('settingWorkspace').value = result.path;
-            }
+            if (result.canceled || !result.path) return;
+            await atlas.saveSettings({ ATLAS_WORKSPACE: result.path });
+            await loadSettings();
+            await restartBotForChanges('Workspace changed. Restarting Bhai…');
         }
 
+        async function resetWorkspace() {
+            await atlas.saveSettings({ ATLAS_WORKSPACE: '' });
+            await loadSettings();
+            await restartBotForChanges('Workspace reset. Restarting Bhai…');
+        }
+
+        // ── Google ──
         async function connectGoogleAccount() {
             const btn = document.getElementById('googleConnectBtn');
+            const st = document.getElementById('googleStatus');
             btn.disabled = true;
-            btn.textContent = 'Waiting...';
-
-            const result = await atlas.googleOAuth();
-            if (result.success) {
-                document.getElementById('googleStatus').textContent = '✓ Connected: ' + result.email;
-                document.getElementById('googleStatus').style.color = 'var(--accent-success)';
-            } else {
-                showToast('Google sign-in failed: ' + (result.error || 'Unknown error'));
+            setStatus(st, 'Finish signing in in your browser…', 'loading');
+            try {
+                const result = await atlas.googleOAuth();
+                if (!result.success) return setStatus(st, 'Google sign-in failed: ' + (result.error || 'unknown error'), 'error');
+                setStatus(st, '', '');
+                await loadSettings();
+                await restartBotForChanges('Google connected. Restarting Bhai…');
+            } finally {
+                btn.disabled = false;
             }
-            btn.disabled = false;
-            btn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18">
-                <path fill="#4285F4" d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z"/>
-                <path fill="#34A853" d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z"/>
-                <path fill="#FBBC05" d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z"/>
-                <path fill="#EA4335" d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z"/>
-            </svg> Connect Google`;
         }
 
-        // Listen for Google OAuth success from main process
-        atlas.onGoogleOAuthSuccess((email) => {
-            document.getElementById('googleStatus').textContent = '✓ Connected: ' + email;
-            document.getElementById('googleStatus').style.color = 'var(--accent-success)';
+        async function disconnectGoogle(email) {
+            await atlas.googleDisconnect(email);
+            await loadSettings();
+            await restartBotForChanges('Google account removed. Restarting Bhai…');
+        }
+
+        atlas.onGoogleOAuthSuccess(() => {
+            if (document.getElementById('tab-settings').classList.contains('active')) loadSettings();
+        });
+
+        // Back from GitHub with a token copied? Fill it in (main only hands over a GitHub-shaped token).
+        window.addEventListener('focus', async () => {
+            if (!document.getElementById('tab-settings').classList.contains('active')) return;
+            if (document.getElementById('ghSetup').style.display === 'none' || fieldVal('settingGithubToken')) return;
+            const token = await atlas.clipboardToken('github').catch(() => '');
+            if (!token) return;
+            document.getElementById('settingGithubToken').value = token;
+            showToast('Pasted your GitHub token from the clipboard');
+            connectGithub();
         });
 
         // ── Channels ──────────────────────────────────
@@ -3430,8 +3433,14 @@
             }
         }
 
+        let notesTimer = null;
+        function onPersonalityNotesInput() {
+            clearTimeout(notesTimer);
+            notesTimer = setTimeout(savePersonality, 800);
+        }
+
         async function savePersonality() {
-            const btn = document.getElementById('personalitySaveBtn');
+            const btn = null;
             const status = document.getElementById('personalitySaveStatus');
             if (btn) btn.disabled = true;
             if (status) status.textContent = 'Saving…';

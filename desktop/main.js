@@ -4225,6 +4225,62 @@ function registerIPC() {
         return null;
     }
 
+    // Settings → Integrations: what's connected, for the cards' status lines.
+    const googleTokensDir = path.join(DATA_DIR, "google-tokens");
+    function connectedGoogleAccounts() {
+        const out = [];
+        let files = [];
+        try { files = fs.readdirSync(googleTokensDir).filter(f => f.endsWith(".json")); } catch { return out; }
+        for (const file of files) {
+            let email = "";
+            try {
+                const tokens = JSON.parse(fs.readFileSync(path.join(googleTokensDir, file), "utf-8"));
+                if (tokens.id_token) email = JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64").toString("utf-8")).email || "";
+            } catch { /* unreadable token file */ }
+            out.push({ file, email: email || file.replace(/\.json$/, "") });
+        }
+        return out;
+    }
+
+    ipcMain.handle("settings:integrations", () => {
+        const custom = loadEnvKey("ATLAS_WORKSPACE") || "";
+        return {
+            workspace: custom || path.join(app.getPath("desktop"), "Bhai Files"),
+            workspaceIsDefault: !custom,
+            googleAvailable: !!findGoogleCredentials(),
+            googleAccounts: connectedGoogleAccounts().map(a => a.email),
+            githubSaved: !!loadEnvKey("GITHUB_TOKEN"),
+        };
+    });
+
+    // Checks a GitHub token (or the saved one) and says whose it is.
+    ipcMain.handle("settings:test-github", async (_, token) => {
+        token = token || loadEnvKey("GITHUB_TOKEN") || "";
+        if (!token) return { success: false, message: "No token" };
+        try {
+            const res = await fetch("https://api.github.com/user", {
+                headers: { Authorization: `Bearer ${token}`, "User-Agent": "Bhai", Accept: "application/vnd.github+json" },
+                signal: AbortSignal.timeout(15000),
+            });
+            if (res.status === 401) return { success: false, message: "GitHub didn't accept this token. It may be mistyped, expired or revoked." };
+            if (!res.ok) return { success: false, message: `GitHub error (${res.status})` };
+            const user = await res.json();
+            return { success: true, login: user.login, name: user.name || "", scopes: res.headers.get("x-oauth-scopes") || "" };
+        } catch (err) { return { success: false, message: err.message }; }
+    });
+
+    ipcMain.handle("settings:google-disconnect", (_, email) => {
+        const hit = connectedGoogleAccounts().find(a => a.email === email);
+        if (hit) fs.rmSync(path.join(googleTokensDir, hit.file), { force: true });
+        return { success: !!hit };
+    });
+
+    ipcMain.handle("settings:open-workspace", () => {
+        const dir = loadEnvKey("ATLAS_WORKSPACE") || path.join(app.getPath("desktop"), "Bhai Files");
+        fs.mkdirSync(dir, { recursive: true });
+        return shell.openPath(dir);
+    });
+
     // Setup: Google OAuth
     ipcMain.handle("setup:google-oauth", async () => {
         try {
@@ -5869,6 +5925,7 @@ ${body}`;
         discord: /^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{25,}$/,
         slackBot: /^xoxb-[A-Za-z0-9-]{20,}$/,
         slackApp: /^xapp-[A-Za-z0-9-]{20,}$/,
+        github: /^(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{60,})$/,
     };
     ipcMain.handle("channel:clipboard-token", (_, kind) => {
         const text = require("electron").clipboard.readText().trim();
