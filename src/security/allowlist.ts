@@ -230,6 +230,12 @@ export function isShellBypass(command: string, args: string[]): boolean {
 
 const CRITICAL_SYSTEM_PATHS: string[] = [
     // Unix / macOS core OS paths
+    // "/etc" wholesale — not just the three files below. On macOS /etc is a
+    // symlink to /private/etc (listed), so every /etc/* read was already
+    // blocked; on Linux there is no /private/etc, so without this a sandboxed
+    // dynamic tool could read /etc/hosts, /etc/fstab, /etc/resolv.conf, etc.
+    // Listing /etc gives Linux the parity macOS always had.
+    "/etc",
     "/etc/passwd", "/etc/shadow", "/etc/sudoers",
     "/boot", "/System/Library",
     "/usr/bin", "/usr/sbin", "/sbin", "/bin",
