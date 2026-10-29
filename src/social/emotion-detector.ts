@@ -103,7 +103,12 @@ export function detectEmotion(text: string): EmotionAnalysis {
     let totalArousal = 0;
     let emotionCount = 0;
     for (const h of kept) {
-        const before = lower.slice(Math.max(0, h.start - 20), h.start);
+        // Look back only within the current clause: a negator in a previous clause
+        // ("not a fan, this is terrible") must not flip this cue to neutral.
+        let before = lower.slice(Math.max(0, h.start - 20), h.start);
+        const bound = Math.max(before.lastIndexOf(","), before.lastIndexOf("."), before.lastIndexOf(";"),
+            before.lastIndexOf("!"), before.lastIndexOf("?"), before.lastIndexOf("\n"));
+        if (bound >= 0) before = before.slice(bound + 1);
         if (NEGATOR_RE.test(before)) continue; // negated cue — ignore
         signals.push(`"${h.word}" → ${h.emotion}`);
         totalValence += h.valence;

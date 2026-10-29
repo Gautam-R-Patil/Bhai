@@ -30,6 +30,11 @@ describe("emotion scoring", () => {
         expect(e.primary).not.toBe("happy");
     });
 
+    it("a negator in a previous clause does not suppress a later cue", () => {
+        // "not" negates "a fan", not "terrible" one clause later.
+        expect(detectEmotion("not a fan, this is terrible").primary).toBe("frustrated");
+    });
+
     it("counts an overlapping phrase once (longest wins)", () => {
         // "appreciate" ⊂ "really appreciate" must not double-count and dilute.
         const e = detectEmotion("really appreciate it");
