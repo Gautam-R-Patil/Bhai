@@ -15,6 +15,7 @@ import { executeTool, getToolSchemasByNames } from "../tools/index.js";
 import { extractPrimaryPath, logToolAction, summarizeToolCall } from "../utils/debug-log.js";
 import { isToolError } from "./error-types.js";
 import { smartTruncate } from "./smart-truncate.js";
+import { stepBlockCount } from "./swarm-context.js";
 import { isMutator } from "./verify-before-done.js";
 
 // ── Worktree path rewriting (Phase 4G) ────────
@@ -375,6 +376,10 @@ export interface SubAgentResult {
     error?: string;
     /** Side-effecting tools that completed (sends, clicks, edits…). A blind re-run would repeat them. */
     mutatorsRan?: string[];
+    /** Not run: an irreversible step nobody approved (the owner can re-ask with a go-ahead). */
+    needsApproval?: boolean;
+    /** Not run: the owner declined it. */
+    declined?: boolean;
 }
 
 // Tools whose successful run changed the world outside the conversation.
@@ -519,6 +524,8 @@ export async function runSubAgent(
     // so swarm/mesh recovery (retry → rephrase → reroute → skip) gets to run.
     let failure = "";
     const mutatorsRan = new Set<string>();
+    // A swarm's tool gate held back a side effect: stop, the mesh reports the step.
+    let heldForOwner = false;
 
     try {
         while (iterations < maxIter) {
@@ -666,6 +673,7 @@ export async function runSubAgent(
                     action: summarizeToolCall(fnName, fnArgs),
                     context: { sub_agent: task.id, role: task.role },
                 });
+                const heldBefore = stepBlockCount();
                 const result = await executeTool(fnName, fnArgs);
                 totalToolCalls++;
 
@@ -685,7 +693,14 @@ export async function runSubAgent(
                     tool_call_id: tc.id,
                     content: fenceToolResult(fnName, smartTruncate(fnName, result)), // Smart truncation (#3)
                 } as ChatCompletionMessageParam);
+                // The swarm gate held this call back (its own record, not the result text).
+                if (stepBlockCount() > heldBefore) {
+                    heldForOwner = true;
+                    failure = "Stopped: an action in this step needs the owner's OK";
+                    break;
+                }
             }
+            if (heldForOwner) break;
 
             // ── Streaming Partial Results (#19) ──────
             const interval = task.partialResultInterval || 5;

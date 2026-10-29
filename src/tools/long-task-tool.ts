@@ -43,20 +43,12 @@ export function longTaskMarker(taskId: string, message: string): string {
     return `[LONG-TASK:${taskId}] ${message}`;
 }
 
-// A turn's progress callback (Telegram status message etc.) is only valid
-// while that turn runs: the channel clears/replaces it when the turn ends.
-// Later progress is dropped; completion still reaches the user through the
-// proactive long-task bus below.
+// The channel's callback outlives the turn on purpose: a Discord thread keeps
+// posting phase updates and the result, while Telegram's ignores updates once
+// its status message is gone. Completion also goes to the proactive bus below.
 function makeProgressCallback(): ((progress: LongTaskProgress) => Promise<void>) | undefined {
     if (!_onProgress) return undefined;
-    const turnFn = _onProgress;
-    const fn = async (msg: string): Promise<void> => {
-        if (_onProgress !== turnFn) {
-            console.log(`[LONG-TASK] turn ended — dropping progress: ${msg.substring(0, 80)}`);
-            return;
-        }
-        await turnFn(msg);
-    };
+    const fn = _onProgress;
     return async (progress: LongTaskProgress) => {
         const elapsed = (progress.elapsedMs / 1000).toFixed(0);
         if (progress.status === "completed") {

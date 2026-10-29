@@ -94,6 +94,24 @@ export function phaseSucceeded(task: Pick<LongTask, "checkpointData">, phaseId: 
     return !!out && !out.startsWith("PHASE FAILED:") && !out.startsWith("PHASE ERROR:");
 }
 
+/**
+ * Before a resume: a phase that ran on a failed phase's output is stale, so
+ * its checkpoint is dropped and it re-runs after the failed phase does.
+ */
+export function invalidateStaleDependents(task: Pick<LongTask, "phases" | "checkpointData">): void {
+    const rerun = new Set(task.phases.filter((p) => !phaseSucceeded(task, p.id)).map((p) => p.id));
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const p of task.phases) {
+            if (rerun.has(p.id) || !p.depends_on.some((d) => rerun.has(d))) continue;
+            delete task.checkpointData[p.id];
+            rerun.add(p.id);
+            changed = true;
+        }
+    }
+}
+
 // ── Types ─────────────────────────────────────
 
 export interface TaskPhase {
@@ -501,7 +519,9 @@ async function executePhases(
                                 }));
 
                             if (newPhases.length > 0) {
-                                // Replace remaining phases
+                                // Replace remaining phases; a reused id from an earlier run must run again.
+                                const keptIds = new Set(task.phases.slice(0, i + 1).map((p) => p.id));
+                                for (const p of newPhases) if (!keptIds.has(p.id)) delete task.checkpointData[p.id];
                                 task.phases = [...task.phases.slice(0, i + 1), ...newPhases];
                                 task.checkpointData[replanKey] = String(currentReplans + 1);
                                 await saveCheckpoint(task);
@@ -654,6 +674,7 @@ export async function resumeLongTask(
     }
 
     // Resume from the first phase that didn't succeed (failed ones re-run)
+    invalidateStaleDependents(task);
     const nextPhase = task.phases.findIndex((p) => !phaseSucceeded(task, p.id));
     if (nextPhase === -1) {
         task.status = "completed";

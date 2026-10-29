@@ -113,6 +113,9 @@ desktop/hostinger-upload/
 !src/tools/browser/tab-list-active.test.ts
 !src/tools/browser/tree-budget.test.ts
 !src/voice/transcribe.test.ts
+!src/agents/approval-gate.test.ts
+!src/agents/sub-agent-hold.test.ts
+!src/tools/swarm-tool-gate.test.ts
 # Session 2026-10-28: security, consent, Site Skills, computer use, proactive, memory
 !src/security/loopback.test.ts
 !src/security/tool-access.test.ts
