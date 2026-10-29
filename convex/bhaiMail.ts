@@ -1,13 +1,22 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Bhai's own email address: <name>.bhai@<domain> on a catch-all mailbox
 // (Hostinger). bhaiMailNode.ts reads the mailbox every minute and routes mail
-// here; each user's Bhai collects its owner's mail through /api/mail/*. Bhai
-// only takes mail from its owner's address and only writes to that owner, and
-// only after they've emailed it recently, so nobody can send from the domain.
+// here; each user's Bhai collects its mail through /api/mail/*. Anyone can
+// email a Bhai; mail from the owner's address is marked so the bot gives the
+// owner full Bhai and everyone else guest mode. Sends are capped per day so
+// the company domain can't be used to spam.
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
-import { bhaiAddress, handleFromEmail, MAX_TEXT, mailDomain } from "./bhaiMailHelpers";
+import {
+    bhaiAddress,
+    DAY_MS,
+    handleFromEmail,
+    MAX_TEXT,
+    mailDomain,
+    OTHERS_INBOUND_PER_DAY,
+    SEND_RECIPIENTS_PER_DAY,
+} from "./bhaiMailHelpers";
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
@@ -62,43 +71,67 @@ export const addressFor = internalQuery({
 // ── Inbound ────────────────────────────────────────────────────────────────
 
 export const routeInbound = internalMutation({
-    args: { address: v.string(), from: v.string(), messageId: v.string(), subject: v.string(), text: v.string() },
-    returns: v.union(v.literal("queued"), v.literal("unknown"), v.literal("not_owner"), v.literal("duplicate")),
-    handler: async (ctx, { address, from, messageId, subject, text }) => {
+    args: {
+        address: v.string(),
+        from: v.string(),
+        fromName: v.string(),
+        messageId: v.string(),
+        subject: v.string(),
+        text: v.string(),
+        automated: v.boolean(),
+    },
+    returns: v.union(v.literal("queued"), v.literal("unknown"), v.literal("over_cap"), v.literal("duplicate")),
+    handler: async (ctx, { address, from, fromName, messageId, subject, text, automated }) => {
         const row = await ctx.db
             .query("bhai_mail_addresses")
             .withIndex("by_address", (q) => q.eq("address", address))
             .first();
         if (!row) return "unknown" as const;
-        if (from.toLowerCase() !== row.ownerEmail) return "not_owner" as const;
         const seen = await ctx.db
             .query("bhai_mail_inbox")
             .withIndex("by_messageId", (q) => q.eq("messageId", messageId))
             .first();
         if (seen) return "duplicate" as const;
+        const fromOwner = from.toLowerCase() === row.ownerEmail;
+        if (fromOwner) {
+            await ctx.db.patch(row._id, { lastInboundAt: Date.now() });
+        } else if (!automated) {
+            // Strangers each cost the owner an agent run: cap them per day.
+            const day = new Date().toISOString().slice(0, 10);
+            const count = row.othersDay === day ? (row.othersCount ?? 0) : 0;
+            if (count >= OTHERS_INBOUND_PER_DAY) return "over_cap" as const;
+            await ctx.db.patch(row._id, { othersDay: day, othersCount: count + 1 });
+        }
         await ctx.db.insert("bhai_mail_inbox", {
             otplessUserId: row.otplessUserId,
             messageId,
+            from: from.toLowerCase(),
+            fromName: fromName.slice(0, 120),
+            fromOwner,
+            automated,
             subject: subject.slice(0, 300),
             text: text.slice(0, MAX_TEXT),
             receivedAt: Date.now(),
         });
-        await ctx.db.patch(row._id, { lastInboundAt: Date.now() });
         return "queued" as const;
     },
 });
 
+const inboxItem = v.object({
+    id: v.string(),
+    messageId: v.string(),
+    from: v.string(),
+    fromName: v.string(),
+    fromOwner: v.boolean(),
+    automated: v.boolean(),
+    subject: v.string(),
+    text: v.string(),
+    receivedAt: v.number(),
+});
+
 export const inboxFor = internalQuery({
     args: { otplessUserId: v.string() },
-    returns: v.array(
-        v.object({
-            id: v.string(),
-            messageId: v.string(),
-            subject: v.string(),
-            text: v.string(),
-            receivedAt: v.number(),
-        }),
-    ),
+    returns: v.array(inboxItem),
     handler: async (ctx, { otplessUserId }) => {
         const rows = await ctx.db
             .query("bhai_mail_inbox")
@@ -107,10 +140,31 @@ export const inboxFor = internalQuery({
         return rows.map((r) => ({
             id: r._id,
             messageId: r.messageId,
+            from: r.from ?? "",
+            fromName: r.fromName ?? "",
+            fromOwner: r.fromOwner ?? false,
+            automated: r.automated ?? false,
             subject: r.subject,
             text: r.text,
             receivedAt: r.receivedAt,
         }));
+    },
+});
+
+// Daily recipient cap: true (and recorded) if this send fits.
+export const reserveSend = internalMutation({
+    args: { otplessUserId: v.string(), recipients: v.number() },
+    returns: v.boolean(),
+    handler: async (ctx, { otplessUserId, recipients }) => {
+        const since = Date.now() - DAY_MS;
+        const recent = await ctx.db
+            .query("bhai_mail_sends")
+            .withIndex("by_otplessUserId_and_at", (q) => q.eq("otplessUserId", otplessUserId).gt("at", since))
+            .take(SEND_RECIPIENTS_PER_DAY + 1);
+        const used = recent.reduce((n, r) => n + r.recipients, 0);
+        if (used + recipients > SEND_RECIPIENTS_PER_DAY) return false;
+        await ctx.db.insert("bhai_mail_sends", { otplessUserId, at: Date.now(), recipients });
+        return true;
     },
 });
 

@@ -2,7 +2,12 @@
 // Pure helpers for Bhai's own email (bhaiMail.ts, bhaiMailNode.ts). No Convex
 // functions here, so both runtimes can import it.
 
-export const SEND_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+export const DAY_MS = 24 * 60 * 60 * 1000;
+// Bhai can email anyone, so the company domain is protected by caps instead.
+export const SEND_RECIPIENTS_PER_DAY = 100;
+export const MAX_RECIPIENTS_PER_EMAIL = 10;
+// Mail from people other than the owner each costs an agent run.
+export const OTHERS_INBOUND_PER_DAY = 200;
 export const MAX_TEXT = 20_000;
 
 export function mailDomain(): string {
@@ -47,4 +52,38 @@ export function stripQuoted(text: string): string {
         out.push(line);
     }
     return out.join("\n").trim().slice(0, MAX_TEXT);
+}
+
+// "a@x.com, B <b@y.com>" → ["a@x.com", "b@y.com"]; null if any part isn't an address.
+export function parseRecipients(list: unknown): string[] | null {
+    if (typeof list !== "string" || !list.trim()) return [];
+    const out: string[] = [];
+    for (const part of list.split(",")) {
+        const m = /<([^>]+)>/.exec(part);
+        const addr = (m ? m[1] : part).trim().toLowerCase();
+        if (!isEmail(addr)) return null;
+        if (!out.includes(addr)) out.push(addr);
+    }
+    return out;
+}
+
+// Newsletters, auto-replies, bounces and no-reply senders: Bhai never answers
+// these (no mail loops, no replies to robots). headers are lower-cased names.
+export function isAutomatedMail(from: string, headers: Record<string, string>): boolean {
+    const auto = (headers["auto-submitted"] || "").toLowerCase();
+    if (auto && auto !== "no") return true;
+    if (/^(bulk|junk|list|auto_reply)$/i.test((headers.precedence || "").trim())) return true;
+    if (headers["list-unsubscribe"] || headers["list-id"] || headers["x-autoreply"] || headers["x-autorespond"])
+        return true;
+    return /^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounces?|notifications?)[@+.-]/i.test(from);
+}
+
+// Raw header block → { lower-case name: value } (folded lines joined).
+export function parseHeaderBlock(raw: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const line of raw.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
+        const i = line.indexOf(":");
+        if (i > 0) out[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+    }
+    return out;
 }

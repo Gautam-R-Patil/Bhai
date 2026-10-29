@@ -958,16 +958,16 @@
                                 <div class="channel-wizard-step active" id="wizStepEmail1">
                                     <h4>Bhai's own email</h4>
                                     <div id="bhaiMailSetup">
-                                        <p>Bhai gets its own address like <code>you.bhai@xagilab.com</code>. Email it from your address and it replies. It only reads mail from you.</p>
+                                        <p>Bhai gets its own address like <code>you.bhai@xagilab.com</code>. Anyone can email it and it replies; it can also send email for you. Mail from your address gets the full Bhai, everyone else gets a polite assistant that keeps your things private.</p>
                                         <div class="input-group">
-                                            <label class="input-label">Your email</label>
+                                            <label class="input-label">Your email (so Bhai knows it's you)</label>
                                             <input class="clean-input" type="email" id="chBhaiMailOwner" placeholder="you@example.com" autocomplete="off">
                                         </div>
                                         <button class="wizard-btn wizard-btn-success" id="bhaiMailBtn" onclick="claimBhaiMail()">Get Bhai's email</button>
                                     </div>
                                     <div id="bhaiMailReady" style="display:none;">
                                         <p>Bhai's address: <code id="bhaiMailAddress"></code> <button class="copy-inline-btn" onclick="copyText(document.getElementById('bhaiMailAddress').textContent)">Copy</button></p>
-                                        <p>It answers mail from <strong id="bhaiMailOwnerShown"></strong>.</p>
+                                        <p>Mail from <strong id="bhaiMailOwnerShown"></strong> is you; anyone else is a guest.</p>
                                         <a class="wizard-link" id="bhaiMailWrite" target="_blank">Write to Bhai</a>
                                     </div>
                                     <div class="channel-test-result" id="bhaiMailStatus"></div>

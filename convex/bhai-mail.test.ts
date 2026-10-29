@@ -28,3 +28,26 @@ describe("Bhai's own email", () => {
         expect(isEmail("a b@example.com")).toBe(false);
     });
 });
+
+describe("Bhai's email with everyone", () => {
+    it("parses recipient lists and refuses junk", async () => {
+        const { parseRecipients } = await import("./bhaiMailHelpers");
+        expect(parseRecipients("A@x.com, Bee <b@y.com>, a@x.com")).toEqual(["a@x.com", "b@y.com"]);
+        expect(parseRecipients("")).toEqual([]);
+        expect(parseRecipients(undefined)).toEqual([]);
+        expect(parseRecipients("a@x.com, not-an-email")).toBe(null);
+    });
+
+    it("spots mail Bhai must never answer", async () => {
+        const { isAutomatedMail, parseHeaderBlock } = await import("./bhaiMailHelpers");
+        const h = (raw: string) => parseHeaderBlock(raw);
+        expect(isAutomatedMail("friend@x.com", h("Subject: hi"))).toBe(false);
+        expect(isAutomatedMail("friend@x.com", h("Auto-Submitted: auto-replied"))).toBe(true);
+        expect(isAutomatedMail("friend@x.com", h("Auto-Submitted: no"))).toBe(false);
+        expect(isAutomatedMail("news@x.com", h("List-Unsubscribe:\r\n <mailto:u@x.com>"))).toBe(true);
+        expect(isAutomatedMail("x@y.com", h("Precedence: bulk"))).toBe(true);
+        expect(isAutomatedMail("MAILER-DAEMON@x.com", {})).toBe(true);
+        expect(isAutomatedMail("no-reply@x.com", {})).toBe(true);
+        expect(isAutomatedMail("noreen@x.com", {})).toBe(false);
+    });
+});

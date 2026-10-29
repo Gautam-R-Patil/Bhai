@@ -9,7 +9,16 @@ import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
-import { mailDomain, pickBhaiRecipient, stripQuoted } from "./bhaiMailHelpers";
+import { isAutomatedMail, mailDomain, parseHeaderBlock, pickBhaiRecipient, stripQuoted } from "./bhaiMailHelpers";
+
+const AUTOMATION_HEADERS = [
+    "auto-submitted",
+    "precedence",
+    "list-unsubscribe",
+    "list-id",
+    "x-autoreply",
+    "x-autorespond",
+];
 
 const PER_RUN = 20;
 const MAX_PART_BYTES = 200_000;
@@ -97,13 +106,15 @@ export const poll = internalAction({
                     uid: number;
                     to: string;
                     from: string;
+                    fromName: string;
+                    automated: boolean;
                     messageId: string;
                     subject: string;
                     structure: Part;
                 }> = [];
                 for await (const msg of client.fetch(
                     `${cursor.lastUid + 1}:*`,
-                    { uid: true, envelope: true, bodyStructure: true },
+                    { uid: true, envelope: true, bodyStructure: true, headers: AUTOMATION_HEADERS },
                     { uid: true },
                 )) {
                     if (msg.uid <= cursor.lastUid) continue; // "N:*" returns the last message when nothing is newer
@@ -112,10 +123,16 @@ export const poll = internalAction({
                         [...(env?.to ?? []), ...(env?.cc ?? [])].map((a) => a.address ?? ""),
                         domain,
                     );
+                    const from = (env?.from?.[0]?.address ?? "").toLowerCase();
+                    const headers = parseHeaderBlock(msg.headers ? msg.headers.toString("utf-8") : "");
                     found.push({
                         uid: msg.uid,
                         to: to ?? "",
-                        from: env?.from?.[0]?.address ?? "",
+                        from,
+                        fromName: env?.from?.[0]?.name ?? "",
+                        // Mail Bhai itself sent (one Bhai writing to another) is never
+                        // answered either, so two Bhais can't loop.
+                        automated: isAutomatedMail(from, headers) || from === cfg.user.toLowerCase(),
                         messageId: env?.messageId || `uid-${uidValidity}-${msg.uid}`,
                         subject: env?.subject ?? "",
                         structure: msg.bodyStructure as Part,
@@ -138,12 +155,14 @@ export const poll = internalAction({
                     const result = await ctx.runMutation(internal.bhaiMail.routeInbound, {
                         address: m.to,
                         from: m.from,
+                        fromName: m.fromName,
+                        automated: m.automated,
                         messageId: m.messageId,
                         subject: m.subject,
                         text: stripQuoted(raw) || "(empty email)",
                     });
-                    // Bhai mail is copied into its owner's queue (or isn't theirs to read);
-                    // either way it doesn't stay in the shared mailbox.
+                    // Bhai mail is copied into its user's queue (or dropped over the
+                    // daily cap); either way it doesn't stay in the shared mailbox.
                     if (result !== "unknown") routed.push(m.uid);
                 }
                 if (routed.length) await client.messageDelete(routed.join(","), { uid: true });
@@ -161,13 +180,14 @@ export const poll = internalAction({
 export const deliver = internalAction({
     args: {
         replyTo: v.string(),
-        to: v.string(),
+        to: v.array(v.string()),
+        cc: v.optional(v.array(v.string())),
         subject: v.string(),
         text: v.string(),
         inReplyTo: v.optional(v.string()),
     },
     returns: v.object({ ok: v.boolean(), error: v.optional(v.string()) }),
-    handler: async (_ctx, { replyTo, to, subject, text, inReplyTo }) => {
+    handler: async (_ctx, { replyTo, to, cc, subject, text, inReplyTo }) => {
         const cfg = mailConfig();
         if (!cfg) return { ok: false, error: "not_configured" };
         const transport = nodemailer.createTransport({
@@ -183,6 +203,7 @@ export const deliver = internalAction({
                 from: { name: "Bhai", address: cfg.user },
                 replyTo,
                 to,
+                ...(cc?.length ? { cc } : {}),
                 subject,
                 text,
                 ...(inReplyTo ? { inReplyTo, references: inReplyTo } : {}),

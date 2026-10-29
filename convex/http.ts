@@ -168,7 +168,7 @@ async function buildResponse(
 import { getCreditCost } from "./credit_cost.js";
 import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
 import { isBotUsername, managedBotLink } from "./telegramManaged.js";
-import { isEmail, SEND_WINDOW_MS } from "./bhaiMailHelpers.js";
+import { isEmail, MAX_RECIPIENTS_PER_EMAIL, parseRecipients, SEND_RECIPIENTS_PER_DAY } from "./bhaiMailHelpers.js";
 
 // ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
 // Isolated subsystem — no coupling to session/credit machinery. Lives next
@@ -3971,7 +3971,8 @@ http.route({
   }),
 });
 
-// Bot: email the owner (and only the owner, and only if they wrote recently).
+// Bot: send an email from the user's Bhai address. No "to" = the owner.
+// Anyone can be written to, so recipients are capped per email and per day.
 http.route({
   path: "/api/mail/send",
   method: "POST",
@@ -3983,12 +3984,24 @@ http.route({
     const reply = (data: unknown, status = 200) => buildResponse(data, status, encrypted, account.sharedKey, request);
     const mine = await ctx.runQuery(internal.bhaiMail.addressFor, { otplessUserId: account.otplessUserId });
     if (!mine) return await reply({ ok: false, error: "no_address" }, 404);
-    if (Date.now() - mine.lastInboundAt > SEND_WINDOW_MS) return await reply({ ok: false, error: "owner_has_not_written_recently" }, 403);
+    const to = parseRecipients(body?.to);
+    const cc = parseRecipients(body?.cc);
+    if (!to || !cc) return await reply({ ok: false, error: "bad_recipient" }, 400);
+    const recipients = to.length ? to : [mine.ownerEmail];
+    if (recipients.length + cc.length > MAX_RECIPIENTS_PER_EMAIL) {
+      return await reply({ ok: false, error: `at most ${MAX_RECIPIENTS_PER_EMAIL} recipients per email` }, 400);
+    }
     const text = typeof body?.text === "string" ? body.text.slice(0, 50_000) : "";
     if (!text.trim()) return await reply({ ok: false, error: "empty" }, 400);
+    const fits = await ctx.runMutation(internal.bhaiMail.reserveSend, {
+      otplessUserId: account.otplessUserId,
+      recipients: recipients.length + cc.length,
+    });
+    if (!fits) return await reply({ ok: false, error: `daily limit of ${SEND_RECIPIENTS_PER_DAY} recipients reached` }, 429);
     const result = await ctx.runAction(internal.bhaiMailNode.deliver, {
       replyTo: mine.address,
-      to: mine.ownerEmail,
+      to: recipients,
+      ...(cc.length ? { cc } : {}),
       subject: typeof body?.subject === "string" && body.subject.trim() ? body.subject.slice(0, 300) : "From Bhai",
       text,
       ...(typeof body?.inReplyTo === "string" ? { inReplyTo: body.inReplyTo.slice(0, 500) } : {}),

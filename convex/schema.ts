@@ -443,22 +443,35 @@ export default defineSchema({
   bhai_mail_addresses: defineTable({
     otplessUserId: v.string(),
     address: v.string(), // <name>.bhai@<domain>, lower-case
-    ownerEmail: v.string(), // the only address Bhai reads from and writes to
-    lastInboundAt: v.number(), // last mail from the owner; gates Bhai writing
+    ownerEmail: v.string(), // mail from here is the owner (full Bhai); anyone else gets guest mode
+    lastInboundAt: v.number(), // last mail from the owner
+    othersDay: v.optional(v.string()), // YYYY-MM-DD of othersCount
+    othersCount: v.optional(v.number()), // non-owner mail queued that day (capped)
   })
     .index("by_address", ["address"])
     .index("by_otplessUserId", ["otplessUserId"]),
 
-  // Owner mail waiting for their Bhai; deleted when the Bhai acks it.
+  // Mail waiting for a user's Bhai; deleted when the Bhai acks it.
   bhai_mail_inbox: defineTable({
     otplessUserId: v.string(),
     messageId: v.string(),
+    from: v.optional(v.string()),
+    fromName: v.optional(v.string()),
+    fromOwner: v.optional(v.boolean()),
+    automated: v.optional(v.boolean()), // newsletter/auto-reply: never answered
     subject: v.string(),
     text: v.string(),
     receivedAt: v.number(),
   })
     .index("by_otplessUserId", ["otplessUserId"])
     .index("by_messageId", ["messageId"]),
+
+  // Who each Bhai emailed, for the daily recipient cap.
+  bhai_mail_sends: defineTable({
+    otplessUserId: v.string(),
+    at: v.number(),
+    recipients: v.number(),
+  }).index("by_otplessUserId_and_at", ["otplessUserId", "at"]),
 
   // Where the catch-all mailbox poll got to (one row, name "inbox").
   bhai_mail_cursor: defineTable({
