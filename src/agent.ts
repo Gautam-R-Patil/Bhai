@@ -2215,9 +2215,62 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // starved its timeout (a 5s budget took 15s on "… my code doesn't build.
             // roast me"), so they start once routing settles and are skipped on a
             // chat-lane turn. Memory retrieval below does not wait for either; the
-            // parts are spliced back in at this position before the context cap.
+            // parts go last, so the context cap cuts them before core memory.
             const buildCodingContext = async (): Promise<string[]> => {
                 const parts: string[] = [];
+                // ── Coding complexity classification ──
+                // Inject a short reminder telling the agent which flow to
+                // follow: trivial skips design-docs, standard implements
+                // directly with Pro tier, complex triggers the full PRD →
+                // approval → walkthrough ceremony.
+                try {
+                    const { classifyCodingComplexity } = await import("./model-router.js");
+                    const c = classifyCodingComplexity(userMessage);
+                    if (c === "complex") {
+                        parts.push(
+                            '<coding_complexity level="complex">\n' +
+                                "This task is classified as COMPLEX (multi-file / architectural / new-system / high-stakes).\n" +
+                                "YOU MUST follow the full flow in prompts/coding.md §Complex coding:\n" +
+                                "  1. generate_design_docs → auto-enters awaiting_approval mode\n" +
+                                "  2. render_md_to_pdf (TG/WA) or deliver MD (overlay/Discord/Slack)\n" +
+                                "  3. Wait for the user to approve, then call approve_design_docs\n" +
+                                "  4. Implement on Pro tier\n" +
+                                "  5. demo_project (if runnable) → generate_walkthrough → deliver with screenshots/recording\n" +
+                                "Do NOT skip Phase 1 — the tool machinery will refuse code edits until approval lands.\n" +
+                                "</coding_complexity>",
+                        );
+                    } else if (c === "trivial") {
+                        parts.push(
+                            '<coding_complexity level="trivial">\n' +
+                                "This is a trivial edit (one-liner / typo / rename / log statement). Skip the design-docs flow and implement directly. Light tier is acceptable.\n" +
+                                "</coding_complexity>",
+                        );
+                    } else {
+                        parts.push(
+                            '<coding_complexity level="standard">\n' +
+                                "Standard-scope coding task: debug / single feature / targeted fix. Implement directly on Pro tier. Skip design docs, but still finish with a short recap of what changed.\n" +
+                                "</coding_complexity>",
+                        );
+                    }
+                } catch {
+                    /* classifier unavailable — don't block the agent */
+                }
+
+                // ── Past coding-strategy recall (Phase 4E read side) ──
+                // For coding tasks, surface the code-category task-learnings separately
+                // from the general recall so previously-validated patterns aren't
+                // crowded out by browser/os/app entries when the top-3 is shared.
+                // Owner-only: playbooks quote the owner's own task messages.
+                try {
+                    const codingLearnings =
+                        channelContext?.isOwner === false
+                            ? ""
+                            : getTaskLearningsContext(rawUserMessage, "code", injectedLearnings);
+                    if (codingLearnings) parts.push(codingLearnings);
+                } catch {
+                    /* task-learnings not initialized */
+                }
+
                 // ── Project memory (ATLAS.md walk-up) ──
                 // Only for coding-classified queries to avoid injecting
                 // project conventions into chat/research flows.
@@ -2287,62 +2340,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 const safeArch = await guardContext("architecture", arch);
                 if (safeRepoMap) parts.push(safeRepoMap);
                 if (safeArch) parts.push(safeArch);
-
-                // ── Past coding-strategy recall (Phase 4E read side) ──
-                // For coding tasks, surface the code-category task-learnings ahead
-                // of the general recall so previously-validated patterns aren't
-                // crowded out by browser/os/app entries when the top-3 is shared.
-                // Owner-only: playbooks quote the owner's own task messages.
-                try {
-                    const codingLearnings =
-                        channelContext?.isOwner === false
-                            ? ""
-                            : getTaskLearningsContext(rawUserMessage, "code", injectedLearnings);
-                    if (codingLearnings) parts.push(codingLearnings);
-                } catch {
-                    /* task-learnings not initialized */
-                }
-
-                // ── Coding complexity classification ──
-                // Inject a short reminder telling the agent which flow to
-                // follow: trivial skips design-docs, standard implements
-                // directly with Pro tier, complex triggers the full PRD →
-                // approval → walkthrough ceremony.
-                try {
-                    const { classifyCodingComplexity } = await import("./model-router.js");
-                    const c = classifyCodingComplexity(userMessage);
-                    if (c === "complex") {
-                        parts.push(
-                            '<coding_complexity level="complex">\n' +
-                                "This task is classified as COMPLEX (multi-file / architectural / new-system / high-stakes).\n" +
-                                "YOU MUST follow the full flow in prompts/coding.md §Complex coding:\n" +
-                                "  1. generate_design_docs → auto-enters awaiting_approval mode\n" +
-                                "  2. render_md_to_pdf (TG/WA) or deliver MD (overlay/Discord/Slack)\n" +
-                                "  3. Wait for the user to approve, then call approve_design_docs\n" +
-                                "  4. Implement on Pro tier\n" +
-                                "  5. demo_project (if runnable) → generate_walkthrough → deliver with screenshots/recording\n" +
-                                "Do NOT skip Phase 1 — the tool machinery will refuse code edits until approval lands.\n" +
-                                "</coding_complexity>",
-                        );
-                    } else if (c === "trivial") {
-                        parts.push(
-                            '<coding_complexity level="trivial">\n' +
-                                "This is a trivial edit (one-liner / typo / rename / log statement). Skip the design-docs flow and implement directly. Light tier is acceptable.\n" +
-                                "</coding_complexity>",
-                        );
-                    } else {
-                        parts.push(
-                            '<coding_complexity level="standard">\n' +
-                                "Standard-scope coding task: debug / single feature / targeted fix. Implement directly on Pro tier. Skip design docs, but still finish with a short recap of what changed.\n" +
-                                "</coding_complexity>",
-                        );
-                    }
-                } catch {
-                    /* classifier unavailable — don't block the agent */
-                }
                 return parts;
             };
-            const codingInsertAt = parts.length;
             const codingPartsPromise: Promise<string[]> =
                 detectTaskType(rawUserMessage) !== "coding"
                     ? Promise.resolve([])
@@ -2706,7 +2705,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 - After this chat, you'll remember everything. Never re-introduce or re-ask.`);
             }
 
-            parts.splice(codingInsertAt, 0, ...(await codingPartsPromise));
+            parts.push(...(await codingPartsPromise));
 
             // Contact agents: drain ALL owner memory that was just collected and
             // replace with only the contact's own profile. The LLM must not have
