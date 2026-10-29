@@ -463,7 +463,7 @@ data/
 | Vision-nav models | OmniParser (captions) + UI-TARS (grounding) via Ollama; Qwen3.7-plus / Qwen3-VL-235B cloud-grounding fallback |
 | Desktop | Electron 40+ with `electron-builder`, `bytenode` protected modules |
 | Telegram | `grammy` 1.35 |
-| Discord | `discord.js` 14 + `@discordjs/voice` |
+| Discord | `discord.js` 14 |
 | Slack | `@slack/bolt` 4 (Socket Mode) |
 | Matrix | Matrix JS client |
 | WhatsApp | `@whiskeysockets/baileys` 7 |

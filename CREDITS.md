@@ -29,7 +29,6 @@ We gratefully acknowledge their authors and communities.
 |---------|---------|-------------|
 | [grammY](https://grammy.dev) (`grammy`) | MIT | Telegram Bot framework |
 | [discord.js](https://discord.js.org) (`discord.js`) | Apache-2.0 | Discord bot library |
-| [@discordjs/voice](https://github.com/discordjs/voice) (`@discordjs/voice`) | Apache-2.0 | Discord voice connections |
 | [Slack Bolt](https://slack.dev/bolt-js) (`@slack/bolt`) | MIT | Slack app framework |
 | [Baileys](https://github.com/WhiskeySockets/Baileys) (`@whiskeysockets/baileys`) | MIT | WhatsApp Web API |
 

@@ -115,7 +115,7 @@ Bhai runs as a single long-lived Node.js process on the user's own machine. This
 | Chrome bridge | Custom extension | MV3 | Real Chrome via WebSocket IPC |
 | Desktop app | Electron | ^40+ | macOS + Windows, auto-updater |
 | Telegram | grammY | ^1.35 | Bot API |
-| Discord | discord.js + voice | ^14.26 / ^0.19 | Text + voice |
+| Discord | discord.js | ^14.26 | Text |
 | Slack | @slack/bolt | ^4.7 | Socket Mode |
 | WhatsApp | @whiskeysockets/baileys | ^7.0-rc.9 | WhatsApp Web protocol |
 | Email | IMAPFlow + Nodemailer | ^1.2 / ^8.0 | IMAP read + SMTP send |
@@ -1006,7 +1006,7 @@ Bhai implements Google's Agent-to-Agent (A2A) protocol, which enables external s
 | Channel | Library | Notes |
 |---------|---------|-------|
 | Telegram | grammY ^1.35 | Sender ID allowlist; voice/image/video extraction; Markdown→HTML |
-| Discord | discord.js ^14 + @discordjs/voice | Text + voice; message content intent |
+| Discord | discord.js ^14 | Text; message content intent |
 | Slack | @slack/bolt ^4.7 | Socket Mode |
 | Matrix | matrix-js-sdk | Federated messaging |
 | WhatsApp | @whiskeysockets/baileys ^7 | 4 identity tiers (owner/contact/unknown/group); persona system; rate limit 50/hr, min 2s interval |
