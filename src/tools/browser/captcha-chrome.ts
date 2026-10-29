@@ -133,5 +133,9 @@ export function chromeDriver(page: any): CaptchaDriver {
             held = [];
             await play(gesture);
         },
+
+        async type(text) {
+            await cdp("Input.insertText", { text });
+        },
     };
 }

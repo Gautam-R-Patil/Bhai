@@ -31,7 +31,7 @@ const TILE_SEL = ["td.rc-imageselect-tile", ".task-image", ".task-grid .task", "
 const SUBMIT_SEL = ["#recaptcha-verify-button", ".button-submit"];
 const TICK_SEL = ["#recaptcha-anchor", "#checkbox"];
 const PROMPT_SEL = ".rc-imageselect-desc-wrapper,.rc-imageselect-desc-no-canonical,.prompt-text,h2";
-const GRID = 10; // rows A-J × columns 1-10
+export const GRID = 10; // rows A-J × columns 1-10
 const BLOCKED_JS = `(() => { const e = document.querySelector(".rc-doscaptcha-header-text"); return !!e && e.offsetParent !== null; })()`;
 
 // Visible widget frames in CSS px. The challenge frame exists before it opens, hidden.
@@ -60,10 +60,10 @@ const tilePrompt = (instruction: string, n: number) =>
 The image's ${n} tiles are numbered in red in their top-left corners. Which tiles match the instruction?
 Reply {"answer": [tile numbers], "unsolvable": false}. Use [] if none match. Set "unsolvable": true only if this is not a pick-the-tiles task.`;
 
-const gridPrompt = (instruction: string) =>
+export const gridPrompt = (instruction: string) =>
     `Challenge instruction: "${instruction || "read it from the image"}".
 A grid is drawn over the puzzle: rows A-J top to bottom, columns 1-10 left to right, and each cell is labelled (e.g. C4).
-To click things: name the cell at the centre of each one, {"answer": ["C4", ...]}.
+To click things: name the cell at the centre of each one, in the order the instruction asks, {"answer": ["C4", ...]}.
 To drag something (a piece, a slider): name where to grab it and where to drop it, {"drag": [["B2", "F7"]]}.
 Set "unsolvable": true if it needs typing or audio.`;
 
@@ -142,7 +142,7 @@ async function waitFor(check: () => Promise<boolean>, timeoutMs: number, everyMs
 }
 
 /** A point near the centre, not dead-centre every time. */
-const centre = (r: Rect): [number, number] => [
+export const centre = (r: Rect): [number, number] => [
     r.x + r.w * (0.4 + Math.random() * 0.2),
     r.y + r.h * (0.4 + Math.random() * 0.2),
 ];
@@ -198,6 +198,8 @@ export interface CaptchaDriver {
     click(x: number, y: number): Promise<void>;
     down(): Promise<void>;
     up(): Promise<void>;
+    /** Types into the focused field with real key input. */
+    type(text: string): Promise<void>;
 }
 
 /** Screenshots of the challenge at this many image pixels per CSS pixel. */
@@ -262,6 +264,7 @@ export function playwrightDriver(page: Page): CaptchaDriver | null {
         click: (x, y) => page.mouse.click(x, y),
         down: () => page.mouse.down(),
         up: () => page.mouse.up(),
+        type: (text) => page.keyboard.type(text, { delay: 30 }),
     };
 }
 
@@ -303,7 +306,7 @@ function overlaySvg(w: number, h: number, tiles: Rect[], grid: Rect): string {
  * Screenshot of the whole challenge frame (so the instruction shows), with the
  * numbered tiles, or the lettered grid over `grid` (page CSS px), drawn on.
  */
-async function snapshot(d: CaptchaDriver, frame: Rect, tiles: Rect[], grid: Rect) {
+export async function snapshot(d: CaptchaDriver, frame: Rect, tiles: Rect[], grid: Rect) {
     const png = await d.shot(frame);
     const img = await downscaleForVision(png, { maxSide: 1024 });
     if (!img.width) return null;
@@ -331,15 +334,17 @@ async function debugDump(image: string, text: string): Promise<void> {
     await writeFile(`${base}.txt`, text);
 }
 
-async function callModel(model: string, prompt: string, image: string): Promise<string | null> {
+async function callModel(model: string, prompt: string, image: string | null): Promise<string | null> {
     if (!_llm) return null;
     const messages: ChatCompletionMessageParam[] = [
         {
             role: "user",
-            content: [
-                { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: image } },
-            ],
+            content: image
+                ? [
+                      { type: "text", text: prompt },
+                      { type: "image_url", image_url: { url: image } },
+                  ]
+                : prompt,
         },
     ];
     let timer: NodeJS.Timeout | undefined;
@@ -359,7 +364,44 @@ async function callModel(model: string, prompt: string, image: string): Promise<
     }
 }
 
-/** One model's answer, or null (no reply, a refusal, nothing usable). */
+/**
+ * A typed answer (the characters in an image, the answer to a question, a picked number) from
+ * the models, voted the same way as tiles: the first two answer together, and when they
+ * differ the next one decides; with no majority, the higher-ranked model's answer.
+ */
+export async function askValue(prompt: string, image: string | null): Promise<string | null> {
+    const one = async (m: string): Promise<string | null> => {
+        const text = await callModel(m, prompt, image);
+        if (image) await debugDump(image, `${prompt}\n\n--- ${m} ---\n${text ?? "(no reply)"}`);
+        if (!text) return null;
+        try {
+            const v = (JSON.parse(extractJSON(text) ?? "") as Record<string, unknown>).text;
+            if (v !== undefined && v !== null && String(v).trim()) return String(v).trim();
+        } catch {
+            /* prose */
+        }
+        if (REFUSAL.test(text)) {
+            refusals.set(m, (refusals.get(m) ?? 0) + 1);
+            return null;
+        }
+        const plain = text
+            .trim()
+            .split("\n")[0]
+            .replace(/^["'`]|["'`]$/g, "")
+            .trim();
+        return plain.length && plain.length <= 40 ? plain : null;
+    };
+    const list = models();
+    const [a, b] = await Promise.all(list.slice(0, 2).map(one));
+    const same = (x: string | null, y: string | null) => x !== null && x === y;
+    if (same(a, b)) return a;
+    if (list.length < 3) return a ?? b;
+    const c = await one(list[2]);
+    if (same(c, a)) return a;
+    if (same(c, b)) return b;
+    return a ?? b ?? c;
+}
+
 async function askOne(model: string, prompt: string, image: string, kind: "tiles" | "grid"): Promise<Answer | null> {
     const text = await callModel(model, prompt, image);
     await debugDump(image, `${prompt}\n\n--- ${model} ---\n${text ?? "(no reply)"}`);
@@ -381,7 +423,7 @@ const sameTiles = (a: Answer, b: Answer) =>
  * answers (cells to click or drag) don't vote well, since two right answers can
  * name different cells, so those take the first usable answer down the list.
  */
-async function askModel(prompt: string, image: string, kind: "tiles" | "grid"): Promise<Answer | null> {
+export async function askModel(prompt: string, image: string, kind: "tiles" | "grid"): Promise<Answer | null> {
     const list = models();
     if (kind === "grid" || list.length < 2) {
         for (const m of list) {
@@ -404,7 +446,7 @@ async function askModel(prompt: string, image: string, kind: "tiles" | "grid"): 
     return { answer: [...count].filter(([, n]) => n >= 2).map(([t]) => t), drag: [], unsolvable: false };
 }
 
-async function click(d: CaptchaDriver, [x, y]: [number, number]) {
+export async function click(d: CaptchaDriver, [x, y]: [number, number]) {
     await d.move(x, y, 5);
     await d.click(x, y);
 }

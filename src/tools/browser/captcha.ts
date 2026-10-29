@@ -29,7 +29,19 @@ try {
     /* native not available */
 }
 
-export type CaptchaType = "recaptcha-v2" | "recaptcha-v3" | "hcaptcha" | "turnstile" | "none";
+export type CaptchaType =
+    | "recaptcha-v2"
+    | "recaptcha-v3"
+    | "hcaptcha"
+    | "turnstile"
+    // Form-style checks Bhai reads and fills itself (captcha-forms.ts)
+    | "image-text"
+    | "text-question"
+    | "click-image"
+    | "rotate"
+    // A vendor Bhai can't solve itself (siteKey holds its name): detected so it goes to the owner
+    | "other"
+    | "none";
 
 // ─── Convex-backed key loader ─────────────────────────────────────────────
 // CAPTCHA API keys are stored as Convex environment variables (never bundled
@@ -116,7 +128,12 @@ export async function detectCaptcha(
                 /* javascript-obfuscator:enable */ undefined,
             )) as string;
             const result = nativeClassifyCaptcha(html);
-            if (result.kind === "none" && result.confidence === 0) {
+            // The classifier only knows the big widgets: trust its "none" only when the page
+            // doesn't so much as mention a check (Enterprise, text and vendor CAPTCHAs).
+            const mentions = /captcha|geetest|arkose|funcaptcha|awswaf|turnstile|challenge-form|just a moment/i.test(
+                html,
+            );
+            if (result.kind === "none" && result.confidence === 0 && !mentions) {
                 return { type: "none", siteKey: null }; // definitively no CAPTCHA
             }
         } catch {
@@ -167,8 +184,75 @@ export async function detectCaptcha(
             if (rcV3) {
                 return { type: "recaptcha-v3", siteKey: rcV3.match(/render=([^&]+)/)?.[1] ?? null };
             }
-            // Any other reCAPTCHA widget (invisible v2, a challenge frame)
-            if (rcFrames.length || rcWidget) return rcV2;
+            // Invisible v2: only its picture challenge, once it pops up, needs anyone. Until then
+            // it's like v3 (and often passes by itself), so it's reported as that.
+            const challengeUp = rcFrames.some((f) => {
+                const r = f.getBoundingClientRect();
+                return (
+                    (f.getAttribute("src") ?? "").includes("/bframe") &&
+                    r.width > 100 &&
+                    r.bottom > 0 &&
+                    getComputedStyle(f).visibility !== "hidden"
+                );
+            });
+            if (challengeUp) return rcV2;
+            if (rcFrames.length || rcWidget) return { type: "recaptcha-v3", siteKey: rcV2.siteKey };
+            // Cloudflare's full-page check ("Just a moment…" / "Verify you are human")
+            if (
+                /^(just a moment|attention required)/i.test(document.title) ||
+                document.querySelector("#challenge-form,#challenge-stage,[id^='cf-chl-widget']")
+            ) {
+                return { type: "turnstile", siteKey: null };
+            }
+            // Vendors Bhai can't solve itself: detected so they reach the owner, never missed.
+            const vendors: [string, string][] = [
+                ["geetest", "[class*='geetest_'],[class^='geetest'],iframe[src*='geetest']"],
+                ["arkose", "iframe[src*='arkoselabs'],iframe[src*='funcaptcha'],[id*='funcaptcha']"],
+                ["aws-waf", "awswaf-captcha,iframe[src*='awswaf'],[id*='aws-waf']"],
+                ["mtcaptcha", ".mtcaptcha,iframe[src*='mtcaptcha']"],
+                ["keycaptcha", "[id*='keycaptcha'],[class*='keycaptcha'],iframe[src*='keycaptcha']"],
+                ["lemin", "[id^='lemin-cropped-captcha'],iframe[src*='leminnow']"],
+                ["friendly-captcha", ".frc-captcha"],
+                ["yandex-smartcaptcha", ".smart-captcha,iframe[src*='smartcaptcha']"],
+                ["solvemedia", "[id*='adcopy'],iframe[src*='solvemedia']"],
+            ];
+            const vendor = vendors.find(([, sel]) => document.querySelector(sel));
+            if (vendor) return { type: "other", siteKey: vendor[0] };
+            // Form-style checks: an image named captcha, a field for the answer, rotate buttons.
+            // No named helper functions in here: the bundler wraps them in a __name() the page lacks.
+            const field = Array.from(document.querySelectorAll("input")).find((i) => {
+                const r = i.getBoundingClientRect();
+                return (
+                    /^(text|)$/i.test(i.type || "") &&
+                    /captcha|verification code|security code|enter the (characters|code|text)/i.test(
+                        `${i.name} ${i.id} ${i.placeholder || ""} ${i.labels?.[0]?.textContent || ""}`,
+                    ) &&
+                    r.width > 20 &&
+                    r.height > 10
+                );
+            });
+            const img = Array.from(document.images).find((i) => {
+                const r = i.getBoundingClientRect();
+                // In a form and not a logo: sites (and CAPTCHA vendors) show "captcha" logos everywhere.
+                return (
+                    /captcha/i.test(`${i.src} ${i.id} ${i.className} ${i.alt}`) &&
+                    !/logo|icon/i.test(`${i.alt} ${i.className}`) &&
+                    !!i.closest("form") &&
+                    r.width > 20 &&
+                    r.height > 10
+                );
+            });
+            // No token shows a form check is done: its field holds an answer, or the image is the one
+            // Bhai answered (captcha-forms marks it; a reload or a new image clears that).
+            if (field ? !!field.value : img?.getAttribute("data-bhai-answered") === img?.src) {
+                return { type: "none", siteKey: null };
+            }
+            if (img && document.querySelector("button[class*='rotate' i],[class*='rotate' i] button")) {
+                return { type: "rotate", siteKey: null };
+            }
+            if (img && field) return { type: "image-text", siteKey: null };
+            if (field) return { type: "text-question", siteKey: null };
+            if (img) return { type: "click-image", siteKey: null };
             return { type: "none", siteKey: null };
         },
         /* javascript-obfuscator:enable */ undefined,
@@ -396,9 +480,12 @@ async function injectToken(page: any, type: CaptchaType, token: string): Promise
 // means passed. The widget box (or iframe) gives where to click.
 const TURNSTILE_JS = `(() => {
   const tok = [...document.querySelectorAll('input[name="cf-turnstile-response"]')].some((e) => !!e.value);
-  const w = document.querySelector('iframe[src*="challenges.cloudflare.com"]') || document.querySelector('.cf-turnstile,[data-cf-turnstile]');
+  // The first one with a box: [id*=turnstile] also matches Cloudflare's <script id="cf-turnstile-script…">.
+  const w = [...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"],.cf-turnstile,[data-cf-turnstile],#cf-turnstile,div[id*="turnstile" i],#challenge-stage')].find((e) => e.getBoundingClientRect().width > 30);
+  const field = document.querySelector('input[name="cf-turnstile-response"]');
   const r = w && w.getBoundingClientRect();
-  return { tok, present: !!w, box: r && r.width > 30 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null };
+  // An empty response field means the widget is still there even if its box can't be found.
+  return { tok, present: !!w || !!field, box: r && r.width > 30 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null };
 })()`;
 type TurnstileState = { tok: boolean; present: boolean; box: { x: number; y: number; w: number; h: number } | null };
 
@@ -756,6 +843,23 @@ export async function handleCaptchaIfPresent(
                 method: how === "passive" ? "passive_stealth" : "turnstile_click",
             };
     }
+
+    // ── Form-style checks: read the image / question with the vision models and fill it in ──
+    if (
+        info.type === "image-text" ||
+        info.type === "text-question" ||
+        info.type === "click-image" ||
+        info.type === "rotate"
+    ) {
+        const driver = captchaDriver(page);
+        const { solveFormCaptcha } = await import("./captcha-forms.js");
+        if (driver && (await solveFormCaptcha(page, info.type, driver).catch(() => false))) {
+            return { handled: true, type: info.type, method: "vision_form" };
+        }
+        return { handled: false, type: info.type, method: "unsolved" };
+    }
+    // A vendor Bhai can't solve: straight to the owner.
+    if (info.type === "other") return { handled: false, type: info.type, method: "unsolved" };
 
     // ── Tier 2: reCAPTCHA v2 audio bypass (free, no API key needed) ──────────
     if (info.type === "recaptcha-v2") {

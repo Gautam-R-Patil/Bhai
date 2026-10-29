@@ -168,3 +168,4 @@ describe("clearCaptchaIfAny on a page it already gave up on", () => {
         waitHandler.mockResolvedValue(JSON.stringify({ success: true, status: "cleared" }));
     });
 });
+

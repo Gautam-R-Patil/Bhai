@@ -101,6 +101,7 @@ desktop/hostinger-upload/
 !src/tools/browser/captcha-detect.test.ts
 !src/tools/browser/captcha-vision.test.ts
 !src/tools/browser/captcha-chrome.test.ts
+!src/tools/browser/captcha-forms.test.ts
 !src/tools/turn-signal.test.ts
 !src/tools/browser/page-callbacks.test.ts
 !src/tools/browser/bridge-ready.test.ts
