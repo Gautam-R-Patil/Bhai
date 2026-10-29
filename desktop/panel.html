@@ -718,7 +718,7 @@
                             </label>
                         </div>
                         <div class="settings-fields" id="chFieldsWhatsapp" style="display:none;">
-                            <div class="wizard-progress" id="wizardProgressWhatsapp">
+                            <div class="wizard-progress" id="wizardProgressWhatsapp" style="display:none;">
                                 <div class="wizard-progress-step active" id="wizProgWhatsapp1">1</div>
                                 <div class="wizard-progress-line" id="wizLineWhatsapp1"></div>
                                 <div class="wizard-progress-step" id="wizProgWhatsapp2">2</div>
@@ -732,18 +732,20 @@
                             <div class="channel-wizard" id="wizardWhatsapp">
                                 <!-- Step 1: QR Code -->
                                 <div class="channel-wizard-step active" id="wizStepWhatsapp1">
-                                    <h4>Scan the QR code</h4>
-                                    <p>On your phone open WhatsApp → Settings → Linked Devices → Link a Device, and scan the code below.</p>
+                                    <h4>Link Bhai's number</h4>
+                                    <p>On the phone with Bhai's WhatsApp number, open WhatsApp → Settings → Linked Devices → Link a Device, and scan this code.</p>
                                     <div id="waQRArea">
                                         <div class="qr-waiting">Starting WhatsApp… the code appears here in a few seconds.</div>
                                     </div>
                                 </div>
                                 <!-- Step 2: Connected -->
                                 <div class="channel-wizard-step" id="wizStepWhatsapp2">
-                                    <h4>Connected!</h4>
-                                    <div class="qr-connected" id="waConnectedInfo">WhatsApp is paired and ready to use.</div>
+                                    <h4>You're all set</h4>
+                                    <p>Message Bhai's number from your phone anytime; it answers there.</p>
+                                    <div><a class="wizard-link" id="waChatLink" target="_blank" style="display:none;">Open chat with Bhai</a></div>
                                     <div class="wizard-nav">
-                                        <button class="wizard-btn wizard-btn-primary" onclick="startWhatsAppOwnerStep()">Set Up Owner Access</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="startWhatsAppOwnerStep()">Add another owner</button>
+                                        <button class="wizard-btn wizard-btn-secondary" onclick="goToWizardStep('whatsapp', 4); loadWhatsAppOwners(); loadWhatsAppPersona();">Owners and other people</button>
                                     </div>
                                 </div>
                                 <!-- Step 3: Verify Your Number (OTP) -->
@@ -2496,10 +2498,11 @@
         if (atlas.onWhatsAppOTP) {
             atlas.onWhatsAppOTP((data) => {
                 if (data.verified) {
-                    // Owner verified — refresh list and advance to step 4
-                    loadWhatsAppOwners();
-                    goToWizardStep('whatsapp', 4);
-                    showToast('Owner verified successfully!');
+                    // Owner verified: done. Owners and personality stay optional.
+                    goToWizardStep('whatsapp', 2);
+                    showToast("WhatsApp is ready. You're the owner.");
+                } else if (data.self && !data.code) {
+                    setWhatsAppChatLink(data.self);
                 } else if (data.code) {
                     showWhatsAppOTP(data);
                 }
@@ -2534,6 +2537,12 @@
                 }
                 timerEl.textContent = 'Expires in ' + Math.floor(remaining / 60) + ':' + String(remaining % 60).padStart(2, '0');
             }, 1000);
+        }
+
+        function setWhatsAppChatLink(number) {
+            const link = document.getElementById('waChatLink');
+            link.href = 'https://wa.me/' + encodeURIComponent(number);
+            link.style.display = 'inline-flex';
         }
 
         function startWhatsAppOwnerStep() {
@@ -2618,6 +2627,7 @@
                 document.getElementById('chToggleWhatsapp').checked = !!wa.enabled;
                 document.getElementById('chFieldsWhatsapp').style.display = wa.enabled ? 'block' : 'none';
                 const waConnected = wa.status === 'connected' || (channelStatuses && channelStatuses.whatsapp === 'connected');
+                if (wa.selfNumber) setWhatsAppChatLink(wa.selfNumber);
                 document.getElementById('chStatusWhatsapp').className = 'channel-status-dot ' + (wa.enabled ? (waConnected ? 'connected' : 'disconnected') : 'disabled');
 
                 if (wa.enabled) {
@@ -2626,10 +2636,7 @@
                         try {
                             const owners = await atlas.waGetOwners();
                             if (owners && owners.length > 0) {
-                                // Has owners — show owner management (step 4)
-                                goToWizardStep('whatsapp', 4);
-                                loadWhatsAppOwners();
-                                loadWhatsAppPersona();
+                                goToWizardStep('whatsapp', 2);
                             } else {
                                 startWhatsAppOwnerStep();
                             }

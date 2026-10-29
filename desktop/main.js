@@ -1421,7 +1421,10 @@ async function startBot() {
 
             // WhatsApp OTP forwarding
             const selfMatch = msg.match(/##ATLAS_WA_SELF##(\d+)##END_SELF##/);
-            if (selfMatch) waSelfNumber = selfMatch[1];
+            if (selfMatch) {
+                waSelfNumber = selfMatch[1];
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("whatsapp-otp", { self: waSelfNumber });
+            }
             const otpMatch = msg.match(/##ATLAS_WA_OTP##(.+)##END_OTP##/);
             if (otpMatch) {
                 waOtpPayload(otpMatch[1]).then(p => {
@@ -5521,6 +5524,7 @@ ${body}`;
                     enabled: !!env.WHATSAPP_ALLOWED_JIDS,
                     jids: env.WHATSAPP_ALLOWED_JIDS || "",
                     status: channelStatuses.whatsapp || "disconnected",
+                    selfNumber: waSelfNumber,
                 },
                 discord: {
                     enabled: !!env.DISCORD_BOT_TOKEN,
