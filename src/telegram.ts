@@ -1149,7 +1149,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 clearLongTaskProgress();
 
                 clearTimeout(thinkingFallback);
-                if (controller.signal.aborted) {
+                // Aborted, or the agent decided no reply is needed: stay silent.
+                if (controller.signal.aborted || response.text.trim() === "[NO_REPLY]") {
                     await clearStatusMessage();
                     return;
                 }

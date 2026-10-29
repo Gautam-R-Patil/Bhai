@@ -432,6 +432,80 @@ function sanitizeAgentResponse(text: string): string {
         .trim();
 }
 
+/** Channels that stay silent when the whole reply is [NO_REPLY]; the overlay and the rest always answer. */
+const NO_REPLY_CHANNELS = new Set(["telegram", "whatsapp", "discord", "slack", "matrix", "email"]);
+
+/** The final reply as channels get it: an exact [NO_REPLY] on a silent-capable, user-typed turn survives sanitizing. */
+export function finalReplyText(raw: string, channelContext?: ChannelContext): string {
+    if (
+        raw.trim().toUpperCase() === "[NO_REPLY]" &&
+        channelContext &&
+        !channelContext.autonomous &&
+        NO_REPLY_CHANNELS.has(channelContext.channel)
+    ) {
+        return "[NO_REPLY]";
+    }
+    return sanitizeAgentResponse(raw);
+}
+
+/**
+ * Anti-giving-up guard: an action task the reply hands back to the user (or gives up on)
+ * right after a tool failure. Returns how many recent tool results failed when it should
+ * force a retry, else 0. A stuck report ([[STUCK]]) is the agreed hand-off, so never over it.
+ */
+export function antiGivingUpFailures(
+    messages: ChatCompletionMessageParam[],
+    lastUserText: string,
+    responseText: string,
+    totalToolCalls: number,
+): number {
+    if (takeStuckMarker(responseText).stuck) return 0;
+    const lower = responseText.toLowerCase();
+    const failures = messages.slice(-10).filter((m) => {
+        if (m.role !== "tool") return false;
+        const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        return (
+            txt.includes('"error"') ||
+            txt.includes('"success":false') ||
+            txt.includes("NOT_PLAYING") ||
+            txt.includes("NO_RESULTS") ||
+            txt.includes("failed")
+        );
+    }).length;
+    if (failures === 0 || totalToolCalls >= 15) return 0;
+    const isActionTask =
+        /\b(play|open|send|create|set|start|stop|run|install|build|find|show|take|click|type|write|download|upload|schedule|remind|pause|skip|next|search)\b/i.test(
+            lastUserText,
+        );
+    const isDelegatingToUser = [
+        "you can ",
+        "you should ",
+        "you need to ",
+        "you'll need to",
+        "go ahead and ",
+        "from there",
+        "i recommend you",
+    ].some((p) => lower.includes(p));
+    const isGivingUp = [
+        "want me to try",
+        "shall i try",
+        "something else?",
+        "another way",
+        "isn't finding",
+        "not finding",
+        "couldn't find",
+        "not in your library",
+        "not available",
+        "something's off",
+        "having trouble",
+        "doesn't seem",
+        "unable to",
+    ].some((p) => lower.includes(p));
+    // Substantial replies (>200 chars) delegating to the user are likely genuine instructions.
+    const fire = (isDelegatingToUser && isActionTask && responseText.length < 200) || isGivingUp;
+    return fire ? failures : 0;
+}
+
 // ── Milestone tool descriptions ───────────────
 
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
@@ -3617,86 +3691,15 @@ PLAN:`,
             // the user instead of trying alternative approaches → it's giving up.
             // If the agent is asking a DISAMBIGUATION question (no errors) → legitimate.
 
-            // Check if recent tool results had errors/failures
-            const recentToolMessages = [...messages].slice(-10);
-            const recentToolErrors = recentToolMessages.filter((m) => {
-                if (m.role !== "tool") return false;
-                const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-                return (
-                    txt.includes('"error"') ||
-                    txt.includes('"success":false') ||
-                    txt.includes("NOT_PLAYING") ||
-                    txt.includes("NO_RESULTS") ||
-                    txt.includes("failed")
-                );
-            });
-            const hadRecentToolFailure = recentToolErrors.length > 0;
-
-            // Check if the user's original message was an action command
-            const isActionTask =
-                /\b(play|open|send|create|set|start|stop|run|install|build|find|show|take|click|type|write|download|upload|schedule|remind|pause|skip|next|search)\b/i.test(
-                    lastUserText,
-                );
-
-            // Detect explicit delegation patterns
-            const isDelegatingToUser =
-                responseTextLower.includes("you can ") ||
-                responseTextLower.includes("you should ") ||
-                responseTextLower.includes("you need to ") ||
-                responseTextLower.includes("you'll need to") ||
-                responseTextLower.includes("go ahead and ") ||
-                responseTextLower.includes("from there") ||
-                responseTextLower.includes("i recommend you");
-
-            // Detect "giving up" — agent had a tool failure and is now asking
-            // instead of trying a different approach
-            const isGivingUp =
-                hadRecentToolFailure &&
-                (responseTextLower.includes("want me to try") ||
-                    responseTextLower.includes("shall i try") ||
-                    responseTextLower.includes("something else?") ||
-                    responseTextLower.includes("another way") ||
-                    responseTextLower.includes("isn't finding") ||
-                    responseTextLower.includes("not finding") ||
-                    responseTextLower.includes("couldn't find") ||
-                    responseTextLower.includes("not in your library") ||
-                    responseTextLower.includes("not available") ||
-                    responseTextLower.includes("something's off") ||
-                    responseTextLower.includes("having trouble") ||
-                    responseTextLower.includes("doesn't seem") ||
-                    responseTextLower.includes("unable to"));
-
-            // Determine if the agent should be forced to continue
-            // TRUE = giving up after failure, or delegating to user on an action task
-            // FALSE = legitimate question (disambiguation, missing info, no errors)
-            // Guard: ONLY force retry if there were actual tool errors AND response is short
-            // (substantial responses >200 chars are likely genuine instructions, not giving up)
-            const shouldForceRetry =
-                (isDelegatingToUser &&
-                    isActionTask &&
-                    hadRecentToolFailure &&
-                    totalToolCalls < 15 &&
-                    responseText.length < 200) ||
-                (isGivingUp && totalToolCalls < 15);
-
-            // A stuck report ([[STUCK]]) is the agreed way to hand back a blocker; never force a retry over it.
-            if (shouldForceRetry && !takeStuckMarker(responseText).stuck) {
-                // Build context-aware continuation prompt based on what failed
-                const failedTools = recentToolErrors
-                    .map((m) => {
-                        const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-                        // Extract tool name from context if possible
-                        return txt.substring(0, 100);
-                    })
-                    .join("; ");
-
+            const recentFailures = antiGivingUpFailures(messages, lastUserText, responseText, totalToolCalls);
+            if (recentFailures > 0) {
                 const hasVisualTools = toolSelection.categories.includes("os_control");
                 const continuationHint = hasVisualTools
                     ? "Use os_smart_click with a natural-language instruction (e.g. 'the Wi-Fi row') — it cascades AX → OmniParser → UI-TARS/cloud grounding automatically and is far more reliable than os_ocr_click, which has been failing here. Only fall back to os_screenshot + os_click if os_smart_click returns cascade_miss. You have full mouse+keyboard control."
                     : "Try a completely different approach — use request_tools if you need different capabilities, or try browser_navigate to accomplish it via the web.";
 
                 console.log(
-                    `  🔄 Anti-giving-up: agent stopped after tool failure (${recentToolErrors.length} errors) — forcing retry with visual fallback`,
+                    `  🔄 Anti-giving-up: agent stopped after tool failure (${recentFailures} errors) — forcing retry with visual fallback`,
                 );
                 messages.push({ role: "assistant", content: responseText });
                 messages.push({
@@ -3779,6 +3782,8 @@ PLAN:`,
             if (
                 finalSelection &&
                 model !== MODELS.PRO &&
+                // Choosing to stay silent is the answer; a stronger model mustn't overwrite it.
+                responseText.trim().toUpperCase() !== "[NO_REPLY]" &&
                 TIER_RANK[claudeTier(finalSelection.modelId)] > TIER_RANK[claudeTier(model)]
             ) {
                 console.log(`  🧠 Switching to ${finalSelection.displayName} for final answer`);
@@ -3843,7 +3848,7 @@ PLAN:`,
                         continue;
                     }
                     const rawText = finalChoice.message.content || "";
-                    const text = sanitizeAgentResponse(rawText) || "(empty response)";
+                    const text = finalReplyText(rawText, channelContext) || "(empty response)";
                     // Retry if final model produced empty response after tool calls.
                     // BUT: if the prompt is already huge (>40K tokens), retrying the
                     // same prompt at the same model produces the same empty response
@@ -3893,7 +3898,7 @@ PLAN:`,
                 }
             }
 
-            let text = sanitizeAgentResponse(responseText) || "(empty response)";
+            let text = finalReplyText(responseText, channelContext) || "(empty response)";
 
             // ── Empty response retry: nudge the LLM instead of returning "(empty response)" ──
             if (
@@ -3918,7 +3923,7 @@ PLAN:`,
 
             // ── Cascade escalation: detect poor responses and re-try with a better model ──
             // Only attempt once per turn to avoid infinite loops, and only if not already on the best model
-            if (model !== MODELS.PRO && !cascadeAttempted) {
+            if (model !== MODELS.PRO && !cascadeAttempted && text !== "[NO_REPLY]") {
                 const cascadeCheck = shouldCascadeEscalate(text, rawUserMessage, model);
                 if (cascadeCheck.shouldEscalate) {
                     const nextModel = getCascadeNext(model);

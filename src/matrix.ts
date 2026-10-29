@@ -248,7 +248,8 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
 
         await setTyping(roomId, false);
 
-        if (result.text) {
+        // [NO_REPLY]: the agent decided no reply is needed — stay silent.
+        if (result.text && result.text.trim() !== "[NO_REPLY]") {
             await sendReply(roomId, withStuckReplyLine(result, senderIsOwner));
         }
 

@@ -1695,7 +1695,8 @@ ${persona.systemPrompt}`;
 
         // Voice note response: if incoming was a voice note and response is short, reply with audio
         const wasVoiceNote = message?.message?.audioMessage?.ptt === true;
-        if (wasVoiceNote && result.text && result.text.length < 300) {
+        // ([NO_REPLY] falls through to sendTypingThenMessage, which stays silent.)
+        if (wasVoiceNote && result.text && result.text.trim() !== "[NO_REPLY]" && result.text.length < 300) {
             await sendVoiceReply(jid, result.text);
         } else {
             // Only quote-reply when the contact's message was itself a reply (swipe-reply)

@@ -361,7 +361,7 @@ export async function captchaAfterAction(result: string, signal?: AbortSignal): 
         obj.owner_needed =
             outcome.detail.status === "cancelled"
                 ? "Stopped by the owner."
-                : "This page has a step only the owner can finish (they were asked and it's still open). Tell them in one line and stop here.";
+                : "This page has a step only the owner can finish (they were asked and it's still open). Don't try that step yourself: stop and send the stuck report (what's blocked, and that the owner has to finish it in the browser), ending with [[STUCK]] on its own line.";
     }
     return JSON.stringify(obj);
 }
