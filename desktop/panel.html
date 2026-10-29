@@ -90,6 +90,15 @@
                     </svg>
                     <span>Store</span>
                 </button>
+                <button class="nav-item" data-tab="vault" onclick="switchTab('vault')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        <circle cx="12" cy="16" r="1.5"></circle>
+                    </svg>
+                    <span>Vault</span>
+                </button>
                 <div class="nav-section-label">Preferences</div>
                 <button class="nav-item" data-tab="settings" onclick="switchTab('settings')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -502,58 +511,6 @@
                                 <button class="btn btn-sm btn-secondary" id="personalitySaveBtn" onclick="savePersonality()">Save personality</button>
                             </div>
                             <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);margin-top:4px;min-height:1em;"></div>
-                        </div>
-                    </div>
-
-                    <!-- ═════════ VAULT ═════════ -->
-                    <div class="settings-section" id="vaultSection">
-                        <div class="settings-section-header">
-                            <span class="settings-section-icon">🔐</span>
-                            <div>
-                                <h3 class="settings-section-title">Vault</h3>
-                                <p class="settings-section-desc">Logins, API keys, cards and UPI IDs Bhai can use but never sees. Encrypted on this device; a login is typed only on its own website, and every payment needs your OK.</p>
-                            </div>
-                        </div>
-                        <div class="settings-fields">
-                            <div id="vaultList" style="display:flex;flex-direction:column;gap:6px;"></div>
-                            <div class="input-group" id="vaultPwRow" style="display:none;">
-                                <label class="input-label">Vault password</label>
-                                <input class="clean-input" type="password" id="vaultPassword" autocomplete="off" placeholder="Needed to view or change an entry">
-                                <div style="display:flex;gap:8px;margin-top:6px;">
-                                    <input class="clean-input" type="password" id="vaultNewPassword" autocomplete="off" placeholder="New vault password (6+ characters)" style="flex:1;">
-                                    <button class="btn btn-secondary btn-sm" id="vaultSetPwBtn" onclick="vaultSetPassword()">Set password</button>
-                                </div>
-                                <span class="input-hint">No Touch ID on this computer, so the vault uses its own password.</span>
-                            </div>
-                            <div class="input-group">
-                                <label class="input-label" id="vaultFormTitle">Add to vault</label>
-                                <select id="vaultKind" onchange="vaultRenderForm()" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;outline:none;">
-                                    <option value="login">Website login</option>
-                                    <option value="api_key">API key</option>
-                                    <option value="card">Card</option>
-                                    <option value="upi">UPI ID</option>
-                                </select>
-                                <div id="vaultForm" style="display:flex;flex-direction:column;gap:6px;margin-top:6px;"></div>
-                                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
-                                    <button class="btn btn-secondary btn-sm" onclick="vaultResetForm()">Clear</button>
-                                    <button class="btn btn-sm" onclick="vaultSave()">Save</button>
-                                </div>
-                                <span class="input-hint" id="vaultStatus"></span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Card CVV at pay time: used once, never saved -->
-                    <div id="vaultCvvModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;">
-                        <div class="surface-card" style="padding:20px;border-radius:12px;max-width:340px;width:90%;background:var(--bg-secondary);">
-                            <h3 style="margin:0 0 6px;">Confirm payment</h3>
-                            <p id="vaultCvvText" style="font-size:13px;color:var(--text-secondary);margin:0 0 12px;"></p>
-                            <input class="clean-input" type="password" id="vaultCvvInput" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="CVV" style="width:100%;">
-                            <span class="input-hint">Used once for this payment, never saved.</span>
-                            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
-                                <button class="btn btn-secondary btn-sm" onclick="vaultCvvAnswer(false)">Cancel</button>
-                                <button class="btn btn-sm" onclick="vaultCvvAnswer(true)">Pay</button>
-                            </div>
                         </div>
                     </div>
 
@@ -1641,8 +1598,99 @@
             </div>
 
             <!-- ═══════════════════════════════ -->
+            <!-- TAB: Vault                     -->
+            <!-- ═══════════════════════════════ -->
+            <div class="tab-content" id="tab-vault">
+                <div class="tab-header">
+                    <h2 class="tab-title">Vault</h2>
+                </div>
+                <div class="vault-page">
+                    <p class="vault-intro">Logins, API keys, cards and UPI IDs Bhai can use but never sees. Encrypted on this device with AES-256-GCM — a login is typed only on its own website, and every payment needs your OK.</p>
+
+                    <div class="vault-lock" id="vaultPwRow" style="display:none;">
+                        <div class="vault-lock-icon">🔒</div>
+                        <div class="vault-lock-body">
+                            <input class="clean-input" type="password" id="vaultPassword" autocomplete="off" placeholder="Vault password — to view or change an entry">
+                            <div class="vault-lock-row">
+                                <input class="clean-input" type="password" id="vaultNewPassword" autocomplete="off" placeholder="New vault password (6+ characters)">
+                                <button class="btn btn-secondary btn-sm" id="vaultSetPwBtn" onclick="vaultSetPassword()">Set password</button>
+                            </div>
+                            <span class="input-hint">No Touch ID on this computer, so the vault uses its own password.</span>
+                        </div>
+                    </div>
+
+                    <section class="vault-section" data-kind="login">
+                        <div class="vault-section-head">
+                            <h3>Logins<span class="vault-count" id="vaultCount-login"></span></h3>
+                            <button class="vault-add" onclick="vaultOpenModal('login')" title="Add a login" aria-label="Add a login">＋</button>
+                        </div>
+                        <div class="vault-list" id="vaultList-login"></div>
+                    </section>
+
+                    <section class="vault-section" data-kind="api_key">
+                        <div class="vault-section-head">
+                            <h3>API keys<span class="vault-count" id="vaultCount-api_key"></span></h3>
+                            <button class="vault-add" onclick="vaultOpenModal('api_key')" title="Add an API key" aria-label="Add an API key">＋</button>
+                        </div>
+                        <div class="vault-list" id="vaultList-api_key"></div>
+                    </section>
+
+                    <section class="vault-section" data-kind="card">
+                        <div class="vault-section-head">
+                            <h3>Cards<span class="vault-count" id="vaultCount-card"></span></h3>
+                            <button class="vault-add" onclick="vaultOpenModal('card')" title="Add a card" aria-label="Add a card">＋</button>
+                        </div>
+                        <div class="vault-list" id="vaultList-card"></div>
+                    </section>
+
+                    <section class="vault-section" data-kind="upi">
+                        <div class="vault-section-head">
+                            <h3>UPI IDs<span class="vault-count" id="vaultCount-upi"></span></h3>
+                            <button class="vault-add" onclick="vaultOpenModal('upi')" title="Add a UPI ID" aria-label="Add a UPI ID">＋</button>
+                        </div>
+                        <div class="vault-list" id="vaultList-upi"></div>
+                    </section>
+
+                    <div class="vault-foot">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        Bhai uses these but never sees the secret — it is typed straight into the page, and a card's CVV is asked for fresh at each payment.
+                    </div>
+                </div>
+
+                <!-- Add / Edit modal -->
+                <div class="vault-modal-bg" id="vaultModal" style="display:none;" onclick="if(event.target===this)vaultCloseModal()">
+                    <div class="vault-modal" role="dialog" aria-modal="true" aria-labelledby="vaultModalTitle">
+                        <div class="vault-modal-head">
+                            <h3 id="vaultModalTitle">Add login</h3>
+                            <button class="vault-modal-x" onclick="vaultCloseModal()" aria-label="Close">✕</button>
+                        </div>
+                        <div class="vault-modal-body" id="vaultForm"></div>
+                        <span class="input-hint" id="vaultStatus"></span>
+                        <div class="vault-modal-actions">
+                            <button class="btn btn-secondary btn-sm" onclick="vaultCloseModal()">Cancel</button>
+                            <button class="btn btn-sm" onclick="vaultSave()">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════ -->
             <!-- TAB: Setup (Ready Hub body)    -->
             <!-- ═══════════════════════════════ -->
+        </div>
+    </div>
+
+    <!-- Card CVV at pay time: used once, never saved. Global so it shows on any tab. -->
+    <div id="vaultCvvModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;">
+        <div class="surface-card" style="padding:20px;border-radius:12px;max-width:340px;width:90%;background:var(--bg-secondary);">
+            <h3 style="margin:0 0 6px;">Confirm payment</h3>
+            <p id="vaultCvvText" style="font-size:13px;color:var(--text-secondary);margin:0 0 12px;"></p>
+            <input class="clean-input" type="password" id="vaultCvvInput" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="CVV" style="width:100%;">
+            <span class="input-hint">Used once for this payment, never saved.</span>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+                <button class="btn btn-secondary btn-sm" onclick="vaultCvvAnswer(false)">Cancel</button>
+                <button class="btn btn-sm" onclick="vaultCvvAnswer(true)">Pay</button>
+            </div>
         </div>
     </div>
 
@@ -1679,6 +1727,7 @@
             }
             if (tabId === 'account') loadAccountInfo();
             if (tabId === 'store') loadStore();
+            if (tabId === 'vault') vaultLoad();
             if (tabId === 'channels') { loadChannelConfig(); loadPrimaryChannel(); }
             if (tabId === 'chats') loadChats();
         }
@@ -3336,22 +3385,40 @@
             ? (vaultState.touchId ? 'Touch ID was cancelled.' : 'Enter the vault password first.')
             : (r && r.error) || 'Something went wrong';
 
+        let vaultModalKind = 'login';
+        let vaultModalValues = null;
+        const VAULT_KIND_LABEL = { login: 'login', api_key: 'API key', card: 'card', upi: 'UPI ID' };
+        const VAULT_KIND_ICON = {
+            login: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></svg>',
+            api_key: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2m-4 4 2 2m-6 2 2 2"/></svg>',
+            card: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>',
+            upi: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>',
+        };
         function vaultRenderForm(values) {
-            const kind = document.getElementById('vaultKind').value;
             const form = document.getElementById('vaultForm');
-            form.innerHTML = VAULT_FIELDS[kind].map(([f, ph, type]) =>
-                `<input class="clean-input" data-vault-field="${f}" type="${type || 'text'}" autocomplete="off" placeholder="${escapeHtml(ph)}">`).join('')
-                + (kind === 'card' ? '<span class="input-hint">No CVV here: Bhai asks for it each time you pay.</span>' : '');
+            form.innerHTML = VAULT_FIELDS[vaultModalKind].map(([f, ph, type]) =>
+                `<label class="vault-field"><span>${escapeHtml(ph)}</span><input class="clean-input" data-vault-field="${f}" type="${type || 'text'}" autocomplete="off" placeholder="${escapeHtml(ph)}"></label>`).join('')
+                + (vaultModalKind === 'card' ? '<span class="input-hint">No CVV here: Bhai asks for it each time you pay.</span>' : '');
             for (const el of form.querySelectorAll('[data-vault-field]')) {
                 const v = values && values[el.dataset.vaultField];
                 if (v) el.value = Array.isArray(v) ? v.join(', ') : v;
             }
         }
-        function vaultResetForm() {
+        function vaultOpenModal(kind, editId) {
+            vaultModalKind = kind;
+            vaultEditingId = editId || null;
+            document.getElementById('vaultModalTitle').textContent = (editId ? 'Edit ' : 'Add ') + VAULT_KIND_LABEL[kind];
+            vaultMsg('');
+            vaultRenderForm(editId ? vaultModalValues : null);
+            document.getElementById('vaultModal').style.display = 'flex';
+            const first = document.querySelector('#vaultForm [data-vault-field]');
+            if (first) first.focus();
+        }
+        function vaultCloseModal() {
+            document.getElementById('vaultModal').style.display = 'none';
             vaultEditingId = null;
-            document.getElementById('vaultKind').disabled = false;
-            document.getElementById('vaultFormTitle').textContent = 'Add to vault';
-            vaultRenderForm();
+            vaultModalValues = null;
+            vaultMsg('');
         }
         async function vaultLoad() {
             const r = await atlas.vault.list();
@@ -3359,16 +3426,23 @@
             vaultState = r;
             document.getElementById('vaultPwRow').style.display = r.touchId ? 'none' : '';
             document.getElementById('vaultSetPwBtn').textContent = r.hasPassword ? 'Change' : 'Set password';
-            document.getElementById('vaultList').innerHTML = r.entries.length ? r.entries.map((e) => {
-                const id = escapeHtml(e.id);
-                const detail = [(e.domains || []).join(', '), e.username_masked, e.name, e.last4 && ('•••• ' + e.last4), e.expiry].filter(Boolean).join(' · ');
-                return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;">
-                    <div style="flex:1;min-width:0;"><div style="font-weight:600;">${escapeHtml(e.label)} <span style="font-weight:400;font-size:11px;color:var(--text-secondary);">${escapeHtml(e.kind.replace('_', ' '))}</span></div>
-                    <div style="font-size:12px;color:var(--text-secondary);overflow-wrap:anywhere;" id="vaultDetail-${id}">${escapeHtml(detail)}</div></div>
-                    <button class="btn btn-secondary btn-sm" onclick="vaultShow('${id}')">Show</button>
-                    <button class="btn btn-secondary btn-sm" onclick="vaultEdit('${id}')">Edit</button>
-                    <button class="btn btn-secondary btn-sm" onclick="vaultDelete('${id}')">Delete</button></div>`;
-            }).join('') : '<span class="input-hint">Nothing saved yet.</span>';
+            for (const kind of ['login', 'api_key', 'card', 'upi']) {
+                const items = r.entries.filter((e) => e.kind === kind);
+                document.getElementById('vaultCount-' + kind).textContent = items.length ? ' · ' + items.length : '';
+                document.getElementById('vaultList-' + kind).innerHTML = items.length ? items.map((e) => {
+                    const id = escapeHtml(e.id);
+                    const detail = [(e.domains || []).join(', '), e.username_masked, e.name, e.brand, e.last4 && ('•••• ' + e.last4), e.expiry].filter(Boolean).join(' · ');
+                    return `<div class="vault-row">
+                        <span class="vault-row-icon">${VAULT_KIND_ICON[kind]}</span>
+                        <div class="vault-row-main"><div class="vault-row-name">${escapeHtml(e.label)}</div>
+                        <div class="vault-row-detail" id="vaultDetail-${id}">${escapeHtml(detail) || '—'}</div></div>
+                        <div class="vault-row-actions">
+                            <button class="btn btn-secondary btn-sm" onclick="vaultShow('${id}')">Show</button>
+                            <button class="btn btn-secondary btn-sm" onclick="vaultEdit('${id}')">Edit</button>
+                            <button class="btn btn-secondary btn-sm vault-del" onclick="vaultDelete('${id}')">Delete</button>
+                        </div></div>`;
+                }).join('') : '<div class="vault-empty">Nothing here yet.</div>';
+            }
         }
         async function vaultShow(id) {
             const r = await atlas.vault.reveal(id, vaultPw());
@@ -3381,21 +3455,16 @@
             const r = await atlas.vault.reveal(id, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
             const e = vaultState.entries.find((x) => x.id === id);
-            vaultEditingId = id;
-            const kind = document.getElementById('vaultKind');
-            kind.value = e.kind;
-            kind.disabled = true;
-            document.getElementById('vaultFormTitle').textContent = 'Edit ' + e.label;
-            vaultRenderForm({ ...r.values, label: e.label, domains: e.domains });
+            vaultModalValues = { ...r.values, label: e.label, domains: e.domains };
+            vaultOpenModal(e.kind, id);
         }
         async function vaultSave() {
-            const entry = { kind: document.getElementById('vaultKind').value };
+            const entry = { kind: vaultModalKind };
             if (vaultEditingId) entry.id = vaultEditingId;
             for (const el of document.querySelectorAll('#vaultForm [data-vault-field]')) entry[el.dataset.vaultField] = el.value;
             const r = await atlas.vault.save(entry, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
-            vaultMsg('Saved. Bhai can use it right away.');
-            vaultResetForm();
+            vaultCloseModal();
             vaultLoad();
         }
         async function vaultDelete(id) {
@@ -3431,7 +3500,6 @@
                 document.getElementById('vaultCvvModal').style.display = 'flex';
                 document.getElementById('vaultCvvInput').focus();
             });
-            vaultRenderForm();
             vaultLoad().catch(() => {});
         }
 
