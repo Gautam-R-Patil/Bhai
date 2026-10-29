@@ -155,10 +155,15 @@ async function rotationSheet(png: Buffer, deg: number, presses: number[]): Promi
     return `data:image/jpeg;base64,${sheet.toString("base64")}`;
 }
 
+function miss(type: CaptchaType, why: string): false {
+    console.log(`  🧩 CAPTCHA (${type}): gave up, ${why}`);
+    return false;
+}
+
 /** True once the check is answered (whether it was right shows when the agent submits the form). */
 export async function solveFormCaptcha(page: Page, type: CaptchaType, d: CaptchaDriver): Promise<boolean> {
     const parts = await locate(page);
-    if (!parts) return false;
+    if (!parts) return miss(type, "couldn't read the widget");
 
     if (type === "text-question") {
         if (!parts.question || !parts.field) return false;
@@ -169,7 +174,7 @@ export async function solveFormCaptcha(page: Page, type: CaptchaType, d: Captcha
         return true;
     }
 
-    if (!parts.img) return false;
+    if (!parts.img) return miss(type, "no CAPTCHA image found");
 
     if (type === "image-text") {
         if (!parts.field) return false;
@@ -200,13 +205,13 @@ export async function solveFormCaptcha(page: Page, type: CaptchaType, d: Captcha
 
     if (type === "rotate") {
         const turn = parts.right ?? parts.left;
-        if (!turn) return false;
+        if (!turn) return miss(type, "no rotate button found");
         // One press shows how far each press turns the picture.
         await click(d, centre(turn));
         await sleep(300);
         const after = await locate(page);
         const step = Math.abs((after?.angle ?? 0) - (parts.angle ?? 0)) || 0;
-        if (!step || !after?.img) return false;
+        if (!step || !after?.img) return miss(type, `a press didn't turn the picture (angle ${parts.angle} → ${after?.angle})`);
         const deg = parts.right ? step : -step; // what one press of `turn` does, clockwise positive
         const n = Math.round(360 / step);
         const options = Array.from({ length: Math.min(n, 36) }, (_, i) => Math.round((i * n) / Math.min(n, 36)));

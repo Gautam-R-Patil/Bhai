@@ -14,7 +14,7 @@ import { createRequire as _bridgeCreateRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
-import { getDataDir } from "../../config/paths.js";
+import { getDataDir, getScriptsDir } from "../../config/paths.js";
 import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
 import { isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
 import { resetBackend } from "./browser-backend.js";
@@ -601,6 +601,51 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
     });
 }
 
+// ── Extension updates ────────────────────────
+// Chrome runs an unpacked extension from memory, so an update installed with Bhai
+// (new files under a running Chrome) stays unused until it reloads. An extension
+// older than the copy shipped beside Bhai is asked to reload itself, once per
+// version per run (a copy that can't update, e.g. from the store, can't loop).
+
+const reloadAsked = new Set<string>();
+
+function shippedExtensionVersion(): string | null {
+    const scripts = getScriptsDir(); // <repo>/scripts in dev, <Resources>/bot/scripts packaged
+    for (const dir of [path.join(scripts, "..", "chrome-extension"), path.join(scripts, "..", "..", "chrome-extension")]) {
+        try {
+            const v = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")).version;
+            if (typeof v === "string") return v;
+        } catch {
+            /* not this one */
+        }
+    }
+    return null;
+}
+
+/** True when dotted version `a` is newer than `b` ("1.0.10" > "1.0.9"). */
+export function isNewerVersion(a: string, b: string): boolean {
+    const x = a.split(".").map(Number);
+    const y = b.split(".").map(Number);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+        const d = (x[i] || 0) - (y[i] || 0);
+        if (d) return d > 0;
+    }
+    return false;
+}
+
+function askOutdatedExtensionToReload(ws: WebSocket, running: unknown): void {
+    const shipped = shippedExtensionVersion();
+    if (!shipped) return;
+    if (typeof running !== "string") {
+        console.log(`🔌 Chrome extension is older than ${shipped}: reload it once in chrome://extensions to update it`);
+        return;
+    }
+    if (!isNewerVersion(shipped, running) || reloadAsked.has(shipped)) return;
+    reloadAsked.add(shipped);
+    console.log(`🔌 Chrome extension ${running} → ${shipped}: asking it to reload`);
+    ws.send(JSON.stringify({ type: "reload" }));
+}
+
 // ── Message Handler ──────────────────────────
 
 function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, authTimer: NodeJS.Timeout): void {
@@ -617,6 +662,7 @@ function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, aut
             resetBackend();
             notifyEvent({ type: "extension_connected", data: {} });
             console.log("🔌 Chrome extension authenticated ✓");
+            askOutdatedExtensionToReload(ws, msg.version);
         } else {
             ws.send(JSON.stringify({ type: "auth_failed", error: "Invalid token" }));
             ws.close(4003, "Invalid token");

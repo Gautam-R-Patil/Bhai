@@ -76,7 +76,8 @@ function connect() {
     console.log("[ATLAS Bridge] Connected to Bhai bridge");
     connectionAttempts = 0;
     reconnectDelay = 1000;
-    ws.send(JSON.stringify({ type: "auth", token: authToken }));
+    // The version lets Bhai ask an outdated copy (an update installed under a running Chrome) to reload.
+    ws.send(JSON.stringify({ type: "auth", token: authToken, version: chrome.runtime.getManifest().version }));
     startHeartbeat();
     updateBadge(true);
   };
@@ -313,6 +314,13 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Bhai shipped a newer copy of this extension: load it (the socket reconnects after).
+  if (msg.type === "reload") {
+    console.log("[ATLAS Bridge] Reloading to pick up the updated extension");
+    chrome.runtime.reload();
+    return;
+  }
+
   // Heartbeat ping from server
   if (msg.type === "ping") {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -529,6 +537,8 @@ async function handleCommand(cmd) {
 
       case "mouse_path":
         result = await mousePath(payload);
+        break;
+
       case "get_cookies":
         result = await getCookies(payload);
         break;
