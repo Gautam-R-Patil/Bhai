@@ -22,10 +22,10 @@ describe("buildDynamicContextBlock — prompt-cache stability", () => {
         expect(buildDynamicContextBlock("", t1)).not.toBe(buildDynamicContextBlock("", t2));
     });
 
-    it("contains the clock and widget markers", () => {
+    it("contains the clock but no overlay widget markup", () => {
         const out = buildDynamicContextBlock("", new Date(2026, 5, 3, 14, 0, 0));
         expect(out).toContain("[SYSTEM CLOCK:");
-        expect(out).toContain('<!--WIDGET: {"type": "clock"}-->');
+        expect(out).not.toContain("WIDGET");
     });
 
     it("appends a language instruction only when provided, stably", () => {

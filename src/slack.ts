@@ -175,7 +175,7 @@ async function handleSlackMessage(
     try {
         // Send initial typing indicator via a placeholder message
         const modelHint = !media && classifyQuery(text) === "llm_only" ? "simple" as const : undefined;
-        const taggedMessage = `${text}\n\n[SOURCE: Slack — respond here. Keep response clear and well-formatted.]`;
+        const taggedMessage = `${text}\n\n[SOURCE: Slack — respond here.]`;
 
         // Progress callback -- update thread with status
         let statusMessageTs: string | null = null;

@@ -454,6 +454,20 @@ function sanitizeAgentResponse(text: string): string {
 /** Channels that stay silent when the whole reply is [NO_REPLY]; the overlay and the rest always answer. */
 const NO_REPLY_CHANNELS = new Set(["telegram", "whatsapp", "discord", "slack", "matrix", "email"]);
 
+const PHONE_CHAT = "phone chat: 1-2 short lines unless they asked for detail; no headings or tables";
+const TEAM_CHAT = "team chat: short; markdown lists and code blocks are fine";
+/** How a reply should look on each channel; the only place reply length and markup are set per channel. */
+const CHANNEL_REGISTER: Record<string, string> = {
+    telegram: PHONE_CHAT,
+    whatsapp: PHONE_CHAT,
+    discord: TEAM_CHAT,
+    slack: TEAM_CHAT,
+    matrix: TEAM_CHAT,
+    email: "email: full sentences, no emoji or chat slang, greeting/sign-off only if theirs had one",
+    overlay:
+        'desktop overlay: short by default, full answer when asked. Markers go at the END: <!--QUICK_ACTIONS:["Option 1","Option 2"]--> for a choice or confirmation (always before deleting, overwriting, installing or anything destructive); <!--COLLAPSE:Title-->long content<!--/COLLAPSE--> around code over 5 lines or lists over 5 items; for the current time output exactly <!--WIDGET: {"type": "clock"}--> instead of the time',
+};
+
 /** The final reply as channels get it: an exact [NO_REPLY] on a silent-capable, user-typed turn survives sanitizing. */
 export function finalReplyText(raw: string, channelContext?: ChannelContext): string {
     if (
@@ -464,7 +478,9 @@ export function finalReplyText(raw: string, channelContext?: ChannelContext): st
     ) {
         return "[NO_REPLY]";
     }
-    return sanitizeAgentResponse(raw);
+    const text = sanitizeAgentResponse(raw);
+    // Overlay markers (<!--QUICK_ACTIONS-->, <!--WIDGET-->) mean nothing elsewhere and would show as literal text.
+    return channelContext?.channel === "overlay" ? text : text.replace(/<!--[\s\S]*?-->/g, "").trim();
 }
 
 /**
@@ -3051,8 +3067,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             if (process.env.MATRIX_HOMESERVER) activeChannels.push("matrix");
 
             const primaryChannel = process.env.PRIMARY_CHANNEL || "telegram";
+            const register = CHANNEL_REGISTER[channelContext.channel];
 
-            const ctxMsg = `[Channel: ${channelContext.channel} | User: ${channelContext.userName || channelContext.userId} | Role: ${channelContext.isOwner ? "owner" : "contact"} | Active channels: ${activeChannels.join(", ")} | Primary channel for notifications: ${primaryChannel}]`;
+            const ctxMsg = `[Channel: ${channelContext.channel} | User: ${channelContext.userName || channelContext.userId} | Role: ${channelContext.isOwner ? "owner" : "contact"} | Active channels: ${activeChannels.join(", ")} | Primary channel for notifications: ${primaryChannel}${register ? ` | Register: ${register}` : ""}]`;
             iterationMessages.push({ role: "system", content: ctxMsg });
         }
 

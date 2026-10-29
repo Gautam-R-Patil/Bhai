@@ -941,7 +941,7 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
         }
     } catch { /* non-fatal */ }
 
-    let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep your response SHORT and concise — this is a compact overlay, not a full chat. Use 1-3 sentences when possible.]${chromeCtxNote}`;
+    let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.]${chromeCtxNote}`;
 
     // Only the owner's own chat bar may look at the screen — never a web-widget visitor.
     if (wsIsOwner(ws) && isScreenQuery(userMessage)) {
@@ -953,7 +953,7 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
             media = [{ type: "image", base64: screenshot.base64, mimeType: screenshot.mimeType }];
             taggedMessage = `${userMessage}
 
-[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep responses SHORT (2-4 sentences).
+[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.
 
 A screenshot of the user's current screen is attached. Use it as your PRIMARY context.
 
@@ -969,7 +969,7 @@ IMPORTANT RULES:
             // Screenshot failed (permissions issue etc) — tell user
             taggedMessage = `${userMessage}
 
-[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep responses SHORT.
+[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.
 NOTE: Screenshot capture failed (screen recording permission may be needed). Answer based on conversation context if possible, or ask the user to describe what they are seeing.]`;
         }
     }
@@ -1098,7 +1098,7 @@ async function handleFileAttachment(
 
     const prompt = userText
         ? `${userText}${fileContext}\n\n[SOURCE: Desktop overlay chat — file attached: ${fileName}]`
-        : `[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep responses SHORT. The user dropped a file: "${fileName}". ${isImage ? "Analyze the image and describe what you see." : `Here is its content:${fileContext}`}]`;
+        : `[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. The user dropped a file: "${fileName}". ${isImage ? "Analyze the image and describe what you see." : `Here is its content:${fileContext}`}]`;
 
     try {
         const onProgress = async (msg: string) => {
