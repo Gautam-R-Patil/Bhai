@@ -1060,38 +1060,6 @@
                         </div>
                     </div>
 
-                    <!-- ── Overlay (always enabled) ── -->
-                    <div class="settings-section" id="channel-overlay">
-                        <div class="settings-section-header">
-                            <div style="display:flex;align-items:center;gap:10px;">
-                                <span class="channel-status-dot connected" id="chStatusOverlay"></span>
-                                <span>🖥️ Desktop Overlay</span>
-                            </div>
-                            <span class="ch-always-on">Always on</span>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
-                                Always on. Change its keyboard shortcut in Settings.
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ── Web Widget (always enabled) ── -->
-                    <div class="settings-section" id="channel-webwidget">
-                        <div class="settings-section-header">
-                            <div style="display:flex;align-items:center;gap:10px;">
-                                <span class="channel-status-dot connected" id="chStatusWebWidget"></span>
-                                <span>🌐 Web Widget</span>
-                            </div>
-                            <span class="ch-always-on">Always on</span>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
-                                Always enabled. Shares port 18792 with the overlay WebSocket server.
-                            </div>
-                        </div>
-                    </div>
-
                     <div class="settings-note">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2645,7 +2613,7 @@
             });
         }
 
-        // Channels that are on first (yours, then the always-on ones), off ones after.
+        // Channels that are on first, off ones after.
         // Runs on load and after an apply, never mid-toggle, so a card doesn't jump away.
         function sortChannelCards() {
             const list = document.querySelector('#tab-channels .settings-scroll');
@@ -2653,7 +2621,7 @@
             const cards = [...list.querySelectorAll(':scope > .settings-section')];
             const rank = (card) => {
                 const toggle = card.querySelector('.settings-section-header input[type=checkbox]');
-                return toggle ? (toggle.checked ? 0 : 2) : 1;
+                return toggle && toggle.checked ? 0 : 1;
             };
             cards.map((card, i) => ({ card, key: rank(card) * 100 + i }))
                 .sort((a, b) => a.key - b.key)
