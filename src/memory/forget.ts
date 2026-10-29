@@ -191,6 +191,27 @@ export function findForgettable(query: string): ForgetItem[] {
             if (hit(r.description)) add("goal", r.id, r.created_at, r.description);
         }
     }
+    // Proactive thoughts and goals: a queued thought is sent to the owner unprompted later.
+    if (hasTable("thoughts")) {
+        for (const r of rows<{ id: number; content: string; created_at: string }>(
+            "SELECT id, content, created_at FROM thoughts WHERE instr(lower(content), @t) > 0",
+        )) {
+            if (hit(r.content)) add("thought", r.id, r.created_at, r.content);
+        }
+    }
+    if (hasTable("proactive_goals")) {
+        for (const r of rows<{ id: number; title: string; description: string | null; created_at: string }>(
+            "SELECT id, title, description, created_at FROM proactive_goals WHERE instr(lower(title || ' ' || COALESCE(description, '')), @t) > 0",
+        )) {
+            const text = `${r.title}: ${r.description ?? ""}`;
+            if (hit(text)) add("proactive goal", r.id, r.created_at, text);
+        }
+        for (const r of rows<{ id: number; description: string; created_at: string }>(
+            "SELECT id, description, created_at FROM goal_tasks WHERE instr(lower(description), @t) > 0",
+        )) {
+            if (hit(r.description)) add("goal task", r.id, r.created_at, r.description);
+        }
+    }
     if (hasTable("entities")) {
         for (const r of rows<{ id: number; name: string; properties: string; updated_at: string }>(
             "SELECT id, name, properties, updated_at FROM entities WHERE instr(lower(name || ' ' || COALESCE(properties, '')), @t) > 0",
@@ -294,6 +315,12 @@ function forgetItems(query: string, items: ForgetItem[]): void {
         // The FTS mirrors follow through the conv_msg_ad trigger.
         for (const id of of("chat message")) raw.prepare("DELETE FROM conversation_messages WHERE id = ?").run(id);
         for (const id of of("goal")) raw.prepare("DELETE FROM goals WHERE id = ?").run(id);
+        for (const id of of("thought")) raw.prepare("DELETE FROM thoughts WHERE id = ?").run(id);
+        for (const id of of("proactive goal")) {
+            raw.prepare("DELETE FROM goal_tasks WHERE goal_id = ?").run(id);
+            raw.prepare("DELETE FROM proactive_goals WHERE id = ?").run(id);
+        }
+        for (const id of of("goal task")) raw.prepare("DELETE FROM goal_tasks WHERE id = ?").run(id);
         // foreign_keys is off, so the entity's links go by hand.
         for (const id of of("graph entity")) {
             raw.prepare("DELETE FROM relationships WHERE from_id = ? OR to_id = ?").run(id, id);

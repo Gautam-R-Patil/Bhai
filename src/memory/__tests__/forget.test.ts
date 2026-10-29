@@ -172,6 +172,21 @@ describe("memory_forget across tiers", () => {
         expect(audit.trim().split("\n")).toEqual(['{"action":"shell_exec","command":"echo Маша"}']);
     });
 
+    it("clears queued proactive thoughts and goals, so nothing resurfaces the fact unprompted", async () => {
+        consent._resetConsent();
+        const db = sqlite.getMemoryDB();
+        (await import("../../proactive/thought-journal.js")).initThoughtJournal(db);
+        (await import("../../proactive/goal-engine.js")).initGoalEngine(db);
+        raw.prepare("INSERT INTO thoughts (content, decision) VALUES ('Ask how Zara is settling in', 'queue')").run();
+        const g = raw.prepare("INSERT INTO proactive_goals (title) VALUES ('Help Zara find a flat')").run().lastInsertRowid;
+        raw.prepare("INSERT INTO goal_tasks (goal_id, description) VALUES (?, 'List flats for Zara')").run(g);
+        const p = forget.previewForget("zara");
+        expect(p.preview.split("\n")[0]).toBe("3 items: 1 thought, 1 proactive goal, 1 goal task");
+        consent.noteOwnerMessage("yes");
+        expect(forget.executeForget(p.token as string, "yes", "")).toEqual({ forgotten: 3 });
+        expect(count("SELECT (SELECT COUNT(*) FROM thoughts) + (SELECT COUNT(*) FROM proactive_goals) + (SELECT COUNT(*) FROM goal_tasks) n")).toBe(0);
+    });
+
     it("forgetMemoryById drops one memory without keeping its content", () => {
         const id = (raw.prepare("SELECT id FROM memories").get() as { id: number }).id;
         expect(forget.forgetMemoryById(id)).toBe(true);

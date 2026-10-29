@@ -29,6 +29,7 @@ import { digestItemId } from "../proactive/sources/memory-digest.js";
 import {
     canPinMemory,
     claimCommitmentDone,
+    claimNewPin,
     claimPin,
     claimSupersede,
     isMainLoopCall,
@@ -180,7 +181,7 @@ export const memoryStore: ToolDefinition = {
             if (pin) markOwnerStated(pinId);
             return JSON.stringify({ success: true, id: pinId, pinned: pin });
         }
-        const pin = input.pin === true && hasPinCue(ownerTurnMessage()) && canPinMemory();
+        const pin = input.pin === true && hasPinCue(ownerTurnMessage()) && claimNewPin();
         const imp = (input.importance as number) || 5;
         const oldId = input.supersedes == null ? 0 : Number(String(input.supersedes).replace(/^#/, ""));
         // Owner only, and only when their message says something changed and the id was shown

@@ -26,6 +26,7 @@ export interface CronCallerContext {
     shownMemories?: Set<number>;
     superseded?: boolean;
     pinChanged?: boolean;
+    newPinned?: boolean;
     commitmentDone?: boolean;
     /** storedMemory is a supersede's new row: its undo is the only way back to the old one. */
     undoPinned?: boolean;
@@ -84,7 +85,8 @@ export function noteShownMemories(ids: number[]): void {
  */
 export function claimSupersede(id: number): boolean {
     const ctx = _callerStorage.getStore();
-    if (!ctx || !canPinMemory(id) || ctx.superseded) return false;
+    // Private chats only: that's where the reply's "Forget that" tap can bring the old memory back.
+    if (!ctx || !ctx.isPrivate || !canPinMemory(id) || ctx.superseded) return false;
     ctx.superseded = true;
     return true;
 }
@@ -94,6 +96,14 @@ export function claimPin(id: number): boolean {
     const ctx = _callerStorage.getStore();
     if (!ctx || !canPinMemory(id) || ctx.pinChanged) return false;
     ctx.pinChanged = true;
+    return true;
+}
+
+/** pin:true on a new row: once per turn, so injected text riding a "remember…" turn can't pin a batch. */
+export function claimNewPin(): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !canPinMemory() || ctx.newPinned) return false;
+    ctx.newPinned = true;
     return true;
 }
 

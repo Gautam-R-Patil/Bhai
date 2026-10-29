@@ -47,7 +47,7 @@ describe("memory_store supersedes", () => {
 
     it("retires the old memory on the owner's correction, everywhere it was shown", async () => {
         const a = old("Owner lives in Mumbai");
-        const out = await store({ isOwner: true, message: "Actually I moved to Pune last month", shownMemories: shown(a) }, {
+        const out = await store({ isOwner: true, isPrivate: true, message: "Actually I moved to Pune last month", shownMemories: shown(a) }, {
             content: "Owner lives in Pune",
             supersedes: `#${a}`,
         });
@@ -61,10 +61,12 @@ describe("memory_store supersedes", () => {
     it("ignores supersedes without a correction cue, from contacts, and on autonomous runs", async () => {
         const b = old("Owner's car is a Swift");
         const cases: CronCallerContext[] = [
-            { isOwner: true, message: "My car is a Creta", shownMemories: shown(b) },
+            { isOwner: true, isPrivate: true, message: "My car is a Creta", shownMemories: shown(b) },
             { isOwner: false, message: "Actually his car is a Creta", shownMemories: shown(b) },
             { isOwner: true, autonomous: true, message: "Actually it changed", shownMemories: shown(b) },
-            { isOwner: true, message: "Actually it changed" },
+            // A group chat: no "Forget that" tap there to bring the old memory back.
+            { isOwner: true, message: "Actually it changed", shownMemories: shown(b) },
+            { isOwner: true, isPrivate: true, message: "Actually it changed" },
         ];
         for (const ctx of cases) {
             const out = await store(ctx, { content: `Car note ${cases.indexOf(ctx)}`, supersedes: b });
@@ -77,7 +79,7 @@ describe("memory_store supersedes", () => {
     it("the Forget that tap on a correction brings the old memory back", async () => {
         const { memoryUndoAction, undoMemoryTap } = await import("../forget.js");
         const c = old("Owner's standup is at 10");
-        const ctx: CronCallerContext = { isOwner: true, message: "standup moved, now it's at 11", shownMemories: shown(c) };
+        const ctx: CronCallerContext = { isOwner: true, isPrivate: true, message: "standup moved, now it's at 11", shownMemories: shown(c) };
         const out = await store(ctx, { content: "Owner's standup is at 11", supersedes: c });
         expect(live(c)).toBe(false);
         expect(ctx.storedMemory?.id).toBe(out.id);
@@ -89,7 +91,7 @@ describe("memory_store supersedes", () => {
     it("refuses sub-agents and a second supersede in the turn; memory_search in the main loop marks ids shown", async () => {
         const d = old("Owner's gym is Cult");
         const e = old("Owner's gym timing is 7am");
-        const ctx: CronCallerContext = { isOwner: true, message: "research gyms instead of yoga" };
+        const ctx: CronCallerContext = { isOwner: true, isPrivate: true, message: "research gyms instead of yoga" };
         // A sub-agent started by sub_agent searches and then tries to retire what it found.
         await cron.runWithCallerContext(ctx, () =>
             cron.runAsMainLoopTool("sub_agent", () => tools.memorySearch.handler({ query: "Owner's gym" })),
@@ -99,7 +101,7 @@ describe("memory_store supersedes", () => {
         expect((await store(ctx, { content: "x", supersedes: d }, "sub_agent")).message).toMatch(/supersede ignored/);
         expect(live(d)).toBe(true);
 
-        const turn: CronCallerContext = { isOwner: true, message: "actually I switched gyms" };
+        const turn: CronCallerContext = { isOwner: true, isPrivate: true, message: "actually I switched gyms" };
         await cron.runWithCallerContext(turn, () =>
             cron.runAsMainLoopTool("memory_search", () => tools.memorySearch.handler({ query: "Owner's gym" })),
         );
@@ -112,7 +114,7 @@ describe("memory_store supersedes", () => {
     it("a later store in the turn doesn't take the correction's undo away", async () => {
         const { memoryUndoAction, undoMemoryTap } = await import("../forget.js");
         const f = old("Owner's sister lives in Mumbai");
-        const ctx: CronCallerContext = { isOwner: true, message: "actually I moved to Pune, office in Baner", shownMemories: shown(f) };
+        const ctx: CronCallerContext = { isOwner: true, isPrivate: true, message: "actually I moved to Pune, office in Baner", shownMemories: shown(f) };
         const out = await store(ctx, { content: "Owner lives in Pune", supersedes: f });
         await store(ctx, { content: "Owner's office is in Baner" });
         expect(ctx.storedMemory?.id).toBe(out.id);
@@ -124,7 +126,7 @@ describe("memory_store supersedes", () => {
         const { executeTool } = await import("../../tools/index.js");
         const g = old("Owner's dentist is Dr Rao");
         for (let i = 0; i < 2; i++) {
-            const turn: CronCallerContext = { isOwner: true, message: "my dentist changed" };
+            const turn: CronCallerContext = { isOwner: true, isPrivate: true, message: "my dentist changed" };
             await cron.runWithCallerContext(turn, () =>
                 cron.runAsMainLoopTool("memory_search", () => executeTool("memory_search", { query: "Owner's dentist" })),
             );
