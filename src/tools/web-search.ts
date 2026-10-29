@@ -84,20 +84,32 @@ function randomUA(): string {
     return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+/** Scraped HTML → plain text: tags dropped, entities ("Tom &amp; Jerry", "&#39;") decoded, spaces collapsed. */
+export function htmlText(html: string): string {
+    return html
+        .replace(/<\/?(?:b|strong|em|i|span|mark)\b[^>]*>/gi, "") // engines bold query words mid-word: <b>iPhone</b>s
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+            if (e[0] !== "#") return ENTITIES[e.toLowerCase()] ?? m;
+            const code = e[1] === "x" || e[1] === "X" ? Number.parseInt(e.slice(2), 16) : Number(e.slice(1));
+            return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+        })
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 // ── DuckDuckGo Lite (fastest, lightest) ───────
 
 async function searchDDGLite(query: string): Promise<SearchResult[]> {
     try {
         const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-
         const response = await fetch(url, {
             headers: { "User-Agent": randomUA() },
             redirect: "follow",
-            signal: controller.signal,
+            // Covers the body read too: a cleared timer let one stalled engine hang the whole search.
+            signal: AbortSignal.timeout(8000),
         });
-        clearTimeout(timeout);
 
         const html = await response.text();
 
@@ -114,18 +126,13 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
         const snippets: string[] = [];
         let match;
         while ((match = snippetPattern.exec(html)) !== null) {
-            snippets.push(
-                match[1]
-                    .replace(/<[^>]+>/g, " ")
-                    .replace(/\s+/g, " ")
-                    .trim(),
-            );
+            snippets.push(htmlText(match[1]));
         }
 
         let i = 0;
         while ((match = linkPattern.exec(html)) !== null && results.length < 15) {
             let resultUrl = match[1];
-            const title = match[2].replace(/<[^>]+>/g, "").trim();
+            const title = htmlText(match[2]);
 
             // Decode DDG redirect URL
             if (resultUrl.includes("uddg=")) {
@@ -150,7 +157,7 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
             i = 0;
             while ((match = fallbackLink.exec(html)) !== null && results.length < 15) {
                 let resultUrl = match[1];
-                const title = match[2].replace(/<[^>]+>/g, "").trim();
+                const title = htmlText(match[2]);
                 if (resultUrl.includes("uddg=")) {
                     try {
                         resultUrl = decodeURIComponent(resultUrl.split("uddg=")[1].split("&")[0]);
@@ -174,9 +181,6 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
 async function searchBraveLite(query: string): Promise<SearchResult[]> {
     try {
         const url = `https://search.brave.com/search?q=${encodeURIComponent(query)}&source=web`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-
         const response = await fetch(url, {
             headers: {
                 "User-Agent": randomUA(),
@@ -184,9 +188,9 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
                 "Accept-Language": "en-US,en;q=0.9",
             },
             redirect: "follow",
-            signal: controller.signal,
+            // Covers the body read too: a cleared timer let one stalled engine hang the whole search.
+            signal: AbortSignal.timeout(8000),
         });
-        clearTimeout(timeout);
 
         if (response.status !== 200) return [];
 
@@ -203,21 +207,14 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
             const content = match[2];
 
             const titleMatch = content.match(/<div[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-            const title = titleMatch
-                ? titleMatch[1].replace(/<[^>]+>/g, "").trim()
-                : content.replace(/<[^>]+>/g, "").trim();
+            const title = htmlText(titleMatch ? titleMatch[1] : content);
 
             if (url.startsWith("http") && !url.includes("brave.com") && title.length > 5 && !seenUrls.has(url)) {
                 seenUrls.add(url);
 
                 const afterLink = html.substring(match.index + match[0].length, match.index + match[0].length + 1500);
                 const snippetMatch = afterLink.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-                const snippet = snippetMatch
-                    ? snippetMatch[1]
-                          .replace(/<[^>]+>/g, "")
-                          .replace(/\s+/g, " ")
-                          .trim()
-                    : "";
+                const snippet = snippetMatch ? htmlText(snippetMatch[1]) : "";
 
                 if (snippet.length > 10) {
                     results.push({ url, title, snippet: snippet.substring(0, 300) });
@@ -236,9 +233,6 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
 async function searchGoogleLite(query: string): Promise<SearchResult[]> {
     try {
         const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10&hl=en`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-
         const response = await fetch(url, {
             headers: {
                 "User-Agent": randomUA(),
@@ -246,9 +240,9 @@ async function searchGoogleLite(query: string): Promise<SearchResult[]> {
                 "Accept-Language": "en-US,en;q=0.9",
             },
             redirect: "follow",
-            signal: controller.signal,
+            // Covers the body read too: a cleared timer let one stalled engine hang the whole search.
+            signal: AbortSignal.timeout(8000),
         });
-        clearTimeout(timeout);
 
         if (response.status !== 200) return [];
 
@@ -263,7 +257,7 @@ async function searchGoogleLite(query: string): Promise<SearchResult[]> {
         let match;
         while ((match = resultPattern.exec(html)) !== null && results.length < 15) {
             const resultUrl = decodeURIComponent(match[1]);
-            const title = match[2].replace(/<[^>]+>/g, "").trim();
+            const title = htmlText(match[2]);
             if (!seenUrls.has(resultUrl) && !resultUrl.includes("google.com")) {
                 seenUrls.add(resultUrl);
                 results.push({ url: resultUrl, title, snippet: "" });
@@ -366,7 +360,7 @@ async function searchBingLite(query: string): Promise<SearchResult[]> {
             // Bing uses h2 > a for result links
             const h2LinkM = block.match(/<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
             if (!h2LinkM) continue;
-            const title = h2LinkM[2].replace(/<[^>]+>/g, "").trim();
+            const title = htmlText(h2LinkM[2]);
             if (title.length < 3) continue;
 
             // The h2 link is a bing.com/ck/a redirect; the real URL is in its `u`
@@ -377,12 +371,7 @@ async function searchBingLite(query: string): Promise<SearchResult[]> {
             seenUrls.add(url);
 
             const snippetM = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-            const snippet = snippetM
-                ? snippetM[1]
-                      .replace(/<[^>]+>/g, "")
-                      .replace(/&nbsp;/g, " ")
-                      .trim()
-                : "";
+            const snippet = snippetM ? htmlText(snippetM[1]) : "";
             results.push({ url, title, snippet: snippet.substring(0, 300) });
         }
         return results;
