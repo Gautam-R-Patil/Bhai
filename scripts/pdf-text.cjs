@@ -7,6 +7,14 @@
 // process once its RSS passes 1GB. A bomb, a hang or a crash ends this process,
 // never the bot. One message in ({data}), one out ({ok, text} or {ok, error}).
 "use strict";
+// unpdf's pdf.js uses Promise.try, which only exists on Node >= 22.13 / 24+.
+// On the project's supported Node 20-22.12 it throws "Promise.try is not a
+// function" and PDF parsing crashes. Polyfill it before unpdf loads.
+if (typeof Promise.try !== "function") {
+    Promise.try = function (fn, ...args) {
+        return new Promise((resolve) => resolve(fn(...args)));
+    };
+}
 const { Worker } = require("node:worker_threads");
 
 const MAX_RSS = Number(process.argv[2]) || 1024 * 1024 * 1024; // argv only from tests; the bot passes none
