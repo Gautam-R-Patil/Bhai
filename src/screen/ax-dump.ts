@@ -74,10 +74,10 @@ const DEFAULT_TIMEOUT_MS = 5_000;
  * every cascade call. Once we've seen a permission-shaped error, short-circuit
  * for `AX_NEGATIVE_CACHE_MS` and return the cached failure instantly.
  *
- * Cleared by `clearAxFailureCache()` or auto-expires after 5 minutes (gives the
- * user time to fix permission via System Preferences and try again).
+ * Cleared by `clearAxFailureCache()` or auto-expires after 10s: short, so a
+ * grant the user just made in System Settings takes effect on the next try.
  */
-const AX_NEGATIVE_CACHE_MS = 5 * 60 * 1000;
+const AX_NEGATIVE_CACHE_MS = 10_000;
 let _axNegativeUntil = 0;
 let _axNegativeReason = "";
 
@@ -189,16 +189,26 @@ async function runSwiftHelper(exec: string, args: string[], timeoutMs: number): 
     }
 }
 
+// Helper errors raised before it acted: the element was never pressed.
+const _AX_REFUSED = /^(element_gone|element_changed|unsupported|unknown_action|no_pid|not_trusted|pid_not_found)/;
+
 /**
  * AXPress ("press") or AXScrollToVisible ("reveal") the element at `el.path`
  * of app `pid` (macOS). The helper first checks the element there still has
  * the dumped role + frame. Returns the element's frame afterwards on success.
+ * `unconfirmed`: the action may have run anyway (a timeout, or a press whose
+ * handler opened a menu/modal and returned an error) — don't repeat it.
  */
 export async function axPerformAction(
     pid: number,
     el: Pick<AxFlatElement, "path" | "role" | "bbox">,
     action: "press" | "reveal",
-): Promise<{ ok: boolean; error?: string; frame?: { x: number; y: number; w: number; h: number } }> {
+): Promise<{
+    ok: boolean;
+    error?: string;
+    unconfirmed?: boolean;
+    frame?: { x: number; y: number; w: number; h: number };
+}> {
     if (process.platform !== "darwin") return { ok: false, error: "unsupported_platform" };
     if (!pid) return { ok: false, error: "no_pid" };
     const h = swiftHelper();
@@ -206,12 +216,17 @@ export async function axPerformAction(
     const args = [...h.args, "--pid", String(pid), "--action", action, "--path", el.path.join(",")];
     args.push("--expect-role", el.role, "--expect-frame", [b.x, b.y, b.w, b.h].join(","));
     try {
-        const out = (await runSwiftHelper(h.exec, args, 5000)).trim();
-        if (!out.startsWith("ok|")) return { ok: false, error: out.replace(/^error\|/, "") || "no_output" };
+        // Longer than AppKit's ~6s AX messaging timeout, so a slow press reports back.
+        const out = (await runSwiftHelper(h.exec, args, 8000)).trim();
+        if (!out.startsWith("ok|")) {
+            const error = out.replace(/^error\|/, "") || "no_output";
+            return { ok: false, error, unconfirmed: !_AX_REFUSED.test(error) };
+        }
         const [x, y, w, hh] = out.slice(3).split(",").map(Number);
         return { ok: true, frame: { x, y, w, h: hh } };
     } catch (err) {
-        return { ok: false, error: (err as Error).message.slice(0, 200) };
+        const e = err as NodeJS.ErrnoException;
+        return { ok: false, error: e.message.slice(0, 200), unconfirmed: e.code !== "ENOENT" };
     }
 }
 
@@ -411,15 +426,22 @@ function deriveLabelFromDescendants(node: AxNode): string {
 }
 
 const WINDOW_ROLES = new Set(["AXWindow", "Window", "frame", "window", "dialog"]);
+// Open native menus and popovers sit inside a window in the tree but are drawn
+// past its edge: their items are visible inside their own rect too. Not under a
+// web area, where ARIA role=menu lists are laid out (and scrolled) with the page.
+const POPUP_ROLES = new Set(["AXMenu", "AXPopover"]);
 
 function flattenInteractiveJs(dump: AxDump): AxFlatElement[] {
     const out: AxFlatElement[] = [];
     let id = 1;
     // `win` = the nearest enclosing window's rect: an element whose center is
     // outside it is scrolled out of view, and its coordinates can't be clicked.
-    function walk(node: AxNode, path: number[], depth: number, win?: AxNode) {
+    function walk(node: AxNode, path: number[], depth: number, win?: AxNode, pop?: AxNode, inWeb = false) {
         if (depth > MAX_WALK_DEPTH) return;
-        if (WINDOW_ROLES.has(node.role || "") && node.w > 0 && node.h > 0) win = node;
+        const sized = node.w > 0 && node.h > 0;
+        if (WINDOW_ROLES.has(node.role || "") && sized) win = node;
+        if (node.role === "AXWebArea") inWeb = true;
+        else if (POPUP_ROLES.has(node.role || "") && sized && !inWeb) pop = node;
         if (isInteractiveRole(node.role) && node.w > 0 && node.h > 0) {
             const label = (node.label || "").trim();
             const value = (node.value || "").trim();
@@ -441,12 +463,12 @@ function flattenInteractiveJs(dump: AxDump): AxFlatElement[] {
                     path: [...path],
                     depth,
                 };
-                if (win && !inRect(center, win)) el.offscreen = true;
+                if (win && !inRect(center, win) && !(pop && inRect(center, pop))) el.offscreen = true;
                 out.push(el);
             }
         }
         for (let i = 0; i < node.children.length; i++) {
-            walk(node.children[i], [...path, i], depth + 1, win);
+            walk(node.children[i], [...path, i], depth + 1, win, pop, inWeb);
         }
     }
     walk(dump.root, [], 0);
@@ -599,9 +621,16 @@ const _POSITIONS: Array<[RegExp, (el: AxFlatElement) => number]> = [
     [/\b(right|rightmost)\b/, (el) => -el.center.x],
 ];
 
-/** The one candidate the query's first positional word singles out, or null. */
+/**
+ * The one candidate the query's first positional word singles out, or null.
+ * Words of the candidates' own labels don't count ("Last Name" is not "last").
+ */
 export function pickByPosition(els: AxFlatElement[], query: string): AxFlatElement | null {
-    const words = _POSITIONS.map(([re, key]) => ({ at: query.search(re), key })).filter((p) => p.at >= 0);
+    const labelWords = new Set(els.flatMap((el) => _tokens(el.label || "")));
+    const q = _tokens(query)
+        .filter((w) => !labelWords.has(w))
+        .join(" ");
+    const words = _POSITIONS.map(([re, key]) => ({ at: q.search(re), key })).filter((p) => p.at >= 0);
     if (!words.length) return null;
     const key = words.sort((a, b) => a.at - b.at)[0].key;
     const sorted = [...els].sort((a, b) => key(a) - key(b));

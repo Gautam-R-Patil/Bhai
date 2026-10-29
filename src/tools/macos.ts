@@ -63,18 +63,19 @@ let _lastScreenshotBuffer: Buffer | null = null;
  * Capture the focused window's monitor — the one os_click scales image and
  * percent coords against — instead of `screencapture -x`'s main display, which
  * is a different screen whenever the app sits on a second monitor.
+ * Returns the monitor captured, or undefined when it fell back to the main
+ * display (the OCR helper's own main-display mapping is then the right one).
  */
 async function captureFocusedDisplay(
     out: string,
     dims?: ScreenDimensions,
     type: "png" | "jpg" = "png",
-): Promise<ScreenDimensions> {
+): Promise<ScreenDimensions | undefined> {
     const d = dims ?? (await getScreenDimensions({ focusedWindow: true, force: true }));
     const rect = monitorRect(d);
-    if (!rect || !(await captureRegionToFile(rect, out, type))) {
-        await withCursorHidden(() => execFileAsync("screencapture", ["-x", "-t", type, out], { timeout: 10000 }));
-    }
-    return d;
+    if (rect && (await captureRegionToFile(rect, out, type))) return d;
+    await withCursorHidden(() => execFileAsync("screencapture", ["-x", "-t", type, out], { timeout: 10000 }));
+    return undefined;
 }
 
 // ── Element Map Cache (for os_scan → os_click_element flow) ──
@@ -1892,7 +1893,7 @@ export const osScan: ToolDefinition = {
             // 2. Hide overlay, capture screenshot
             hideOverlayForAgent();
             await new Promise((r) => setTimeout(r, 100));
-            await captureFocusedDisplay(tmpPng, dims);
+            const ocrDims = await captureFocusedDisplay(tmpPng, dims);
             showOverlayForAgent();
 
             // 3. Resize to 1280px width
@@ -1905,7 +1906,7 @@ export const osScan: ToolDefinition = {
 
             // 4. Run OCR (accurate mode for reliable text) + accessibility in parallel
             const [ocrResult, axElements] = await Promise.all([
-                runOcr(tmpPng, "accurate", undefined, dims),
+                runOcr(tmpPng, "accurate", undefined, ocrDims),
                 getAccessibilityElements(),
             ]);
 

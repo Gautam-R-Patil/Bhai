@@ -32,8 +32,23 @@ interface InspectCache {
     elements: AxFlatElement[];
     app: string;
     pid: number;
+    /** The inspected app was frontmost (else an explicit pid: the Dock, a menu extra, a background window). */
+    wasFront: boolean;
+    depth: number;
     timestamp: number;
 }
+
+// Roles whose AX value is their state (checked, slider position, typed text): it
+// changes when the agent uses them, so it can't identify them on a re-check.
+const STATE_VALUE_ROLES = new Set([
+    "AXCheckBox",
+    "AXRadioButton",
+    "AXSlider",
+    "AXTextField",
+    "AXTextArea",
+    "AXPopUpButton",
+    "AXComboBox",
+]);
 
 let _lastInspect: InspectCache | null = null;
 const INSPECT_CACHE_TTL_MS = 30_000;
@@ -104,6 +119,8 @@ export const osInspect: ToolDefinition = {
                 elements: all, // os_click_id text= can match past the listed cap
                 app: dump.app,
                 pid: dump.pid,
+                wasFront: !pid || (await getFrontmostApp())?.pid === dump.pid,
+                depth,
                 timestamp: Date.now(),
             };
 
@@ -226,19 +243,27 @@ export const osClickId: ToolDefinition = {
         // seconds old, the UI may have scrolled or re-laid out. Re-check first.
         const age = Date.now() - cache.timestamp;
         const front = await getFrontmostApp();
-        if (front && cache.pid && front.pid !== cache.pid) {
+        if (front && cache.pid && cache.wasFront && front.pid !== cache.pid) {
             return JSON.stringify({
                 success: false,
                 error: `The frontmost app changed since os_inspect (was ${cache.app}, now ${front.name}). Run os_inspect again.`,
             });
         }
         if (age > CLICK_ID_FRESH_MS) {
-            const fresh = await dumpAccessibilityTree({ pid: cache.pid || undefined, depth: DEFAULT_INSPECT_DEPTH });
+            const fresh = await dumpAccessibilityTree({
+                pid: cache.pid || undefined,
+                depth: Math.max(cache.depth, DEFAULT_INSPECT_DEPTH),
+            });
             if (fresh.error)
                 return JSON.stringify({ success: false, error: `Could not re-check the element: ${fresh.error}` });
             const target = el;
             const same = flattenInteractive(fresh)
-                .filter((e) => e.role === target.role && e.label === target.label && e.value === target.value)
+                .filter(
+                    (e) =>
+                        e.role === target.role &&
+                        e.label === target.label &&
+                        (e.value === target.value || (!!e.label && STATE_VALUE_ROLES.has(e.role))),
+                )
                 .sort(
                     (a, b) =>
                         Math.hypot(a.center.x - target.center.x, a.center.y - target.center.y) -

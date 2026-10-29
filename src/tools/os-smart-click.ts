@@ -106,7 +106,15 @@ async function activateApp(appName: string): Promise<"already" | "raised" | "fai
         if (process.platform === "darwin") {
             const front = await getFrontmostApp();
             if (front && frontmostMatches(appName, front)) return "already";
-            await execFileAsync("open", ["-a", appName], { timeout: 4000 });
+            // System agents are never frontmost: nothing to raise.
+            // ponytail: fixed list; third-party menu-bar-only apps still wait out the 5s.
+            if (/^(dock|control ?center|systemuiserver|notification ?center)$/i.test(appName.trim())) return "already";
+            try {
+                await execFileAsync("open", ["-a", appName], { timeout: 4000 });
+            } catch {
+                // A loose name `open -a` can't resolve ("Chrome"): best-effort, click in what's in front.
+                return "already";
+            }
             return (await waitForFrontmost(appName, 5000)) ? "raised" : "failed";
         }
         if (process.platform === "win32") {
@@ -257,12 +265,13 @@ export const osSmartClick: ToolDefinition = {
         const selfCorrectOn = process.env.ATLAS_NO_SMARTCLICK_SELFCORRECT !== "true";
 
         // A frame of the region the click is judged in: the focused window when
-        // its rect is known, else the screen. Returns the rect it shows.
-        const snap = async (): Promise<{ buf: Buffer; rect: Rect } | null> => {
-            const fw = dims.focusedWindow;
-            if (fw && fw.w > 0 && fw.h > 0) {
-                const buf = await captureWindowRegion(fw);
-                if (buf) return { buf, rect: fw };
+        // its rect is known and holds `at`, else the monitor (a menu-bar click).
+        // Returns the rect it shows.
+        const snap = async (at?: { x: number; y: number }): Promise<{ buf: Buffer; rect: Rect } | null> => {
+            const r = dimsAreFallback ? dims.focusedWindow : clickBasis(dims, at);
+            if (r && r.w > 0 && r.h > 0) {
+                const buf = await captureWindowRegion(r);
+                if (buf) return { buf, rect: r };
             }
             try {
                 return { buf: await takeScreenshot(), rect: { x: 0, y: 0, w: dims.width, h: dims.height } };
@@ -284,11 +293,11 @@ export const osSmartClick: ToolDefinition = {
             }
             await dispatchClick("mouse_move", x, y, dims);
             await sleep(80);
-            const before = await snap();
+            const before = await snap({ x, y });
             const r = await dispatchClick(action, x, y, dims);
             if (!r.success) return { dispatchErr: r.error || "click_dispatch_failed" };
             await sleep(300); // let the UI settle
-            const after = await snap();
+            const after = await snap({ x, y });
             const rect = before?.rect ?? after?.rect ?? { x: 0, y: 0, w: dims.width, h: dims.height };
             const verdict = await reportClickOutcome(
                 site,
@@ -437,6 +446,7 @@ export const osSmartClick: ToolDefinition = {
                     skipTiers: [...skipTiers, ...extraSkip],
                     screenDims: dims,
                     axDumpHint,
+                    dockFirst: /^dock$/i.test(appName.trim()),
                     llm: _smartClickLLM ?? undefined,
                     groundingModel,
                     groundingTimeoutMs: Math.max(3000, deadline - Date.now() - 5000),
@@ -470,6 +480,17 @@ export const osSmartClick: ToolDefinition = {
                                 }
                             }
                             return { ok: true, target, calX: target.x, calY: target.y, verdict: "ax_press" };
+                        }
+                        // The press may have run (a menu/modal handler blocks AXPress
+                        // past its timeout): a pixel click now would run it twice.
+                        if (pressed.unconfirmed) {
+                            return {
+                                ok: false,
+                                target,
+                                calX: target.x,
+                                calY: target.y,
+                                dispatchErr: `ax_press_unconfirmed: AXPress on "${target.matchedLabel}" did not report back (${pressed.error}); it may have worked. Take an os_screenshot before retrying; nothing else was clicked.`,
+                            };
                         }
                     }
                     if (target.ax.offscreen) {

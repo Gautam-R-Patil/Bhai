@@ -85,6 +85,14 @@ describe("os_smart_click grounding", () => {
         expect(again.source).toBe("ax_exact");
     });
 
+    it("app hint Dock tells the cascade to search the Dock first; other apps do not", async () => {
+        findClickTarget.mockResolvedValue({ x: 10, y: 10, confidence: 0.99, source: "ax_exact" });
+        await osSmartClick.handler({ instruction: "Safari", app: "Dock" });
+        expect(findClickTarget.mock.calls[0][1].dockFirst).toBe(true);
+        await osSmartClick.handler({ instruction: "Safari" });
+        expect(findClickTarget.mock.calls[1][1].dockFirst).toBe(false);
+    });
+
     it("re-grounds a verified Haiku miss once with Sonnet", async () => {
         findClickTarget.mockResolvedValueOnce(cloudHit(100)).mockResolvedValueOnce(cloudHit(140));
         classify.mockResolvedValueOnce({ outcome: "no_op" }).mockResolvedValueOnce({ outcome: "success" });

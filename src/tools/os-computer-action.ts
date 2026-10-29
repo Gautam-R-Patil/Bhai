@@ -156,6 +156,25 @@ async function executeZoom(
     };
 }
 
+/**
+ * Crop `img` (whose pixels are screen coords from 0,0) to `r`; null when `r` doesn't fit inside it.
+ * `scaled` (Wayland: grim captures physical pixels, xrandr reports logical ones): pixels aren't
+ * screen coords, so the frame is `r` only when it has `r`'s shape, else null.
+ */
+export async function cropToRect(
+    img: Buffer,
+    r: { x: number; y: number; w: number; h: number },
+    scaled = false,
+): Promise<Buffer | null> {
+    const sharp = (await import("sharp")).default;
+    const { width = 0, height = 0 } = await sharp(img).metadata();
+    // ponytail: a scaled 2x2 grid of same-shape monitors passes this check; scale r by the frame if that bites.
+    if (scaled) return height > 0 && Math.abs(width / height - r.w / r.h) < 0.01 ? img : null;
+    if (r.x < 0 || r.y < 0 || r.x + r.w > width || r.y + r.h > height) return null;
+    if (r.x === 0 && r.y === 0 && r.w === width && r.h === height) return img;
+    return sharp(img).extract({ left: r.x, top: r.y, width: r.w, height: r.h }).png().toBuffer();
+}
+
 /** Run one parsed action. `dims` (the focused monitor) skips a re-probe when the caller already has it. */
 export async function executeStructuredAction(
     act: ComputerAction,
@@ -207,7 +226,19 @@ export async function executeStructuredAction(
             // The focused window's monitor — the same one percent/image coords resolve against.
             const d = dims ?? (await getScreenDimensions({ focusedWindow: true, force: true }));
             const rect = monitorRect(d);
-            const raw = (rect && (await captureRegion(rect))) || (await takeScreenshot());
+            let raw = rect && (await captureRegion(rect));
+            // Linux has no region capture and its full shot spans every monitor (root
+            // pixels = screen coords): crop it to this monitor, or say the frame is off.
+            let wholeDesktop = false;
+            if (!raw) {
+                const full = await takeScreenshot();
+                raw = full;
+                if (process.platform === "linux" && rect) {
+                    const cropped = await cropToRect(full, rect, isWayland());
+                    if (cropped) raw = cropped;
+                    else wholeDesktop = true;
+                }
+            }
             const { downscaleForVision } = await import("../screen/ui-tars.js");
             const img = await downscaleForVision(raw, { jpeg: true });
             return {
@@ -216,8 +247,14 @@ export async function executeStructuredAction(
                 mime_type: img.mime,
                 imageWidth: img.width,
                 imageHeight: img.height,
-                monitor: d.monitorId,
-                note: `Click with coordSystem "image" + imageWidth ${img.width}, or coordSystem "percent".`,
+                ...(wholeDesktop
+                    ? {
+                          note: 'Whole desktop, not one monitor: image/percent coords will not line up. Use coordSystem "screen" or os_screenshot.',
+                      }
+                    : {
+                          monitor: d.monitorId,
+                          note: `Click with coordSystem "image" + imageWidth ${img.width}, or coordSystem "percent".`,
+                      }),
             };
         }
         case "zoom":
@@ -775,17 +812,29 @@ const MAC_MOD_DOWN: Record<string, string> = {
     "⌃": "control down",
 };
 
-/** Split "cmd+shift+s" into modifiers + key; "cmd++" and "+" press the plus key. */
+/**
+ * Split "cmd+shift+s" into lowercased modifiers + key; "cmd++", "cmd + +" and "+" press
+ * the plus key, " " is space. A lone key keeps its case ("Y" stays "Y"); a single
+ * character under modifiers is lowercased. An empty segment ("cmd+shift+") throws instead of pressing only the
+ * modifiers.
+ */
 export function splitCombo(combo: string): { mods: string[]; key: string } {
-    const lower = combo.toLowerCase().trim();
-    if (lower === "+") return { mods: [], key: "+" };
-    const plusKey = lower.endsWith("++");
-    const parts = (plusKey ? lower.slice(0, -2) : lower)
-        .split("+")
-        .map((p) => p.trim())
-        .filter(Boolean);
-    const key = plusKey ? "+" : (parts.pop() ?? "");
-    return { mods: parts, key };
+    const s = combo.trim();
+    if (!s) {
+        if (combo) return { mods: [], key: "space" };
+        throw new Error("Empty key.");
+    }
+    if (s === "+") return { mods: [], key: "+" };
+    const plusKey = /\+\s*\+$/.test(s);
+    const rest = plusKey ? s.replace(/\+\s*\+$/, "").trim() : s;
+    if (plusKey && !rest) return { mods: [], key: "+" };
+    const parts = rest.split("+").map((p) => p.trim());
+    if (parts.some((p) => !p)) throw new Error(`Malformed combo "${combo}": empty key between "+" signs.`);
+    const key = plusKey ? "+" : (parts.pop() as string);
+    const mods = parts.map((m) => m.toLowerCase());
+    // Names keep their case (X keysyms like Page_Down are case-sensitive); a letter
+    // under modifiers is lowercased so "ctrl+A" doesn't become ctrl+shift+a.
+    return { mods, key: mods.length && [...key].length === 1 ? key.toLowerCase() : key };
 }
 
 /** The AppleScript line for a key or combo ("enter", "cmd+shift+s", "home", "f5"). Throws on an unknown name. */
@@ -794,8 +843,9 @@ export function macKeyScript(combo: string): string {
     const bad = mods.find((m) => !MAC_MOD_DOWN[m]);
     if (bad) throw new Error(`Unknown modifier "${bad}". Use command, shift, option or control.`);
     const using = mods.length ? ` using {${mods.map((m) => MAC_MOD_DOWN[m]).join(", ")}}` : "";
-    if (Object.hasOwn(MAC_KEY_CODES, key))
-        return `tell application "System Events" to key code ${MAC_KEY_CODES[key]}${using}`;
+    const named = key.toLowerCase();
+    if (Object.hasOwn(MAC_KEY_CODES, named))
+        return `tell application "System Events" to key code ${MAC_KEY_CODES[named]}${using}`;
     if ([...key].length === 1)
         return `tell application "System Events" to keystroke "${escapeApplescript(key)}"${using}`;
     throw new Error(
@@ -837,18 +887,94 @@ const XDO_KEYS: Record<string, string> = {
     command: "super",
     meta: "super",
     "+": "plus",
+    plus: "plus",
+    capslock: "Caps_Lock",
+    print: "Print",
+    menu: "Menu",
+    pause: "Pause",
 };
+// Single punctuation characters → their keysym names ("ctrl+-" → "ctrl+minus").
+const XDO_PUNCT: Record<string, string> = {
+    " ": "space",
+    "-": "minus",
+    "=": "equal",
+    ",": "comma",
+    ".": "period",
+    "/": "slash",
+    "\\": "backslash",
+    ";": "semicolon",
+    "'": "apostrophe",
+    "`": "grave",
+    "[": "bracketleft",
+    "]": "bracketright",
+    "!": "exclam",
+    "@": "at",
+    "#": "numbersign",
+    $: "dollar",
+    "%": "percent",
+    "^": "asciicircum",
+    "&": "ampersand",
+    "*": "asterisk",
+    "(": "parenleft",
+    ")": "parenright",
+    _: "underscore",
+    "{": "braceleft",
+    "}": "braceright",
+    "|": "bar",
+    ":": "colon",
+    '"': "quotedbl",
+    "<": "less",
+    ">": "greater",
+    "?": "question",
+    "~": "asciitilde",
+};
+// Lowercase X keysym names agents spell out ("ctrl+minus", "ctrl+bracketleft").
+const XDO_NAMED_PUNCT = new Set(Object.values(XDO_PUNCT));
+// Real capitalized X keysyms, keyed by lowercase so "page_down" also works. xdotool exits 0 on an
+// unknown keysym and presses nothing, so anything not listed here throws instead of passing through.
+// ponytail: hand-picked subset of keysymdef.h/XF86keysym.h; add names as agents need them.
+const XDO_KEYSYMS = new Map(
+    [
+        "BackSpace Tab Return Escape Delete Insert Home End Left Right Up Down Prior Next Page_Up Page_Down Begin",
+        "Print Sys_Req Pause Break Scroll_Lock Num_Lock Caps_Lock Menu Clear Select Execute Find Cancel Help Undo Redo",
+        "Shift_L Shift_R Control_L Control_R Alt_L Alt_R Meta_L Meta_R Super_L Super_R Hyper_L Hyper_R",
+        "ISO_Left_Tab ISO_Level3_Shift Mode_switch Multi_key",
+        "KP_0 KP_1 KP_2 KP_3 KP_4 KP_5 KP_6 KP_7 KP_8 KP_9 KP_Add KP_Subtract KP_Multiply KP_Divide KP_Decimal",
+        "KP_Separator KP_Enter KP_Equal KP_Home KP_End KP_Left KP_Right KP_Up KP_Down KP_Prior KP_Next",
+        "KP_Page_Up KP_Page_Down KP_Insert KP_Delete KP_Begin",
+        "XF86AudioMute XF86AudioLowerVolume XF86AudioRaiseVolume XF86AudioMicMute XF86AudioPlay XF86AudioPause",
+        "XF86AudioStop XF86AudioPrev XF86AudioNext XF86AudioRecord XF86AudioRewind XF86AudioForward XF86AudioMedia",
+        "XF86MonBrightnessUp XF86MonBrightnessDown XF86KbdBrightnessUp XF86KbdBrightnessDown XF86KbdLightOnOff",
+        "XF86Calculator XF86Mail XF86WWW XF86HomePage XF86Search XF86Explorer XF86Back XF86Forward XF86Refresh",
+        "XF86Favorites XF86Sleep XF86PowerOff XF86Eject XF86Display XF86WLAN XF86TouchpadToggle XF86ScreenSaver",
+    ]
+        .join(" ")
+        .split(" ")
+        .map((k) => [k.toLowerCase(), k]),
+);
 
 /** One key name → xdotool keysym. Throws on a name xdotool would silently ignore. */
 export function xdotoolKeySpec(name: string): string {
-    const k = name.toLowerCase().trim();
+    if (Object.hasOwn(XDO_PUNCT, name)) return XDO_PUNCT[name];
+    const raw = name.trim();
+    const k = raw.toLowerCase();
     if (Object.hasOwn(XDO_KEYS, k)) return XDO_KEYS[k];
-    const f = /^f([1-9]|1[0-2])$/.exec(k);
+    if (XDO_NAMED_PUNCT.has(k)) return k;
+    const f = /^f([1-9]|[12]\d|3[0-5])$/.exec(k);
     if (f) return `F${f[1]}`;
-    if (/^[a-z0-9]$/.test(k)) return k;
+    if (/^[a-z0-9]$/i.test(raw)) return raw;
+    if (Object.hasOwn(XDO_PUNCT, raw)) return XDO_PUNCT[raw];
+    const sym = XDO_KEYSYMS.get(k);
+    if (sym) return sym;
     throw new Error(
-        `Unknown key "${name}". Use a letter/digit, F1-F12, or one of: ${Object.keys(XDO_KEYS).join(", ")}.`,
+        `Unknown key "${name}". Use a letter/digit/punctuation, F1-F35, an X keysym (e.g. Page_Down, KP_Add, XF86AudioMute), or one of: ${Object.keys(XDO_KEYS).join(", ")}.`,
     );
+}
+
+/** hold_key on X11: exactly the named key; "W" holds w, not shift+w (matches the ydotool path). */
+export function xdotoolHoldKeySpec(name: string): string {
+    const raw = name.trim();
+    return xdotoolKeySpec(/^[A-Za-z]$/.test(raw) ? raw.toLowerCase() : name);
 }
 
 /** "ctrl+enter" → "ctrl+Return". */
@@ -888,6 +1014,28 @@ const EVDEV: Record<string, number> = {
     delete: 111,
     f11: 87,
     f12: 88,
+    minus: 12,
+    "-": 12,
+    equal: 13,
+    "=": 13,
+    bracketleft: 26,
+    "[": 26,
+    bracketright: 27,
+    "]": 27,
+    semicolon: 39,
+    ";": 39,
+    apostrophe: 40,
+    "'": 40,
+    grave: 41,
+    "`": 41,
+    backslash: 43,
+    "\\": 43,
+    comma: 51,
+    ",": 51,
+    period: 52,
+    ".": 52,
+    slash: 53,
+    "/": 53,
 };
 for (const [row, start] of [
     ["1234567890", 2],
@@ -902,7 +1050,7 @@ for (const [row, start] of [
 for (let i = 1; i <= 10; i++) EVDEV[`f${i}`] = 58 + i;
 
 function evdevCode(name: string): number {
-    const k = name.toLowerCase().trim();
+    const k = name === " " ? "space" : name.toLowerCase().trim();
     if (!Object.hasOwn(EVDEV, k)) throw new Error(`Unknown key "${name}" for ydotool.`);
     return EVDEV[k];
 }
@@ -910,7 +1058,8 @@ function evdevCode(name: string): number {
 /** ydotool `key` args for a combo: press modifiers + key, release in reverse. */
 export function ydotoolKeyArgs(combo: string): string[] {
     const { mods, key } = splitCombo(combo);
-    const codes = [...mods, key].map(evdevCode);
+    // A lone uppercase letter ("Y") needs shift; evdev codes are case-less.
+    const codes = [...(/^[A-Z]$/.test(key) ? ["shift"] : []), ...mods, key].map(evdevCode);
     return [...codes.map((c) => `${c}:1`), ...codes.reverse().map((c) => `${c}:0`)];
 }
 
@@ -1079,7 +1228,7 @@ async function dispatchHoldKey(text: string, durationMs: number): Promise<void> 
             await execFileAsync("ydotool", ["key", `${code}:0`], { timeout: 3000 });
             return;
         }
-        const key = xdotoolKeySpec(text);
+        const key = xdotoolHoldKeySpec(text);
         // Add `--` to prevent flag injection.
         await execFileAsync("xdotool", ["keydown", "--", key], { timeout: 3000 });
         await new Promise((r) => setTimeout(r, hold));

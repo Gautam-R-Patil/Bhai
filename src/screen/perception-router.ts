@@ -111,6 +111,8 @@ export interface CascadeOptions {
     forceProfile?: CapabilityReport["profile"];
     /** AX dump to reuse (avoids re-probing if caller already has one). */
     axDumpHint?: AxDump;
+    /** The caller targets the Dock (app hint "Dock"): search it first, as when the instruction names it. */
+    dockFirst?: boolean;
     /**
      * Screen dimensions for the monitor the screenshot was captured from.
      * REQUIRED for OmniParser and UI-TARS tiers — their output coordinates are
@@ -183,7 +185,9 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         miss.axElementCount = els.length;
         const toTarget = (m: LabelMatch, tier: "ax_exact" | "ax_fuzzy", confidence: number): ClickTarget | null => {
             if (m.ambiguous) miss.reason = "ambiguous";
-            else if (m.disabled && miss.reason === "not_found") miss.reason = "disabled";
+            // Only a confident disabled match ends the cascade; a fuzzy one ("Send"
+            // vs a disabled "Send Later") may not be the target at all.
+            else if (m.disabled && tier === "ax_exact" && miss.reason === "not_found") miss.reason = "disabled";
             miss.nearest = m.nearest.map((c) => ({
                 label: c.el.label || c.el.value,
                 role: c.el.role,
@@ -216,7 +220,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                 thresholds.ax_exact,
             );
             elapsed.ax_exact = Date.now() - t;
-            if (hit || miss.reason === "ambiguous") return hit;
+            if (hit || miss.reason === "ambiguous" || miss.reason === "disabled") return hit;
         }
         if (!skip.has("ax_fuzzy")) {
             tried.push("ax_fuzzy");
@@ -233,8 +237,10 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     };
 
     // The Dock (and its app icons) isn't the frontmost app, so the normal dump
-    // never sees it: search it when the front app has no match, or first when
-    // the instruction names the Dock.
+    // never sees it: search it first when the instruction names the Dock, else
+    // only once every other tier has missed (a page link "Mail" must not launch
+    // the Mail app just because AX couldn't see the link).
+    const dockFirst = opts.dockFirst || /\bdock\b/i.test(instruction);
     const tryDock = async (): Promise<ClickTarget | null> => {
         const dock = await dumpDock();
         if (!dock) return null;
@@ -246,7 +252,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
 
     let axDump = opts.axDumpHint;
     if (!skip.has("ax_exact") || !skip.has("ax_fuzzy")) {
-        if (/\bdock\b/i.test(instruction)) {
+        if (dockFirst) {
             const hit = await tryDock();
             if (hit) return hit;
         }
@@ -265,7 +271,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             // look-alike label read before the cut, so it counts as an AX miss.
             const hit = matchAx(axDump);
             if (hit) return hit;
-            if (miss.reason === "ambiguous") return missed();
+            if (miss.reason === "ambiguous" || miss.reason === "disabled") return missed();
 
             // Cold-window retry: a freshly-activated window's AX tree is often
             // incomplete on first dump (still settling), so a real element
@@ -281,18 +287,24 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
                     if (redump && !redump.error && !redump.partial) {
                         const retryHit = matchAx(redump);
                         if (retryHit) return retryHit;
-                        if ((miss.reason as CascadeMiss["reason"]) === "ambiguous") return missed();
+                        const r = miss.reason as CascadeMiss["reason"];
+                        if (r === "ambiguous" || r === "disabled") return missed();
                     }
                 } catch {
                     /* re-dump failed — fall through to vision tiers */
                 }
             }
-            if (!/\bdock\b/i.test(instruction)) {
-                const hit = await tryDock();
-                if (hit) return hit;
-            }
         }
     }
+    // Last resort once the vision tiers have missed too.
+    const dockOrMissed = async (): Promise<ClickTarget | null> => {
+        const axOn = !skip.has("ax_exact") || !skip.has("ax_fuzzy");
+        if (axOn && axDump && !axDump.error && !dockFirst) {
+            const hit = await tryDock();
+            if (hit) return hit;
+        }
+        return missed();
+    };
 
     // Tiers 4 + 5 require a screenshot (captured lazily, only now).
     let screenshotPath = opts.screenshotPath;
@@ -310,7 +322,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     }
     if (!screenshotPath) {
         miss.tierErrors.cloud_grounding = "no_screenshot";
-        return missed();
+        return dockOrMissed();
     }
 
     // Tier 4: OmniParser (Standard tier and up). Short-circuit when the
@@ -402,7 +414,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
 
     // No tier yielded sufficient confidence — caller falls through to cloud VLM.
     // Do NOT add cloud_vlm_required to triedTiers (router never actually ran it).
-    return missed();
+    return dockOrMissed();
 }
 
 /**
