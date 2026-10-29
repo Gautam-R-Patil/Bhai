@@ -93,7 +93,9 @@ const DETECTION_COOLDOWN_MS = 30000; // Don't re-detect within 30s
 let loaded = false;
 // A switch is saved only when the next detection confirms it, so a one-off paste
 // (a text to translate, a quoted email) doesn't become the language after a restart.
+// The confirming message must be a different one: every LLM call of a long turn re-checks the same text.
 let pendingSave = "";
+let pendingFrom = "";
 
 // The owner's language is kept in their identity profile, so proactive sends after a restart
 // don't fall back to English. Read once the identity store is up (its row carries a version).
@@ -207,13 +209,14 @@ export function updateSessionLanguage(userMessage: string): string {
         currentLanguage = detection.language;
         lastDetectionTime = now;
         pendingSave = currentLanguage;
+        pendingFrom = userMessage;
     } else if (detection.confidence > 0 && detection.language === currentLanguage) {
         // Only a REAL same-language detection refreshes the cooldown. A message
         // too short to detect returns the inherited language at confidence 0 —
         // if that armed the 30s window, a quick "ok" before a long foreign
         // message would block its detection and keep replies in the old language.
         lastDetectionTime = now;
-        if (detection.confidence >= 0.8 && pendingSave === currentLanguage) {
+        if (detection.confidence >= 0.8 && pendingSave === currentLanguage && userMessage !== pendingFrom) {
             pendingSave = "";
             try {
                 updateIdentityProfile({ preferences: { language: currentLanguage } });
@@ -257,4 +260,5 @@ export function resetLanguage(): void {
     lastDetectionTime = 0;
     loaded = false;
     pendingSave = "";
+    pendingFrom = "";
 }

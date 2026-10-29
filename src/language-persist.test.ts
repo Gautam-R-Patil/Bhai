@@ -34,6 +34,15 @@ describe("language persistence", () => {
         expect(getCurrentLanguage()).toBe("Hindi (Romanized)");
     });
 
+    it("the same message re-checked on a later iteration of a long turn doesn't confirm it", () => {
+        const paste = "add this to my calendar: Привет, встреча завтра в 10 у офиса, подтверди пожалуйста";
+        updateSessionLanguage(paste);
+        vi.advanceTimersByTime(31_000);
+        updateSessionLanguage(paste);
+        expect(getCurrentLanguage()).toBe("Russian");
+        expect(prefs.language).toBeUndefined();
+    });
+
     it("a one-off foreign paste switches this session only", () => {
         updateSessionLanguage("translate this: Привет, как дела? Увидимся завтра на встрече");
         expect(getCurrentLanguage()).toBe("Russian");
