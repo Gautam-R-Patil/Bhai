@@ -23,6 +23,7 @@ import {
     runPowerShell,
     runPowerShellInline,
 } from "./platform.js";
+import { macWifi, WIFI_NAME_HIDDEN_HINT } from "./platform-bridge.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -567,10 +568,7 @@ export const wifiControl: ToolDefinition = {
 
             switch (action) {
                 case "status": {
-                    const { stdout } = await execFileAsync("networksetup", ["-getairportnetwork", iface], {
-                        timeout: 3000,
-                    });
-                    const ssidMatch = stdout.match(/Current Wi-Fi Network:\s*(.+)/);
+                    const w = await macWifi(iface);
                     const powerResult = await execFileAsync("networksetup", ["-getairportpower", iface], {
                         timeout: 3000,
                     });
@@ -578,7 +576,9 @@ export const wifiControl: ToolDefinition = {
                     return JSON.stringify({
                         success: true,
                         power: isOn ? "on" : "off",
-                        connected_ssid: ssidMatch ? ssidMatch[1].trim() : null,
+                        connected: w.connected,
+                        connected_ssid: w.ssid,
+                        ...(w.nameHidden && { note: WIFI_NAME_HIDDEN_HINT }),
                     });
                 }
                 case "off":
