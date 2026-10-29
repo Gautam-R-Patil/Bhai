@@ -245,9 +245,7 @@ function canonicalize(s: string): string {
 
 export function isGuardedOrg(value: string): boolean {
     const c = canonicalize(value);
-    return GUARDED_ORGS.some(
-        (g) => c === g || c.endsWith(" " + g) || c.startsWith(g + " ") || c.includes(" " + g + " "),
-    );
+    return GUARDED_ORGS.some((g) => c === g || c.endsWith(` ${g}`) || c.startsWith(`${g} `) || c.includes(` ${g} `));
 }
 
 export function isGuardedRole(value: string): boolean {

@@ -51,6 +51,8 @@ describe("proactive push", () => {
         _setFatigueCheckForTests(() => true);
         expect(await dispatchProactiveMessage("telegram", "how'd it go?", "question")).toBe(false);
         expect(await dispatchProactiveMessage("telegram", "your 5pm moved", "fyi")).toBe(true);
-        expect(await dispatchProactiveMessage("telegram", "server down?", "question", undefined, false, true)).toBe(true);
+        expect(await dispatchProactiveMessage("telegram", "server down?", "question", undefined, false, true)).toBe(
+            true,
+        );
     });
 });
