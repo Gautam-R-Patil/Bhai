@@ -2983,6 +2983,11 @@ body.theme-dark .installed-item {
 .pp-row:has(input:focus-visible) { outline: 2px solid var(--accent-primary, #e8762c); outline-offset: 2px; }
 .pp-desc { display: none; }
 .pp-desc-shown { font-size: 13px; color: var(--text-secondary); margin-top: 10px; min-height: 1.2em; }
+.settings-search { width: 240px; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; outline: none; }
+.settings-search:focus { border-color: var(--accent-primary, #e8762c); }
+.settings-empty { text-align: center; color: var(--text-secondary); font-size: 13px; padding: 40px 0; }
+.about-links a { color: var(--text-secondary); text-decoration: none; }
+.about-links a:hover { color: var(--text-primary); text-decoration: underline; }
 .integration-state { font-size: 11px; font-weight: 500; color: var(--text-secondary); padding: 3px 10px; border-radius: 999px; background: rgba(127,127,127,0.12); white-space: nowrap; }
 .integration-state.on { color: #1f8a3c; background: rgba(52,199,89,0.14); }
 .integration-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; }

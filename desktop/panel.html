@@ -118,15 +118,6 @@
                     </svg>
                     <span>Account</span>
                 </button>
-                <button class="nav-item" data-tab="about" onclick="switchTab('about')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="16" x2="12" y2="12"></line>
-                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                    </svg>
-                    <span>About</span>
-                </button>
                 <span class="nav-pill" aria-hidden="true"></span>
             </div>
             <div class="sidebar-footer">
@@ -304,6 +295,7 @@
             <div class="tab-content" id="tab-settings">
                 <div class="tab-header">
                     <h2 class="tab-title">Settings</h2>
+                    <input class="settings-search" id="settingsSearch" type="search" placeholder="Search settings" oninput="filterSettings(this.value)" autocomplete="off">
                 </div>
 
                 <div class="settings-scroll">
@@ -313,7 +305,7 @@
 
                     <div class="pref-section surface-card">
                         <div class="pref-items">
-                            <div class="pref-select-group">
+                            <div class="pref-select-group" data-keywords="appearance dark light mode colour color">
                                 <span class="pref-select-label">Theme</span>
                                 <div class="pref-theme-buttons">
                                     <button class="pref-theme-btn" id="themeBtnLight" onclick="setTheme('light')">
@@ -346,12 +338,12 @@
                                     </button>
                                 </div>
                             </div>
-                            <label class="pref-toggle">
+                            <label class="pref-toggle" data-keywords="startup launch login boot">
                                 <span class="pref-toggle-label">Open Bhai when I log in</span>
                                 <input type="checkbox" id="prefLaunchAtLogin" onchange="setPref('launchAtLogin', this.checked)">
                                 <span class="pref-toggle-switch"></span>
                             </label>
-                            <div class="pref-shortcut">
+                            <div class="pref-shortcut" data-keywords="keyboard shortcut hotkey overlay">
                                 <span class="pref-shortcut-label">Show or hide Bhai</span>
                                 <div class="pref-shortcut-control">
                                     <kbd id="prefHotkeyShow" tabindex="0" title="Click to change" onclick="startHotkeyRecording(this)">Alt + Space</kbd>
@@ -546,6 +538,60 @@
                             </label>
                         </div>
                     </div>
+
+<div class="settings-group-heading">Data &amp; privacy</div>
+
+                    <div class="pref-section surface-card">
+                        <div class="pref-items">
+                            <div class="pref-update-status data-row" data-keywords="memory memories remember forget privacy">
+                                <div>
+                                    <div>What Bhai remembers</div>
+                                    <small style="color:var(--text-secondary);">See, edit or delete memories</small>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" onclick="switchTab('memory')">Open Memory</button>
+                            </div>
+                            <div class="pref-update-status data-row" data-keywords="chats chat history conversations delete clear privacy">
+                                <div>
+                                    <div>Chat history</div>
+                                    <small style="color:var(--text-secondary);">Chats with Bhai saved on this Mac</small>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" id="clearChatsBtn" onclick="clearChatHistory()">Clear</button>
+                            </div>
+                            <div class="pref-update-status data-row" data-keywords="logs data folder files debug support">
+                                <div>
+                                    <div>Logs and data</div>
+                                    <small style="color:var(--text-secondary);">For troubleshooting or sending to support</small>
+                                </div>
+                                <div style="display:flex;gap:6px;">
+                                    <button class="btn btn-sm btn-secondary" onclick="atlas.openLogsDir()">Logs</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="atlas.openDataDir()">Data folder</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-group-heading">About</div>
+
+                    <div class="pref-section surface-card">
+                        <div class="pref-items">
+                            <div class="pref-update-status data-row" data-keywords="about version legal terms privacy policy copyright">
+                                <div style="display:flex;align-items:center;gap:12px;">
+                                    <img src="logo.png" alt="" style="width:36px;height:36px;border-radius:8px;">
+                                    <div>
+                                        <div>Bhai <span id="aboutVersion" style="color:var(--text-secondary);"></span></div>
+                                        <small style="color:var(--text-secondary);">© 2024-2026 XAGI Labs Private Limited</small>
+                                    </div>
+                                </div>
+                                <small class="about-links">
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">All legal</a>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-empty" id="settingsEmpty" style="display:none;">No settings match.</div>
 
                     <div class="settings-note">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1100,65 +1146,6 @@
             <!-- ═══════════════════════════════════ -->
             <!-- TAB: About                     -->
             <!-- ═══════════════════════════════════ -->
-            <div class="tab-content" id="tab-about">
-                <div class="tab-header">
-                    <h2 class="tab-title">About Bhai</h2>
-                </div>
-
-                <div class="about-content">
-                    <div class="about-hero surface-card">
-                        <img src="logo.png" alt="Bhai" class="about-logo">
-                        <div class="about-info">
-                            <h3 class="about-name">Bhai</h3>
-                            <div class="about-version" id="aboutVersion">Version 0.2.0</div>
-                            <div class="about-tagline">Personal AI Agent · All Systems</div>
-                        </div>
-                    </div>
-
-                    <div class="about-details surface-card">
-                        <div class="about-row">
-                            <span class="about-label">Architecture</span>
-                            <span class="about-value">SAC-DR · HNSW · RRF · SAN</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Memory</span>
-                            <span class="about-value">SQLite + Vector Search + Knowledge Graph</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Embedding Model</span>
-                            <span class="about-value">Xenova/all-MiniLM-L6-v2</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Security</span>
-                            <span class="about-value">AES-256-GCM · DPAPI</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Hotkey</span>
-                            <span class="about-value" id="aboutHotkey"><kbd>Alt + Space</kbd></span>
-                        </div>
-                    </div>
-
-                    <div class="about-details surface-card" style="margin-top:16px;">
-                        <div class="about-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                            <span class="about-label">Legal documents</span>
-                            <span class="about-value" style="font-size:13px;line-height:1.6;">
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">Legal Hub (index)</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/acceptable-use');">Acceptable Use</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/disclaimer');">Disclaimer</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/refund');">Refund</a>
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="copyright" style="margin-top: 16px;">
-                        Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-                    </div>
-                </div>
-            </div>
-
-
             <!-- ═══════════════════════════════ -->
             <!-- TAB: Memory Studio             -->
             <!-- ═══════════════════════════════ -->
@@ -1515,7 +1502,7 @@
             navEl.classList.add('active');
             moveNavPill();
 
-            if (tabId === 'settings') { loadSettings(); loadPreferences(); }
+            if (tabId === 'settings') { loadSettings(); loadPreferences(); autoCheckUpdates(); }
             if (tabId === 'memory') {
                 if (window.MemoryStudio && typeof window.MemoryStudio.mount === 'function') {
                     window.MemoryStudio.mount();
@@ -1891,6 +1878,63 @@
 
         // ── Settings ──────────────────────────────────
 
+
+        // Search: show only the rows (and cards/headings) that match.
+        function filterSettings(raw) {
+            const q = raw.trim().toLowerCase();
+            const scroll = document.querySelector('#tab-settings .settings-scroll');
+            const matches = (el) => !q || (el.textContent + ' ' + (el.dataset.keywords || '')).toLowerCase().includes(q);
+            let shown = 0;
+            scroll.querySelectorAll(':scope > .pref-section, :scope > .settings-section').forEach(card => {
+                const head = card.querySelector('.pref-section-header, .settings-section-header');
+                const headHit = !!head && matches(head);
+                let any = false;
+                card.querySelectorAll('.pref-toggle, .pref-select-group, .pref-shortcut, .pref-update-status').forEach(row => {
+                    const hit = headHit || matches(row);
+                    row.style.display = hit ? '' : 'none';
+                    any = any || hit;
+                });
+                const visible = headHit || any || (!head && !q);
+                card.style.display = visible ? '' : 'none';
+                if (visible) shown++;
+            });
+            scroll.querySelectorAll(':scope > .settings-group-heading').forEach(h => {
+                let el = h.nextElementSibling;
+                let any = false;
+                while (el && !el.classList.contains('settings-group-heading')) {
+                    if ((el.classList.contains('pref-section') || el.classList.contains('settings-section')) && el.style.display !== 'none') any = true;
+                    el = el.nextElementSibling;
+                }
+                h.style.display = any ? '' : 'none';
+            });
+            document.getElementById('settingsEmpty').style.display = shown ? 'none' : '';
+        }
+
+        // Press twice to clear: no confirm() dialog.
+        async function clearChatHistory() {
+            const btn = document.getElementById('clearChatsBtn');
+            if (btn.dataset.armed !== '1') {
+                btn.dataset.armed = '1';
+                btn.textContent = 'Press again to clear';
+                setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Clear'; }, 4000);
+                return;
+            }
+            btn.dataset.armed = '';
+            await atlas.clearChats();
+            btn.textContent = 'Cleared';
+            setTimeout(() => { btn.textContent = 'Clear'; }, 2000);
+        }
+
+        // Opening Settings checks for updates quietly, at most every 6 hours.
+        async function autoCheckUpdates() {
+            try {
+                const status = await atlas.getUpdateStatus();
+                if (status && status.lastCheck && Date.now() - new Date(status.lastCheck).getTime() < 6 * 60 * 60 * 1000) return;
+                const result = await atlas.checkForUpdates();
+                updateLastCheckDisplay();
+                if (result && result.available) document.getElementById('prefUpdateStatus').textContent = `Version ${result.version} is available`;
+            } catch { /* offline: try next time */ }
+        }
 
         // Settings save by themselves; integration changes restart the bot so it picks them up.
         async function restartBotForChanges(message) {
@@ -3424,7 +3468,6 @@
                     const info = await atlas.getAppInfo();
                     const display = formatAccelerator(accelerator, info.platform);
                     el.textContent = display;
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${display}</kbd>`;
                     document.getElementById('prefHotkeyReset').style.display = '';
                     showToast('✓ Hotkey updated');
                 } else {
@@ -3444,7 +3487,6 @@
                     const info = await atlas.getAppInfo();
                     const defaultDisplay = info.platform === 'darwin' ? '⌘ Cmd + J' : 'Alt + Space';
                     document.getElementById('prefHotkeyShow').textContent = defaultDisplay;
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${defaultDisplay}</kbd>`;
                     document.getElementById('prefHotkeyReset').style.display = 'none';
                     showToast('✓ Hotkey reset to default');
                 } else {
@@ -3828,16 +3870,9 @@
             try {
                 const info = await atlas.getAppInfo();
                 document.getElementById('sidebarVersion').textContent = `v${info.version}`;
-                document.getElementById('aboutVersion').textContent = `Version ${info.version}`;
+                document.getElementById('aboutVersion').textContent = info.version;
                 document.getElementById('settingsVersion').textContent = info.version;
 
-                const prefs = await atlas.getPrefs();
-                const activeHotkey = info.overlayShortcut || prefs.overlayHotkey;
-                if (activeHotkey) {
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${formatAccelerator(activeHotkey, info.platform)}</kbd>`;
-                } else if (info.platform === 'darwin') {
-                    document.getElementById('aboutHotkey').innerHTML = '<kbd>⌘ Cmd + J</kbd>';
-                }
             } catch { /* */ }
 
             // Load account info on startup
