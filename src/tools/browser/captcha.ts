@@ -206,31 +206,58 @@ export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | nu
     }
 }
 
-/**
- * A CAPTCHA a browser action runs into is handled right there, by the solver tiers
- * (the owner's setting; ATLAS_NO_CAPTCHA_AUTO=true turns it off). No owner wait
- * inside a navigate/click: if the solvers can't, the result says so and the agent
- * calls browser_handle_captcha, which asks the owner. Fields to merge into the
- * tool result; {} when the page has no CAPTCHA.
- */
-export async function autoHandleCaptcha(page: unknown): Promise<Record<string, unknown>> {
+// ─── The CAPTCHA pipeline ─────────────────────
+// The agent never deals with CAPTCHAs. After any page action, a check on the page
+// goes here: Bhai's solvers, then (only if they can't) the owner, while the agent's
+// tool call simply waits. The agent gets the page back, or one line saying the owner
+// still has to finish it. ATLAS_NO_CAPTCHA_AUTO=true skips the solvers: every
+// check goes straight to the owner.
+
+type CaptchaOutcome = { present: false } | { present: true; cleared: boolean; detail: Record<string, unknown> };
+
+export async function clearCaptchaIfAny(page: unknown, signal?: AbortSignal): Promise<CaptchaOutcome> {
     const type = await quickCaptchaCheck(page);
-    if (!type) return {};
-    const unsolved = { captcha_detected: true, captcha_type: type, hint: CAPTCHA_HINT };
-    if (process.env.ATLAS_NO_CAPTCHA_AUTO === "true") return unsolved;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const r = await handleCaptchaIfPresent(page as any).catch(() => null);
-    if (!r?.handled) return unsolved;
-    return {
-        captcha_solved: true,
-        captcha_type: type,
-        captcha_method: r.method,
-        note: "This page had a CAPTCHA; Bhai's CAPTCHA handler already got past it (the owner's setting). Carry on with the task.",
-    };
+    if (!type) return { present: false };
+    console.log(`  🧩 CAPTCHA pipeline: ${type} on the page, taking over`);
+    const raw =
+        process.env.ATLAS_NO_CAPTCHA_AUTO === "true"
+            ? await (await import("./human-handoff.js")).browserWaitForHuman.handler({ _signal: signal })
+            : await browserHandleCaptcha.handler({ _signal: signal });
+    const detail = JSON.parse(raw) as Record<string, unknown>;
+    const cleared = detail.success === true;
+    console.log(`  🧩 CAPTCHA pipeline: ${cleared ? `cleared (${detail.method ?? detail.status})` : "not cleared"}`);
+    return { present: true, cleared, detail };
 }
 
-export const CAPTCHA_HINT =
-    "A human-verification check (CAPTCHA) is on this page. Don't solve it yourself: call browser_handle_captcha. That hands it to Bhai's separate CAPTCHA pipeline (set up by the owner), which completes it and gives control back to you; then continue the task from where you were.";
+/** A browser tool's result after the pipeline had its turn: nothing about CAPTCHAs in it. */
+export async function captchaAfterAction(result: string, signal?: AbortSignal): Promise<string> {
+    const outcome = await getActivePage()
+        .then((page) => clearCaptchaIfAny(page, signal))
+        .catch(() => ({ present: false }) as const);
+    if (!outcome.present) return result;
+    let obj: Record<string, unknown>;
+    try {
+        obj = JSON.parse(result);
+    } catch {
+        obj = { result };
+    }
+    if (outcome.cleared) {
+        // A challenge page (Cloudflare's 403/503) is gone once cleared: not a failed load.
+        if (typeof obj.error === "string" && /HTTP (403|429|503)/.test(obj.error)) {
+            delete obj.error;
+            obj.success = true;
+        }
+        obj.page_note =
+            "The page changed after this step (Bhai finished an automatic step on it). Scan it again before relying on the element list above.";
+    } else {
+        obj.error ??= "This page is waiting on the owner.";
+        obj.owner_needed =
+            outcome.detail.status === "cancelled"
+                ? "Stopped by the owner."
+                : "This page has a step only the owner can finish (they were asked and it's still open). Tell them in one line and stop here.";
+    }
+    return JSON.stringify(obj);
+}
 
 // ─── Solver (2captcha) ────────────────────────
 
@@ -759,7 +786,7 @@ export async function handleCaptchaIfPresent(
 
 // ─── Tool Definition ──────────────────────────
 
-const TOOL_BUDGET_S = 570; // TOOL_TIMEOUTS.browser_handle_captcha (600s) minus headroom
+const TOOL_BUDGET_S = 570; // solvers plus the owner's wait: under ~10 min in all
 
 export const browserHandleCaptcha: ToolDefinition = {
     schema: {

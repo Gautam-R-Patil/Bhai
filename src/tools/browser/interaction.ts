@@ -6,7 +6,6 @@
 // Click, type, scroll, hover, drag, keyboard
 
 import type { ToolDefinition } from "../get-current-time.js";
-import { autoHandleCaptcha } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
     buildElementsText,
@@ -263,8 +262,6 @@ export const browserClickAt: ToolDefinition = {
                 stateTransitions.navigation = `Navigated from ${initialUrl} to ${finalUrl}`;
                 await waitForPageReady(page);
             }
-            // Every click: a CAPTCHA often opens on the same URL (a submit button's challenge).
-            const captchaFields = await autoHandleCaptcha(page);
 
             // Generate condensed DOM text of updated elements
             const newElementMap = await getInteractiveElements(page);
@@ -298,8 +295,6 @@ export const browserClickAt: ToolDefinition = {
                 title: await page.title(),
                 url: page.url(),
                 open_tabs: context.pages().length,
-                // Ahead of the element list, which the result cap cuts first.
-                ...captchaFields,
                 interactive_elements_text,
             });
         } catch (err) {

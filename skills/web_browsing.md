@@ -34,7 +34,6 @@ triggers:
 |---|---|
 | **Design tools (Figma, Canva, Miro)** | `browser_scan(visual:true)` → click by (x,y) coordinates |
 | Video player control (YouTube, Vimeo, HTML5) | `browser_video_control` |
-| CAPTCHA / "I'm not a robot" blocking the page | `browser_handle_captcha` (hands it to the CAPTCHA pipeline, which completes it and gives control back) |
 | Cookie/consent banner blocking | Auto-handled — popup guard fires on every page load |
 | Hover-hidden controls (nav dropdowns, video bars) | `browser_hover` with `wait_for` + `rescan:true` |
 | Scan page + reveal hidden controls in one call | `browser_scan` with `hover_at` |
@@ -177,19 +176,6 @@ After key actions, verify they worked:
 - After seeking: `browser_video_control(action: "get_info")` → check `currentTime ≈ target`
 - After clicking: check returned `interactive_elements_text` for state change
 - After form fill: `browser_run_js(code: "return document.querySelector('input').value")`
-
-## CAPTCHA Handling
-
-If a page shows a human-verification check ("I'm not a robot", reCAPTCHA, hCaptcha, Cloudflare Turnstile):
-1. Don't solve or click it yourself. Call `browser_handle_captcha`: it hands the check to Bhai's separate CAPTCHA pipeline (owner-configured, its own models), which completes it and gives control back to you; only if the pipeline can't does it ask the owner and wait (~5 min)
-2. On `success: true`, carry on with the original task from where you stopped
-3. On `requires_user: true`, tell the owner the page is still waiting for them and stop; don't call it again in a loop
-
-```
-browser_handle_captcha()
-→ { success: true, captcha_type: "hcaptcha", method: "vision" }
-→ now navigate/click as normal
-```
 
 ## Cookie Banners & Popups
 

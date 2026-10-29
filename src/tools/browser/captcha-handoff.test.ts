@@ -105,7 +105,7 @@ describe("Turnstile", () => {
     });
 });
 
-describe("autoHandleCaptcha", () => {
+describe("captchaAfterAction", () => {
     const captchaPage = () => ({
         url: () => "https://shop.test",
         screenshot: vi.fn(),
@@ -116,23 +116,32 @@ describe("autoHandleCaptcha", () => {
         }),
     });
 
-    it("reports a CAPTCHA it couldn't solve so the agent can hand it to the owner", async () => {
-        const { autoHandleCaptcha } = await import("./captcha.js");
-        expect(await autoHandleCaptcha(captchaPage())).toMatchObject({ captcha_detected: true, captcha_type: "hcaptcha" });
+    it("leaves a result alone when the page has no CAPTCHA", async () => {
+        getActivePage.mockResolvedValue({
+            evaluate: vi.fn(async (code: unknown) => (String(code).includes("innerHTML") ? "<p>hi</p>" : { type: "none", siteKey: null })),
+        });
+        const { captchaAfterAction } = await import("./captcha.js");
+        expect(await captchaAfterAction('{"success":true}')).toBe('{"success":true}');
     });
 
-    it("leaves CAPTCHAs to the agent when the owner turned it off", async () => {
-        process.env.ATLAS_NO_CAPTCHA_AUTO = "true";
-        const { autoHandleCaptcha, CAPTCHA_HINT } = await import("./captcha.js");
-        const page = captchaPage();
-        expect(await autoHandleCaptcha(page)).toEqual({ captcha_detected: true, captcha_type: "hcaptcha", hint: CAPTCHA_HINT });
-        expect(page.mouse.click).not.toHaveBeenCalled();
-        delete process.env.ATLAS_NO_CAPTCHA_AUTO;
+    it("hands the check to the pipeline and returns the page with no CAPTCHA detail", async () => {
+        getActivePage.mockResolvedValue(captchaPage());
+        waitHandler.mockClear();
+        const { captchaAfterAction } = await import("./captcha.js");
+        const out = JSON.parse(await captchaAfterAction('{"success":false,"error":"Navigation failed: HTTP 403"}'));
+        expect(waitHandler).toHaveBeenCalled(); // the solvers couldn't here, so the owner was asked
+        expect(out.success).toBe(true);
+        expect(out.error).toBeUndefined();
+        expect(out.page_note).toMatch(/Scan it again/);
+        expect(JSON.stringify(out)).not.toMatch(/captcha/i);
     });
 
-    it("returns nothing on a page without a CAPTCHA", async () => {
-        const { autoHandleCaptcha } = await import("./captcha.js");
-        const page = { evaluate: vi.fn(async (code: unknown) => (String(code).includes("innerHTML") ? "<p>hi</p>" : { type: "none", siteKey: null })) };
-        expect(await autoHandleCaptcha(page)).toEqual({});
+    it("tells the agent the owner still has to finish it when they didn't", async () => {
+        getActivePage.mockResolvedValue(captchaPage());
+        waitHandler.mockResolvedValueOnce(JSON.stringify({ error: "timed out", status: "timeout", requires_user: true }));
+        const { captchaAfterAction } = await import("./captcha.js");
+        const out = JSON.parse(await captchaAfterAction('{"success":true}'));
+        expect(out.owner_needed).toMatch(/only the owner can finish/);
+        expect(JSON.stringify(out)).not.toMatch(/captcha/i);
     });
 });

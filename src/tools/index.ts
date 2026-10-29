@@ -33,6 +33,7 @@ import { askOwnerTool } from "./ask-owner.js";
 import { audioVisualize } from "./audio-visualize.js";
 import { blenderScript } from "./blender.js";
 import { brandAudit } from "./brand-audit.js";
+import { captchaAfterAction } from "./browser/captcha.js";
 import { getActivePage } from "./browser/core.js";
 import {
     browserAnalyze,
@@ -44,7 +45,6 @@ import {
     browserClose,
     browserDrag,
     browserExtract,
-    browserHandleCaptcha,
     browserHoldClick,
     browserHover,
     browserKeyboard,
@@ -529,7 +529,6 @@ registry.set(browserParallelActions.schema.function.name, browserParallelActions
 registry.set(browserSetMode.schema.function.name, browserSetMode);
 registry.set(browserChromeStatus.schema.function.name, browserChromeStatus);
 registry.set(browserVideoControl.schema.function.name, browserVideoControl);
-registry.set(browserHandleCaptcha.schema.function.name, browserHandleCaptcha);
 // OpenCLI batch tools
 for (const tool of openCliTools) registry.set(tool.schema.function.name, tool);
 
@@ -675,11 +674,10 @@ export function getToolSchemasByNames(names: string[]): ChatCompletionTool[] {
 // Per-tool timeouts (in ms) - longer for I/O heavy operations
 const TOOL_TIMEOUTS: Record<string, number> = {
     // Browser tools - can be slow due to page loads
-    browser_navigate: 240_000, // the page load has its own 30s cap; this leaves room for a CAPTCHA solve
+    browser_navigate: 30_000,
     browser_click: 15_000,
-    browser_click_at: 240_000, // a click can open a CAPTCHA, solved before the result returns
     browser_type: 30_000, // long text + submit + page-ready can take a while
-    site_task: 180_000, // up to 40 steps; a cut-off checkout would keep running unseen
+    site_task: 600_000, // up to 40 steps, plus the CAPTCHA pipeline (and the owner's ~5 min); a cut-off checkout would keep running unseen
     site_skill_mint: 600_000, // start returns at once; a safety net
     // AX dump + activation + capture + grounding (+ one Sonnet re-ground). The
     // handler stops itself at 40s so it never clicks after we report a timeout.
@@ -688,7 +686,6 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_scan: 20_000,
     browser_screenshot: 15_000,
     // Covers the solver tiers plus the human hand-off wait (ATLAS_CAPTCHA_HANDOFF_MS, 5 min).
-    browser_handle_captcha: 600_000, // solver tiers, then the owner's ~5 min
     // Shell/system tools - variable execution time
     shell: 60_000, // Shell commands can take a while
     run_code: 30_000,
@@ -754,8 +751,21 @@ const turnSignal = new AsyncLocalStorage<AbortSignal | undefined>();
 export function withTurnSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
     return turnSignal.run(signal, fn);
 }
+// Browser tools that don't act on the open page: no CAPTCHA check after them.
+const NO_PAGE_CHECK = new Set([
+    "browser_chrome_status",
+    "browser_set_mode",
+    "browser_close",
+    "browser_save_strategy",
+    "browser_recall_strategy",
+    "browser_cache_actions",
+    "browser_batch_fetch",
+    "browser_connect_electron",
+    "browser_network_requests",
+    "browser_intercept_read",
+]);
 // Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
-const STOPPABLE_TOOLS = new Set(["browser_handle_captcha"]);
+const STOPPABLE_TOOLS = new Set(["site_task"]);
 
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
@@ -872,7 +882,11 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
     try {
         // Execute with timeout protection
-        const result = await executeWithTimeout(tool.handler(effectiveInput), timeout, name);
+        let result = await executeWithTimeout(tool.handler(effectiveInput), timeout, name);
+        // CAPTCHAs never reach the agent: a check this step left on the page goes to the
+        // CAPTCHA pipeline (solvers, then the owner) while this call waits, outside the
+        // tool's own timeout; Stop still ends it.
+        if (name.startsWith("browser_") && !NO_PAGE_CHECK.has(name)) result = await captchaAfterAction(result, stop);
         const durationMs = Date.now() - startTime;
 
         // Cache the result if eligible

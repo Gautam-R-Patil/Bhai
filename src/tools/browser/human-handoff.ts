@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 //
-// The last step of browser_handle_captcha, once Bhai's own solvers failed on a
+// The CAPTCHA pipeline's last step, once Bhai's own solvers failed on a
 // human-verification check (reCAPTCHA, hCaptcha, Turnstile, a Cloudflare
 // interstitial). It brings the tab to the front, asks the owner on the channel the task
 // came from (plus a desktop notification), then polls until the check is gone
@@ -123,7 +123,7 @@ async function tellOwner(ask: string): Promise<string | null> {
 
 const DEFAULT_TIMEOUT_S = 300;
 const MIN_TIMEOUT_S = 15; // a model-supplied 1s would give the owner no time at all
-const MAX_TIMEOUT_S = 300; // inside TOOL_TIMEOUTS.browser_handle_captcha with the solvers' time
+const MAX_TIMEOUT_S = 300; // inside the pipeline's budget (captcha.ts TOOL_BUDGET_S) with the solvers' time
 
 export const browserWaitForHuman: ToolDefinition = {
     schema: {
@@ -131,7 +131,7 @@ export const browserWaitForHuman: ToolDefinition = {
         function: {
             name: "browser_wait_for_human",
             description:
-                "Not offered to the model: the owner hand-off step of browser_handle_captcha. Brings the tab up, messages the owner, and polls until the check is gone.",
+                "Not offered to the model: the owner hand-off step of the CAPTCHA pipeline. Brings the tab up, messages the owner, and polls until the check is gone.",
             parameters: {
                 type: "object",
                 properties: {
@@ -229,7 +229,7 @@ export const browserWaitForHuman: ToolDefinition = {
             // Bhai's own browser window may be out of the owner's reach (they're on their phone).
             const reopenHint =
                 mode !== "chrome" && isExtensionConnected()
-                    ? ` If they can't get to Bhai's browser window, offer to reopen ${startUrl ?? "this page"} in their own Chrome (browser_set_mode mode='chrome', then browser_navigate) and call browser_handle_captcha again.`
+                    ? ` If they can't get to Bhai's browser window, offer to reopen ${startUrl ?? "this page"} in their own Chrome (browser_set_mode mode='chrome', then browser_navigate) and try that step again.`
                     : "";
             return JSON.stringify({
                 error: `The owner didn't complete the human check on ${site} within ${Math.round(timeoutMs / 1000)}s.`,

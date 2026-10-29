@@ -8,7 +8,6 @@
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCachedActions, markActionFailed, replayActions, shouldReplayActions } from "./action-cache.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
-import { autoHandleCaptcha } from "./captcha.js";
 import {
     ATLAS_HUD_JS,
     getAccessibilityTree,
@@ -117,7 +116,6 @@ export const browserNavigate: ToolDefinition = {
             // Clear HUD once page is ready
             await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
 
-            const captchaFields = navError ? {} : await autoHandleCaptcha(page);
             if (!navError && page.url().startsWith("chrome-error://"))
                 navError = "browser error page (site unreachable)";
             if (!navError && status !== null && BLOCKING_STATUSES.has(status)) navError = `HTTP ${status}`;
@@ -126,7 +124,6 @@ export const browserNavigate: ToolDefinition = {
                     error: `Navigation failed: ${navError}`,
                     url: page.url(),
                     ...(status !== null ? { status } : {}),
-                    ...captchaFields,
                 });
             }
 
@@ -184,7 +181,6 @@ export const browserNavigate: ToolDefinition = {
                 interactive_elements_text,
                 tip: "Read interactive_elements_text to find the label ID, then use browser_click_at with the label to click.",
                 ...(status !== null ? { status } : {}),
-                ...captchaFields,
             };
 
             // `canvas_app` means a GENUINE canvas surface (design tool) — it drives
