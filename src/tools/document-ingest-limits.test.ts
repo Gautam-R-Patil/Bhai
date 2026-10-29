@@ -143,7 +143,7 @@ describe("ingestPdfToDocument limits", { retry: 2 }, () => {
 
     it("a long ordinary text PDF parses, page by page, within a small heap", async () => {
         // 1500 pages of text (~5.6M chars). Loading every page at once (unpdf's
-        // extractText) ran a 128MB heap out of memory; the real cap is 512MB, and
+        // extractText) ran a 64MB heap out of memory; the real cap is 512MB, and
         // 5000 such pages broke it the same way.
         const doc = await PDFDocument.create();
         const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -158,7 +158,7 @@ describe("ingestPdfToDocument limits", { retry: 2 }, () => {
         const script = fileURLToPath(new URL("../../scripts/pdf-text.cjs", import.meta.url));
         const m = await new Promise<{ ok?: boolean; text?: string; signal?: string }>((resolve) => {
             const c = fork(script, [], {
-                execArgv: ["--max-old-space-size=128"],
+                execArgv: ["--max-old-space-size=64"],
                 serialization: "advanced",
                 stdio: ["ignore", "ignore", "ignore", "ipc"],
             });
