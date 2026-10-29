@@ -3380,6 +3380,9 @@ PLAN:`,
                 // Unhinged on Grok gets its own personality prompt (rules + prompts/unhinged.md)
                 // instead of the default one, whose calm, short style rules won out.
                 serverPromptSlug: model === MODELS.GROK ? "unhinged" : undefined,
+                // Unhinged runs hot: a higher sampling temperature makes Grok wilder
+                // and less predictable — the point of the mode. Normal turns omit it.
+                temperature: model === MODELS.GROK ? 1.1 : undefined,
             });
         } catch (llmErr) {
             cbRecordFailure(circuitBreaker);

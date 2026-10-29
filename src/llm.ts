@@ -49,6 +49,9 @@ export interface LLMClient {
         modelOverride?: string;
         skillSlugs?: string[];
         responseFormat?: "json_object";
+        /** Sampling temperature forwarded to the model (e.g. unhinged mode runs
+         * hotter for wilder, less predictable output). Omitted → model default. */
+        temperature?: number;
         /**
          * Helper call (classifier, HyDE, briefing): no thinking, no clock/widget
          * context, and — when it has no tools — no server rules preamble. Much
@@ -183,6 +186,7 @@ export function createLLMClient(config: Config): LLMClient {
             modelOverride,
             skillSlugs,
             responseFormat,
+            temperature,
             lean,
             timeoutMs,
             signal,
@@ -262,6 +266,7 @@ export function createLLMClient(config: Config): LLMClient {
                 const requestBody: any = {
                     model,
                     max_tokens: maxTokens,
+                    ...(typeof temperature === "number" ? { temperature } : {}),
                     messages: allMessages,
                     tools:
                         params.tools && params.tools.length > 0
