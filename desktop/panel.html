@@ -668,17 +668,23 @@
                             <div class="channel-wizard" id="wizardTelegram">
                                 <div class="channel-wizard-step active" id="wizStepTelegram1">
                                     <h4>Create your bot</h4>
-                                    <p>Open BotFather and send <code>/newbot</code>. For the name say <code>Bhai</code>; for the username use <code id="tgSuggestedUsername">bhai_bot</code> <button class="copy-inline-btn" onclick="copyText(document.getElementById('tgSuggestedUsername').textContent)">Copy</button>. Then copy the token it sends back and come back here; Bhai picks it up by itself.</p>
+                                    <p>Telegram opens with your own Bhai bot ready to go. Tap <strong>Create</strong> there and you're done.</p>
+                                    <button class="wizard-btn wizard-btn-success" id="tgCreateBtn" onclick="createTelegramBot()">Create my Telegram bot</button>
+                                    <div class="channel-test-result" id="tgCreateStatus"></div>
+                                    <details class="ch-advanced" id="tgManual">
+                                        <summary class="advanced-toggle">Or make one yourself with BotFather</summary>
+                                        <p>Open BotFather and send <code>/newbot</code>. For the name say <code>Bhai</code>; for the username use <code id="tgSuggestedUsername">bhai_bot</code> <button class="copy-inline-btn" onclick="copyText(document.getElementById('tgSuggestedUsername').textContent)">Copy</button>. Then copy the token it sends back and come back here; Bhai picks it up by itself.</p>
                                     <a class="wizard-link" href="https://t.me/BotFather" target="_blank">Open @BotFather</a>
                                     <div class="input-group" style="margin-top:12px;">
                                         <label class="input-label">Bot Token</label>
                                         <input class="clean-input" type="password" id="chTelegramToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" oninput="onTokenInput('telegram')">
                                     </div>
                                     <div class="channel-test-result" id="tgTokenStatus"></div>
+                                    </details>
                                 </div>
                                 <div class="channel-wizard-step" id="wizStepTelegram2">
-                                    <h4>Say hi to your bot</h4>
-                                    <p>Tap the button and press <strong>Start</strong> in Telegram. Bhai recognises you from that message and finishes setup by itself.</p>
+                                    <h4 id="tgStep2Title">Say hi to your bot</h4>
+                                    <p id="tgStep2Text">Tap the button and press <strong>Start</strong> in Telegram. Bhai recognises you from that message and finishes setup by itself.</p>
                                     <a class="wizard-link" id="tgBotLink" href="https://t.me/BotFather" target="_blank" onclick="onTelegramBotLinkClick()">Open your bot</a>
                                     <div class="channel-test-result" id="tgOwnerStatus"></div>
                                     <details class="ch-advanced">
@@ -2306,6 +2312,7 @@
                 const token = await atlas.clipboardToken(kind);
                 if (!token || [...document.querySelectorAll('#tab-channels input')].some(i => i !== field && i.value.trim() === token)) continue;
                 if (channel === 'slack' && step === 1) goToWizardStep('slack', 2);
+                if (channel === 'telegram') document.getElementById('tgManual').open = true;
                 field.value = token;
                 showToast('Pasted your ' + capitalize(channel) + ' token from the clipboard');
                 onTokenInput(channel === 'slack' && kind === 'slackApp' ? 'slack-app' : channel);
@@ -2318,6 +2325,41 @@
             navigator.clipboard.writeText(text).then(() => showToast('Copied')).catch(() => showToast('Select the text to copy it'));
         }
         document.getElementById('tgSuggestedUsername').textContent = 'bhai_' + Math.random().toString(36).slice(2, 7) + '_bot';
+
+        function showTelegramReady(status) {
+            document.getElementById('tgStep2Title').textContent = 'Your bot is ready';
+            document.getElementById('tgStep2Text').textContent = 'Message it in Telegram anytime; Bhai answers there.';
+            setStatus(document.getElementById('tgOwnerStatus'), status, 'success');
+        }
+
+        async function createTelegramBot() {
+            const btn = document.getElementById('tgCreateBtn');
+            const st = document.getElementById('tgCreateStatus');
+            btn.disabled = true;
+            try {
+                setStatus(st, 'Opening Telegram…', 'loading');
+                const r = await atlas.telegramManagedStart();
+                if (!r || !r.success) {
+                    document.getElementById('tgManual').open = true;
+                    return setStatus(st, (r && r.notConfigured ? "One-tap setup isn't switched on yet" : "Couldn't reach Bhai's servers") + '. BotFather below takes about a minute.', 'error');
+                }
+                setStatus(st, 'In Telegram, tap Create (keep the suggested username). Waiting…', 'loading');
+                const res = await atlas.telegramManagedWait(r.username);
+                if (!res || !res.success) return setStatus(st, ((res && res.message) || "Telegram didn't confirm") + '. Tap the button to try again.', 'error');
+                document.getElementById('chTelegramToken').value = res.token;
+                document.getElementById('chTelegramUserIds').value = res.userId;
+                setStatus(st, '✓ Created @' + res.username + (res.name ? ' for ' + res.name : ''), 'success');
+                const link = document.getElementById('tgBotLink');
+                link.href = 'https://t.me/' + encodeURIComponent(res.username);
+                link.textContent = 'Open @' + res.username;
+                link.onclick = null;
+                goToWizardStep('telegram', 2);
+                showTelegramReady('✓ Only you can talk to it.');
+                connectChannel('telegram');
+            } finally {
+                btn.disabled = false;
+            }
+        }
 
         let tgWaiting = false;
         async function waitForTelegramOwner(token) {
@@ -2561,7 +2603,7 @@
                 if (tg.userIds) document.getElementById('chTelegramUserIds').value = tg.userIds;
                 if (tg.enabled && tg.token) {
                     goToWizardStep('telegram', 2);
-                    setStatus(document.getElementById('tgOwnerStatus'), '✓ Connected' + (tg.userIds ? '. Allowed: ' + tg.userIds : ''), 'success');
+                    showTelegramReady('✓ Connected' + (tg.userIds ? '. Allowed: ' + tg.userIds : ''));
                     atlas.testChannel('telegram', { token: '' }).then(r => {
                         if (!r || !r.success) return;
                         const link = document.getElementById('tgBotLink');

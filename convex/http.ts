@@ -167,6 +167,7 @@ async function buildResponse(
 // mapping is unit-testable without a Convex harness.
 import { getCreditCost } from "./credit_cost.js";
 import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
+import { isBotUsername, managedBotLink } from "./telegramManaged.js";
 
 // ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
 // Isolated subsystem — no coupling to session/credit machinery. Lives next
@@ -3825,6 +3826,95 @@ http.route({
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// One-tap Telegram bots (convex/telegramManaged.ts)
+// ══════════════════════════════════════════════════════════════════════════
+
+const jsonReply = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+async function telegramCall(token: string, method: string, params: Record<string, unknown>): Promise<any> {
+  const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return await res.json().catch(() => ({ ok: false }));
+}
+
+// Desktop: "Create my Telegram bot" → the link to open.
+http.route({
+  path: "/api/telegram/managed/claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const manager = process.env.TELEGRAM_MANAGER_BOT_USERNAME;
+    if (!manager || !process.env.TELEGRAM_MANAGER_BOT_TOKEN) return jsonReply({ error: "not_configured" }, 503);
+    const body = await request.json().catch(() => ({}));
+    if (!isBotUsername(body.username)) return jsonReply({ error: "bad_username" }, 400);
+    await ctx.runMutation(internal.telegramManaged.claim, {
+      otplessUserId: validation.account.otplessUserId,
+      username: body.username,
+    });
+    return jsonReply({ link: managedBotLink(manager, body.username) });
+  }),
+});
+
+// Desktop polls this until the user has tapped Create; the token is handed over once.
+http.route({
+  path: "/api/telegram/managed/collect",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const body = await request.json().catch(() => ({}));
+    if (!isBotUsername(body.username)) return jsonReply({ error: "bad_username" }, 400);
+    const result = await ctx.runMutation(internal.telegramManaged.collect, {
+      otplessUserId: validation.account.otplessUserId,
+      username: body.username,
+    });
+    return jsonReply(result);
+  }),
+});
+
+// Telegram → manager bot updates (setWebhook with secret_token).
+http.route({
+  path: "/api/telegram/manager-webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const token = process.env.TELEGRAM_MANAGER_BOT_TOKEN;
+    const secret = process.env.TELEGRAM_MANAGER_WEBHOOK_SECRET;
+    if (!token || !secret || request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== secret) {
+      return new Response("forbidden", { status: 403 });
+    }
+    const update = await request.json().catch(() => null);
+    const created = update?.managed_bot;
+    if (created?.bot?.id && isBotUsername(created.bot.username) && created.user?.id) {
+      // Only bots someone claimed from Bhai get their token fetched.
+      if (await ctx.runQuery(internal.telegramManaged.isPending, { username: created.bot.username })) {
+        const got = await telegramCall(token, "getManagedBotToken", { user_id: created.bot.id });
+        if (got.ok && typeof got.result === "string") {
+          // Telegram itself keeps strangers out; Bhai's allowlist is the second lock.
+          await telegramCall(token, "setManagedBotAccessSettings", { user_id: created.bot.id, is_access_restricted: true });
+          await ctx.runMutation(internal.telegramManaged.fulfil, {
+            username: created.bot.username,
+            token: got.result,
+            ownerId: String(created.user.id),
+            ownerName: [created.user.first_name, created.user.last_name].filter(Boolean).join(" "),
+          });
+        }
+      }
+    } else if (update?.message?.chat?.id && typeof update.message.text === "string" && update.message.text.startsWith("/start")) {
+      await telegramCall(token, "sendMessage", {
+        chat_id: update.message.chat.id,
+        text: "Hi! I make personal Bhai bots. Open the Bhai app → Channels → Telegram → Create my Telegram bot.",
+      });
+    }
+    return new Response("ok");
   }),
 });
 

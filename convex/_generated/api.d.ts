@@ -32,6 +32,7 @@ import type * as store_storage from "../store/storage.js";
 import type * as store_submissions from "../store/submissions.js";
 import type * as stt from "../stt.js";
 import type * as systemContent from "../systemContent.js";
+import type * as telegramManaged from "../telegramManaged.js";
 import type * as userAddenda from "../userAddenda.js";
 import type * as waitlist from "../waitlist.js";
 import type * as waitlistMailer from "../waitlistMailer.js";
@@ -67,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   "store/submissions": typeof store_submissions;
   stt: typeof stt;
   systemContent: typeof systemContent;
+  telegramManaged: typeof telegramManaged;
   userAddenda: typeof userAddenda;
   waitlist: typeof waitlist;
   waitlistMailer: typeof waitlistMailer;

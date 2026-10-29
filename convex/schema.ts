@@ -425,4 +425,17 @@ export default defineSchema({
     .index("by_user", ["otplessUserId"])
     .index("by_user_authoredAt", ["otplessUserId", "authoredAt"])
     .index("by_user_slug_authoredAt", ["otplessUserId", "slug", "authoredAt"]),
+
+  // One-tap Telegram bot creation (convex/telegramManaged.ts). Short-lived:
+  // a row is deleted once the desktop collects the token, or after 30 min.
+  telegram_bot_claims: defineTable({
+    otplessUserId: v.string(),
+    username: v.string(), // suggested bot username, lower-case
+    status: v.union(v.literal("pending"), v.literal("ready")),
+    token: v.optional(v.string()),
+    ownerId: v.optional(v.string()),
+    ownerName: v.optional(v.string()),
+  })
+    .index("by_username", ["username"])
+    .index("by_otplessUserId", ["otplessUserId"]),
 });

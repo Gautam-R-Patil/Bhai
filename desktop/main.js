@@ -5811,6 +5811,32 @@ ${body}`;
         } catch (err) { return { success: false, message: err.message }; }
     });
 
+    // One-tap Telegram bot through Bhai's manager bot (convex/telegramManaged.ts):
+    // claim a username, open Telegram's prefilled "create bot" screen, then
+    // collect the token and the owner's id once the user taps Create.
+    ipcMain.handle("channel:telegram-managed-start", async () => {
+        const username = `bhai_${require("crypto").randomBytes(3).toString("hex")}_bot`;
+        try {
+            const r = await convexSiteRequest("POST", "/api/telegram/managed/claim", { username });
+            if (!r || !r.link) return { success: false, notConfigured: !!r && r.error === "not_configured", message: (r && r.error) || "No reply" };
+            await shell.openExternal(r.link);
+            return { success: true, username };
+        } catch (err) { return { success: false, message: err.message }; }
+    });
+
+    ipcMain.handle("channel:telegram-managed-wait", async (_, { username }) => {
+        const deadline = Date.now() + 10 * 60 * 1000;
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 3000));
+            let r;
+            try { r = await convexSiteRequest("POST", "/api/telegram/managed/collect", { username }); } catch { continue; }
+            if (r && r.status === "ready") return { success: true, username, token: r.token, userId: r.ownerId, name: r.ownerName || "" };
+            if (r && r.status === "expired") return { success: false, message: "That request expired" };
+            if (r && r.error && !/rate limit/i.test(r.error)) return { success: false, message: r.error };
+        }
+        return { success: false, message: "Telegram didn't confirm in 10 minutes" };
+    });
+
     // Coming back from BotFather / the Discord or Slack portal with a token
     // copied fills it in. Only a value shaped like the asked-for token leaves
     // main; the rest of the clipboard never reaches the page.
