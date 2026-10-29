@@ -16,7 +16,7 @@ import {
     detectContradictions, identifyGaps, synthesizeResearch,
     shouldExtractContacts, extractContactsSection,
 } from "./analysis.js";
-import { rankSource, dedupeByText, crossReferenceFindings } from "./scoring.js";
+import { crossReferenceFindings, dedupeByText, rankSource, UrlSet } from "./scoring.js";
 import { saveResearchState, deleteResearchState, storeResearchInMemory } from "./persistence.js";
 import { generateHypotheses, updateHypothesis, type Hypothesis, type ResearchPlan } from "./hypothesis-engine.js";
 import { getCredibility, recordClaimVerification } from "./credibility-model.js";
@@ -33,7 +33,7 @@ export async function executeDeepResearch(
     const allFindings: Array<{ text: string; sourceUrl: string; sourceTitle: string; categories: string[] }> = [];
     const allSources: RankedSource[] = [];
     const rounds: ResearchRound[] = [];
-    const visitedUrls = new Set<string>();
+    const visitedUrls = new UrlSet(); // the same page under another URL spelling is visited once
     const usedQueries = new Set<string>();
     const signal = research.abortController.signal;
     const rateLimiter = new AdaptiveRateLimiter();
@@ -500,7 +500,15 @@ export async function executeDeepResearch(
         const structuredFindings = crossReferenceFindings(dedupedFindings, allSources);
         console.log(`[RESEARCH]   Confidence: ${structuredFindings.filter(f => f.confidence === "strong").length} strong, ${structuredFindings.filter(f => f.confidence === "moderate").length} moderate, ${structuredFindings.filter(f => f.confidence === "weak").length} weak`);
 
+        // Cancelled while Phase 3 runs: stop before each long model call and before saving
+        // (it used to finish, mark itself "completed" and start the follow-up agent).
+        const cancelled = () => {
+            if (signal.aborted) research.status = "cancelled";
+            return signal.aborted;
+        };
+
         // Detect contradictions
+        if (cancelled()) return;
         const contradictions = await detectContradictions(llm, structuredFindings.map(f => f.text));
         console.log(`[RESEARCH]   Contradictions found: ${contradictions.length}`);
 
@@ -508,7 +516,7 @@ export async function executeDeepResearch(
         for (const c of contradictions) {
             const f1 = structuredFindings.find(f => f.text.includes(c.finding1.substring(0, 50)));
             const f2 = structuredFindings.find(f => f.text.includes(c.finding2.substring(0, 50)));
-            if (f1 && f2) {
+            if (f1 && f2 && f1 !== f2) {
                 f1.contradictedBy.push(f2.sourceUrl);
                 f2.contradictedBy.push(f1.sourceUrl);
             }
@@ -541,6 +549,7 @@ export async function executeDeepResearch(
         }
 
         // Gap analysis
+        if (cancelled()) return;
         const gaps = await identifyGaps(llm, research.topic, structuredFindings.slice(0, 40).map(f => f.text));
         console.log(`[RESEARCH]   Research gaps: ${gaps.length}`);
 
@@ -548,6 +557,7 @@ export async function executeDeepResearch(
         console.log(`[RESEARCH] 📝 Writing final report (router will select optimal model)...`);
         await notify(`📝 Synthesizing final report (${structuredFindings.length} findings, ${allSources.length} sources)...`);
 
+        if (cancelled()) return;
         let report = await synthesizeResearch(
             llm, research.topic, structuredFindings, allSources.length,
             rounds.length, engineBreakdown, contradictions, gaps, profile,
@@ -567,6 +577,7 @@ export async function executeDeepResearch(
         }
 
         // Save report to disk
+        if (cancelled()) return;
         await fs.mkdir(RESEARCH_DIR, { recursive: true });
         const filename = research.topic.toLowerCase().replace(/[^a-z0-9]+/g, "-").substring(0, 50) + `-${research.id}.md`;
         const filePath = join(RESEARCH_DIR, filename);
@@ -594,6 +605,10 @@ export async function executeDeepResearch(
         await notify(`✅ Research complete — analyzing findings...`);
 
     } catch (err) {
+        if (signal.aborted) {
+            research.status = "cancelled"; // an abort surfacing as an error is still a cancel
+            return;
+        }
         research.status = "failed";
         research.error = (err as Error).message;
         research.updatedAt = new Date().toISOString();

@@ -46,6 +46,7 @@ vi.mock("./analysis.js", () => ({
 }));
 
 vi.mock("./scoring.js", () => ({
+    UrlSet: Set,
     rankSource: (url: string, title: string, content: string) => ({
         url,
         title,

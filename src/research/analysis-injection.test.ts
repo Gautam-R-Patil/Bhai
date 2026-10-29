@@ -8,7 +8,7 @@ vi.mock("../model-router.js", () => ({
     selectForSynthesis: () => ({ modelId: "test-model" }),
 }));
 
-const { analyzeAndExtract } = await import("./analysis.js");
+const { analyzeAndExtract, detectContradictions } = await import("./analysis.js");
 
 describe("analyzeAndExtract prompt injection hardening", () => {
     it("wraps and neutralizes untrusted page content", async () => {
@@ -34,5 +34,26 @@ describe("analyzeAndExtract prompt injection hardening", () => {
         expect(captured.prompt).not.toContain('"""');
         // System prompt warns the model the block is untrusted.
         expect(captured.systemPrompt.toLowerCase()).toContain("untrusted");
+    });
+});
+
+describe("model output that isn't the expected shape", () => {
+    const llmSaying = (content: string) => ({ chat: async () => ({ choices: [{ message: { content } }] }) });
+
+    it("keeps only non-empty string findings, and well-formed contradictions", async () => {
+        const out = await analyzeAndExtract(
+            llmSaying('{"findings":["real finding",{"text":"object"},"",42],"follow_up_queries":[null],"categories":["a"]}') as never,
+            "topic",
+            "https://example.com",
+            "Title",
+            "Some page content long enough to analyse.",
+        );
+        expect(out.findings).toEqual(["real finding"]);
+        expect(out.followUpQueries).toEqual([]);
+        const contradictions = await detectContradictions(
+            llmSaying('{"contradictions":["a string",{"finding1":"x"},{"finding1":"","finding2":"y"},{"finding1":"A says 5","finding2":"B says 7"}]}') as never,
+            ["A says 5", "B says 7", "C", "D", "E"], // it only looks with 5+ findings
+        );
+        expect(contradictions).toHaveLength(1);
     });
 });
