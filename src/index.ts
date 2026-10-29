@@ -547,9 +547,7 @@ async function boot() {
     registerChannelSender("matrix", async (message) => {
         await sendMatrixProactiveMessage(message);
     });
-    registerChannelSender("overlay", async (message) => {
-        sendOverlayNotification(message);
-    });
+    registerChannelSender("overlay", (message) => sendOverlayNotification(message));
 
     // Wire deep research proactive notifier (background research sends progress here)
     setDeepResearchNotifier(async (msg: string) => {

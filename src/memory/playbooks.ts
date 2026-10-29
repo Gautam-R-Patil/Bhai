@@ -153,6 +153,8 @@ export function looksSensitive(text: string): boolean {
 const HANDOFF_MESSAGES = new Set(["takeover", "retry", "skip"].map((a) => stuckCallbackMessage(`stuck:${a}`)));
 /** The quoted message telegram.ts / whatsapp.ts put in front of a reply. */
 const REPLY_QUOTE_RE = /^\[Replying to [^\n]*?message: "([\s\S]*?)"\]\n\n/;
+/** `text` without the message it replies to: the sender's own words. */
+export const ownWords = (text: string) => text.replace(REPLY_QUOTE_RE, "");
 
 /** A stuck-report handoff: a Retry / Skip / take-over button's text, or the typed "retry it" etc. */
 export function isStuckHandoff(text: string): boolean {

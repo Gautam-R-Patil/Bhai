@@ -100,8 +100,20 @@ describe("weekly digest", () => {
         expect(await forgetItem({ isOwner: false, message: "forget #2" }, 2)).toMatchObject({ success: false });
         expect(await forgetItem({ isOwner: true, message: "#2 is right" }, 2)).toMatchObject({ success: false });
         expect(await forgetItem({ isOwner: true, message: "forget #12" }, 2)).toMatchObject({ success: false });
+        // The cue word in the quoted digest is not the owner's.
+        const reply = '[Replying to Bhai\'s message: "tap one to drop it."]\n\n#2 is right';
+        expect(await forgetItem({ isOwner: true, message: reply }, 2)).toMatchObject({ success: false });
+        // A pending forget preview owns "#N": "yes delete #2" confirms it, not the digest.
+        const { token } = forget.previewForget("Riya");
+        expect(token).toBeTruthy();
+        expect(await forgetItem({ isOwner: true, message: "yes delete #2" }, 2)).toMatchObject({ success: false });
+        forget._resetForget();
         expect(exists(ids[1])).toBe(true);
-        expect(await forgetItem({ isOwner: true, message: "forget #2 please" }, 2)).toMatchObject({ success: true });
+        expect(await forgetItem({ isOwner: true, message: "forget #2 please" }, 2)).toEqual({
+            success: true,
+            forgotten: "My sister Riya lives in Pune",
+            hint: expect.any(String),
+        });
         expect(exists(ids[1])).toBe(false);
         expect(await forgetItem({ isOwner: true, message: "forget #2" }, 2)).toMatchObject({ error: "Already gone." });
     });

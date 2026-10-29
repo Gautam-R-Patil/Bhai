@@ -1384,35 +1384,37 @@ function humanizeForOverlay(msg: string): string {
 
 // ── Send proactive message to overlay ─────────
 
-export function sendOverlayNotification(message: string): void {
+/** False when Smart DND held it or no owner overlay is connected, so a proactive sender can retry. */
+export async function sendOverlayNotification(message: string): Promise<boolean> {
     // Gate proactive overlay notifications through Smart DND
-    (async () => {
-        try {
-            const { shouldSuppressMessage } = await import("../proactive/dnd.js");
-            const suppress = await shouldSuppressMessage(message);
-            if (suppress) {
-                console.log("🔕 Proactive overlay notification suppressed by DND");
-                return;
-            }
-        } catch { /* DND check failed — deliver anyway */ }
-
-        const isResearchComplete =
-            message.includes("Deep research complete") ||
-            message.includes("research complete") ||
-            (message.includes("✅") && message.includes("sources"));
-        for (const client of ownerClients()) {
-            sendToClient(client, { type: "notification", text: message });
-            if (isResearchComplete) {
-                sendToClient(client, { type: "research_complete", text: message });
-            }
+    try {
+        const { shouldSuppressMessage } = await import("../proactive/dnd.js");
+        const suppress = await shouldSuppressMessage(message);
+        if (suppress) {
+            console.log("🔕 Proactive overlay notification suppressed by DND");
+            return false;
         }
+    } catch { /* DND check failed — deliver anyway */ }
 
-        // Record notification for engagement tracking
-        try {
-            const { recordNotification } = await import("../proactive/notification-tracker.js");
-            recordNotification("proactive", message);
-        } catch { /* non-fatal */ }
-    })();
+    const clients = ownerClients();
+    if (clients.length === 0) return false;
+    const isResearchComplete =
+        message.includes("Deep research complete") ||
+        message.includes("research complete") ||
+        (message.includes("✅") && message.includes("sources"));
+    for (const client of clients) {
+        sendToClient(client, { type: "notification", text: message });
+        if (isResearchComplete) {
+            sendToClient(client, { type: "research_complete", text: message });
+        }
+    }
+
+    // Record notification for engagement tracking
+    try {
+        const { recordNotification } = await import("../proactive/notification-tracker.js");
+        recordNotification("proactive", message);
+    } catch { /* non-fatal */ }
+    return true;
 }
 
 // ── Send image to overlay ─────────────────────

@@ -235,6 +235,9 @@ export function findForgettable(query: string): ForgetItem[] {
     return items;
 }
 
+/** A forget preview awaits the owner's yes, so a "#N" this turn may mean its lines, not the digest's. */
+export const forgetPreviewPending = (now = Date.now()) => [...pending.values()].some((p) => now - p.at <= TOKEN_TTL_MS);
+
 /** Step 1: numbered preview + a token for step 2. */
 export function previewForget(query: string): { token?: string; count: number; preview: string } {
     const items = findForgettable(query);

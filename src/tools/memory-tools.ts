@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import { normalizeTags } from "../memory/cards.js";
-import { executeForget, forgetMemoryById, forgetTerms, previewForget } from "../memory/forget.js";
+import { executeForget, forgetMemoryById, forgetPreviewPending, forgetTerms, previewForget } from "../memory/forget.js";
 import {
     addGoal,
     addProject,
@@ -11,8 +11,10 @@ import {
     getIdentityProfile,
     updateIdentityProfile,
 } from "../memory/identity.js";
+import { ownWords } from "../memory/playbooks.js";
 import {
     getMemoryStats,
+    getRawDb,
     listMemories,
     markCommitmentDone,
     markOwnerStated,
@@ -88,8 +90,9 @@ export function commitmentDue(message: string, dueAt: unknown, now = Date.now())
     return { dueAt: new Date(ms).toISOString() };
 }
 
-/** The owner's message asks to forget digest item #n ("forget #2", "#2 hata do"). */
-export function hasDigestForgetCue(text: string, n: number): boolean {
+/** The owner's own words (not a message they reply to) ask to forget digest item #n ("forget #2", "#2 hata do"). */
+export function hasDigestForgetCue(message: string, n: number): boolean {
+    const text = ownWords(message);
     return (
         new RegExp(`#\\s*${n}(?!\\d)`).test(text) &&
         /\b(?:forget|drop|remove|delete|prune|bhool\w*|bhul\w*|hata\w*)\b|भूल|हटा/i.test(text)
@@ -315,8 +318,21 @@ export const memoryForget: ToolDefinition = {
             if (!id || !hasDigestForgetCue(ownerTurnMessage(), n)) {
                 return JSON.stringify({ success: false, error: `No digest item #${n} to forget.` });
             }
-            if (!forgetMemoryById(id, "digest")) return JSON.stringify({ success: false, error: "Already gone." });
-            return JSON.stringify({ success: true, forgotten: 1, hint: "Tell the owner it is forgotten." });
+            if (forgetPreviewPending()) {
+                return JSON.stringify({
+                    success: false,
+                    error: "A forget preview is awaiting confirmation, so #N may mean its lines: finish it with token and user_quote.",
+                });
+            }
+            const row = getRawDb()?.prepare("SELECT content FROM memories WHERE id = ?").get(id) as
+                | { content: string }
+                | undefined;
+            if (!row || !forgetMemoryById(id, "digest")) return JSON.stringify({ success: false, error: "Already gone." });
+            return JSON.stringify({
+                success: true,
+                forgotten: row.content,
+                hint: "Tell the owner exactly which item you forgot, quoting it once.",
+            });
         }
         const query = typeof input.query === "string" ? input.query.trim() : "";
         // Whole words match, so a query of only short words ("my ex") would sweep up far too much.
