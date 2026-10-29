@@ -87,6 +87,32 @@ desktop/hostinger-upload/
 !src/prompts/dynamic-assembler.test.ts
 !src/alive-ux.test.ts
 !src/memory/relationship.test.ts
+# Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
+!convex/stt.test.ts
+!src/agent.reliability.test.ts
+!src/agent.prune-nudges.test.ts
+!src/agent.prune-order.test.ts
+!src/account-guard.test.ts
+!src/tool-router.assemble.test.ts
+!src/channel-text.test.ts
+!src/telegram-batch.test.ts
+!src/agents/sub-agent.failure.test.ts
+!src/agents/orchestration-reliability.test.ts
+!src/agents/long-task-reliability.test.ts
+!src/memory/remember-gate.test.ts
+!src/memory/vector-index-rebuild.test.ts
+!src/security/vm-isolate.test.ts
+!src/tools/coding/git-op.test.ts
+!src/tools/os-computer-action-keys.test.ts
+!src/tools/browser/active-tab.test.ts
+!src/tools/browser/auth-wall-reload.test.ts
+!src/tools/browser/auth-wall.test.ts
+!src/tools/browser/extension-enter.test.ts
+!src/tools/browser/interaction-fixes.test.ts
+!src/tools/browser/scan-reliability.test.ts
+!src/tools/browser/tab-list-active.test.ts
+!src/tools/browser/tree-budget.test.ts
+!src/voice/transcribe.test.ts
 # Session 2026-10-28: security, consent, Site Skills, computer use, proactive, memory
 !src/security/loopback.test.ts
 !src/security/tool-access.test.ts
