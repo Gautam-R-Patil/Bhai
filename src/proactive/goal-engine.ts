@@ -51,7 +51,7 @@ export function initGoalEngine(database: Database): void {
     db = database;
 
     db.run(`
-        CREATE TABLE IF NOT EXISTS goals (
+        CREATE TABLE IF NOT EXISTS proactive_goals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             description TEXT,
@@ -74,11 +74,11 @@ export function initGoalEngine(database: Database): void {
             status TEXT DEFAULT 'pending',
             result TEXT,
             created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (goal_id) REFERENCES goals(id)
+            FOREIGN KEY (goal_id) REFERENCES proactive_goals(id)
         )
     `);
 
-    try { db.run("CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)"); } catch { /* */ }
+    try { db.run("CREATE INDEX IF NOT EXISTS idx_proactive_goals_status ON proactive_goals(status)"); } catch { /* */ }
     try { db.run("CREATE INDEX IF NOT EXISTS idx_goal_tasks_status ON goal_tasks(status)"); } catch { /* */ }
 
     console.log("[GOAL-ENGINE] Initialized");
@@ -180,7 +180,7 @@ export function saveGoal(data: {
     if (!db) return null;
 
     db.run(
-        `INSERT INTO goals (title, description, source, evidence, priority)
+        `INSERT INTO proactive_goals (title, description, source, evidence, priority)
          VALUES (?, ?, ?, ?, ?)`,
         [data.title, data.description, data.source, data.evidence, data.priority]
     );
@@ -208,12 +208,12 @@ export function saveGoal(data: {
 
 export function updateGoalStatus(goalId: number, status: Goal["status"]): void {
     if (!db) return;
-    db.run("UPDATE goals SET status = ?, updated_at = datetime('now') WHERE id = ?", [status, goalId]);
+    db.run("UPDATE proactive_goals SET status = ?, updated_at = datetime('now') WHERE id = ?", [status, goalId]);
 }
 
 export function updateGoalProgress(goalId: number, progress: number): void {
     if (!db) return;
-    db.run("UPDATE goals SET progress = ?, updated_at = datetime('now') WHERE id = ?", [Math.min(1, progress), goalId]);
+    db.run("UPDATE proactive_goals SET progress = ?, updated_at = datetime('now') WHERE id = ?", [Math.min(1, progress), goalId]);
 }
 
 // ── Query ─────────────────────────────────────
@@ -225,7 +225,7 @@ export function getGoalsByStatus(statuses: string[]): Goal[] {
     const results = db.exec(
         `SELECT id, title, description, source, priority, status, parent_goal_id,
                 evidence, progress, created_at, updated_at
-         FROM goals WHERE status IN (${placeholders})
+         FROM proactive_goals WHERE status IN (${placeholders})
          ORDER BY priority DESC`,
         statuses
     );
@@ -299,7 +299,7 @@ export function applyGoalDecay(): void {
                     updateGoalStatus(goalId, "abandoned");
                     console.log(`[GOAL-ENGINE] Abandoned goal #${goalId} (priority decayed to 0)`);
                 } else {
-                    db.run("UPDATE goals SET priority = ?, updated_at = datetime('now') WHERE id = ?",
+                    db.run("UPDATE proactive_goals SET priority = ?, updated_at = datetime('now') WHERE id = ?",
                         [newPriority, goalId]);
                 }
             }

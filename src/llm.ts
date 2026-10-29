@@ -50,7 +50,7 @@ export interface LLMClient {
         skillSlugs?: string[];
         responseFormat?: "json_object";
         /**
-         * Helper call (classifier, HyDE, briefing): no thinking, no clock/widget
+         * Helper call (classifier, HyDE): no thinking, no clock/widget
          * context, and — when it has no tools — no server rules preamble. Much
          * faster and cheaper; use only for calls that just transform text.
          */

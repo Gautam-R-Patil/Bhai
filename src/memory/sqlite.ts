@@ -20,7 +20,6 @@ import { getCurrentEmotionalIntensity } from "./emotional.js";
 import { CONVERSATIONS_FTS_SYNC_SQL, MEMORIES_FTS_SYNC_SQL } from "./fts-triggers.js";
 import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
 import { logGateDecision } from "./gate-audit.js";
-import { initProspectiveDB } from "./prospective.js";
 import { boostMemory } from "./self-evolving.js";
 import { mergeSANResults, spreadActivation } from "./spreading-activation.js";
 import { getTemporalCache } from "./temporal-cache.js";
@@ -585,9 +584,6 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     } else {
         console.log("[MEMORY] Value-gate: ENFORCING");
     }
-
-    // ── Initialize brain-inspired modules ──
-    initProspectiveDB(db);
 
     // ── Build HNSW index from existing embeddings (async, non-blocking) ──
     if (rawDb) {
@@ -1670,7 +1666,7 @@ export async function recall(
     const effectiveScopes = scopes && scopes.length > 0 ? [...new Set(["global", ...scopes])] : ["global"];
     const scopePlaceholders = effectiveScopes.map(() => "?").join(",");
     const scopeWhereClause = `scope IN (${scopePlaceholders})`;
-    // Shared visibility filter for the secondary paths (KG / SAN / Hopfield / HyDE).
+    // Shared visibility filter for the secondary paths (KG / SAN / HyDE).
     const visibleWhere = `decay_score > 0.2 AND consolidated_into IS NULL AND ${recallableSql()} AND ${scopeWhereClause}`;
 
     // Extract meaningful keywords
@@ -1709,27 +1705,8 @@ export async function recall(
     const keywords = words.filter((w) => w.length > 2 && !stopWords.has(w));
     const searchTerms = keywords.length > 0 ? keywords : words;
 
-    // ── Active Inference: decide explore vs exploit ──
-    let effectiveLimit = limit;
-    let inferenceBeliefs: import("./active-inference.js").BeliefState | null = null;
-    try {
-        const { makeInferenceDecision } = await import("./active-inference.js");
-        // Build a simple belief state from query keywords
-        const hypotheses = keywords.length > 0 ? keywords : ["general"];
-        const uniform = 1 / hypotheses.length;
-        inferenceBeliefs = {
-            hypotheses,
-            probabilities: hypotheses.map(() => uniform),
-            evidenceCounts: hypotheses.map(() => 0),
-        };
-        const decision = makeInferenceDecision(inferenceBeliefs, []);
-        if (decision.shouldExplore) {
-            // Widen search to gather more diverse results
-            effectiveLimit = limit * 2;
-        }
-    } catch {
-        /* active inference non-fatal */
-    }
+    // Recall was tuned with this 2x candidate over-fetch.
+    const effectiveLimit = limit * 2;
 
     // ── Layer 1a: FTS5 keyword search (porter-stemmed BM25) ──
     // Uses the standalone keywordSearch() which handles sanitization and fail-open
@@ -2021,47 +1998,11 @@ export async function recall(
         }
     }
 
-    // ── Layer 2b+: Hopfield Associative Recall ──
-    // Use Hopfield network for pattern-completion retrieval ("reminds me of")
-    try {
-        const { associativeRecall, getPatternCount } = await import("./hopfield-memory.js");
-        if (getPatternCount() > 0) {
-            const hopfieldResults = await associativeRecall(query, 5);
-            const hopW = getDimensionValue<number>("memory.hopfield.weight") ?? 0.15;
-            const hopSim = getDimensionValue<number>("memory.hopfield.similarityThreshold") ?? 0.3;
-            for (const hr of hopfieldResults) {
-                if (hr.similarity > hopSim) {
-                    const existing = fusedScores.find((f) => f.id === hr.memoryId);
-                    if (existing) {
-                        // Boost existing results found associatively
-                        existing.score += hopW * hr.similarity;
-                    } else {
-                        // Add new associative results
-                        const memResult = db.exec(
-                            `SELECT id, content, category, tags, importance, created_at, access_count
-               FROM memories WHERE id = ? AND ${visibleWhere}`,
-                            [hr.memoryId, ...effectiveScopes],
-                        );
-                        if (memResult.length > 0 && memResult[0].values.length > 0) {
-                            fusedScores.push({
-                                id: hr.memoryId,
-                                record: rowToMemory(memResult[0].values[0]),
-                                score: hopW * hr.similarity,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    } catch {
-        /* Hopfield recall non-fatal */
-    }
-
     // ── Layer 2c: Cross-Encoder Re-Ranking (lightweight) ──
     // Re-rank top candidates using direct embedding similarity for precision.
     // This is a lightweight cross-attention substitute — compare query embedding
     // against each candidate's content embedding for fine-grained relevance.
-    fusedScores.sort((a, b) => b.score - a.score); // SAN/Hopfield may have reordered
+    fusedScores.sort((a, b) => b.score - a.score); // SAN may have reordered
     if (isEmbeddingReady() && fusedScores.length > 3) {
         try {
             const queryEmb = await embedText(query);
@@ -2340,27 +2281,6 @@ export async function recall(
         } catch {
             rollbackTransaction();
             // Still return the records but don't cache stale data
-        }
-    }
-
-    // ── Active Inference: update beliefs with retrieval evidence ──
-    if (inferenceBeliefs && records.length > 0) {
-        try {
-            const { updateBeliefs } = await import("./active-inference.js");
-            // Strengthen belief for the most represented hypothesis (keyword)
-            const contentConcat = records.map((r) => r.content.toLowerCase()).join(" ");
-            let bestIdx = 0;
-            let bestCount = 0;
-            for (let i = 0; i < inferenceBeliefs.hypotheses.length; i++) {
-                const count = (contentConcat.match(new RegExp(inferenceBeliefs.hypotheses[i], "g")) || []).length;
-                if (count > bestCount) {
-                    bestCount = count;
-                    bestIdx = i;
-                }
-            }
-            updateBeliefs(inferenceBeliefs, bestIdx, Math.min(bestCount / records.length, 1));
-        } catch {
-            /* active inference update non-fatal */
         }
     }
 

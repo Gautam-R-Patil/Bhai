@@ -77,7 +77,6 @@ import type { ChatCompletionMessageParam, LLMClient, ThinkingLevel } from "./llm
 import { MODEL_DISPLAY, MODELS } from "./llm.js";
 import { getLocationSnippet, getTimezone } from "./location/index.js";
 import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
-import { BRIEFING_MIN_CHARS, generateMemoryBriefing, USE_MEMORY_BRIEFING } from "./memory/briefing.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
@@ -88,7 +87,6 @@ import { findEntities, getKnowledgeGraphDB } from "./memory/knowledge-graph.js";
 import { getProjectMemorySnippet } from "./memory/project-memory.js";
 import { runReflection } from "./memory/reflection.js";
 import { getRelationshipSnippet } from "./memory/relationship.js";
-import { getSelfModelSnippet, recordOutcome as recordSelfModelOutcome } from "./memory/self-model.js";
 import { getSelfStateSnippet } from "./memory/self-state.js";
 import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./memory/session.js";
 // ── Dynamic Context Injections ────────────────
@@ -104,9 +102,7 @@ import {
 } from "./memory/playbooks.js";
 import { demoteLearnings, getTaskLearningsContext, upsertLearning } from "./memory/task-learnings.js";
 import { getTraitsForInjection, resetSessionTraitCaps } from "./memory/traits.js";
-import { getUserModelSnippet } from "./memory/user-model.js";
 import { getWMSnippet, reflect as wmReflect, retain as wmRetain } from "./memory/working-memory.js";
-import { recordFailure as recordWorldFailure, recordSuccess as recordWorldSuccess } from "./memory/world-model.js";
 import {
     classifyOrchestratorComplexity,
     claudeTier,
@@ -147,7 +143,7 @@ import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tool
 import { withSendLedger } from "./tools/send-ledger.js";
 
 // ── Music fast-path helpers ──────────────────────
-// Short-circuits the Sonnet orchestrator + heavy memory briefing when the LLM
+// Short-circuits the Sonnet orchestrator + memory injection when the LLM
 // classifier is highly confident the user is asking for simple music playback.
 // Fails open: any misfire falls through to the normal agent path.
 
@@ -169,7 +165,7 @@ interface MusicFastPathContext {
 /**
  * True iff the current turn is a simple, high-confidence music-playback command.
  * When this returns true, the agent skips the Sonnet orchestrator, the
- * full memory briefing, and the auto-verification loop.
+ * memory injection, and the auto-verification loop.
  */
 function isMusicFastPathEligible(opts: {
     userMessage: string;
@@ -237,7 +233,7 @@ async function musicMemoryPeek(userMessage: string, llmForRecall: LLMClient): Pr
 }
 
 // Cheap synchronous heuristic used BEFORE the LLM classifier has run. It's used
-// only to skip the expensive memory briefing — any false positive here just
+// only to skip the memory injection — any false positive here just
 // means the user gets a lighter memory context on a non-music turn, not a
 // broken agent. Keep it conservative to minimise those misses.
 const MUSIC_HEURISTIC_PATTERN =
@@ -1568,15 +1564,16 @@ async function _runAgentBody(
     // Only a message the owner actually sent can answer a consent question.
     if (channelContext?.isOwner && !channelContext.autonomous) noteOwnerMessage(userIntentText);
 
-    // ── Goal detection: check if user mentioned a goal ──
-    try {
-        const detectedGoal = detectGoalFromMessage(userIntentText);
-        if (detectedGoal) {
-            createGoal(detectedGoal.description, detectedGoal.deadline ?? undefined);
-            console.log(`  🎯 Goal detected: "${detectedGoal.description}"`);
+    // ── Goal detection: only the owner's own words become the owner's goals ──
+    if (channelContext?.isOwner && !channelContext.autonomous) {
+        try {
+            const detectedGoal = detectGoalFromMessage(userIntentText);
+            if (detectedGoal && createGoal(detectedGoal.description, detectedGoal.deadline ?? undefined) > 0) {
+                console.log(`  🎯 Goal detected: "${detectedGoal.description}"`);
+            }
+        } catch {
+            /* non-fatal */
         }
-    } catch {
-        /* non-fatal */
     }
 
     // When running on a fork, use the fork instead of global history
@@ -2090,9 +2087,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // Auto-inject relevant memory and strategies on the first iteration of a user's prompt
         let activeInjection = "";
         // Music fast-path state. Phase-1 is set BEFORE the tool-selection await
-        // (heuristic only — skips the heavy memory briefing). Phase-2 is set
+        // (heuristic only — skips the memory injection). Phase-2 is set
         // AFTER the await when the LLM classifier has populated its output.
-        let musicFastPathPhase1 = false; // heuristic match — skip briefing only
+        let musicFastPathPhase1 = false; // heuristic match — skip memory injection only
         let musicFastPathActive = false; // full classifier match — skip orchestrator + verification + auto-reply
         let musicFastPathHint: string | undefined;
         let toolSelectionPromise: Promise<Awaited<ReturnType<typeof selectTools>>> | null = null;
@@ -2428,16 +2425,6 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 }
             }
 
-            // ── 10. User model (aggregated profile: projects, routines, style) ──
-            if (queryMode !== "llm_only") {
-                try {
-                    const userModelSnippet = await getUserModelSnippet();
-                    if (userModelSnippet) parts.push(userModelSnippet);
-                } catch {
-                    /* user model not initialized */
-                }
-            }
-
             try {
                 // Core Identity & Important Facts (Always injected)
                 const coreMems = getCoreMemory(getDimensionValue<number>("memory.coreMemory.k") ?? 10);
@@ -2574,14 +2561,6 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 /* working memory not initialized */
             }
 
-            // ── Self-model (capability confidence) ──
-            try {
-                const selfSnippet = getSelfModelSnippet();
-                if (selfSnippet) parts.push(selfSnippet);
-            } catch {
-                /* self-model not ready */
-            }
-
             // ── Active goals ──
             try {
                 const goalsSnippet = getGoalsSnippet();
@@ -2599,17 +2578,6 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 if (cfSnippet) parts.push(cfSnippet);
             } catch {
                 /* counterfactual not ready */
-            }
-
-            // ── Prospective triggers ──
-            // Surfaces user-set reminders / triggers that might fire on this
-            // turn (e.g. "when I mention the deploy, show me the runbook").
-            try {
-                const { getProspectiveSnippet } = await import("./memory/prospective.js");
-                const proSnippet = getProspectiveSnippet();
-                if (proSnippet) parts.push(proSnippet);
-            } catch {
-                /* prospective not ready */
             }
 
             try {
@@ -2816,53 +2784,14 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 }
 
                 // Phase-1 heuristic: if this looks like a simple music command, skip the
-                // expensive memory briefing. False positives here are low-cost — the user
+                // memory injection. False positives here are low-cost — the user
                 // just gets a leaner context on a non-music turn.
                 if (iterations === 1 && !isPlanMode() && isLikelyMusicCommand(rawUserMessage)) {
                     musicFastPathPhase1 = true;
-                    console.log(`  ⚡ Music fast-path phase-1 (heuristic) — skipping memory briefing`);
+                    console.log(`  ⚡ Music fast-path phase-1 (heuristic) — skipping memory injection`);
                 }
 
-                // ── LLM Memory Briefing ──
-                // When enabled, synthesize raw memory fragments into a cohesive briefing
-                // via a cheap Haiku call. Falls back to raw injection on failure.
-                // Small injections go in raw: cheaper than a briefing call, which
-                // also sits on the critical path (see BRIEFING_MIN_CHARS).
-                if (
-                    USE_MEMORY_BRIEFING &&
-                    queryMode !== "llm_only" &&
-                    !musicFastPathPhase1 &&
-                    totalChars > BRIEFING_MIN_CHARS
-                ) {
-                    try {
-                        const rawMemories: Record<string, string> = {};
-                        for (const part of cappedParts) {
-                            // Extract section headers from the parts
-                            const headerMatch = part.match(/^[^\n]+/);
-                            const key = headerMatch
-                                ? headerMatch[0]
-                                      .replace(/[^a-zA-Z0-9_ ]/g, "")
-                                      .trim()
-                                      .substring(0, 40)
-                                : "context";
-                            rawMemories[key] = part;
-                        }
-                        const briefing = await generateMemoryBriefing(llm, rawMemories, rawUserMessage, 400);
-                        if (briefing) {
-                            activeInjection = `[Memory Briefing — synthesized from ${cappedParts.length} memory sources]\n${briefing}`;
-                            console.log(
-                                `  📋 Memory briefing generated (${briefing.length} chars from ${cappedParts.length} sources)`,
-                            );
-                        } else {
-                            // Briefing returned null — fall back to raw injection
-                            activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
-                        }
-                    } catch {
-                        // Briefing failed — fall back to raw injection (fail-open)
-                        activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
-                    }
-                } else if (!musicFastPathPhase1) {
-                    // Briefing disabled or query is llm_only — fall back to raw injection.
+                if (!musicFastPathPhase1) {
                     activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
                 }
                 // If musicFastPathPhase1 is true, we intentionally inject nothing here.
@@ -4061,30 +3990,8 @@ PLAN:`,
             if (toolFailed(r)) {
                 recordToolFailure(r.fnName, content.substring(0, 200));
                 lastFailedTool = r.fnName;
-                // World model + self-model: track tool failure
-                try {
-                    recordWorldFailure(r.fnName, "tool");
-                } catch {
-                    /* non-fatal */
-                }
-                try {
-                    recordSelfModelOutcome(r.fnName, false, 0);
-                } catch {
-                    /* non-fatal */
-                }
             } else {
                 recordToolSuccess(r.fnName);
-                // World model + self-model: track tool success
-                try {
-                    recordWorldSuccess(r.fnName, "tool");
-                } catch {
-                    /* non-fatal */
-                }
-                try {
-                    recordSelfModelOutcome(r.fnName, true, 0);
-                } catch {
-                    /* non-fatal */
-                }
                 // If previous tool failed and this one succeeded → record recovery
                 if (lastFailedTool) {
                     recordToolRecovery(lastFailedTool, r.fnName, `${lastFailedTool} failed → ${r.fnName} succeeded`);

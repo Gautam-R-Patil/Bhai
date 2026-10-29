@@ -84,7 +84,7 @@ Bhai is a **local-first** autonomous agent. The Node.js process runs on the user
 7. **Tool execution** — The agent parses `tool_calls` from the LLM response. Non-browser tools execute in parallel (`Promise.all`); browser tools execute sequentially because they share a single Playwright `Page` object.
 8. **Loop termination** — The loop continues until `finish_reason === "stop"`, the agent emits `TASK_COMPLETE`, the iteration cap (200) is hit, or the circuit breaker trips.
 9. **Egress** — The final assistant message is streamed back to the originating channel using its own formatting adapter (Markdown → HTML for Telegram, blocks for Slack, embeds for Discord, plain for SMS-style channels).
-10. **Post-session** — After the conversation settles (no follow-up within a threshold), `runReflection()` runs: extract coding strategies, detect goals, record outcomes into the self-model, and embed the turn into episodic memory.
+10. **Post-session** — After the conversation settles (no follow-up within a threshold), `runReflection()` runs: extract coding strategies, detect goals, and embed the turn into episodic memory.
 
 ### Why local-first
 
@@ -358,10 +358,6 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 | `traits.ts` | Behavioral traits | Confidence-weighted, 600-token budget, conflict detection |
 | `identity.ts` | User profile | JSON Resume format; persisted to `user_profiles` |
 | `working-memory.ts` | Short-term buffer | 20 items, 3000-token budget, attention-scored |
-| `hopfield-memory.ts` | Associative recall | Continuous Hopfield network, similarity > 0.3 gate |
-| `world-model.ts` | World state | Per-entity accessibility scores, EMA response times |
-| `user-model.ts` | User model | Aggregates identity + traits + KG into unified prediction |
-| `active-inference.ts` | Predictive inference | Free-energy minimization; explore vs exploit (Nature Comms Dec 2025) |
 | `reflection.ts` | Nightly consolidation | SAC-DR; trait extraction, HMAC audit log |
 | `self-evolving.ts` | Synaptic pruning | Strength-based: weak→delete, medium→weaken, strong→strengthen |
 | `task-learnings.ts` | Task strategies | Per-(category, pattern, context) learning; merges on re-encounter |
@@ -371,7 +367,7 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 | `spreading-activation.ts` | Spreading Activation Network | k-hop BFS over the knowledge graph for associative recall boost |
 | `fts5-query.ts` | BM25 search helper | SQLite FTS5 query construction + scoring |
 | `project-memory.ts` | Per-project scoping | Tags memory entries with the active workspace root for project-scoped recall |
-| `anticipation.ts` / `briefing.ts` | Forward-looking context | Upcoming-event scan + morning briefing assembly |
+| `anticipation.ts` | Forward-looking context | Upcoming-event scan |
 | `value-gate.ts` + `gate-audit.ts` | Write value-gate | Every `remember()` passes a Haiku gate (hardReject/hardAllow short-circuits + LLM judgment); sha256-cached, fail-closed, decisions logged to `data/memory-gate.jsonl` (10 MB rotation) |
 | `compression-template.ts` | Structured compression | 13-section continuity template (active task verbatim, completed actions, exact errors, decisions, pending asks, files); persisted so the next iterative pass parses + extends it |
 
@@ -882,7 +878,6 @@ An automated outer-loop optimization system (based on arxiv 2603.28052) that tre
 | `memory.fusion.relevanceWeight` | 0.5 | numeric |
 | `memory.fusion.recencyWeight` | 0.25 | numeric |
 | `memory.san.weight` | 0.3 | numeric |
-| `memory.hopfield.weight` | 0.15 | numeric |
 | `memory.recall.k` | 10 | 3–50 |
 | `memory.crossEncoder.blend` | 0.6 | numeric |
 | `agent.contextCap` | 8000 | 2000–20000 |

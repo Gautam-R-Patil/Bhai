@@ -28,7 +28,6 @@ import { decayEmotions, recordEmotion } from "./emotional.js";
 import { recordEpisode } from "./episodic.js";
 import { getIdentityProfile, updateIdentityProfile } from "./identity.js";
 import { addEntity, getKnowledgeGraphDB } from "./knowledge-graph.js";
-import { cleanupTriggers } from "./prospective.js";
 import { updateRelationshipAfterSession } from "./relationship.js";
 import { findDuplicates, mergeDuplicates, reorganizeMemories, synapticPrune } from "./self-evolving.js";
 import { type EmotionalTone, updateSelfStateFromSession } from "./self-state.js";
@@ -604,13 +603,6 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
             }
         } catch (err) {
             console.error("[MEMORY][REPLAY] Consolidation failed (non-fatal):", err);
-        }
-
-        // ── 5d. Cleanup prospective memory triggers ──
-        try {
-            cleanupTriggers();
-        } catch {
-            /* non-fatal */
         }
 
         // ── 5e. Clear temporal cache (fresh start after reorganization) ──

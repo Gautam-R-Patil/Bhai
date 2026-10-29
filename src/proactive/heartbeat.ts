@@ -12,7 +12,6 @@ import { getEpisodicSnippet } from "../memory/episodic.js";
 import { getIdentityPromptSnippet } from "../memory/identity.js";
 import { getSessionSummary } from "../memory/session.js";
 import { getCoreMemory } from "../memory/sqlite.js";
-import { resetDailyCounts as resetWorldModelDailyCounts } from "../memory/world-model.js";
 import { getUnrespondedProactiveTopics } from "../telegram.js";
 import { describePresence, getUserPresence, type UserPresence } from "./activity.js";
 import { globalBoundaryBus } from "./boundary-events.js";
@@ -35,7 +34,6 @@ let config: HeartbeatConfig | null = null;
 let checkCount = 0;
 let briefingSentDate = ""; // YYYY-MM-DD — which day we already sent the briefing
 let briefingTargetMinute = -1; // minutes-since-midnight (local tz) randomly chosen for today
-let worldModelResetDate = ""; // YYYY-MM-DD — which day we already reset world model counts
 
 export function pickBriefingTime(): number {
     const low = 6 * 60;
@@ -126,16 +124,6 @@ export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
             const todayStr = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, "0")}-${String(nowLocal.getDate()).padStart(2, "0")}`;
             const minutesNow = nowLocal.getHours() * 60 + nowLocal.getMinutes();
             const hourNow = nowLocal.getHours();
-
-            // ── World Model Daily Reset ──
-            if (worldModelResetDate !== todayStr) {
-                worldModelResetDate = todayStr;
-                try {
-                    resetWorldModelDailyCounts();
-                } catch {
-                    /* non-fatal */
-                }
-            }
 
             // ── Morning Briefing Logic (unchanged) ──
 

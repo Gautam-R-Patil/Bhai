@@ -117,10 +117,8 @@ function buildRegistry(): void {
         numericDim("memory.fusion.recencyWeight", "Weight given to recency (exponential decay) in the generative-agents blend", 0.25, "src/memory/sqlite.ts", "1421"),
         numericDim("memory.fusion.importanceWeight", "Weight given to stored importance score in the generative-agents blend", 0.25, "src/memory/sqlite.ts", "1421"),
 
-        // SAN + Hopfield weights (sqlite.ts:1440,1473)
+        // SAN weight (sqlite.ts:1440)
         numericDim("memory.san.weight", "Spreading activation network boost multiplier applied to existing+new nodes", 0.3, "src/memory/sqlite.ts", "1440"),
-        numericDim("memory.hopfield.weight", "Hopfield associative recall boost multiplier (similarity > 0.3 gate)", 0.15, "src/memory/sqlite.ts", "1473"),
-        numericDim("memory.hopfield.similarityThreshold", "Minimum Hopfield similarity for recall inclusion", 0.3, "src/memory/sqlite.ts", "1469"),
 
         // Cross-encoder blend (sqlite.ts:1508)
         numericDim("memory.crossEncoder.blend", "Cross-encoder re-rank blend: (blend)×RRF_score + (1-blend)×rerankSim×0.02", 0.6, "src/memory/sqlite.ts", "1508"),

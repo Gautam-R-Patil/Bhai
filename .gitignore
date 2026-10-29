@@ -185,7 +185,6 @@ desktop/hostinger-upload/
 !src/skills/site/mint/__tests__/
 !src/skills/site/mint/__tests__/**
 !src/skills/site/mint/__tests__/self-heal.test.ts
-!src/memory/active-inference.test.ts
 !src/memory/traits-decay.test.ts
 !src/memory/embedding-cache.test.ts
 !src/memory/resolve-embedding.test.ts
@@ -325,6 +324,7 @@ desktop/hostinger-upload/
 !src/memory/value-gate.test.ts
 !src/memory/strategy-library.test.ts
 !src/memory/sleep-gate.test.ts
+!src/memory/goals.test.ts
 !src/proactive/heartbeat-morning-boundary.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js

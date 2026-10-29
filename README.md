@@ -120,9 +120,8 @@ src/                                  # ~770 TypeScript files (incl. tests)
 │   ├── resolve-embedding.ts memory-tiers.ts fts5-query.ts
 │   ├── reflection.ts                 # Nightly dream replay + decay
 │   ├── emotional.ts episodic.ts identity.ts traits.ts session.ts
-│   ├── relationship.ts self-state.ts self-model.ts goals.ts anticipation.ts briefing.ts
-│   ├── working-memory.ts hopfield-memory.ts spreading-activation.ts
-│   ├── world-model.ts user-model.ts active-inference.ts counterfactual.ts prospective.ts
+│   ├── relationship.ts self-state.ts goals.ts anticipation.ts
+│   ├── working-memory.ts spreading-activation.ts counterfactual.ts
 │   ├── sleep-gate.ts surprise-gate.ts reranker.ts strategy-library.ts self-evolving.ts
 │   ├── value-gate.ts gate-audit.ts            # LLM write value-gate + JSONL audit (10MB rotation)
 │   ├── compression-template.ts                # Structured 13-section continuity summary

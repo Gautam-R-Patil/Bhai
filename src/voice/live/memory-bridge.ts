@@ -16,7 +16,6 @@ import { getEmotionalContextSnippet } from "../../memory/emotional.js";
 import { getEpisodicSnippet } from "../../memory/episodic.js";
 import { getRelationshipSnippet } from "../../memory/relationship.js";
 import { getAnticipationSnippet } from "../../memory/anticipation.js";
-import { getUserModelSnippet } from "../../memory/user-model.js";
 import { getWMSnippet } from "../../memory/working-memory.js";
 import { getTimezone } from "../../location/index.js";
 
@@ -87,12 +86,6 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
     try {
         const anticipationSnippet = getAnticipationSnippet();
         if (anticipationSnippet) parts.push(anticipationSnippet);
-    } catch { /* */ }
-
-    // ── User model ──
-    try {
-        const userModelSnippet = await getUserModelSnippet();
-        if (userModelSnippet) parts.push(userModelSnippet);
     } catch { /* */ }
 
     // ── Core memory ──
