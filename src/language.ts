@@ -67,8 +67,14 @@ const LATIN_LANGUAGE_KEYWORDS: [RegExp, string][] = [
     [/\b(hej|tack|snälla|god morgon|hur mår du|varför|inte|också|göra|har|mycket|är)\b/i, "Swedish"],
 ];
 
-// Romanized Hindi/Hinglish detection
-const HINGLISH_KEYWORDS = /\b(kya|kaise|hai|hain|nahi|mujhe|aap|tum|yeh|woh|karo|bhai|yaar|accha|theek|bahut|lekin|aur|kyun|kab|kahan|kaisa|batao|bolo|dekho|chalo|ruk|samajh|pata|chahiye|kuch|sab|abhi)\b/i;
+// Romanized Hindi/Hinglish detection. Words that are also common English or French
+// ("do", "the", "main", "to", "le", "de", "sun", "band") are left out on purpose.
+const HINGLISH_KEYWORDS =
+    /\b(kya|kaise|hai|hain|nahi|nahin|nhi|mujhe|aap|tum|yeh|woh|karo|kar|karna|karke|karta|karti|kardo|bhai|yaar|accha|acha|achha|theek|thik|bahut|lekin|aur|kyun|kyunki|kab|kahan|kaisa|kaun|kitna|kitne|batao|bata|bolo|bol|dekho|dekh|chalo|chal|ruk|samajh|pata|chahiye|kuch|sab|abhi|raha|rahi|rahe|tha|thi|kal|aaj|baje|bas|haan|gaya|gayi|hua|hoga|mera|meri|mere|tera|teri|apna|apni|sahi|matlab|phir|jaldi|thoda|zyada|bilkul|sirf|wala|wali|wale|bhej|bhejo|bhejna|dena|lena|ho|hoon|hun|ji|arre|arey|yahan|wahan|subah|shaam|raat|ek)\b/i;
+
+// Plain English: function words a Hinglish or other-language message rarely carries this many of.
+const ENGLISH_MARKERS =
+    /\b(the|is|are|was|and|to|for|my|me|you|your|can|could|please|what|how|it|this|that|with|of|on|at|i|do|does|will|would|should|have|has|an)\b/gi;
 
 // ── Session State ────────────────────────────
 
@@ -91,7 +97,7 @@ export function detectLanguage(text: string): LanguageMatch {
         .replace(/\b[A-Z_]{2,}\b/g, "") // Constants like UPPERCASE_VAR
         .trim();
 
-    if (cleanText.length < 20) {
+    if (cleanText.length < 10) {
         return { language: currentLanguage, confidence: 0, script: "inherited" };
     }
 
@@ -112,8 +118,30 @@ export function detectLanguage(text: string): LanguageMatch {
         const words = cleanText.split(/\s+/).length;
         const ratio = hinglishMatches.length / words;
         if (ratio > 0.2) {
-            return { language: "Hindi (Romanized)", confidence: 0.7 + ratio * 0.2, script: "Latin-Hinglish" };
+            // ≥2 Hindi words at >20% density is already a clear signal: clear the 0.80 switch bar.
+            return {
+                language: "Hindi (Romanized)",
+                confidence: Math.min(0.95, 0.8 + ratio * 0.15),
+                script: "Latin-Hinglish",
+            };
         }
+    }
+
+    // 2b. Plain English, confidently: without this, English came back at 0.5 — under the 0.80
+    // switch bar — so a session that went Hinglish (or Spanish…) never switched back.
+    const words = cleanText.split(/\s+/).length;
+    const hinglishHits = hinglishMatches?.length ?? 0;
+    const englishHits = cleanText.match(ENGLISH_MARKERS)?.length ?? 0;
+    // Two hits, like the checks below: "comment", "come", "non" are English words too.
+    const latinHit = LATIN_LANGUAGE_KEYWORDS.some(
+        ([p]) => (cleanText.match(new RegExp(p.source, "gi"))?.length ?? 0) >= 2,
+    );
+    if (
+        words >= 4 &&
+        !latinHit &&
+        ((hinglishHits === 0 && englishHits >= 1) || (hinglishHits <= 1 && englishHits >= 2))
+    ) {
+        return { language: "English", confidence: 0.85, script: "Latin" };
     }
 
     // 3. Check Latin-script languages via keywords
