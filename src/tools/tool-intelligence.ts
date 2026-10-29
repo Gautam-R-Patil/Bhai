@@ -43,13 +43,11 @@ const CACHEABLE_TOOLS = new Set([
     "get_current_time", // current time (short TTL)
     "list_tasks", // scheduled tasks list
     "list_webhooks", // webhooks list
-    "memory_list", // memory listing
     "identity_view", // identity info
     "trait_list", // traits listing
     "google_accounts", // only "list" action
     // Expensive tools — caching saves significant cost
     "web_search", // search results are stable for minutes
-    "memory_search", // memory doesn't change within a conversation
     "glob", // file listing stable for short windows
     "grep", // codebase searches stable for short windows
 ]);
@@ -74,7 +72,6 @@ const TOOL_TTL_MS: Record<string, number> = {
     list_directory: 120_000,
     file_metadata: 120_000,
     google_accounts: 120_000,
-    memory_list: 120_000,
     list_tasks: 120_000,
     list_webhooks: 120_000,
     // Somewhat volatile — standard TTL (60 seconds)
@@ -87,7 +84,6 @@ const TOOL_TTL_MS: Record<string, number> = {
     get_current_time: 5_000, // Time changes constantly
     // Expensive tools — cache to reduce latency + cost
     web_search: 120_000, // Search results stable for 2 minutes
-    memory_search: 120_000, // Memory stable within conversation
     glob: 60_000, // File listings stable for short windows
     grep: 60_000, // Code search results stable for short windows
 };

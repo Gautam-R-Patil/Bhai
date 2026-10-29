@@ -108,4 +108,27 @@ describe("memory_store supersedes", () => {
         expect((await store(turn, { content: "Owner's gym timing is 8am", supersedes: e })).message).toMatch(/ignored/);
         expect(live(e)).toBe(true);
     });
+
+    it("a later store in the turn doesn't take the correction's undo away", async () => {
+        const { memoryUndoAction, undoMemoryTap } = await import("../forget.js");
+        const f = old("Owner's sister lives in Mumbai");
+        const ctx: CronCallerContext = { isOwner: true, message: "actually I moved to Pune, office in Baner", shownMemories: shown(f) };
+        const out = await store(ctx, { content: "Owner lives in Pune", supersedes: f });
+        await store(ctx, { content: "Owner's office is in Baner" });
+        expect(ctx.storedMemory?.id).toBe(out.id);
+        undoMemoryTap(memoryUndoAction(ctx.storedMemory as { id: number; at: number }));
+        expect(live(f)).toBe(true);
+    });
+
+    it("a repeated memory_search through executeTool still marks its ids shown", async () => {
+        const { executeTool } = await import("../../tools/index.js");
+        const g = old("Owner's dentist is Dr Rao");
+        for (let i = 0; i < 2; i++) {
+            const turn: CronCallerContext = { isOwner: true, message: "my dentist changed" };
+            await cron.runWithCallerContext(turn, () =>
+                cron.runAsMainLoopTool("memory_search", () => executeTool("memory_search", { query: "Owner's dentist" })),
+            );
+            expect(turn.shownMemories?.has(g), `call ${i + 1}`).toBe(true);
+        }
+    });
 });

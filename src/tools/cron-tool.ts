@@ -23,6 +23,8 @@ export interface CronCallerContext {
     /** Memory ids the main loop showed the model this turn: the only ones memory_store may supersede. */
     shownMemories?: Set<number>;
     superseded?: boolean;
+    /** storedMemory is a supersede's new row: its undo is the only way back to the old one. */
+    undoPinned?: boolean;
 }
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
 // The tool the owner's main loop (agent.ts) is running; a sub-agent or swarm that tool
@@ -50,10 +52,15 @@ export function ownerTurnMessage(): string {
     return isOwnerCaller() ? (_callerStorage.getStore()?.message ?? "") : "";
 }
 
-/** memory_store saved `id` on the owner's live turn: the reply may offer a one-tap undo. */
-export function noteStoredMemory(id: number): void {
+/**
+ * memory_store saved `id` on the owner's live turn: the reply may offer a one-tap undo.
+ * A supersede's row (`retired`) keeps the button, since tapping it brings the old memory back.
+ */
+export function noteStoredMemory(id: number, retired = false): void {
     const ctx = _callerStorage.getStore();
-    if (ctx && isOwnerCaller()) ctx.storedMemory = { id, at: Date.now() };
+    if (!ctx || !isOwnerCaller() || (ctx.undoPinned && !retired)) return;
+    ctx.storedMemory = { id, at: Date.now() };
+    ctx.undoPinned = retired;
 }
 
 /** The main loop showed the model these memory ids on the owner's turn. */

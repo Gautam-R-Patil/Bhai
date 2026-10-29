@@ -82,11 +82,12 @@ export const memoryStore: ToolDefinition = {
         if (id === null) {
             return JSON.stringify({ success: false, reason: "rejected_by_value_gate" });
         }
+        const retired = supersede && id !== oldId && supersedeMemory(oldId, id);
         // Smart write may merge or drop this row moments later, so its id can't back an undo.
-        if (!useSmartWrite) noteStoredMemory(id);
+        if (!useSmartWrite) noteStoredMemory(id, retired);
         if (input.supersedes == null || id === oldId)
             return JSON.stringify({ success: true, id, message: "Memory stored." });
-        if (supersede && supersedeMemory(oldId, id)) {
+        if (retired) {
             return JSON.stringify({
                 success: true,
                 id,
