@@ -119,7 +119,7 @@ import {
 } from "./deep-research.js";
 import { documentTools, initDocumentTools } from "./document.js";
 import { emailSend } from "./email-tool.js";
-import { compressFiles, fileMetadata, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
+import { compressFiles, fileMetadata, findFiles, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
 import { deleteFile, listDirectory } from "./files.js";
 import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { generateImage } from "./generate-image.js";
@@ -444,6 +444,7 @@ registry.set(fileMetadata.schema.function.name, fileMetadata);
 registry.set(compressFiles.schema.function.name, compressFiles);
 registry.set(trashManager.schema.function.name, trashManager);
 registry.set(openInApp.schema.function.name, openInApp);
+registry.set(findFiles.schema.function.name, findFiles);
 
 // Google API tools
 registry.set(googleAccounts.schema.function.name, googleAccounts);

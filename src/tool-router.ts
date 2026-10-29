@@ -130,7 +130,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     file_system: {
         description:
-            "Reading files, writing files, creating files, editing documents and code, listing directories, searching files by name or content, searching code with regex, finding files by glob pattern, deleting files, file metadata, compressing archives, managing the trash can, opening files in applications, appending to log files.",
+            "Reading files, writing files, creating files, editing documents and code, listing directories, searching files by name or content, finding a file anywhere on the computer (Spotlight), searching code with regex, finding files by glob pattern, deleting files, file metadata, compressing archives, managing the trash can, opening files in applications, appending to log files.",
         tools: [
             "read",
             "edit",
@@ -144,6 +144,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "compress_files",
             "trash_manager",
             "open_in_app",
+            "find_files",
         ],
     },
     coding: {

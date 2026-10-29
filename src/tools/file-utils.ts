@@ -768,6 +768,80 @@ export const runShortcut: ToolDefinition = {
 // 6. OPEN URL/FILE IN SPECIFIC APP
 // ═══════════════════════════════════════════════
 
+// Folders that are almost never what someone means by "find my file".
+const FIND_NOISE = /\/(Library|node_modules|\.git|\.Trash|\.cache|\.npm|DerivedData)\//;
+
+export const findFiles: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "find_files",
+            description:
+                "Find files or folders anywhere on the Mac instantly through the Spotlight index, by name or by words inside them. Use this (not glob, Finder clicks or shell find) when the user asks for a file without giving its path: 'my resume pdf', 'the invoice from March', 'the Bhai folder'. Returns paths, newest first, the user's own files before system ones. Then use open_in_app to open one.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "Part of the name, e.g. 'resume' or 'tax 2025'" },
+                    content: {
+                        type: "boolean",
+                        description: "Also match words inside the files (documents, PDFs, notes). Default false: names only.",
+                    },
+                    ext: { type: "string", description: "Only this extension, e.g. 'pdf', 'png', 'docx'" },
+                    folder: { type: "string", description: "Only inside this folder, e.g. '~/Documents'" },
+                    limit: { type: "number", description: "Max results (default 20, max 100)" },
+                },
+                required: ["query"],
+            },
+        },
+    },
+
+    async handler(input) {
+        if (!IS_MAC) {
+            return JSON.stringify({
+                success: false,
+                error: "find_files uses Spotlight (macOS). Use glob with a pattern like '**/*resume*' instead.",
+            });
+        }
+        const query = String(input.query ?? "").trim();
+        if (!query) return JSON.stringify({ success: false, error: "Provide 'query'." });
+        const limit = Math.min(Math.max(Number(input.limit) || 20, 1), 100);
+        const ext = String(input.ext ?? "")
+            .replace(/^\./, "")
+            .toLowerCase();
+        const args = input.content ? [query] : ["-name", query];
+        if (input.folder) args.unshift("-onlyin", resolve(String(input.folder).replace(/^~(?=\/|$)/, homedir())));
+        try {
+            const { stdout } = await execFileAsync("mdfind", args, { timeout: 10_000, maxBuffer: 20 * 1024 * 1024 });
+            const home = homedir();
+            const hits = stdout
+                .split("\n")
+                .filter((p) => p && (!ext || extname(p).toLowerCase() === `.${ext}`))
+                .slice(0, 2000)
+                .map((p) => {
+                    let mtime = 0;
+                    try {
+                        mtime = statSync(p).mtimeMs;
+                    } catch {
+                        /* gone since indexing */
+                    }
+                    return { p, mtime, mine: p.startsWith(home) && !FIND_NOISE.test(p) };
+                })
+                .filter((h) => h.mtime > 0)
+                .sort((a, b) => Number(b.mine) - Number(a.mine) || b.mtime - a.mtime);
+            return JSON.stringify({
+                success: true,
+                total: hits.length,
+                files: hits.slice(0, limit).map((h) => ({
+                    path: h.p,
+                    modified: new Date(h.mtime).toISOString().slice(0, 16).replace("T", " "),
+                })),
+            });
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
 export const openInApp: ToolDefinition = {
     schema: {
         type: "function",
