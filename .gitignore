@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+node_modules
+desktop/node_modules
 
 # Build output
 dist/
