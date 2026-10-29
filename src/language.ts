@@ -42,7 +42,7 @@ const SCRIPT_RANGES: [RegExp, string, string][] = [
 ];
 
 // Latin-script language detection via common words
-const LATIN_LANGUAGE_KEYWORDS: [RegExp, string][] = [
+const RAW_LATIN_KEYWORDS: [RegExp, string][] = [
     // Spanish
     [/\b(hola|gracias|por favor|buenos días|buenas|cómo estás|qué|también|puede|hacer|tengo|quiero|necesito|dónde|cuándo)\b/i, "Spanish"],
     // French
@@ -66,6 +66,13 @@ const LATIN_LANGUAGE_KEYWORDS: [RegExp, string][] = [
     // Swedish
     [/\b(hej|tack|snälla|god morgon|hur mår du|varför|inte|också|göra|har|mycket|är)\b/i, "Swedish"],
 ];
+
+// \b is ASCII-only: next to é, ç, ä… it never matches, so keywords starting or ending in one
+// (qué, être, çok, är) could never count. Swap it for a Unicode letter boundary.
+const LATIN_LANGUAGE_KEYWORDS: [RegExp, string][] = RAW_LATIN_KEYWORDS.map(([p, language]) => [
+    new RegExp(p.source.replace(/^\\b/, "(?<!\\p{L})").replace(/\\b$/, "(?!\\p{L})"), "giu"),
+    language,
+]);
 
 // Romanized Hindi/Hinglish detection. Words that are also common English or French
 // ("do", "the", "main", "to", "le", "de", "sun", "band") are left out on purpose.
@@ -133,9 +140,7 @@ export function detectLanguage(text: string): LanguageMatch {
     const hinglishHits = hinglishMatches?.length ?? 0;
     const englishHits = cleanText.match(ENGLISH_MARKERS)?.length ?? 0;
     // Two hits, like the checks below: "comment", "come", "non" are English words too.
-    const latinHit = LATIN_LANGUAGE_KEYWORDS.some(
-        ([p]) => (cleanText.match(new RegExp(p.source, "gi"))?.length ?? 0) >= 2,
-    );
+    const latinHit = LATIN_LANGUAGE_KEYWORDS.some(([p]) => (cleanText.match(p)?.length ?? 0) >= 2);
     if (
         words >= 4 &&
         !latinHit &&
@@ -146,7 +151,7 @@ export function detectLanguage(text: string): LanguageMatch {
 
     // 3. Check Latin-script languages via keywords
     for (const [pattern, language] of LATIN_LANGUAGE_KEYWORDS) {
-        const matches = cleanText.match(new RegExp(pattern.source, "gi"));
+        const matches = cleanText.match(pattern);
         if (matches && matches.length >= 2) {
             const words = cleanText.split(/\s+/).length;
             const ratio = matches.length / words;

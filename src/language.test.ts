@@ -171,6 +171,12 @@ describe("language — detectLanguage: Latin-script languages via keywords", () 
         expect(result.language).toEqual("Vietnamese");
     });
 
+    it("keywords that start or end with an accented letter count (qué, être, çok)", () => {
+        expect(detectLanguage("hola, ¿qué tal?").language).toEqual("Spanish");
+        expect(detectLanguage("je veux être avec toi").language).toEqual("French");
+        expect(detectLanguage("çok teşekkür ederim").language).toEqual("Turkish");
+    });
+
     it("requires ≥2 keyword matches AND ratio > 0.15 — a single keyword doesn't trigger", () => {
         // Long English with ONE Spanish word — word ratio too low
         const result = detectLanguage("I went to the store and bought some gracias bread for my family and friends today morning");
