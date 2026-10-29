@@ -239,6 +239,11 @@ function spillItem(itemId: string): void {
     state.items.splice(idx, 1);
 }
 
+/** Drop items that mention a forgotten fact (memory/forget.ts). */
+export function dropMatching(hit: (text: unknown) => boolean): void {
+    state.items = state.items.filter((i) => !hit(i.summary) && !hit(i.fullContent));
+}
+
 // ── Access Tracking ───────────────────────────
 
 export function recordAccess(itemId: string): void {

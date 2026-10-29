@@ -53,7 +53,7 @@ export interface LLMClient {
          * hotter for wilder, less predictable output). Omitted → model default. */
         temperature?: number;
         /**
-         * Helper call (classifier, HyDE, briefing): no thinking, no clock/widget
+         * Helper call (classifier, HyDE): no thinking, no clock/widget
          * context, and — when it has no tools — no server rules preamble. Much
          * faster and cheaper; use only for calls that just transform text.
          */
@@ -408,7 +408,7 @@ export function createLLMClient(config: Config): LLMClient {
 
                         // Credit exhaustion — don't retry, throw immediately
                         if (response.status === 402) {
-                            throw Object.assign(new Error("You've run out of AI credits. Top up to continue."), {
+                            throw Object.assign(new Error("You've run out of AI credits. Reach the TRUSCOR team for more."), {
                                 status: 402,
                             });
                         }

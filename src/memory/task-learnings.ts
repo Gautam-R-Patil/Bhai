@@ -254,6 +254,14 @@ export function getAllLearnings(): TaskLearning[] {
     return store.learnings;
 }
 
+/** Remove these learnings for good (memory_forget). */
+export function deleteLearnings(ids: Set<string>): number {
+    const before = store.learnings.length;
+    store.learnings = store.learnings.filter((l) => !ids.has(l.id));
+    if (store.learnings.length !== before) save();
+    return before - store.learnings.length;
+}
+
 // ── Immediate Click Strategy Learning ─────────
 // Called right after os_ocr_click succeeds — no need to wait for post-session reflection.
 

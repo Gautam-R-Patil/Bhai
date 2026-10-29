@@ -97,12 +97,12 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     memory: {
         description:
-            "Remembering information, storing facts, searching past memories, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections. Searching the raw text of past conversation transcripts by keyword.",
+            "Remembering information, storing facts, searching past memories, forgetting something the user asks me to forget, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections. Searching the raw text of past conversation transcripts by keyword.",
         tools: [
             "memory_store",
             "memory_search",
             "memory_list",
-            "memory_delete",
+            "memory_forget",
             "session_search",
             "identity_view",
             "identity_update",
@@ -130,7 +130,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     file_system: {
         description:
-            "Reading files, writing files, creating files, editing documents and code, listing directories, searching files by name or content, searching code with regex, finding files by glob pattern, deleting files, file metadata, compressing archives, managing the trash can, opening files in applications, appending to log files.",
+            "Reading files, writing files, creating files, editing documents and code, listing directories, searching files by name or content, finding a file anywhere on the computer (Spotlight), searching code with regex, finding files by glob pattern, deleting files, file metadata, compressing archives, managing the trash can, opening files in applications, appending to log files.",
         tools: [
             "read",
             "edit",
@@ -144,6 +144,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "compress_files",
             "trash_manager",
             "open_in_app",
+            "find_files",
         ],
     },
     coding: {
@@ -215,6 +216,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "browser_scroll",
             "browser_analyze",
             "browser_run_js",
+            "browser_mark",
             "browser_wait",
             "browser_select",
             "browser_right_click",
@@ -300,7 +302,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     system_controls: {
         description:
-            "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep. Platform capability detection: which shell, screenshot engine, clipboard, OCR, and automation tools are available at runtime.",
+            "System settings and hardware controls: volume, brightness, clipboard, system info, WiFi, Bluetooth, Do Not Disturb, dark mode, locking the screen, display sleep, opening any System Settings pane or privacy permission page directly. Platform capability detection: which shell, screenshot engine, clipboard, OCR, and automation tools are available at runtime.",
         tools: [
             "set_volume",
             "clipboard",
@@ -312,6 +314,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "dark_mode",
             "lock_screen",
             "sleep_display",
+            "open_settings",
         ],
     },
     media: {
@@ -377,8 +380,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     app_management: {
         description:
-            "Managing applications, opening apps, closing apps, force-quitting apps, listing running apps, window management, moving windows, resizing windows, drag and drop operations, macOS Shortcuts.",
-        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut"],
+            "Managing applications, opening apps, closing apps, force-quitting apps, listing running apps, window management, moving windows, resizing windows, drag and drop operations, macOS Shortcuts, opening an app straight to a place with a deep link (Maps directions, a FaceTime call, a Zoom meeting, a file in VS Code).",
+        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut", "open_in_app"],
     },
     research: {
         description:

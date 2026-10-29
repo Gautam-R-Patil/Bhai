@@ -80,6 +80,8 @@ struct ChannelState {
     queue: VecDeque<QueuedIntent>,
     posture: PostureParams,
     last_sent_ms: f64,
+    /// last_sent_ms before the latest release picked an intent, for scheduler_refund.
+    prev_sent_ms: f64,
     sent_today: u32,
     day_bucket: i64,
     boundary_window_until_ms: f64,
@@ -159,6 +161,7 @@ pub fn scheduler_configure(posture: PostureParams) {
             queue: VecDeque::new(),
             posture: posture.clone(),
             last_sent_ms: 0.0,
+            prev_sent_ms: 0.0,
             sent_today: 0,
             day_bucket: day_index(now_ms()),
             boundary_window_until_ms: 0.0,
@@ -339,6 +342,7 @@ fn _release_candidates(
             single_slot = true;
         }
 
+        cs.prev_sent_ms = cs.last_sent_ms;
         cs.last_sent_ms = now;
         cs.recent_topic_embeddings
             .push_back((now, q.topic_embedding.clone()));
@@ -436,6 +440,21 @@ pub fn scheduler_release_grouped(channel: String) -> GroupedReleaseResult {
         morning_batch: morning.iter().map(|q| q.id.clone()).collect(),
         singles: singles_vec.iter().map(|q| q.id.clone()).collect(),
         dropped,
+    }
+}
+
+/// The sender refused a release (Smart DND, nobody connected): give back its one daily
+/// slot, the gap and its `topics` topics (a morning batch is one slot, one topic per item).
+/// Two refused from one release keep the gap (conservative).
+#[napi]
+pub fn scheduler_refund(channel: String, topics: u32) {
+    let mut st = STATE.lock();
+    if let Some(cs) = st.get_mut(&channel) {
+        cs.sent_today = cs.sent_today.saturating_sub(1);
+        cs.last_sent_ms = cs.prev_sent_ms;
+        for _ in 0..topics {
+            cs.recent_topic_embeddings.pop_back();
+        }
     }
 }
 
@@ -575,6 +594,26 @@ mod tests {
         assert_eq!(
             scheduler_enqueue(mk("b", "t", "normal", vec![1.0, 0.0, 0.0])),
             "dedup"
+        );
+    }
+
+    #[test]
+    fn refund_gives_back_slot_gap_and_topic() {
+        let _serial = fresh();
+        configure("refund", 1, 120, false, false);
+        scheduler_enqueue(mk("a", "refund", "normal", vec![1.0, 0.0]));
+        assert_eq!(
+            scheduler_try_release("refund".into()).released,
+            vec!["a".to_string()]
+        );
+        scheduler_refund("refund".into(), 1);
+        assert_eq!(
+            scheduler_enqueue(mk("b", "refund", "normal", vec![1.0, 0.0])),
+            "enqueued"
+        );
+        assert_eq!(
+            scheduler_try_release("refund".into()).released,
+            vec!["b".to_string()]
         );
     }
 

@@ -5,10 +5,13 @@
 //
 // Usage:
 //   dump_ax_bin [--pid <pid>] [--frontmost] [--depth N] [--bbox-only]
-//   dump_ax_bin --pid <pid> --action press|reveal --path 0,2,1 [--expect-role R] [--expect-frame x,y,w,h]
-//     Performs AXPress / AXScrollToVisible on the element at that child-index
-//     path (as in the dump), after checking it is still the same element.
-//     Prints "ok|x,y,w,h" (its frame afterwards) or "error|<reason>".
+//   dump_ax_bin --pid <pid> --action press|reveal|focus --path 0,2,1 [--expect-role R] [--expect-frame x,y,w,h]
+//     Acts on the element at that child-index path (as in the dump), after checking it
+//     is still the same element: press = AXPress, reveal = AXScrollToVisible, focus =
+//     raise the element's own window and bring its app forward. (Setting AXSelected is
+//     no click: on Finder's sidebar it moves the highlight but doesn't open the folder.) Prints "ok|x,y,w,h" (its frame afterwards) or
+//     "error|<reason>"; focus adds "|<pid>", the app whose UI is now at the element's
+//     centre (another pid = something still covers it).
 //
 // Output (stdout): JSON tree
 //   {
@@ -24,9 +27,10 @@
 //   An optional top-level "partial": true means some of the tree is missing: an AX read
 //   hit the messaging timeout, or the walk ran out of its total time budget.
 //
-// Environment switches (both opt-in; unset = the old per-attribute walk, system timeout):
-//   ATLAS_AX_BATCH=true            one AXUIElementCopyMultipleAttributeValues per node
-//                                  instead of one IPC per attribute
+// Environment switches:
+//   ATLAS_NO_AX_BATCH=true         the old per-attribute walk (one IPC per attribute)
+//                                  instead of one AXUIElementCopyMultipleAttributeValues
+//                                  per node, the default since parity passed on the owner's Mac
 //   ATLAS_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (clamped 100-5000). Two
 //                                  timeouts in a row count as a hung app and end the walk.
 //   ATLAS_AX_BUDGET_MS=N           whole-walk budget (default 3000, min 500)
@@ -102,7 +106,7 @@ if pid == 0 {
 // ── AX helpers ───────────────────────────────────
 
 let env = ProcessInfo.processInfo.environment
-let useBatch = env["ATLAS_AX_BATCH"] == "true"
+let useBatch = env["ATLAS_NO_AX_BATCH"] != "true"
 /// nil = timeout off: the system default (~6s) applies and no hang tracking runs,
 /// exactly the walk this helper had before the timeout existed.
 let msgTimeoutMs: Int? = Int(env["ATLAS_AX_MSG_TIMEOUT_MS"] ?? "").flatMap { $0 > 0 ? max(100, min(5000, $0)) : nil }
@@ -395,12 +399,7 @@ func fail(_ reason: String) -> Never {
 }
 
 if let act = actionName {
-    let axAction: String
-    switch act {
-    case "press": axAction = kAXPressAction as String
-    case "reveal": axAction = "AXScrollToVisible"
-    default: fail("unknown_action:\(act)")
-    }
+    guard ["press", "reveal", "focus"].contains(act) else { fail("unknown_action:\(act)") }
     var el = app
     for idx in actionPath {
         let kids = cfChildren(axCopy(el, kAXChildrenAttribute))
@@ -414,13 +413,35 @@ if let act = actionName {
         let cur = [Int(p.x), Int(p.y), Int(sz.width), Int(sz.height)]
         if zip(cur, expectFrame).contains(where: { abs($0 - $1) > 2 }) { fail("element_changed") }
     }
-    var names: CFArray?
-    let actions = AXUIElementCopyActionNames(el, &names) == .success ? (names as? [String] ?? []) : []
-    guard actions.contains(axAction) else { fail("unsupported:\(axAction)") }
-    let res = AXUIElementPerformAction(el, axAction as CFString)
-    guard res == .success else { fail("failed:\(res.rawValue)") }
+    var extra = ""
+    switch act {
+    case "focus":
+        // The element's own window, raised and made main, its app frontmost: a pixel click
+        // then lands in it, not in whatever window was in front.
+        guard let winRef = axCopy(el, kAXWindowAttribute), CFGetTypeID(winRef) == AXUIElementGetTypeID()
+        else { fail("unsupported:no_window") }
+        let win = winRef as! AXUIElement
+        AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
+        usleep(150_000) // let the window server restack
+        let p = cfPoint(axCopy(el, kAXPositionAttribute)), sz = cfSize(axCopy(el, kAXSizeAttribute))
+        var hit: AXUIElement?
+        var hitPid: pid_t = 0
+        if AXUIElementCopyElementAtPosition(
+            AXUIElementCreateSystemWide(), Float(p.x + sz.width / 2), Float(p.y + sz.height / 2), &hit) == .success,
+            let h = hit { AXUIElementGetPid(h, &hitPid) }
+        extra = "|\(hitPid)"
+    default:
+        let axAction = act == "press" ? kAXPressAction as String : "AXScrollToVisible"
+        var names: CFArray?
+        let actions = AXUIElementCopyActionNames(el, &names) == .success ? (names as? [String] ?? []) : []
+        guard actions.contains(axAction) else { fail("unsupported:\(axAction)") }
+        let res = AXUIElementPerformAction(el, axAction as CFString)
+        guard res == .success else { fail("failed:\(res.rawValue)") }
+    }
     let p = cfPoint(axCopy(el, kAXPositionAttribute)), sz = cfSize(axCopy(el, kAXSizeAttribute))
-    FileHandle.standardOutput.write("ok|\(Int(p.x)),\(Int(p.y)),\(Int(sz.width)),\(Int(sz.height))\n".data(using: .utf8)!)
+    FileHandle.standardOutput.write("ok|\(Int(p.x)),\(Int(p.y)),\(Int(sz.width)),\(Int(sz.height))\(extra)\n".data(using: .utf8)!)
     exit(0)
 }
 

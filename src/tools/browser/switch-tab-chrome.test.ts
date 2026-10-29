@@ -20,7 +20,16 @@ describe("browser_switch_tab in Chrome mode", () => {
     it("lists, closes by index and switches Chrome's own tabs", async () => {
         const listed = JSON.parse(await browserSwitchTab.handler({}));
         expect(listed.tabs.map((t: { title: string }) => t.title)).toEqual(["Inbox", "Example Domain"]);
-        const closed = JSON.parse(await browserSwitchTab.handler({ close_tab_index: 1 }));
+        // An index alone, or one whose tab has changed since the list, closes nothing.
+        expect(JSON.parse(await browserSwitchTab.handler({ close_tab_index: 1 })).error).toMatch(/close_tab_url/);
+        const moved = JSON.parse(
+            await browserSwitchTab.handler({ close_tab_index: 0, close_tab_url: "https://example.com/" }),
+        );
+        expect(moved.error).toMatch(/tabs changed/);
+        expect(sendBridgeCommand).not.toHaveBeenCalledWith("close_tab", expect.anything());
+        const closed = JSON.parse(
+            await browserSwitchTab.handler({ close_tab_index: 1, close_tab_url: "https://example.com" }),
+        );
         expect(closed.closed.url).toBe("https://example.com/");
         expect(sendBridgeCommand).toHaveBeenCalledWith("close_tab", { tabId: 12 });
         expect(closed.tabs).toHaveLength(1);

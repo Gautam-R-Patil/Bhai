@@ -1,3 +1,5 @@
+> **Status: HISTORICAL analysis (Hermes comparison, written before the Oct 2026 reliability layer).** Not a live spec. Spot-check 2026-10-30: proposed files `src/agents/concurrency-governor.ts`, `src/auth/oauth-loopback.ts`, `src/cli/oneshot.ts`, `src/llm/api-error-classifier.ts`, `src/proactive/skill-curator.ts`, `src/prompts/channel-hints.ts`, `src/goals/standing-goal.ts`, `src/diagnostics/dump.ts` do **not** exist (not built under those names; OAuth loopback hardening shipped in commit `19eea8b`). Items that exist: `src/agents/circuit-breaker.ts`, `tool-output-offload.ts`, `src/proactive/long-task-events.ts`, `src/tools/coding/web-asset-download.ts`. Later shipped work overlapping this roadmap: send ledger, stuck report, step heartbeat, playbooks (see CLAUDE.md). Per-item implementation status otherwise **unverified**.
+
 I'll produce the unified roadmap directly. This is a synthesis task over an already-verified analysis, so I'll write the final document now.
 
 # Bhai × Hermes — Unified Capability Roadmap

@@ -75,6 +75,7 @@ const CURATED_CATEGORIES = new Set([
     "brand",
     "research",
     "voice",
+    "bhai_did", // built from tool calls that went through (bhai-did.ts), not model chatter
 ]);
 
 const HIGH_IMPORTANCE_THRESHOLD = 8;

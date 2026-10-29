@@ -16,7 +16,6 @@ import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.
 import { isStopCommand, STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import { getDataDir } from "./config/paths.js";
 import type { LLMClient } from "./llm.js";
-import { recall } from "./memory/sqlite.js";
 import {
     getPendingQueriesForOwner,
     registerOwnerRelaySender,
@@ -1838,17 +1837,9 @@ async function respondInGroup(
     const recentMessages = getGroupHistory(groupJid, 30);
     const senderInfo = getGroupParticipant(groupJid, senderJid);
 
-    // Recall group-scoped memories
-    let groupMemories = "";
-    try {
-        const results = await recall(text, 5, llm, undefined, [`group:${groupJid}`]);
-        if (results && Array.isArray(results)) {
-            groupMemories = results
-                .map((r) => r.content)
-                .filter(Boolean)
-                .join("\n");
-        }
-    } catch {}
+    // No memory recall here: recall() always adds the owner's global scope, and nothing
+    // writes group-scoped memories, so it could only put the owner's private memories
+    // in front of every group member.
 
     const systemPrompt = `You are Bhai participating in WhatsApp group "${group.name}".
 ${group.description ? `Group description: ${group.description}` : ""}
@@ -1868,7 +1859,6 @@ ABOUT ${senderName}:
 ${senderInfo?.topics?.length ? `Talks about: ${senderInfo.topics.join(", ")}` : ""}
 ${senderInfo?.messageCount ? `Active: ${senderInfo.messageCount} messages in group` : "New to the conversation"}
 
-${groupMemories ? `GROUP MEMORIES:\n${groupMemories}` : ""}
 
 RECENT GROUP CONVERSATION:
 ${recentMessages.map((m) => `${m.isFromBot ? "Bhai" : m.senderName}: ${m.content.substring(0, 200)}`).join("\n")}
@@ -2411,14 +2401,16 @@ export { getOwners } from "./whatsapp-users.js";
  * Send a proactive message to all registered owners (and legacy allowed JIDs).
  * Respects rate limits and typing simulation.
  */
-export async function sendWhatsAppProactiveMessage(message: string, filePath?: string): Promise<void> {
-    if (!socket) return;
+/** Resolves whether anyone got it. */
+export async function sendWhatsAppProactiveMessage(message: string, filePath?: string): Promise<boolean> {
+    if (!socket) return false;
 
     // Collect all owner JIDs + legacy allowed JIDs
     const targetJids = new Set<string>();
     for (const owner of getOwners()) targetJids.add(owner.jid);
     for (const jid of allowedJids) targetJids.add(jid);
 
+    let delivered = false;
     for (const jid of targetJids) {
         try {
             await socket.sendPresenceUpdate("composing", jid);
@@ -2457,12 +2449,14 @@ export async function sendWhatsAppProactiveMessage(message: string, filePath?: s
             } else {
                 await sendMessage(jid, message);
             }
+            delivered = true;
 
             await socket.sendPresenceUpdate("paused", jid);
         } catch (err) {
             console.error(`[WHATSAPP] Failed to send proactive message to ${jid}:`, (err as Error).message);
         }
     }
+    return delivered;
 }
 
 /**
@@ -2486,6 +2480,11 @@ export async function closeWhatsApp(): Promise<void> {
             console.warn("[WHATSAPP] Error during cleanup:", (err as Error).message);
         }
     }
+}
+
+/** The owner's per-chat histories, for memory_forget to redact. */
+export function getOwnerConversations(): ChatCompletionMessageParam[][] {
+    return [...ownerConversations.values()];
 }
 
 export function getWhatsAppQR(): string | null {

@@ -111,7 +111,15 @@ export async function executeWithRecovery(
     // ── Reflexion: Check past recovery lessons before starting ──
     try {
         const { recall } = await import("../memory/sqlite.js");
-        const pastLessons = await recall(`recovery failure ${task.role} ${task.description.substring(0, 50)}`, 2);
+        const pastLessons = await recall(
+            `recovery failure ${task.role} ${task.description.substring(0, 50)}`,
+            2,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { touch: false },
+        );
         if (pastLessons.length > 0) {
             const lessonText = pastLessons.map(m => m.content).join("\n");
             task = { ...task, description: task.description + `\n\n[PAST RECOVERY LESSON]: ${lessonText}` };

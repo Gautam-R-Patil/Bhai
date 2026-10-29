@@ -20,6 +20,14 @@ export class SourceRegistry {
         return this.sources.map((s) => s.name);
     }
 
+    dispatched(intent: ProactiveIntent): void {
+        try {
+            this.sources.find((s) => s.name === intent.source)?.onDispatched?.(intent);
+        } catch (err) {
+            debugProactive("source_on_dispatched_failed", { source: intent.source, err: (err as Error).message });
+        }
+    }
+
     async collectAll(ctx: SourceCtx): Promise<ProactiveIntent[]> {
         const out: ProactiveIntent[] = [];
         const results = await Promise.allSettled(

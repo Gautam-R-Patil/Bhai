@@ -168,7 +168,7 @@ export async function consolidateMemories(
         `SELECT m.id, m.content, m.category, m.tags, m.importance, m.access_count, e.embedding
          FROM memories m
          LEFT JOIN memory_embeddings e ON m.id = e.memory_id
-         WHERE m.tier = 'cold' AND (m.consolidated_into IS NULL)
+         WHERE m.tier = 'cold' AND (m.consolidated_into IS NULL) AND COALESCE(m.pinned, 0) = 0
          ORDER BY m.created_at ASC`
     );
 
@@ -255,6 +255,8 @@ export async function consolidateMemories(
         beginTransaction();
         try {
             for (const member of cluster.members) {
+                // The crystal matched this member exactly, so remember() returned it: keep it live.
+                if (member.id === crystalId) continue;
                 db.run(
                     "UPDATE memories SET consolidated_into = ?, tier = 'archived' WHERE id = ?",
                     [crystalId, member.id]

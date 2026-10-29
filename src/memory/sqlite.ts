@@ -20,9 +20,8 @@ import { getCurrentEmotionalIntensity } from "./emotional.js";
 import { CONVERSATIONS_FTS_SYNC_SQL, MEMORIES_FTS_SYNC_SQL } from "./fts-triggers.js";
 import { buildTrigramQuery, containsCjk, sanitizeFts5Query } from "./fts5-query.js";
 import { logGateDecision } from "./gate-audit.js";
-import { initProspectiveDB } from "./prospective.js";
 import { boostMemory } from "./self-evolving.js";
-import { mergeSANResults, spreadActivation } from "./spreading-activation.js";
+import { spreadActivation } from "./spreading-activation.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { gateVerdict, llmGate, threatReject } from "./value-gate.js";
 // ── Brain-Inspired Module Imports ─────────────
@@ -239,6 +238,23 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     } catch {
         /* */
     }
+    // Commitments: when the owner said it's due (ISO UTC) and when Bhai nudged them about it.
+    try {
+        db.run("ALTER TABLE memories ADD COLUMN due_at TEXT DEFAULT NULL");
+    } catch {
+        /* exists */
+    }
+    try {
+        db.run("ALTER TABLE memories ADD COLUMN fired_at TEXT DEFAULT NULL");
+    } catch {
+        /* exists */
+    }
+    // When the owner last told Bhai this themselves (memory_store or pin on their own turn): the weekly digest.
+    try {
+        db.run("ALTER TABLE memories ADD COLUMN stated_at TEXT DEFAULT NULL");
+    } catch {
+        /* exists */
+    }
     // The old surprise gate stored decay_score up to 1.5, so routine
     // importance-5 rows outranked importance-7 ones. 1.0 is the cap.
     try {
@@ -261,6 +277,8 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
   `);
     try {
         db.run("CREATE INDEX IF NOT EXISTS idx_forget_log_kind ON memory_forget_log(kind, forgotten_at)");
+        // Forgotten means gone: older rows kept the content.
+        db.run("UPDATE memory_forget_log SET content_snapshot = NULL WHERE content_snapshot IS NOT NULL");
     } catch {
         /* */
     }
@@ -557,6 +575,18 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         // Delete/update sync — see fts-triggers.ts (replaces broken older bodies).
         if (rawDb) rawDb.exec(MEMORIES_FTS_SYNC_SQL);
 
+        // Pruned-context facts used to be filed as session_summary (now 'fact'), and
+        // recall used to bump summary importance on every read. Both are no-ops once
+        // applied. Runs after the trigger sync: the old update trigger failed every UPDATE.
+        try {
+            db.run(
+                "UPDATE memories SET category = 'fact' WHERE category = 'session_summary' AND tags LIKE 'context_pruning%'",
+            );
+            db.run("UPDATE memories SET importance = 6 WHERE category = 'session_summary' AND importance > 6");
+        } catch {
+            /* */
+        }
+
         // Backfill both FTS5 tables from existing memories (idempotent).
         backfillFTS5();
 
@@ -585,9 +615,6 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     } else {
         console.log("[MEMORY] Value-gate: ENFORCING");
     }
-
-    // ── Initialize brain-inspired modules ──
-    initProspectiveDB(db);
 
     // ── Build HNSW index from existing embeddings (async, non-blocking) ──
     if (rawDb) {
@@ -793,7 +820,7 @@ export function extractMsgText(msg: unknown): string {
     return "";
 }
 
-function getMsgRole(msg: unknown): string {
+export function getMsgRole(msg: unknown): string {
     if (typeof msg !== "object" || msg === null) return "unknown";
     const r = (msg as { role?: unknown }).role;
     return typeof r === "string" ? r : "unknown";
@@ -841,10 +868,11 @@ export function initConversationSearchSchema(raw: BetterSqlite3.Database): void 
 }
 
 /**
- * Insert one conversation_messages row per non-empty text message of a single
- * conversation. Triggers populate the FTS5 mirrors. Idempotent via
- * UNIQUE(conversation_id, msg_index) + INSERT OR IGNORE. Used by reflection.ts
- * for immediate write-side indexing and by backfill for existing rows.
+ * Append each non-empty text message of a conversation as a conversation_messages
+ * row; triggers populate the FTS5 mirrors. Re-indexing a session's grown (or
+ * pruned) history only adds messages not already stored for that conversation,
+ * so positions shifting under pruning never drop or duplicate rows. Used by
+ * reflection.ts for immediate write-side indexing and by backfill.
  */
 export function indexConversationMessages(
     conversationId: number,
@@ -854,22 +882,107 @@ export function indexConversationMessages(
 ): number {
     if (!rawDb || !Array.isArray(messages)) return 0;
     const stmt = rawDb.prepare(
-        `INSERT OR IGNORE INTO conversation_messages
-         (conversation_id, session_id, msg_index, role, content, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO conversation_messages (conversation_id, session_id, msg_index, role, content, created_at)
+         SELECT @conv, @sid, (SELECT COALESCE(MAX(msg_index), -1) + 1 FROM conversation_messages WHERE conversation_id = @conv),
+                @role, @content, COALESCE(@created, datetime('now'))
+         WHERE NOT EXISTS (SELECT 1 FROM conversation_messages WHERE conversation_id = @conv AND role = @role AND content = @content)`,
     );
     let inserted = 0;
-    for (let i = 0; i < messages.length; i++) {
-        const text = extractMsgText(messages[i]);
-        if (!text) continue;
+    for (const m of messages) {
+        const content = extractMsgText(m);
+        if (!content) continue;
         try {
-            stmt.run(conversationId, sessionId, i, getMsgRole(messages[i]), text, createdAt ?? null);
-            inserted++;
+            inserted += stmt.run({
+                conv: conversationId,
+                sid: sessionId,
+                role: getMsgRole(m),
+                content,
+                created: createdAt ?? null,
+            }).changes;
         } catch {
             /* skip malformed row */
         }
     }
     return inserted;
+}
+
+/**
+ * Images and audio are not stored: screenshots now reach history as real
+ * images, and every reflection would otherwise write full captures of the
+ * user's screen into memory.db, indefinitely.
+ */
+export function withoutMedia<T extends { content?: unknown }>(messages: T[]): T[] {
+    return messages.map((m) =>
+        Array.isArray(m.content)
+            ? {
+                  ...m,
+                  content: (m.content as Array<{ type?: string }>).map((p) =>
+                      p?.type === "image_url" || p?.type === "input_audio"
+                          ? { type: "text", text: "[image omitted]" }
+                          : p,
+                  ),
+              }
+            : m,
+    );
+}
+
+/**
+ * Housekeeping after decay: strip media that older builds stored in
+ * conversations, drop transcripts past ATLAS_TRANSCRIPT_RETENTION_DAYS (unset =
+ * keep forever), refresh planner stats, and on the nightly pass VACUUM when over
+ * a quarter of the file is free pages.
+ */
+export function compactMemoryDB(nightly = false): void {
+    if (!rawDb) return;
+    const raw = rawDb;
+    try {
+        const media = raw
+            .prepare(
+                `SELECT id, messages_json FROM conversations
+                 WHERE messages_json LIKE '%"type":"image_url"%' OR messages_json LIKE '%"type":"input_audio"%'`,
+            )
+            .all() as Array<{ id: number; messages_json: string }>;
+        if (media.length > 0) {
+            const update = raw.prepare("UPDATE conversations SET messages_json = ? WHERE id = ?");
+            raw.transaction(() => {
+                for (const r of media) {
+                    try {
+                        update.run(JSON.stringify(withoutMedia(JSON.parse(r.messages_json))), r.id);
+                    } catch {
+                        /* unparseable row: leave it */
+                    }
+                }
+            })();
+            console.log(`[MEMORY][COMPACT] Stripped media from ${media.length} stored conversations`);
+        }
+
+        const days = Number.parseInt(process.env.ATLAS_TRANSCRIPT_RETENTION_DAYS ?? "", 10);
+        if (days > 0) {
+            const old = "SELECT id FROM conversations WHERE COALESCE(updated_at, created_at) < datetime('now', ?)";
+            const cutoff = `-${days} days`;
+            const removed = raw.transaction(() => {
+                // conversation_messages is absent with ATLAS_NO_SESSION_SEARCH.
+                if (raw.prepare("SELECT 1 FROM sqlite_master WHERE name = 'conversation_messages'").get())
+                    raw.prepare(`DELETE FROM conversation_messages WHERE conversation_id IN (${old})`).run(cutoff);
+                raw.prepare(`DELETE FROM conversation_embeddings WHERE conversation_id IN (${old})`).run(cutoff);
+                return raw.prepare(`DELETE FROM conversations WHERE id IN (${old})`).run(cutoff).changes;
+            })();
+            if (removed > 0) console.log(`[MEMORY][COMPACT] Removed ${removed} transcripts older than ${days} days`);
+        }
+
+        raw.pragma("optimize");
+
+        if (nightly) {
+            const pages = raw.pragma("page_count", { simple: true }) as number;
+            const free = raw.pragma("freelist_count", { simple: true }) as number;
+            if (pages > 0 && free > pages * 0.25) {
+                raw.exec("VACUUM");
+                console.log(`[MEMORY][COMPACT] Vacuumed (${free}/${pages} pages were free)`);
+            }
+        }
+    } catch (err) {
+        console.warn("[MEMORY][COMPACT] Failed (non-fatal):", (err as Error).message);
+    }
 }
 
 /**
@@ -1131,6 +1244,18 @@ export async function remember(
         }
     }
 
+    // Same fact again: reinforce the stored row instead of adding a copy. Before
+    // smart write, whose NOOP/UPDATE path purges the id it is handed.
+    const dup = findExactMemory(content, validScope);
+    if (dup) {
+        db.run(
+            "UPDATE memories SET access_count = access_count + 1, accessed_at = datetime('now'), importance = MAX(importance, ?), decay_score = 1.0 WHERE id = ?",
+            [Math.min(importance, 10), dup],
+        );
+        getTemporalCache().clearCache();
+        return dup;
+    }
+
     if (smartWrite && memoryLLM && isEmbeddingReady()) {
         const directId = _rememberDirect(content, category, tags, importance, source, validScope);
         _smartWriteDecision(directId, content, category, tags, importance, source).catch((err) =>
@@ -1200,9 +1325,7 @@ function _rememberDirect(
         }
     }
 
-    // Register in temporal cache bloom filter; drop cached recall results so a
-    // search right after a store sees the new memory.
-    getTemporalCache().registerContent(content);
+    // Drop cached recall results so a search right after a store sees the new memory.
     getTemporalCache().clearCache();
 
     // Async: generate embedding, store in DB + HNSW index (non-blocking)
@@ -1254,9 +1377,14 @@ async function _smartWriteDecision(
                     const rows = rawDb
                         .prepare(
                             `SELECT id, content, access_count, importance FROM memories
-             WHERE id IN (${placeholders}) AND decay_score > 0.2 AND consolidated_into IS NULL`,
+             WHERE id IN (${placeholders}) AND decay_score > 0.2 AND consolidated_into IS NULL
+               AND COALESCE(pinned, 0) = 0 AND category = ?
+               AND COALESCE(scope, 'global') = (SELECT COALESCE(scope, 'global') FROM memories WHERE id = ?)`,
                         )
-                        .all(...ids) as Array<{
+                        // Only same-category, same-scope, unpinned neighbours: the model's
+                        // UPDATE/DELETE verdict (on model-written content) must never reach
+                        // a pinned memory or another scope's.
+                        .all(...ids, category, newId) as Array<{
                         id: number;
                         content: string;
                         access_count: number;
@@ -1452,6 +1580,18 @@ async function embedAndStore(memoryId: number, content: string): Promise<void> {
 }
 
 // ── Standalone FTS5 Keyword Search (BM25 ranked) ──────────────────
+
+export const normFact = (t: string) =>
+    t
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+
+/** Id of a stored memory in this scope with the same text, ignoring case and punctuation. */
+export function findExactMemory(content: string, scope = "global"): number | null {
+    const n = normFact(content);
+    return keywordSearch(content, 5, [scope]).find((m) => normFact(m.content) === n)?.id ?? null;
+}
 
 /**
  * FTS5 keyword search using BM25 ranking with porter stemming.
@@ -1650,27 +1790,35 @@ export async function recall(
     // resulting promise here so the embedding happens in parallel with
     // those queries instead of sequentially inside recall.
     queryEmbedding?: Float32Array | Promise<Float32Array | null> | null,
+    // touch:false = read-only (no access/decay/importance writes). since/until (ISO)
+    // narrow results to a date window, falling back to unfiltered when it empties them.
+    opts: { touch?: boolean; excludeCategories?: string[]; since?: string; until?: string } = {},
 ): Promise<MemoryRecord[]> {
     if (!db) throw new Error("Memory DB not initialized");
-
-    // ── Layer 0: Temporal Cache (Prefrontal Working Memory) ──
-    const cache = getTemporalCache();
-    const cached = cache.get(query);
-    if (cached) {
-        return cached;
-    }
-
-    // Quick bloom check — if no content could possibly match, skip expensive search
-    if (!cache.mightHaveContent(query)) {
-        // Still do a basic search, but this hint can be used for metrics
-    }
 
     // ── Scope filtering: build SQL clause for memory visibility ──
     // Always include "global" scope; also include any explicitly provided scopes.
     const effectiveScopes = scopes && scopes.length > 0 ? [...new Set(["global", ...scopes])] : ["global"];
+
+    // ── Layer 0: Temporal Cache (Prefrontal Working Memory) ──
+    // The key covers everything that changes the result, so one group's rows are never served to another.
+    const cache = getTemporalCache();
+    const cacheKey = JSON.stringify([
+        query.toLowerCase().trim(),
+        limit,
+        [...effectiveScopes].sort(),
+        queryMode ?? "",
+        !!llm,
+        opts.excludeCategories ?? [],
+        opts.since ?? "",
+        opts.until ?? "",
+    ]);
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
     const scopePlaceholders = effectiveScopes.map(() => "?").join(",");
     const scopeWhereClause = `scope IN (${scopePlaceholders})`;
-    // Shared visibility filter for the secondary paths (KG / SAN / Hopfield / HyDE).
+    // Shared visibility filter for the secondary paths (SAN / HyDE).
     const visibleWhere = `decay_score > 0.2 AND consolidated_into IS NULL AND ${recallableSql()} AND ${scopeWhereClause}`;
 
     // Extract meaningful keywords
@@ -1704,32 +1852,16 @@ export async function recall(
     ]);
     const words = query
         .toLowerCase()
-        .replace(/[^a-z0-9 ]/g, "")
-        .split(/\s+/);
+        // Letters, marks and digits of any script: an ASCII-only filter turned a Hindi or
+        // Russian query into "", whose LIKE "%%" matched (and bumped) every memory.
+        .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        .filter(Boolean);
     const keywords = words.filter((w) => w.length > 2 && !stopWords.has(w));
     const searchTerms = keywords.length > 0 ? keywords : words;
 
-    // ── Active Inference: decide explore vs exploit ──
-    let effectiveLimit = limit;
-    let inferenceBeliefs: import("./active-inference.js").BeliefState | null = null;
-    try {
-        const { makeInferenceDecision } = await import("./active-inference.js");
-        // Build a simple belief state from query keywords
-        const hypotheses = keywords.length > 0 ? keywords : ["general"];
-        const uniform = 1 / hypotheses.length;
-        inferenceBeliefs = {
-            hypotheses,
-            probabilities: hypotheses.map(() => uniform),
-            evidenceCounts: hypotheses.map(() => 0),
-        };
-        const decision = makeInferenceDecision(inferenceBeliefs, []);
-        if (decision.shouldExplore) {
-            // Widen search to gather more diverse results
-            effectiveLimit = limit * 2;
-        }
-    } catch {
-        /* active inference non-fatal */
-    }
+    // Recall was tuned with this 2x candidate over-fetch.
+    const effectiveLimit = limit * 2;
 
     // ── Layer 1a: FTS5 keyword search (porter-stemmed BM25) ──
     // Uses the standalone keywordSearch() which handles sanitization and fail-open
@@ -1859,123 +1991,32 @@ export async function recall(
         }
     }
 
-    // ── Layer 1c: Knowledge Graph Entity Search ──
-    // Find memories linked to entities mentioned in the query (1-hop traversal)
-    const kgResults = new Map<number, { record: MemoryRecord; rank: number }>();
-    try {
-        const { findEntities, getRelationships, getKnowledgeGraphDB: getKGDB } = await import("./knowledge-graph.js");
-        const kgDb = getKGDB();
-        if (kgDb) {
-            const entities = findEntities(kgDb, query);
-            // Collect entity names + 1-hop neighbor names for content matching
-            const entityNames = new Set<string>();
-            for (const ent of entities.slice(0, 5)) {
-                entityNames.add(ent.name.toLowerCase());
-                try {
-                    const rels = getRelationships(kgDb, ent.id);
-                    for (const r of rels.slice(0, 5)) {
-                        entityNames.add(r.entity.name.toLowerCase());
-                    }
-                } catch {
-                    /* */
-                }
-            }
-            // Search memories whose content mentions these entities
-            if (entityNames.size > 0) {
-                const nameArray = [...entityNames];
-                const likeClauses = nameArray.map(() => `LOWER(content) LIKE ?`).join(" OR ");
-                const likeParams = nameArray.map((n) => `%${n}%`);
-                const kgMemories = db.exec(
-                    `SELECT id, content, category, tags, importance, created_at, access_count
-           FROM memories WHERE (${likeClauses}) AND ${visibleWhere}
-           ORDER BY importance DESC LIMIT 10`,
-                    [...likeParams, ...effectiveScopes],
-                );
-                if (kgMemories.length > 0) {
-                    kgMemories[0].values.forEach((row, idx) => {
-                        const rec = rowToMemory(row);
-                        if (!kgResults.has(rec.id)) {
-                            kgResults.set(rec.id, { record: rec, rank: idx + 1 });
-                        }
-                    });
-                }
-
-                // Boost KG results with spreading activation through entity relationships.
-                // Uses mergeSANResults to blend activation scores into KG rankings.
-                if (kgResults.size > 0) {
-                    try {
-                        const kgSeedScores = new Map<number, number>();
-                        for (const [id, entry] of kgResults) {
-                            kgSeedScores.set(id, 1 / (60 + entry.rank)); // Normalize rank to score
-                        }
-                        const sanBoosts = spreadActivation(kgSeedScores, db);
-                        if (sanBoosts.length > 0) {
-                            const kgFused: Array<{ id: number; score: number }> = [];
-                            for (const [id, entry] of kgResults) {
-                                kgFused.push({ id, score: 1 / (60 + entry.rank) });
-                            }
-                            mergeSANResults(kgFused, sanBoosts);
-                            // Re-rank KG results based on SAN-boosted scores
-                            kgFused.sort((a, b) => b.score - a.score);
-                            let newRank = 1;
-                            for (const f of kgFused) {
-                                const entry = kgResults.get(f.id);
-                                if (entry) entry.rank = newRank++;
-                            }
-                            // Add newly discovered SAN memories to KG results
-                            for (const san of sanBoosts) {
-                                if (!kgResults.has(san.memoryId)) {
-                                    const sanMem = db.exec(
-                                        `SELECT id, content, category, tags, importance, created_at, access_count
-                     FROM memories WHERE id = ? AND ${visibleWhere}`,
-                                        [san.memoryId, ...effectiveScopes],
-                                    );
-                                    if (sanMem.length > 0 && sanMem[0].values.length > 0) {
-                                        kgResults.set(san.memoryId, {
-                                            record: rowToMemory(sanMem[0].values[0]),
-                                            rank: newRank++,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    } catch {
-                        /* SAN boost non-fatal */
-                    }
-                }
-            }
-        }
-    } catch {
-        /* KG fusion non-fatal */
-    }
-
     // ── Layer 2a: Reciprocal Rank Fusion (RRF) ──
     const k = 60;
-    const allIds = new Set([...ftsResults.keys(), ...vectorResults.keys(), ...kgResults.keys()]);
+    const allIds = new Set([...ftsResults.keys(), ...vectorResults.keys()]);
     const fusedScores: Array<{ id: number; record: MemoryRecord; score: number }> = [];
-    const activeSources = [ftsResults, vectorResults, kgResults].filter((m) => m.size > 0).length;
+    const activeSources = [ftsResults, vectorResults].filter((m) => m.size > 0).length;
     // Weights tunable via Meta-Harness registry
     const wRel = getDimensionValue<number>("memory.fusion.relevanceWeight") ?? 0.5;
     const wRec = getDimensionValue<number>("memory.fusion.recencyWeight") ?? 0.25;
     const wImp = getDimensionValue<number>("memory.fusion.importanceWeight") ?? 0.25;
-    // Drop weak matches (e.g. single-retriever hits deep in the list while all
-    // three retrievers are active) instead of letting importance/recency carry them in.
+    // Drop weak matches (e.g. single-retriever hits deep in the list while both
+    // retrievers are active) instead of letting importance/recency carry them in.
     const minRelevance = getDimensionValue<number>("memory.fusion.minRelevance") ?? 0.1;
 
     for (const id of allIds) {
         const fts = ftsResults.get(id);
         const vec = vectorResults.get(id);
-        const kg = kgResults.get(id);
-        const record = fts?.record || vec?.record || kg?.record;
+        const record = fts?.record || vec?.record;
         if (!record) continue;
 
-        const relevance = normalizedFusionScore([fts?.rank, vec?.rank, kg?.rank], activeSources, k);
+        const relevance = normalizedFusionScore([fts?.rank, vec?.rank], activeSources, k);
         if (relevance < minRelevance) continue;
 
         // ── Generative Agents-style composite scoring (Park et al. 2023) ──
         // Score = α·recency + β·relevance + γ·importance (all terms 0-1)
-        const hoursAgo = record.created_at ? (Date.now() - new Date(record.created_at).getTime()) / 3600000 : 168; // default 1 week
-        const recencyWeight = Math.exp(-0.01 * hoursAgo); // exponential decay, half-life ~70h
+        const hoursAgo = record.created_at ? (Date.now() - dbTimeMs(record.created_at)) / 3600000 : 168; // default 1 week
+        const recencyWeight = Math.exp((-Math.LN2 * hoursAgo) / (30 * 24)); // exponential decay, half-life 30 days
         const importanceWeight = (record.importance || 5) / 10; // normalized 0-1
         const score = wRel * relevance + wRec * recencyWeight + wImp * importanceWeight;
 
@@ -2021,47 +2062,11 @@ export async function recall(
         }
     }
 
-    // ── Layer 2b+: Hopfield Associative Recall ──
-    // Use Hopfield network for pattern-completion retrieval ("reminds me of")
-    try {
-        const { associativeRecall, getPatternCount } = await import("./hopfield-memory.js");
-        if (getPatternCount() > 0) {
-            const hopfieldResults = await associativeRecall(query, 5);
-            const hopW = getDimensionValue<number>("memory.hopfield.weight") ?? 0.15;
-            const hopSim = getDimensionValue<number>("memory.hopfield.similarityThreshold") ?? 0.3;
-            for (const hr of hopfieldResults) {
-                if (hr.similarity > hopSim) {
-                    const existing = fusedScores.find((f) => f.id === hr.memoryId);
-                    if (existing) {
-                        // Boost existing results found associatively
-                        existing.score += hopW * hr.similarity;
-                    } else {
-                        // Add new associative results
-                        const memResult = db.exec(
-                            `SELECT id, content, category, tags, importance, created_at, access_count
-               FROM memories WHERE id = ? AND ${visibleWhere}`,
-                            [hr.memoryId, ...effectiveScopes],
-                        );
-                        if (memResult.length > 0 && memResult[0].values.length > 0) {
-                            fusedScores.push({
-                                id: hr.memoryId,
-                                record: rowToMemory(memResult[0].values[0]),
-                                score: hopW * hr.similarity,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    } catch {
-        /* Hopfield recall non-fatal */
-    }
-
     // ── Layer 2c: Cross-Encoder Re-Ranking (lightweight) ──
     // Re-rank top candidates using direct embedding similarity for precision.
     // This is a lightweight cross-attention substitute — compare query embedding
     // against each candidate's content embedding for fine-grained relevance.
-    fusedScores.sort((a, b) => b.score - a.score); // SAN/Hopfield may have reordered
+    fusedScores.sort((a, b) => b.score - a.score); // SAN may have reordered
     if (isEmbeddingReady() && fusedScores.length > 3) {
         try {
             const queryEmb = await embedText(query);
@@ -2093,8 +2098,8 @@ export async function recall(
         }
     }
 
-    // ── Layer 2d: Re-Ranking (conditional LLM or heuristic) ──
-    if (fusedScores.length > 3) {
+    // ── Layer 2d: LLM re-ranking for explicit memory lookups (~300ms extra) ──
+    if (queryMode === "retrieve" && llm && fusedScores.length > 3) {
         try {
             fusedScores.sort((a, b) => b.score - a.score); // reranker takes the top slice
             const candidates = fusedScores.map((f) => ({
@@ -2102,36 +2107,17 @@ export async function recall(
                 content: f.record.content,
                 originalScore: f.score,
             }));
-
-            // Use LLM reranker for explicit memory lookups (higher quality, ~300ms extra)
-            // Use heuristic reranker for normal queries (instant, good enough)
-            if (queryMode === "retrieve" && llm) {
-                const { rerankWithLLM } = await import("./reranker.js");
-                const reranked = await rerankWithLLM(llm, query, candidates, limit);
-                const recordMap = new Map(fusedScores.map((f) => [f.id, f.record]));
-                fusedScores.length = 0;
-                for (const rr of reranked) {
-                    const rec = recordMap.get(rr.id);
-                    if (rec) fusedScores.push({ id: rr.id, record: rec, score: rr.score });
-                }
-                for (const [id, rec] of recordMap) {
-                    if (!fusedScores.find((f) => f.id === id)) {
-                        fusedScores.push({ id, record: rec, score: 0 });
-                    }
-                }
-            } else {
-                const { rerankHeuristic } = await import("./reranker.js");
-                const reranked = rerankHeuristic(query, candidates, limit);
-                const recordMap = new Map(fusedScores.map((f) => [f.id, f.record]));
-                fusedScores.length = 0;
-                for (const rr of reranked) {
-                    const rec = recordMap.get(rr.id);
-                    if (rec) fusedScores.push({ id: rr.id, record: rec, score: rr.score });
-                }
-                for (const [id, rec] of recordMap) {
-                    if (!fusedScores.find((f) => f.id === id)) {
-                        fusedScores.push({ id, record: rec, score: 0 });
-                    }
+            const { rerankWithLLM } = await import("./reranker.js");
+            const reranked = await rerankWithLLM(llm, query, candidates, limit);
+            const recordMap = new Map(fusedScores.map((f) => [f.id, f.record]));
+            fusedScores.length = 0;
+            for (const rr of reranked) {
+                const rec = recordMap.get(rr.id);
+                if (rec) fusedScores.push({ id: rr.id, record: rec, score: rr.score });
+            }
+            for (const [id, rec] of recordMap) {
+                if (!fusedScores.find((f) => f.id === id)) {
+                    fusedScores.push({ id, record: rec, score: 0 });
                 }
             }
         } catch {
@@ -2238,10 +2224,21 @@ export async function recall(
         }
     }
 
-    const records = fusedScores.slice(0, limit).map((f) => f.record);
+    const excluded = opts.excludeCategories ?? [];
+    let kept = fusedScores.filter((f) => !excluded.includes(f.record.category));
+    if (opts.since || opts.until) {
+        const lo = opts.since ? Date.parse(opts.since) : Number.NEGATIVE_INFINITY;
+        const hi = opts.until ? Date.parse(opts.until) : Number.POSITIVE_INFINITY;
+        const inWindow = kept.filter((f) => {
+            const t = dbTimeMs(f.record.created_at);
+            return t >= lo && t < hi;
+        });
+        if (inWindow.length > 0) kept = inWindow;
+    }
+    const records = kept.slice(0, limit).map((f) => f.record);
 
     // ── Layer 3: Fallback LIKE search ──
-    if (records.length === 0) {
+    if (records.length === 0 && searchTerms.length > 0) {
         // Sanitize search terms: escape SQL LIKE wildcards and use parameterized queries
         const sanitized = searchTerms.map((t) => t.replace(/[%_'\\]/g, ""));
         const likeConditions = sanitized.flatMap((t) => [`content LIKE ?`, `tags LIKE ?`]);
@@ -2262,18 +2259,20 @@ export async function recall(
 
         if (results.length > 0) {
             for (const row of results[0].values) {
-                records.push(rowToMemory(row));
+                const r = rowToMemory(row);
+                if (!excluded.includes(r.category)) records.push(r);
             }
         }
     }
 
     // ── Layer 4: Update access + Reconsolidation (Hippocampal Reconsolidation) ──
-    if (records.length > 0) {
+    if (opts.touch !== false && records.length > 0) {
         beginTransaction();
         try {
             for (const r of records) {
                 const newAccessCount = r.access_count + 1;
-                const shouldBoost = [10, 25, 50].includes(newAccessCount);
+                // Summaries stay at importance 6, as in remember().
+                const shouldBoost = r.category !== "session_summary" && [10, 25, 50].includes(newAccessCount);
 
                 // ── Reconsolidation: append query context tags to frequently-accessed memories ──
                 if (newAccessCount > 3 && keywords.length > 0) {
@@ -2335,55 +2334,45 @@ export async function recall(
                 }
             }
             commitTransaction();
-            // Only cache if transaction succeeded
-            cache.set(query, records);
         } catch {
             rollbackTransaction();
-            // Still return the records but don't cache stale data
+            return records; // don't cache stale data
         }
     }
-
-    // ── Active Inference: update beliefs with retrieval evidence ──
-    if (inferenceBeliefs && records.length > 0) {
-        try {
-            const { updateBeliefs } = await import("./active-inference.js");
-            // Strengthen belief for the most represented hypothesis (keyword)
-            const contentConcat = records.map((r) => r.content.toLowerCase()).join(" ");
-            let bestIdx = 0;
-            let bestCount = 0;
-            for (let i = 0; i < inferenceBeliefs.hypotheses.length; i++) {
-                const count = (contentConcat.match(new RegExp(inferenceBeliefs.hypotheses[i], "g")) || []).length;
-                if (count > bestCount) {
-                    bestCount = count;
-                    bestIdx = i;
-                }
-            }
-            updateBeliefs(inferenceBeliefs, bestIdx, Math.min(bestCount / records.length, 1));
-        } catch {
-            /* active inference update non-fatal */
-        }
-    }
+    if (records.length > 0) cache.set(cacheKey, records);
 
     return records;
 }
+
+/** Pinned memories ride along with the core list, newest first, up to this many. */
+export const PINNED_CORE_CAP = 10;
 
 export function getCoreMemory(limit = 10): MemoryRecord[] {
     if (!db) return [];
 
     // Skip archived/consolidated originals, smart-write "deleted" (decay 0) rows,
     // session/task-scoped rows and audit/JSON blobs — this is injected every turn.
+    const live = `consolidated_into IS NULL AND scope = 'global' AND ${recallableSql()}
+       AND category NOT IN ('session_summary', 'bhai_did')`; // injected as ACTIVE SESSION / PAST CONVERSATIONS; what Bhai did isn't a fact about the user
+    const cols = "id, content, category, tags, importance, created_at, access_count";
+    // Pinned rows keep their own slots, so a busy week can't push "it matters" out.
+    const pinned = db.exec(
+        `SELECT ${cols} FROM memories WHERE pinned = 1 AND ${live} ORDER BY created_at DESC, id DESC LIMIT ?`,
+        [Math.min(PINNED_CORE_CAP, limit)],
+    );
     const results = db.exec(
-        `SELECT id, content, category, tags, importance, created_at, access_count
+        `SELECT ${cols}
      FROM memories
-     WHERE decay_score > 0.2 AND consolidated_into IS NULL AND scope = 'global' AND ${recallableSql()}
-       AND category != 'session_summary' -- already injected as ACTIVE SESSION / PAST CONVERSATIONS
+     WHERE decay_score > 0.2 AND COALESCE(pinned, 0) = 0 AND ${live}
      ORDER BY importance DESC, access_count DESC, created_at DESC
      LIMIT ?`,
         [limit],
     );
 
-    if (results.length === 0) return [];
-    return results[0].values.map(rowToMemory);
+    return [
+        ...(pinned[0]?.values ?? []).map((r) => ({ ...rowToMemory(r), pinned: true })),
+        ...(results[0]?.values ?? []).map(rowToMemory),
+    ];
 }
 
 // ── Scope Chain Builder ──────────────────────────────────
@@ -2401,14 +2390,55 @@ export function buildScopeChain(userId?: string, sessionId?: string, taskId?: st
 export function listMemories(category?: string, limit = 20): MemoryRecord[] {
     if (!db) throw new Error("Memory DB not initialized");
 
+    // Superseded/consolidated rows stay for undo but are no longer what Bhai knows.
     const query = category
-        ? "SELECT id, content, category, tags, importance, created_at, access_count FROM memories WHERE category = ? ORDER BY created_at DESC LIMIT ?"
-        : "SELECT id, content, category, tags, importance, created_at, access_count FROM memories ORDER BY created_at DESC LIMIT ?";
+        ? "SELECT id, content, category, tags, importance, created_at, access_count FROM memories WHERE category = ? AND consolidated_into IS NULL ORDER BY created_at DESC LIMIT ?"
+        : "SELECT id, content, category, tags, importance, created_at, access_count FROM memories WHERE consolidated_into IS NULL ORDER BY created_at DESC LIMIT ?";
 
     const params = category ? [category, limit] : [limit];
     const results = db.exec(query, params);
     if (results.length === 0) return [];
     return results[0].values.map(rowToMemory);
+}
+
+/**
+ * A correction replaced global memory `oldId` with `newId`: recall, core memory and
+ * lists skip rows with consolidated_into set, and the old vector leaves the index
+ * (boot re-embeds only live rows, so it stays out).
+ */
+export function supersedeMemory(oldId: number, newId: number): boolean {
+    if (!rawDb || oldId === newId) return false;
+    const res = rawDb
+        .prepare(
+            "UPDATE memories SET consolidated_into = ? WHERE id = ? AND consolidated_into IS NULL AND scope = 'global'",
+        )
+        .run(newId, oldId);
+    if (res.changes === 0) return false;
+    // A correction of a pinned fact is still the fact the owner said matters.
+    rawDb
+        .prepare("UPDATE memories SET pinned = 1 WHERE id = ? AND (SELECT pinned FROM memories WHERE id = ?) = 1")
+        .run(newId, oldId);
+    rawDb.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(oldId);
+    try {
+        getHNSWIndex().removeVector(oldId);
+    } catch {
+        /* */
+    }
+    getTemporalCache().clearCache();
+    return true;
+}
+
+/** The correction `newId` was undone: the memories it superseded are live again. */
+export function restoreSuperseded(newId: number): void {
+    if (!rawDb) return;
+    const rows = rawDb
+        .prepare("SELECT id, content FROM memories WHERE consolidated_into = ? AND tier IS NOT 'archived'")
+        .all(newId) as Array<{ id: number; content: string }>;
+    for (const r of rows) {
+        rawDb.prepare("UPDATE memories SET consolidated_into = NULL WHERE id = ?").run(r.id);
+        embedAndStore(r.id, r.content).catch(() => {});
+    }
+    if (rows.length) getTemporalCache().clearCache();
 }
 
 export function forgetMemory(id: number): boolean {
@@ -2469,25 +2499,55 @@ export function setImportance(id: number, importance: number): boolean {
 }
 
 export function setMemoryPinned(id: number, pinned: boolean): boolean {
-    if (!db) throw new Error("Memory DB not initialized");
-    db.run("UPDATE memories SET pinned = ? WHERE id = ?", [pinned ? 1 : 0, id]);
-    return true;
+    if (!rawDb) throw new Error("Memory DB not initialized");
+    // Pinning revives a faded row too: it matters, so recall should find it again.
+    const res = rawDb
+        .prepare(
+            `UPDATE memories SET pinned = ?${pinned ? ", decay_score = MAX(decay_score, 1.0)" : ""} WHERE id = ? AND consolidated_into IS NULL`,
+        )
+        .run(pinned ? 1 : 0, id);
+    getTemporalCache().clearCache();
+    return res.changes > 0;
+}
+
+/** The owner told Bhai memory `id` themselves just now. */
+export function markOwnerStated(id: number): void {
+    rawDb?.prepare("UPDATE memories SET stated_at = datetime('now') WHERE id = ?").run(id);
+}
+
+/** Memory `id` is the owner's commitment, due at `dueIso`; a new due time re-arms its one nudge. */
+export function setCommitmentDue(id: number, dueIso: string): void {
+    rawDb
+        ?.prepare(
+            "UPDATE memories SET category = 'commitment', fired_at = CASE WHEN due_at = ? THEN fired_at END, due_at = ? WHERE id = ?",
+        )
+        .run(dueIso, dueIso, id);
+    getTemporalCache().clearCache();
+}
+
+/** The owner did (or dropped) commitment `id`: it leaves the COMMITMENTS card and never fires. */
+export function markCommitmentDone(id: number): boolean {
+    if (!rawDb) return false;
+    const res = rawDb
+        .prepare(
+            "UPDATE memories SET category = 'commitment_done' WHERE id = ? AND category = 'commitment' AND consolidated_into IS NULL",
+        )
+        .run(id);
+    getTemporalCache().clearCache();
+    return res.changes > 0;
 }
 
 export function forgetMemoryWithReason(id: number, reason: string, source: "user" | "system" = "user"): boolean {
     if (!db) throw new Error("Memory DB not initialized");
     try {
         beginTransaction();
-        // Snapshot for the tombstone audit trail.
-        const snapResult = db.exec("SELECT content FROM memories WHERE id = ? LIMIT 1", [id]);
-        const snapshot =
-            snapResult.length > 0 && snapResult[0].values.length > 0
-                ? ((snapResult[0].values[0]?.[0] as string | null) ?? null)
-                : null;
-        db.run(
-            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, ?)",
-            ["memory", String(id), snapshot, reason || "unspecified", source],
-        );
+        // The tombstone keeps the reason, never the content: forgotten means gone.
+        db.run("INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, ?)", [
+            "memory",
+            String(id),
+            reason || "unspecified",
+            source,
+        ]);
         // Hard delete + cleanup the embedding row (no FK cascade exists).
         db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
         db.run("DELETE FROM memories WHERE id = ?", [id]);
@@ -2511,15 +2571,12 @@ export function bulkForget(ids: number[], reason: string, source: "user" | "syst
     try {
         beginTransaction();
         for (const id of ids) {
-            const snapResult = db.exec("SELECT content FROM memories WHERE id = ? LIMIT 1", [id]);
-            const snapshot =
-                snapResult.length > 0 && snapResult[0].values.length > 0
-                    ? ((snapResult[0].values[0]?.[0] as string | null) ?? null)
-                    : null;
-            db.run(
-                "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, ?)",
-                ["memory", String(id), snapshot, reason || "unspecified", source],
-            );
+            db.run("INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, ?)", [
+                "memory",
+                String(id),
+                reason || "unspecified",
+                source,
+            ]);
             db.run("DELETE FROM memory_embeddings WHERE memory_id = ?", [id]);
             db.run("DELETE FROM memories WHERE id = ?", [id]);
             count++;
@@ -2547,18 +2604,16 @@ export function forgetEntity(
     let relCount = 0;
     try {
         beginTransaction();
-        const snap = db.exec("SELECT name FROM entities WHERE id = ? LIMIT 1", [id]);
-        const snapshot =
-            snap.length > 0 && snap[0].values.length > 0 ? ((snap[0].values[0]?.[0] as string | null) ?? null) : null;
         if (cascade) {
             // FK cascade is set; counting first for the report.
             const r = db.exec("SELECT COUNT(*) FROM relationships WHERE from_id = ? OR to_id = ?", [id, id]);
             relCount = r.length > 0 && r[0].values.length > 0 ? ((r[0].values[0]?.[0] as number) ?? 0) : 0;
         }
-        db.run(
-            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')",
-            ["entity", String(id), snapshot, reason || "unspecified"],
-        );
+        db.run("INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')", [
+            "entity",
+            String(id),
+            reason || "unspecified",
+        ]);
         db.run("DELETE FROM entities WHERE id = ?", [id]);
         commitTransaction();
         return { forgotten: 1, relationshipsRemoved: relCount };
@@ -2595,6 +2650,44 @@ export interface MemoryRecord {
     importance: number;
     created_at: string;
     access_count: number;
+    pinned?: boolean;
+}
+
+// SQLite datetime('now') is UTC without a zone marker; new Date() alone reads it as local time.
+export function dbTimeMs(ts: string): number {
+    if (!ts) return Number.NaN;
+    return new Date(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(ts) ? ts : `${ts.replace(" ", "T")}Z`).getTime();
+}
+
+export function ageLabel(ts: string, now = Date.now()): string {
+    const days = (now - dbTimeMs(ts)) / 86_400_000;
+    if (Number.isNaN(days)) return "undated";
+    if (days < 1) return "today";
+    if (days < 7) return `${Math.floor(days)}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+    return `${Math.floor(days / 365)}y ago`;
+}
+
+// "yesterday" / "last week" / "last month" / "N days|weeks ago" → a created_at window for recall().
+export function parseDateWindow(message: string, now = new Date()): { since?: string; until?: string } {
+    const m = message.toLowerCase();
+    const DAY = 86_400_000;
+    const ago = (days: number) => new Date(now.getTime() - days * DAY).toISOString();
+    if (/\byesterday\b/.test(m)) {
+        const today = new Date(now);
+        today.setHours(0, 0, 0, 0);
+        return { since: new Date(today.getTime() - DAY).toISOString(), until: today.toISOString() };
+    }
+    const n = m.match(/\b(\d+)\s+(day|week)s?\s+ago\b/);
+    if (n) {
+        const days = Number(n[1]) * (n[2] === "week" ? 7 : 1);
+        const slack = n[2] === "week" ? 7 : 1;
+        return { since: ago(days + slack), until: ago(Math.max(0, days - slack)) };
+    }
+    if (/\blast week\b/.test(m)) return { since: ago(14) };
+    if (/\blast month\b/.test(m)) return { since: ago(62) };
+    return {};
 }
 
 function rowToMemory(row: unknown[]): MemoryRecord {
@@ -2651,8 +2744,11 @@ export async function recallConversation(query: string, limit = 5): Promise<Conv
     ]);
     const words = query
         .toLowerCase()
-        .replace(/[^a-z0-9 ]/g, "")
-        .split(/\s+/);
+        // Letters, marks and digits of any script: an ASCII-only filter turned a Hindi or
+        // Russian query into "", whose LIKE "%%" matched (and bumped) every memory.
+        .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        .filter(Boolean);
     const keywords = words.filter((w) => w.length > 2 && !stopWords.has(w));
     const searchTerms = keywords.length > 0 ? keywords : words;
 
@@ -2661,15 +2757,17 @@ export async function recallConversation(query: string, limit = 5): Promise<Conv
     const sanitizedTerms = searchTerms.map((t) => t.replace(/[%_'\\]/g, ""));
     const likeConditions = sanitizedTerms.map(() => `summary LIKE ?`);
     const likeParams = sanitizedTerms.map((t) => `%${t}%`);
-    const whereClause = likeConditions.length > 0 ? `WHERE ${likeConditions.join(" OR ")}` : "";
+    const whereClause = likeConditions.length > 0 ? `WHERE ${likeConditions.join(" OR ")}` : "WHERE 0";
 
+    // Most matching terms first, so one shared word doesn't outrank an exact topic match.
+    const matchOrder = likeConditions.length > 0 ? `(${likeConditions.map((c) => `(${c})`).join(" + ")}) DESC, ` : "";
     const likeRes = db.exec(
         `SELECT id, session_id, summary, created_at
      FROM conversations
      ${whereClause}
-     ORDER BY created_at DESC
+     ORDER BY ${matchOrder}created_at DESC
      LIMIT ?`,
-        [...likeParams, limit * 2],
+        [...likeParams, ...(matchOrder ? likeParams : []), limit * 2],
     );
 
     if (likeRes.length > 0) {
@@ -2691,11 +2789,15 @@ export async function recallConversation(query: string, limit = 5): Promise<Conv
         try {
             const queryEmbedding = await embedText(query);
 
+            // ponytail: brute-force cosine over the newest 500 sessions; older ones stay
+            // keyword/FTS-reachable. Move to an HNSW index if they need vector recall.
             const rows = rawDb
                 .prepare(
                     `SELECT c.id, c.session_id, c.summary, c.created_at, ce.embedding
          FROM conversation_embeddings ce
-         JOIN conversations c ON ce.conversation_id = c.id`,
+         JOIN conversations c ON ce.conversation_id = c.id
+         ORDER BY c.created_at DESC
+         LIMIT 500`,
                 )
                 .all() as Array<{
                 id: number;
@@ -2774,7 +2876,7 @@ export async function embedExistingMemories(): Promise<void> {
             .prepare(
                 `SELECT m.id, m.content FROM memories m
        LEFT JOIN memory_embeddings e ON m.id = e.memory_id
-       WHERE e.memory_id IS NULL`,
+       WHERE e.memory_id IS NULL AND m.consolidated_into IS NULL`,
             )
             .all() as Array<{ id: number; content: string }>;
 

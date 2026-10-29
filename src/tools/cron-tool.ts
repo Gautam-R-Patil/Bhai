@@ -13,14 +13,113 @@ type Op = "schedule" | "list" | "cancel" | "trigger";
 // (e.g. telegram-owner + whatsapp-contact) each run inside their own ALS
 // frame, so a contact-agent never sees the owner's isOwner:true even when
 // both turns are interleaving LLM awaits on the same event loop.
-interface CronCallerContext {
+export interface CronCallerContext {
     isOwner: boolean;
+    autonomous?: boolean;
+    /** A private chat with Bhai (not a group or shared channel): owner memories may be shown. */
+    isPrivate?: boolean;
+    /** The owner's words this turn: memory_store supersedes only when they read like a correction. */
+    message?: string;
+    /** The last memory memory_store saved in this owner turn, for the reply's "Forget that" button. */
+    storedMemory?: { id: number; at: number };
+    /** Memory ids the main loop showed the model this turn: the only ones memory_store may supersede. */
+    shownMemories?: Set<number>;
+    superseded?: boolean;
+    pinChanged?: boolean;
+    newPinned?: boolean;
+    commitmentDone?: boolean;
+    /** storedMemory is a supersede's new row: its undo is the only way back to the old one. */
+    undoPinned?: boolean;
 }
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
+// The tool the owner's main loop (agent.ts) is running; a sub-agent or swarm that tool
+// starts inherits the outer name, so its own memory_store/memory_search don't match.
+const _mainLoopTool = new AsyncLocalStorage<string>();
+
+export function runAsMainLoopTool<T>(name: string, fn: () => T): T {
+    return _mainLoopTool.run(name, fn);
+}
+export const isMainLoopCall = (tool: string): boolean => _mainLoopTool.getStore() === tool;
 
 /** Run `fn` with `ctx` as the ambient caller context for cron-scheduling. */
 export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promise<T> | T): Promise<T> | T {
     return _callerStorage.run(ctx, fn);
+}
+
+/** The owner, speaking in this turn: not a contact, not a scheduled/autonomous run. */
+export function isOwnerCaller(): boolean {
+    const ctx = _callerStorage.getStore();
+    return ctx?.isOwner === true && !ctx.autonomous;
+}
+
+/** The owner, in a private chat with Bhai. */
+export const isPrivateOwnerCaller = (): boolean => isOwnerCaller() && _callerStorage.getStore()?.isPrivate === true;
+
+/** The owner's own message this turn, or "" for contacts and autonomous runs. */
+export function ownerTurnMessage(): string {
+    return isOwnerCaller() ? (_callerStorage.getStore()?.message ?? "") : "";
+}
+
+/**
+ * memory_store saved `id` on the owner's live turn: the reply may offer a one-tap undo.
+ * A supersede's row (`retired`) keeps the button, since tapping it brings the old memory back.
+ */
+export function noteStoredMemory(id: number, retired = false): void {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !isOwnerCaller() || (ctx.undoPinned && !retired)) return;
+    ctx.storedMemory = { id, at: Date.now() };
+    ctx.undoPinned = retired;
+}
+
+/** The main loop showed the model these memory ids on the owner's turn. */
+export function noteShownMemories(ids: number[]): void {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !isOwnerCaller()) return;
+    ctx.shownMemories ??= new Set();
+    for (const id of ids) ctx.shownMemories.add(id);
+}
+
+/**
+ * The owner's main-loop memory_store may retire `id`: it was shown this turn, and it is the
+ * turn's first supersede (so injected text riding an owner turn can't retire arbitrary ids).
+ */
+export function claimSupersede(id: number): boolean {
+    const ctx = _callerStorage.getStore();
+    // Private chats only: that's where the reply's "Forget that" tap can bring the old memory back.
+    if (!ctx?.isPrivate || !canPinMemory(id) || ctx.superseded) return false;
+    ctx.superseded = true;
+    return true;
+}
+
+/** Like claimSupersede, for pin_id: one pin/unpin of a shown memory per turn. */
+export function claimPin(id: number): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !canPinMemory(id) || ctx.pinChanged) return false;
+    ctx.pinChanged = true;
+    return true;
+}
+
+/** pin:true on a new row: once per turn, so injected text riding a "remember…" turn can't pin a batch. */
+export function claimNewPin(): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !canPinMemory() || ctx.newPinned) return false;
+    ctx.newPinned = true;
+    return true;
+}
+
+/** Like claimPin, for done_id: one commitment marked done per turn. */
+export function claimCommitmentDone(id: number): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !canPinMemory(id) || ctx.commitmentDone) return false;
+    ctx.commitmentDone = true;
+    return true;
+}
+
+/** The owner's main-loop memory_store may pin a new row (no id) or memory `id` shown this turn. */
+export function canPinMemory(id?: number): boolean {
+    const ctx = _callerStorage.getStore();
+    if (!ctx || !isOwnerCaller() || !isMainLoopCall("memory_store")) return false;
+    return id === undefined || ctx.shownMemories?.has(id) === true;
 }
 
 /** The current turn's caller: true owner, false guest/contact, undefined outside any turn (background work). */

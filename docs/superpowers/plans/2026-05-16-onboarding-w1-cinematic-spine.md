@@ -1,3 +1,5 @@
+> **Status: SUPERSEDED (historical plan).** Verified 2026-10-30. The first-run wizard was later cut to **three screens** (sign in with terms inline → connect Chrome, installing in the background → Ready Hub; permissions moved to the Hub) per commit `fd43afb` and the comment in `desktop/wizard/router.js`. Name, persona, hotkey, theme and voice now default and live in Settings; there is no vision-tier step (`vision-tier.js` is gone). Step files `persona.js`/`personalize.js`/`profile.js`/`awakening.js` still exist under `desktop/wizard/steps/` but `ALL_STEPS` is only `signin`, `connect`. Paths written as bare filenames in this plan live under `desktop/wizard/`, `desktop/wizard/steps/` or `desktop/components/`. `src/setup/magic-moment.ts` and `desktop/wizard/steps/vision-tier.js` do not exist.
+
 # Onboarding Reimagined — Wave 1: Cinematic Spine — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

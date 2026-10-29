@@ -11,6 +11,7 @@ import { getHighConfidenceTraits, type BehavioralTrait } from "./traits.js";
 import { getRecentEpisodes } from "./episodic.js";
 import { getRelationshipState, canTriggerInitiative } from "./relationship.js";
 import { getShortSummary } from "./session.js";
+import { dbTimeMs } from "./sqlite.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -94,7 +95,7 @@ function analyzePatterns(
     );
     if (recentLaunches.length > 0) {
         const latest = recentLaunches[0];
-        const daysAgo = (Date.now() - new Date(latest.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+        const daysAgo = (Date.now() - dbTimeMs(latest.timestamp)) / (1000 * 60 * 60 * 24);
         if (daysAgo < 14) {
             suggestions.push({
                 suggestion: `Regarding your recent ${latest.type}: "${latest.description.substring(0, 50)}" — want a follow-up action plan or review?`,
@@ -120,7 +121,7 @@ function analyzePatterns(
     const struggles = episodes.filter(e => e.type === "struggle" && e.importance_score > 0.5);
     if (struggles.length > 0) {
         const latest = struggles[0];
-        const daysAgo = (Date.now() - new Date(latest.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+        const daysAgo = (Date.now() - dbTimeMs(latest.timestamp)) / (1000 * 60 * 60 * 24);
         if (daysAgo < 7) {
             suggestions.push({
                 suggestion: `You've been working through "${latest.description.substring(0, 40)}". Want a fresh approach or alternative strategy?`,

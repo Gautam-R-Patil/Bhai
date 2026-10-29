@@ -10,8 +10,9 @@ import {
     getKnowledgeGraphDB,
     getRelationships,
 } from "../memory/knowledge-graph.js";
-import { forgetMemory, listMemories, remember } from "../memory/sqlite.js";
+import { forgetMemory, getRawDb, listMemories, remember } from "../memory/sqlite.js";
 import { deleteTrait, getAllTraits, getTrait, reinforceTrait, upsertTrait } from "../memory/traits.js";
+import { isOwnerCaller } from "./cron-tool.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Section Types ────────────────────────────────
@@ -19,6 +20,15 @@ import type { ToolDefinition } from "./get-current-time.js";
 type CoreMemorySection = "identity" | "traits" | "preferences" | string;
 
 // ── Helpers ──────────────────────────────────────
+
+const OWNER_ONLY = JSON.stringify({ success: false, error: "Only the owner can change Bhai's memory." });
+// Pinned memories and commitments carry flags a forget + remember would drop.
+const KEPT = JSON.stringify({
+    success: false,
+    error: "That memory is pinned or a tracked commitment: use memory_store (supersedes, pin_id or done_id) or memory_forget.",
+});
+const isKept = (id: number) =>
+    !!getRawDb()?.prepare("SELECT 1 FROM memories WHERE id = ? AND (pinned = 1 OR due_at IS NOT NULL)").get(id);
 
 /**
  * Read the content of a core memory section.
@@ -128,6 +138,7 @@ export const coreMemoryReplace: ToolDefinition = {
         },
     },
     async handler(input) {
+        if (!isOwnerCaller()) return OWNER_ONLY;
         const section = (input.section as string).toLowerCase().trim();
         const oldContent = input.old_content as string;
         const newContent = input.new_content as string;
@@ -261,6 +272,7 @@ export const coreMemoryReplace: ToolDefinition = {
 
                     for (const mem of memories) {
                         if (mem.content.includes(oldContent)) {
+                            if (isKept(mem.id)) return KEPT;
                             const updatedContent = mem.content.replace(oldContent, newContent);
                             forgetMemory(mem.id);
                             void remember(updatedContent, section, "", mem.importance);
@@ -451,6 +463,7 @@ export const coreMemoryDelete: ToolDefinition = {
         },
     },
     async handler(input) {
+        if (!isOwnerCaller()) return OWNER_ONLY;
         const section = (input.section as string).toLowerCase().trim();
         const content = input.content as string;
 
@@ -566,6 +579,7 @@ export const coreMemoryDelete: ToolDefinition = {
 
                     for (const mem of memories) {
                         if (mem.content === content || mem.content.includes(content)) {
+                            if (isKept(mem.id)) return KEPT;
                             forgetMemory(mem.id);
                             deleted = true;
                             break;

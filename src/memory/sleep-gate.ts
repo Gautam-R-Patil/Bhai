@@ -81,7 +81,7 @@ export async function runSleepGateConsolidation(db: Database): Promise<Consolida
             // JS fallback: simple age-based cleanup
             const oldMemories = existing.filter(m => m.daysOld > 30 && m.accessCount <= 1);
             for (const m of oldMemories.slice(0, 20)) {
-                db.run("UPDATE memories SET decay_score = decay_score * 0.5 WHERE id = ?", [m.id]);
+                db.run("UPDATE memories SET decay_score = decay_score * 0.5 WHERE id = ? AND COALESCE(pinned, 0) = 0", [m.id]);
                 result.memoriesForgotten++;
             }
         }
@@ -210,7 +210,7 @@ function toNativeEntry(m: MemoryRow): any {
 
 function applyForgetDecisions(db: Database, ids: number[]): void {
     for (const id of ids) {
-        db.run("UPDATE memories SET decay_score = 0, consolidated_into = -1 WHERE id = ?", [id]);
+        db.run("UPDATE memories SET decay_score = 0, consolidated_into = -1 WHERE id = ? AND COALESCE(pinned, 0) = 0", [id]);
     }
 }
 

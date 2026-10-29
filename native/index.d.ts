@@ -1983,6 +1983,12 @@ export interface GroupedReleaseResult {
 }
 export declare function schedulerReleaseGrouped(channel: string): GroupedReleaseResult
 /**
+ * The sender refused a release (Smart DND, nobody connected): give back its one daily
+ * slot, the gap and its `topics` topics (a morning batch is one slot, one topic per item).
+ * Two refused from one release keep the gap (conservative).
+ */
+export declare function schedulerRefund(channel: string, topics: number): void
+/**
  * What must survive a restart: how many were sent today, when the last went, and the
  * topics recently sent (dedup). In memory only, a relaunch (every app update) reset the
  * daily cap and let the same nudge repeat.

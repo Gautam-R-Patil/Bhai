@@ -1881,58 +1881,45 @@ textarea:focus-visible {
     letter-spacing: -0.3px;
 }
 
-/* ── Coming Soon Cards ── */
+/* ── Devices (Account) ── */
 
-.coming-soon-section {
+.account-devices {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin-bottom: 16px;
-}
-
-.coming-soon-card {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 18px !important;
-    margin-bottom: 0 !important;
-    opacity: 0.6;
+    padding: 14px 16px !important;
+    margin-bottom: 14px !important;
     border-radius: 14px !important;
 }
-
-.coming-soon-icon {
-    font-size: 24px;
-    flex-shrink: 0;
+.account-devices-head { display: flex; align-items: center; gap: 8px; }
+.account-devices-head h3 { margin: 0; font-size: 15px; font-weight: 650; color: var(--text-primary); }
+.account-devices-count {
+    padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 16px;
+    color: var(--text-secondary); background: var(--fill-quaternary, rgba(127, 127, 127, 0.14));
 }
-
-.coming-soon-info {
-    flex: 1;
-    min-width: 0;
+.account-devices-count:empty { display: none; }
+.account-devices-sub { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
+.account-devices-list { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.account-device-row {
+    display: flex; align-items: center; gap: 12px;
+    margin: 0 -8px; padding: 8px; border-radius: 10px;
 }
-
-.coming-soon-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
+.account-device-row:hover { background: var(--fill-quaternary, var(--bg-secondary)); }
+.account-device-icon {
+    flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--accent-tint); color: var(--accent-primary);
 }
-
-.coming-soon-desc {
-    font-size: 11px;
-    color: var(--text-muted);
-    margin-top: 1px;
+.account-device-main { flex: 1; min-width: 0; }
+.account-device-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.account-device-detail { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+.account-device-badge {
+    flex: 0 0 auto; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    color: var(--accent-success, #2fb06a); background: rgba(47, 176, 106, 0.12);
 }
-
-.coming-soon-badge {
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    background: rgba(0, 0, 0, 0.04);
-    color: var(--text-muted);
-    flex-shrink: 0;
-}
+.account-device-remove.armed { color: var(--accent-danger) !important; border-color: var(--accent-danger) !important; }
+.account-devices-empty { font-size: 13px; color: var(--text-muted, var(--text-secondary)); padding: 6px 0 2px; }
+.auth-device-removed { margin: 12px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--accent-danger); }
 
 /* ── Logout Button ── */
 
@@ -2984,6 +2971,28 @@ body.theme-dark .installed-item {
 .advanced-toggle { font-size: 12px; color: rgba(255,255,255,0.4); cursor: pointer; display: flex; align-items: center; gap: 4px; margin: 8px 0; user-select: none; }
 .advanced-toggle:hover { color: rgba(255,255,255,0.6); }
 .ch-advanced { margin-top: 12px; }
+.pref-items:has(#prefNotifications:not(:checked)) .pref-subs { display: none; }
+.pref-subs .pref-toggle { padding-left: 16px; }
+.pp-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pp-row { display: inline-flex; align-items: center; padding: 6px 14px; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; font-size: 13px; }
+.pp-row input { position: absolute; opacity: 0; pointer-events: none; }
+.pp-pills .pp-row { padding: 6px 14px; gap: 0; }
+.pp-pills .pp-row > div { flex: none !important; }
+.pp-row > div > div:first-child { font-weight: 500 !important; margin: 0 !important; }
+.pp-row:has(input:checked) { border-color: var(--accent-primary, #e8762c); background: color-mix(in srgb, var(--accent-primary, #e8762c) 16%, transparent); }
+.pp-row:has(input:focus-visible) { outline: 2px solid var(--accent-primary, #e8762c); outline-offset: 2px; }
+.pp-desc { display: none; }
+.pp-desc-shown { font-size: 13px; color: var(--text-secondary); margin-top: 10px; min-height: 1.2em; }
+.settings-search { width: 240px; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; outline: none; }
+.settings-search:focus { border-color: var(--accent-primary, #e8762c); }
+.settings-empty { text-align: center; color: var(--text-secondary); font-size: 13px; padding: 40px 0; }
+.about-links a { color: var(--text-secondary); text-decoration: none; }
+.about-links a:hover { color: var(--text-primary); text-decoration: underline; }
+.integration-state { font-size: 11px; font-weight: 500; color: var(--text-secondary); padding: 3px 10px; border-radius: 999px; background: rgba(127,127,127,0.12); white-space: nowrap; }
+.integration-state.on { color: #1f8a3c; background: rgba(52,199,89,0.14); }
+.integration-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; }
+.integration-help { font-size: 13px; color: var(--text-secondary); margin: 0 0 10px; }
+.workspace-path { font-size: 12px; background: rgba(127,127,127,0.1); padding: 6px 10px; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .ch-hint { font-size: 11px; color: var(--text-muted); font-weight: 400; margin-left: 8px; }
 .copy-inline-btn { font-size: 11px; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; }
 .copy-inline-btn:hover { color: var(--text-primary); }
@@ -5483,16 +5492,9 @@ body.hig .account-id { font-size: 11px; color: var(--text-muted); }
 body.hig .account-status-badge { font-size: 11px; text-transform: none; letter-spacing: 0; padding: 2px 8px; }
 body.hig .account-details-grid { gap: 8px; }
 body.hig .account-detail-card { text-align: left; padding: 10px 12px !important; border-radius: var(--radius-md) !important; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; }
-body.hig .account-detail-icon { grid-row: 1 / span 2; font-size: 16px; margin: 0; }
+body.hig .account-detail-icon { grid-row: 1 / span 2; margin: 0; width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-tint); color: var(--accent-primary); }
 body.hig .account-detail-label { font-size: 11px; text-transform: none; letter-spacing: 0; color: var(--text-secondary); margin: 0; }
 body.hig .account-detail-value { font-size: 15px; font-weight: 600; letter-spacing: 0; font-variant-numeric: tabular-nums; }
-body.hig .coming-soon-section { gap: 0; background: var(--bg-group); border: 1px solid var(--separator); border-radius: var(--radius-md); overflow: hidden; }
-body.hig .coming-soon-card { background: transparent; border: 0; border-radius: 0 !important; padding: 10px 14px !important; opacity: 1; }
-body.hig .coming-soon-card + .coming-soon-card { border-top: 1px solid var(--separator); }
-body.hig :is(.coming-soon-icon) { font-size: 16px; opacity: 0.7; }
-body.hig .coming-soon-title { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
-body.hig .coming-soon-desc { color: var(--text-muted); }
-body.hig .coming-soon-badge { font-size: 11px; text-transform: none; letter-spacing: 0; background: var(--fill-quaternary); color: var(--text-secondary); }
 body.hig .account-logout-btn { width: auto; color: var(--accent-danger) !important; }
 body.hig .account-warning-banner { border-radius: var(--radius-md); font-size: 12px; color: #8a5500; }
 body.hig.theme-dark .account-warning-banner { color: #ffb340; }
@@ -5682,9 +5684,9 @@ body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--
 body.hig .panel-layout { position: relative; z-index: 1; }
 body.hig .title-bar { background: transparent; border-bottom: 0; }
 
-body.hig :is(.panel-sidebar, .info-cards, .coming-soon-section, .update-banner, .installed-item, .trait-item, .connection-item) { position: relative; }
+body.hig :is(.panel-sidebar, .info-cards, .update-banner, .installed-item, .trait-item, .connection-item) { position: relative; }
 
-body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .coming-soon-section, .update-banner, .installed-item, .trait-item) {
+body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .update-banner, .installed-item, .trait-item) {
     --lg-x: 28%;
     --lg-y: -140px;
     border: 0;
@@ -5698,7 +5700,7 @@ body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .com
 }
 /* Specular rim: a 1px ring brightest top-left and bottom-right, plus a glint
    that slides along it under the pointer. */
-body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .coming-soon-section, .update-banner, .installed-item, .trait-item, .connection-item)::before {
+body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .update-banner, .installed-item, .trait-item, .connection-item)::before {
     content: "";
     position: absolute;
     inset: 0;
@@ -5723,7 +5725,7 @@ body.hig .studio-body .studio-canvas-card { transition: margin-right 220ms ease,
 body.hig .studio-insight-card { transition: transform 0.15s ease, box-shadow 0.15s ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
 
 /* Radii */
-body.hig :is(.surface-card, .settings-section, .info-cards, .coming-soon-section, .update-banner) { border-radius: var(--r-group) !important; }
+body.hig :is(.surface-card, .settings-section, .info-cards, .update-banner) { border-radius: var(--r-group) !important; }
 body.hig :is(.stat-card, .account-detail-card, .installed-item, .trait-item) { border-radius: var(--r-tile) !important; }
 
 /* ── Sidebar: a floating glass slab the traffic lights sit on ────── */

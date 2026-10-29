@@ -229,7 +229,7 @@ async function planLongTask(
         const planningCtx = await getMemoryInformedContext(description, 5, 3);
         if (planningCtx.contextSummary) {
             memoryContext = `\n\nRELEVANT CONTEXT FROM PAST EXPERIENCE:\n${planningCtx.contextSummary}\n\nUse this context to inform your phase planning — avoid repeating past mistakes and leverage known strategies.`;
-            console.log(`[LONG-TASK] 🧠 Memory context: ${planningCtx.relevantMemories.length} memories, ${planningCtx.taskLearnings.length} learnings, ${planningCtx.relevantEntities.length} entities`);
+            console.log(`[LONG-TASK] 🧠 Memory context: ${planningCtx.relevantMemories.length} memories, ${planningCtx.taskLearnings.length} learnings`);
         }
     } catch (memErr) {
         console.warn(`[LONG-TASK] Memory-informed planning failed (non-fatal):`, (memErr as Error).message);

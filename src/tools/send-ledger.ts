@@ -143,15 +143,23 @@ export function holdSend(claim: SendClaim, sending: Promise<string>, now = Date.
     // Only this send's own entry: a resend may have replaced it meanwhile.
     const release = () => ledger.get(claim.key) === entry && ledger.delete(claim.key);
     sending.then((r) => {
-        try {
-            const p = JSON.parse(r);
-            const failed = p?.error || p?.success === false || p?.status === "error";
-            if (failed || (p && claim.sent && !claim.sent(p))) return release();
-        } catch {
-            /* plain text: it went out */
-        }
+        if (failedResult(r, claim.sent)) return release();
         entry.done = true;
     }, release);
+}
+
+const failedResult = (r: string, sent?: (r: Result) => boolean): boolean => {
+    try {
+        const p = JSON.parse(r);
+        return !!(p?.error || p?.success === false || p?.status === "error" || (p && sent && !sent(p)));
+    } catch {
+        return false; // plain text: it went out
+    }
+};
+
+/** The send's result says it didn't go out (same test the ledger keeps a send by). */
+export function sendFailed(name: string, result: string): boolean {
+    return failedResult(result, SENDS[name]?.sent);
 }
 
 /** Test hook. */

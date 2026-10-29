@@ -27,6 +27,24 @@ let connectionAttempts = 0;
 let discoveryAttempts = 0;
 let lastAtlasResponse = "";
 
+// The side panel's conversation. Session storage keeps it while the service
+// worker sleeps and the panel is closed; it's gone when Chrome quits.
+const MAX_CHAT = 60;
+let _chat = [];
+const chatReady = chrome.storage.session.get("chat")
+  .then((r) => { if (Array.isArray(r.chat)) _chat = r.chat; })
+  .catch(() => {});
+function addChat(role, text) {
+  if (!text) return;
+  _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now() });
+  if (_chat.length > MAX_CHAT) _chat = _chat.slice(-MAX_CHAT);
+  chrome.storage.session.set({ chat: _chat }).catch(() => {});
+  chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
+}
+
+// Clicking the toolbar icon opens Bhai in the side panel.
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
 // Overlay socket (port 18792): auxiliary chat/page-context relay. Separate
 // from the bridge so the two never share connection state. Auth via the
 // ?localToken= query param at handshake time (the overlay closes token-less
@@ -283,7 +301,13 @@ const _actionLog = [];
 const MAX_ACTION_LOG = 6;
 
 function logAction(type, detail) {
-  const entry = { type, detail: (detail || '').substring(0, 60), ts: Date.now() };
+  if (!detail) return; // internal step (reading tab info etc.): not worth showing
+  const entry = { type, detail: detail.substring(0, 60), ts: Date.now() };
+  // The same step again within a few seconds just refreshes the old line.
+  if (_actionLog[0] && _actionLog[0].detail === entry.detail && entry.ts - _actionLog[0].ts < 10000) {
+    _actionLog[0].ts = entry.ts;
+    return;
+  }
   _actionLog.unshift(entry);
   if (_actionLog.length > MAX_ACTION_LOG) _actionLog.pop();
   chrome.runtime.sendMessage({ type: 'atlas_action', entry }).catch(() => {});
@@ -311,6 +335,34 @@ function sendToAtlas(text, meta = {}) {
 
   overlayWs.send(JSON.stringify(payload));
   console.log(`[ATLAS Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
+  return true;
+}
+
+// The visible tab with the user's drawing on it, as a JPEG data URL; null if
+// they haven't drawn. The drawing is removed once it's been captured.
+async function takeMarkedScreenshot(tab) {
+  const [probe] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => {
+      const d = window.__bhaiDraw;
+      if (!d || !d.hasInk()) return false;
+      d.hideBar();
+      return true;
+    },
+  }).catch(() => []);
+  if (!probe?.result) return null;
+  await new Promise((r) => setTimeout(r, 80)); // let the toolbar disappear before the capture
+  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
+  chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => window.__bhaiDraw?.remove() }).catch(() => {});
+  return dataUrl;
+}
+
+// A message with a picture goes as the chat server's file attachment.
+function sendImageToAtlas(text, dataUrl) {
+  if (!overlayWs || overlayWs.readyState !== WebSocket.OPEN) return false;
+  const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl || "");
+  if (!m) return false;
+  overlayWs.send(JSON.stringify({ type: "file_attach", name: "marked-page.jpg", mimeType: m[1], base64: m[2], text }));
   return true;
 }
 
@@ -368,6 +420,7 @@ function handleOverlayMessage(msg) {
 
   if (msg.type === "response") {
     lastAtlasResponse = msg.text || "";
+    addChat("bhai", lastAtlasResponse);
     chrome.runtime.sendMessage({
       type: "atlas_response",
       text: lastAtlasResponse,
@@ -384,6 +437,7 @@ function handleOverlayMessage(msg) {
   }
 
   if (msg.type === "error") {
+    addChat("error", msg.text || "Something went wrong");
     chrome.runtime.sendMessage({
       type: "atlas_error",
       text: msg.text || "Something went wrong",
@@ -414,19 +468,21 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
+  // A menu click is a user gesture, so the panel may open here.
+  chrome.sidePanel?.open({ tabId: tab.id }).catch(() => {});
 
   const url = tab.url || "unknown";
   const title = tab.title || "Untitled";
 
   if (info.menuItemId === "atlas-ask-page") {
     const message = `[From browser: ${url}] User asks about this page: "${title}"`;
-    sendToAtlas(message, { url, title, action: "ask_page" });
+    if (sendToAtlas(message, { url, title, action: "ask_page" })) addChat("you", `About this page: ${title}`);
   }
 
   if (info.menuItemId === "atlas-ask-selection") {
     const selectedText = info.selectionText || "";
     const message = `[From browser: ${url}] User asks about: "${selectedText}"`;
-    sendToAtlas(message, { url, title, selectedText, action: "ask_selection" });
+    if (sendToAtlas(message, { url, title, selectedText, action: "ask_selection" })) addChat("you", `About: "${selectedText.slice(0, 200)}"`);
   }
 });
 
@@ -467,18 +523,26 @@ async function handleCommand(cmd) {
 
   // Activate badge + log action
   setBadgeActive(true);
+  // Plain words for the popup's activity list; anything not listed (tab
+  // lookups, cookies, CDP plumbing) is internal and not shown.
+  const host = (() => { try { return new URL(payload?.url || '').hostname.replace(/^www\./, ''); } catch { return ''; } })();
   const actionLabels = {
-    click_at: `Clicking (${payload?.x|0},${payload?.y|0})`,
-    type_text: payload?.secret ? 'Typing a saved secret' : `Typing "${(payload?.text||'').substring(0,25)}"`,
-    scroll: `Scrolling ${payload?.direction||'down'} ${payload?.amount||''}px`,
-    navigate: `→ ${(payload?.url||'').replace(/^https?:\/\/(www\.)?/,'')}`,
-    scan_elements: 'Scanning page elements',
-    hover: `Hovering (${payload?.x|0},${payload?.y|0})`,
-    screenshot: 'Taking screenshot',
-    execute_js: 'Running script',
-    keyboard: `Key: ${payload?.key||payload?.combo||''}`,
+    click_at: 'Clicking',
+    mouse_path: 'Clicking',
+    type_text: payload?.secret ? 'Typing a saved password' : `Typing "${(payload?.text||'').substring(0,25)}"`,
+    scroll: `Scrolling ${payload?.direction||'down'}`,
+    navigate: host ? `Opening ${host}` : 'Opening a page',
+    scan_elements: 'Reading the page',
+    execute_js: 'Reading the page',
+    screenshot: 'Looking at the page',
+    hover: 'Pointing at something',
+    keyboard: `Pressing ${payload?.key||payload?.combo||'a key'}`,
+    select_option: 'Choosing an option',
+    switch_tab: 'Switching tabs',
+    close_tab: 'Closing a tab',
+    go_back: 'Going back',
   };
-  const actionDetail = actionLabels[type] || type;
+  const actionDetail = actionLabels[type] || '';
   logAction(type, actionDetail);
 
   try {
@@ -868,9 +932,13 @@ function scanPageElements() {
     if (seenCoords.has(coordKey)) continue;
     seenCoords.add(coordKey);
 
+    // A password, card field or one-time code is labelled, never read: its value would
+    // reach the model.
+    const secretField = el.type === "password" ||
+      /\b(cc-[a-z-]+|one-time-code|current-password|new-password)\b/.test(el.getAttribute("autocomplete") || "");
     const text = el.innerText?.replace(/\n/g, " ").substring(0, 40)
       || el.placeholder
-      || el.value?.substring(0, 40)
+      || (secretField ? "" : el.value?.substring(0, 40))
       || el.getAttribute("aria-label")
       || el.getAttribute("title")
       || "";
@@ -928,7 +996,22 @@ function scanPageElements() {
       return a.x - b.x;
     });
 
-    return merged.slice(0, 150);
+    // Coordinates are this frame's own; clicks use the tab's. Add each enclosing frame's
+    // offset; a frame inside another origin can't see its offset, and its elements would
+    // be clicked somewhere else, so it reports none.
+    let dx = 0, dy = 0;
+    try {
+      for (let w = window; w !== w.top; w = w.parent) {
+        const fe = w.frameElement;
+        if (!fe) return [];
+        const r = fe.getBoundingClientRect();
+        dx += r.left + (fe.clientLeft || 0);
+        dy += r.top + (fe.clientTop || 0);
+      }
+    } catch {
+      return [];
+    }
+    return merged.slice(0, 150).map((el) => ({ ...el, x: Math.round(el.x + dx), y: Math.round(el.y + dy) }));
 }
 
 // ── Shared visual feedback injected into real tabs ──────────────────────────
@@ -1577,6 +1660,12 @@ async function getCookies(payload) {
 }
 
 async function navigate(payload) {
+  // Only web pages (and the blank page): never file://, javascript:, data: or chrome:// —
+  // a second check behind the bridge's own, in case a caller skips it.
+  const target = String(payload.url || "about:blank");
+  if (target !== "about:blank" && !/^https?:\/\//i.test(target)) {
+    throw new Error(`unsafe URL scheme — only http(s) is allowed`);
+  }
   if (payload.newTab) {
     const created = await chrome.tabs.create({ url: payload.url, active: true });
     pinAgentTab(created?.id);
@@ -2023,6 +2112,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     return true;
   }
+  if (msg.type === "get_chat") {
+    chatReady.then(() => sendResponse({ chat: _chat }));
+    return true;
+  }
+  if (msg.type === "clear_chat") {
+    _chat = [];
+    lastAtlasResponse = "";
+    chrome.storage.session.set({ chat: [] }).catch(() => {});
+    sendResponse({ ok: true });
+    return true;
+  }
   if (msg.type === "get_action_log") {
     sendResponse({ log: _actionLog });
     return true;
@@ -2056,12 +2156,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: "Could not capture page context" });
         return;
       }
-      const text = `[From browser: ${ctx.url}]\nPage title: "${ctx.title}"\n\nPage content:\n${ctx.pageContent || "(could not extract)"}`;
+      const ask = typeof msg.question === "string" && msg.question.trim() ? `\n\nAsk: ${msg.question.trim()}` : "";
+      const text = `[From browser: ${ctx.url}]\nPage title: "${ctx.title}"\n\nPage content:\n${ctx.pageContent || "(could not extract)"}${ask}`;
       const sent = sendToAtlas(text, {
         url: ctx.url,
         title: ctx.title,
         action: "send_page",
       });
+      if (sent) addChat("you", msg.display || `Sent this page: ${ctx.title || ctx.url}`);
       sendResponse({ ok: sent });
     });
     return true;
@@ -2074,30 +2176,73 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       const selectedText = ctx.selectedText || "(no text selected)";
-      const text = `[From browser: ${ctx.url}] User selected: "${selectedText}"`;
+      const ask = typeof msg.question === "string" && msg.question.trim() ? ` ${msg.question.trim()}` : "";
+      const text = `[From browser: ${ctx.url}] User selected: "${selectedText}"${ask}`;
       const sent = sendToAtlas(text, {
         url: ctx.url,
         title: ctx.title,
         selectedText,
         action: "send_selection",
       });
+      if (sent) addChat("you", msg.display || `About: "${selectedText.slice(0, 200)}"`);
       sendResponse({ ok: sent });
     });
     return true;
   }
 
   if (msg.type === "send_message") {
-    capturePageContext().then((ctx) => {
+    (async () => {
+      const ctx = await capturePageContext();
       const url = ctx?.url || "";
       const title = ctx?.title || "";
       const prefix = url ? `[From browser: ${url}] ` : "";
-      const text = `${prefix}${msg.text}`;
-      const sent = sendToAtlas(text, {
-        url,
-        title,
-        action: "send_message",
-      });
-      sendResponse({ ok: sent });
+      let text = `${prefix}${msg.text}`;
+      if (msg.text === "stop") {
+        sendResponse({ ok: sendToAtlas(text, { url, title, action: "send_message" }) });
+        return;
+      }
+      // Text selected on the page is what the user means: Bhai should focus on it.
+      const selection = (ctx?.selectedText || "").trim().slice(0, 2000);
+      if (selection) text += `\n\n[Selected on the page; the user wants you to focus on this: "${selection}"]`;
+      // Drew on the page? Send what they see, drawing included.
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+      const shot = tab?.id ? await takeMarkedScreenshot(tab).catch(() => null) : null;
+      const sent = shot
+        ? sendImageToAtlas(`${text}\n\n[Attached: the page as the user sees it, with their drawing in orange. Focus on what they marked.]`, shot)
+        : sendToAtlas(text, { url, title, action: "send_message" });
+      if (sent) {
+        const notes = [
+          shot ? "🖍️ with your drawing" : "",
+          selection ? `📌 "${selection.slice(0, 100)}${selection.length > 100 ? "…" : ""}"` : "",
+        ].filter(Boolean);
+        addChat("you", [msg.text, ...notes].join("\n"));
+      }
+      sendResponse({ ok: sent, drawing: !!shot });
+    })();
+    return true;
+  }
+
+  // "Mark up page": drawing layer on the current tab (draw.js).
+  if (msg.type === "start_draw") {
+    (async () => {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (!tab?.id || !/^https?:|^file:/.test(tab.url || "")) {
+        sendResponse({ ok: false, error: "Chrome doesn't let extensions draw on this page." });
+        return;
+      }
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["draw.js"] });
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || "Couldn't open drawing on this page." });
+      }
+    })();
+    return true;
+  }
+  if (msg.type === "clear_draw") {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
+      if (tab?.id) chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => window.__bhaiDraw?.remove() }).catch(() => {});
+      sendResponse({ ok: true });
     });
     return true;
   }

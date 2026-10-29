@@ -240,3 +240,22 @@ export async function fetchWithRedirectGuard(
         return { response, finalUrl: currentUrl };
     }
 }
+
+/**
+ * Why the agent's browser may not open `url`, or null when it may: only http(s) (and the
+ * blank page). A prompt-injected page could otherwise send it to file:///…/.ssh/id_rsa or
+ * the token file (local read into the model's context) or javascript: (script in a live
+ * logged-in tab). Every way the agent opens a URL calls this — not only browser_navigate.
+ */
+export function unsafeBrowserUrl(url: string): string | null {
+    const raw = String(url ?? "").trim();
+    if (raw === "about:blank") return null;
+    let scheme: string;
+    try {
+        scheme = new URL(raw).protocol.toLowerCase();
+    } catch {
+        return `invalid url: ${raw.slice(0, 120)}`;
+    }
+    return scheme === "http:" || scheme === "https:" ? null : `unsafe URL scheme "${scheme}" — only http(s) is allowed`;
+}
+

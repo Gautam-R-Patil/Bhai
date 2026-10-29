@@ -383,6 +383,10 @@ export async function getActivePage(): Promise<Page> {
 // Handles checkbox/radio as boolean, select-multiple as array.
 export const GET_FORM_STATE_JS = `() => {
     const out = {};
+    // Passwords, card fields and one-time codes say only whether they're filled: their
+    // values must never reach the model (the vault's "uses, never sees" rule).
+    const secret = (el) => el.type === 'password' ||
+        /\\b(cc-[a-z-]+|one-time-code|current-password|new-password)\\b/.test(el.autocomplete || el.getAttribute('autocomplete') || '');
     const fields = document.querySelectorAll('input,select,textarea');
     for (const el of fields) {
         const key = el.id || el.name || el.getAttribute('aria-label') || null;
@@ -392,7 +396,7 @@ export const GET_FORM_STATE_JS = `() => {
         } else if (el.tagName === 'SELECT' && el.multiple) {
             out[key] = Array.from(el.selectedOptions).map(o => o.value);
         } else {
-            out[key] = el.value;
+            out[key] = secret(el) ? (el.value ? '[filled, hidden]' : '') : el.value;
         }
     }
     return out;
@@ -893,7 +897,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
                 // Text, email, tel, number, search, password, url, textarea
                 const displayType = inputType !== 'text' ? '[' + inputType + ']' : '';
                 let t = displayType + (labelText || placeholder || el.getAttribute('name') || '');
-                if (currentVal && inputType !== 'password') t += ' value=' + currentVal;
+                if (currentVal && inputType !== 'password' && !/\\b(cc-[a-z-]+|one-time-code|current-password|new-password)\\b/.test(el.getAttribute('autocomplete') || '')) t += ' value=' + currentVal;
                 text = t.substring(0, 60);
             }
         } else {

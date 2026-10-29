@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 //
-// dump_ax_bin: the batched walk (ATLAS_AX_BATCH=true) must produce the same tree as
+// dump_ax_bin: the batched walk (default; ATLAS_NO_AX_BATCH=true turns it off) must produce the same tree as
 // the per-attribute walk. The rule (compareRuns) is unit-tested here on every run. The
 // live check dumps Finder, so it depends on the UI: it runs only with
 // ATLAS_AX_LIVE_TESTS=true on a Mac with the helper built (npm run build:ax) and

@@ -219,7 +219,7 @@ const ERROR_MESSAGES: Record<string, ErrorConfig> = {
     },
     out_of_credits: {
         message: "out of credits",
-        suggestion: "need to top up",
+        suggestion: "need more credits from the TRUSCOR team",
     },
     file_not_found: {
         message: "can't find that file",

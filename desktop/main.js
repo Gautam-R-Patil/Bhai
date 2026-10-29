@@ -199,6 +199,15 @@ const { readVault, registerVaultIpc } = require("./vault-store");
 // kept here as breadcrumbs for legacy callers.
 let _desktopSessionToken = null;
 let _desktopSessionExpiry = 0;
+// Set when the server says the owner removed this Mac (Account → Devices on another one):
+// it gets no session until someone signs in here again.
+let _deviceRemoved = false;
+
+/** This device as the bot names it (src/session.ts getDeviceFingerprint): one Devices row per Mac. */
+function deviceFingerprint() {
+    const user = process.env.USER || process.env.USERNAME || "unknown";
+    return `${process.platform}:${require("node:os").hostname()}:${user}`;
+}
 
 async function getDesktopSessionToken(overrideUserId, overrideInfo) {
     if (_desktopSessionToken && _desktopSessionExpiry > Date.now() + 3600000) {
@@ -216,6 +225,7 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
     const https = require("https");
     const bodyStr = JSON.stringify({
         otplessUserId: userId,
+        deviceFingerprint: deviceFingerprint(),
     });
 
     return new Promise((resolve) => {
@@ -234,10 +244,12 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
                 try {
                     const data = JSON.parse(raw);
                     if (data.token) {
+                        _deviceRemoved = false;
                         _desktopSessionToken = data.token;
                         _desktopSessionExpiry = data.expiresAt || (Date.now() + 86400000);
                         resolve(data.token);
                     } else {
+                        if (data.error === "device_removed") _deviceRemoved = true;
                         console.warn("[Session] Desktop session failed:", data.error || "unknown");
                         resolve(null);
                     }
@@ -1275,9 +1287,10 @@ async function startBot() {
         return { status: "error", error: errMsg };
     }
 
-    // Validate env content
-    if (!envContent || !envContent.includes("TELEGRAM_BOT_TOKEN")) {
-        sendLog("⚠️ Warning: No credentials found. Configure settings first.");
+    // Only an empty/unreadable settings file is worth a warning; no Telegram
+    // token is normal (other channels, or just the overlay).
+    if (!envContent) {
+        sendLog("⚠️ Warning: settings are empty or couldn't be decrypted.");
     }
 
     sendLog(`Starting bot from: ${entryPoint}`);
@@ -2422,7 +2435,8 @@ function registerIPC() {
             return { success: false, error: "Missing token" };
         }
         try {
-            const raw = await convexPostNoAuth("/api/otpless/validate-token", { token });
+            // The fingerprint lets a verified sign-in bring back a Mac removed in Account → Devices.
+            const raw = await convexPostNoAuth("/api/otpless/validate-token", { token, deviceFingerprint: deviceFingerprint() });
             const parsed = parseOtplessVerifyResponse(raw);
             if (!parsed.ok) return { success: false, error: parsed.error };
             finalizeAuth(parsed);
@@ -3430,6 +3444,8 @@ function registerIPC() {
             )`).run();
         } catch { /* */ }
         try { handle.prepare("CREATE INDEX IF NOT EXISTS idx_forget_log_kind ON memory_forget_log(kind, forgotten_at)").run(); } catch { /* */ }
+        // Forgotten means gone: older rows kept the content.
+        try { handle.prepare("UPDATE memory_forget_log SET content_snapshot = NULL WHERE content_snapshot IS NOT NULL").run(); } catch { /* */ }
         try {
             handle.prepare(`CREATE TABLE IF NOT EXISTS memory_insights (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3537,11 +3553,9 @@ function registerIPC() {
             try {
                 _studioRunWithRetry(() => {
                     const tx = db.transaction(() => {
-                        const snap = db.prepare("SELECT content FROM memories WHERE id = ? LIMIT 1").get(id);
-                        const snapshot = snap ? snap.content ?? null : null;
                         db.prepare(
-                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
-                        ).run("memory", String(id), snapshot, reason || "unspecified");
+                            "INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')"
+                        ).run("memory", String(id), reason || "unspecified");
                         db.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(id);
                         db.prepare("DELETE FROM memories WHERE id = ?").run(id);
                     });
@@ -3564,11 +3578,9 @@ function registerIPC() {
                 _studioRunWithRetry(() => {
                     const tx = db.transaction(() => {
                         for (const id of ids) {
-                            const snap = db.prepare("SELECT content FROM memories WHERE id = ? LIMIT 1").get(id);
-                            const snapshot = snap ? snap.content ?? null : null;
                             db.prepare(
-                                "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
-                            ).run("memory", String(id), snapshot, reason || "unspecified");
+                                "INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')"
+                            ).run("memory", String(id), reason || "unspecified");
                             db.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(id);
                             db.prepare("DELETE FROM memories WHERE id = ?").run(id);
                             forgotten++;
@@ -3590,11 +3602,9 @@ function registerIPC() {
             try {
                 _studioRunWithRetry(() => {
                     const tx = db.transaction(() => {
-                        const snap = db.prepare("SELECT value FROM behavioral_traits WHERE trait_key = ? LIMIT 1").get(traitKey);
-                        const snapshot = snap ? snap.value ?? null : null;
                         db.prepare(
-                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
-                        ).run("trait", String(traitKey), snapshot, reason || "unspecified");
+                            "INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')"
+                        ).run("trait", String(traitKey), reason || "unspecified");
                         db.prepare("DELETE FROM behavioral_traits WHERE trait_key = ?").run(traitKey);
                     });
                     tx();
@@ -3614,15 +3624,13 @@ function registerIPC() {
                 let relCount = 0;
                 _studioRunWithRetry(() => {
                     const tx = db.transaction(() => {
-                        const snap = db.prepare("SELECT name FROM entities WHERE id = ? LIMIT 1").get(id);
-                        const snapshot = snap ? snap.name ?? null : null;
                         if (cascade !== false) {
                             const r = db.prepare("SELECT COUNT(*) AS c FROM relationships WHERE from_id = ? OR to_id = ?").get(id, id);
                             relCount = r ? r.c ?? 0 : 0;
                         }
                         db.prepare(
-                            "INSERT INTO memory_forget_log (kind, original_id, content_snapshot, reason, source) VALUES (?, ?, ?, ?, 'user')"
-                        ).run("entity", String(id), snapshot, reason || "unspecified");
+                            "INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES (?, ?, ?, 'user')"
+                        ).run("entity", String(id), reason || "unspecified");
                         db.prepare("DELETE FROM entities WHERE id = ?").run(id);
                     });
                     tx();
@@ -4224,6 +4232,62 @@ function registerIPC() {
         }
         return null;
     }
+
+    // Settings → Integrations: what's connected, for the cards' status lines.
+    const googleTokensDir = path.join(DATA_DIR, "google-tokens");
+    function connectedGoogleAccounts() {
+        const out = [];
+        let files = [];
+        try { files = fs.readdirSync(googleTokensDir).filter(f => f.endsWith(".json")); } catch { return out; }
+        for (const file of files) {
+            let email = "";
+            try {
+                const tokens = JSON.parse(fs.readFileSync(path.join(googleTokensDir, file), "utf-8"));
+                if (tokens.id_token) email = JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64").toString("utf-8")).email || "";
+            } catch { /* unreadable token file */ }
+            out.push({ file, email: email || file.replace(/\.json$/, "") });
+        }
+        return out;
+    }
+
+    ipcMain.handle("settings:integrations", () => {
+        const custom = loadEnvKey("ATLAS_WORKSPACE") || "";
+        return {
+            workspace: custom || path.join(app.getPath("desktop"), "Bhai Files"),
+            workspaceIsDefault: !custom,
+            googleAvailable: !!findGoogleCredentials(),
+            googleAccounts: connectedGoogleAccounts().map(a => a.email),
+            githubSaved: !!loadEnvKey("GITHUB_TOKEN"),
+        };
+    });
+
+    // Checks a GitHub token (or the saved one) and says whose it is.
+    ipcMain.handle("settings:test-github", async (_, token) => {
+        token = token || loadEnvKey("GITHUB_TOKEN") || "";
+        if (!token) return { success: false, message: "No token" };
+        try {
+            const res = await fetch("https://api.github.com/user", {
+                headers: { Authorization: `Bearer ${token}`, "User-Agent": "Bhai", Accept: "application/vnd.github+json" },
+                signal: AbortSignal.timeout(15000),
+            });
+            if (res.status === 401) return { success: false, message: "GitHub didn't accept this token. It may be mistyped, expired or revoked." };
+            if (!res.ok) return { success: false, message: `GitHub error (${res.status})` };
+            const user = await res.json();
+            return { success: true, login: user.login, name: user.name || "", scopes: res.headers.get("x-oauth-scopes") || "" };
+        } catch (err) { return { success: false, message: err.message }; }
+    });
+
+    ipcMain.handle("settings:google-disconnect", (_, email) => {
+        const hit = connectedGoogleAccounts().find(a => a.email === email);
+        if (hit) fs.rmSync(path.join(googleTokensDir, hit.file), { force: true });
+        return { success: !!hit };
+    });
+
+    ipcMain.handle("settings:open-workspace", () => {
+        const dir = loadEnvKey("ATLAS_WORKSPACE") || path.join(app.getPath("desktop"), "Bhai Files");
+        fs.mkdirSync(dir, { recursive: true });
+        return shell.openPath(dir);
+    });
 
     // Setup: Google OAuth
     ipcMain.handle("setup:google-oauth", async () => {
@@ -4936,6 +5000,7 @@ function registerIPC() {
             } catch (err) {
                 console.warn("[Account] Convex info query failed:", err.message);
             }
+            if (_deviceRemoved) return { signedIn: false, deviceRemoved: true };
 
             return {
                 signedIn: true,
@@ -4953,6 +5018,25 @@ function registerIPC() {
         } catch (err) {
             console.error("[Account] account:info error:", err.message);
             return { signedIn: false, error: err.message };
+        }
+    });
+
+    // Account → Devices
+    ipcMain.handle("account:devices", async () => {
+        try {
+            const data = await convexSiteRequest("GET", "/api/account/devices");
+            return { success: true, devices: Array.isArray(data?.devices) ? data.devices : [] };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+    ipcMain.handle("account:remove-device", async (_, deviceId) => {
+        if (typeof deviceId !== "string" || !deviceId) return { success: false, error: "No device" };
+        try {
+            const r = await convexSiteRequest("POST", "/api/account/devices/remove", { deviceId });
+            return r?.ok ? { success: true } : { success: false, error: r?.error || "Couldn't remove it" };
+        } catch (err) {
+            return { success: false, error: err.message };
         }
     });
 
@@ -5869,6 +5953,7 @@ ${body}`;
         discord: /^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{25,}$/,
         slackBot: /^xoxb-[A-Za-z0-9-]{20,}$/,
         slackApp: /^xapp-[A-Za-z0-9-]{20,}$/,
+        github: /^(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{60,})$/,
     };
     ipcMain.handle("channel:clipboard-token", (_, kind) => {
         const text = require("electron").clipboard.readText().trim();

@@ -23,7 +23,7 @@ import { closeMatrix, initMatrix, sendMatrixProactiveMessage } from "./matrix.js
 import { closeBhaiMail, initBhaiMail } from "./bhai-mail.js";
 import { closeMCPServers, initMCPServers } from "./mcp/client.js";
 import { initCounterfactualMemory } from "./memory/counterfactual.js";
-import { embedText, isReady as isEmbeddingsReady, warmup as warmupEmbeddings } from "./memory/embeddings.js";
+import { embedText, warmup as warmupEmbeddings } from "./memory/embeddings.js";
 import { initEmotionalMemory } from "./memory/emotional.js";
 import { initEpisodicMemory } from "./memory/episodic.js";
 import { initGoals } from "./memory/goals.js";
@@ -31,16 +31,13 @@ import { getIdentityProfile, initIdentityDB, updateIdentityProfile } from "./mem
 import { initKnowledgeGraph } from "./memory/knowledge-graph.js";
 import { runDailyDecay, runDreamReplay } from "./memory/reflection.js";
 import { initRelationshipState } from "./memory/relationship.js";
-import { initSelfModel } from "./memory/self-model.js";
 import { initSelfStateDB } from "./memory/self-state.js";
 import { embedExistingMemories, initMemoryDB, setMemoryLLM } from "./memory/sqlite.js";
 import { initStrategyLibrary } from "./memory/strategy-library.js";
 import { initSupabase } from "./memory/supabase.js";
 import { initTaskLearnings } from "./memory/task-learnings.js";
 import { initTraitsDB, setMemoryDebug } from "./memory/traits.js";
-import { initUserModel } from "./memory/user-model.js";
 import { initWorkingMemory } from "./memory/working-memory.js";
-import { initWorldModel } from "./memory/world-model.js";
 import {
     getOnlineNotificationMessage,
     onNetworkStatusChange,
@@ -320,27 +317,6 @@ async function boot() {
             console.warn("[BOOT] Counterfactual memory init failed (non-fatal):", (cfErr as Error).message);
         }
 
-        // World Model — tracks tool/API/service health for informed planning
-        try {
-            initWorldModel(memDb);
-        } catch (wmErr) {
-            console.warn("[BOOT] World model init failed (non-fatal):", (wmErr as Error).message);
-        }
-
-        // User Model — aggregated user profile for proactive context
-        try {
-            initUserModel(memDb);
-        } catch (umErr) {
-            console.warn("[BOOT] User model init failed (non-fatal):", (umErr as Error).message);
-        }
-
-        // Self Model — tracks agent capability success/failure rates
-        try {
-            initSelfModel(memDb);
-        } catch (smErr) {
-            console.warn("[BOOT] Self model init failed (non-fatal):", (smErr as Error).message);
-        }
-
         // Goals — persistent user goal tracking with progress and deadlines
         try {
             initGoals(memDb);
@@ -540,37 +516,6 @@ async function boot() {
         }
     })();
 
-    // Hopfield Associative Memory: load patterns from HNSW index (background)
-    (async () => {
-        try {
-            if (isEmbeddingsReady()) {
-                const { loadFromHNSW } = await import("./memory/hopfield-memory.js");
-                const { bufferToEmbedding } = await import("./memory/embeddings.js");
-                const memRawDb = (await import("./memory/sqlite.js")).getRawDb();
-                if (memRawDb) {
-                    const rows = memRawDb
-                        .prepare(
-                            `SELECT e.memory_id, e.embedding, m.content
-                         FROM memory_embeddings e
-                         JOIN memories m ON e.memory_id = m.id
-                         LIMIT 500`,
-                        )
-                        .all() as Array<{ memory_id: number; embedding: Buffer; content: string }>;
-                    if (rows.length > 0) {
-                        const entries = rows.map((r) => ({
-                            id: r.memory_id,
-                            embedding: bufferToEmbedding(r.embedding),
-                            content: r.content,
-                        }));
-                        loadFromHNSW(entries);
-                    }
-                }
-            }
-        } catch (hfErr) {
-            console.warn("[BOOT] Hopfield memory init failed (non-fatal):", (hfErr as Error).message);
-        }
-    })();
-
     // Smart tool router (pre-compute category embeddings — async, non-blocking)
     initToolRouter().catch((err) =>
         console.warn("[BOOT] Tool router init failed (non-fatal, will use structural fallback):", err),
@@ -604,21 +549,15 @@ async function boot() {
 
     // ── Register cross-channel senders (for send_message_on_channel tool) ──
     if (bot) {
-        registerChannelSender("telegram", async (message, filePath) => {
-            await sendProactiveMessage(bot, config, message, filePath);
-        });
+        registerChannelSender("telegram", (message, filePath, buttons, ownerOnly) =>
+            sendProactiveMessage(bot, config, message, filePath, buttons, ownerOnly),
+        );
     }
-    registerChannelSender("whatsapp", async (message, filePath) => {
-        await sendWhatsAppProactiveMessage(message, filePath);
-    });
+    registerChannelSender("whatsapp", (message, filePath) => sendWhatsAppProactiveMessage(message, filePath));
     registerChannelSender("discord", (message, filePath) => sendDiscordProactiveMessage(message, filePath));
     registerChannelSender("slack", (message) => sendSlackProactiveMessage(message));
-    registerChannelSender("matrix", async (message) => {
-        await sendMatrixProactiveMessage(message);
-    });
-    registerChannelSender("overlay", async (message) => {
-        sendOverlayNotification(message);
-    });
+    registerChannelSender("matrix", (message) => sendMatrixProactiveMessage(message));
+    registerChannelSender("overlay", (message) => sendOverlayNotification(message));
 
     // Wire deep research proactive notifier (background research sends progress here)
     setDeepResearchNotifier(async (msg: string) => {
@@ -905,6 +844,22 @@ async function boot() {
                 );
             }
 
+            try {
+                const { COMMITMENT_DUE } = await import("./proactive/sources/commitment-due.js");
+                obs.registerSource(COMMITMENT_DUE);
+                console.log("💓 Registered source: commitment_due");
+            } catch (err) {
+                console.log("[BOOT] commitment_due registration failed (non-fatal):", (err as Error).message);
+            }
+
+            try {
+                const { MEMORY_DIGEST } = await import("./proactive/sources/memory-digest.js");
+                obs.registerSource(MEMORY_DIGEST);
+                console.log("💓 Registered source: memory_digest");
+            } catch (err) {
+                console.log("[BOOT] memory_digest registration failed (non-fatal):", (err as Error).message);
+            }
+
             // ── V3 sources (default ON; set ATLAS_PROACTIVE_V3_SOURCES=false to disable) ──
             if (process.env.ATLAS_PROACTIVE_V3_SOURCES !== "false") {
                 const webSearch = async (query: string): Promise<string> => {
@@ -1113,12 +1068,13 @@ async function boot() {
 
         // First run at 3am, then decay every 6h
         setTimeout(() => {
-            runDailyDecay();
+            runDailyDecay(true);
             runDreamReplay(llm).catch((err) => console.error("[MEMORY][REPLAY] Dream replay failed:", err));
-            // Decay runs every 6 hours for cleaner memory
+            // Decay runs every 6 hours for cleaner memory; every 4th tick is the 3am pass.
+            let decayTick = 0;
             const _decayT = setInterval(
                 () => {
-                    runDailyDecay();
+                    runDailyDecay(++decayTick % 4 === 0);
                 },
                 6 * 60 * 60 * 1000,
             );

@@ -19,8 +19,6 @@ export interface PlanningContext {
     relevantMemories: string[];
     /** Task learnings (strategies that worked/failed) */
     taskLearnings: string[];
-    /** Knowledge graph entities relevant to this task */
-    relevantEntities: string[];
     /** Summary for injection into decomposition prompt */
     contextSummary: string;
 }
@@ -39,7 +37,6 @@ export async function getMemoryInformedContext(
     const context: PlanningContext = {
         relevantMemories: [],
         taskLearnings: [],
-        relevantEntities: [],
         contextSummary: "",
     };
 
@@ -59,22 +56,7 @@ export async function getMemoryInformedContext(
             }
         } catch { /* task-learnings not available */ }
 
-        // ── 3. Get relevant knowledge graph entities ──
-        try {
-            const { findEntities } = await import("./knowledge-graph.js");
-            const { getRawDb } = await import("./sqlite.js");
-            const memDb = getRawDb();
-            if (memDb) {
-                const entities = findEntities(memDb as any, taskDescription);
-                if (entities && entities.length > 0) {
-                    context.relevantEntities = entities.slice(0, 5).map((e: any) =>
-                        `${e.name} (${e.type}): ${e.context || "no additional context"}`
-                    );
-                }
-            }
-        } catch { /* knowledge graph not available */ }
-
-        // ── 4. Build summary ──
+        // ── 3. Build summary ──
         const parts: string[] = [];
 
         if (context.relevantMemories.length > 0) {
@@ -83,10 +65,6 @@ export async function getMemoryInformedContext(
 
         if (context.taskLearnings.length > 0) {
             parts.push(`TASK LEARNINGS (what worked before):\n${context.taskLearnings.map(l => `- ${l}`).join("\n")}`);
-        }
-
-        if (context.relevantEntities.length > 0) {
-            parts.push(`RELEVANT ENTITIES:\n${context.relevantEntities.map(e => `- ${e}`).join("\n")}`);
         }
 
         context.contextSummary = parts.join("\n\n");

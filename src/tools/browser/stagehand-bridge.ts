@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../../config/paths.js";
 import type { Page } from "./types.js";
+import { unsafeBrowserUrl } from "../../security/url-safety.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -233,7 +234,11 @@ async function executeAction(page: Page, action: CachedAction): Promise<void> {
             await page.mouse.wheel(0, 500); // native CDP — no eval ReferenceErrors
             break;
         case "navigate":
-            if (action.value) await page.goto(action.value);
+            if (action.value) {
+                const bad = unsafeBrowserUrl(action.value);
+                if (bad) throw new Error(bad);
+                await page.goto(action.value);
+            }
             break;
     }
 }

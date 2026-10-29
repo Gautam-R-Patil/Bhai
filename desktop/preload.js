@@ -99,6 +99,10 @@ contextBridge.exposeInMainWorld("atlas", {
     getSettings: () => ipcRenderer.invoke("settings:get"),
     saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
     chooseSettingsWorkspace: () => ipcRenderer.invoke("settings:choose-workspace"),
+    getIntegrations: () => ipcRenderer.invoke("settings:integrations"),
+    testGithubToken: (token) => ipcRenderer.invoke("settings:test-github", token),
+    googleDisconnect: (email) => ipcRenderer.invoke("settings:google-disconnect", email),
+    openWorkspace: () => ipcRenderer.invoke("settings:open-workspace"),
     openDataDir: () => ipcRenderer.invoke("settings:open-data-dir"),
     openLogsDir: () => ipcRenderer.invoke("settings:open-logs-dir"),
 
@@ -115,6 +119,8 @@ contextBridge.exposeInMainWorld("atlas", {
     accountLogin: (otplessData) => ipcRenderer.invoke("account:login", otplessData),
     accountLogout: () => ipcRenderer.invoke("account:logout"),
     getAccountInfo: () => ipcRenderer.invoke("account:info"),
+    getDevices: () => ipcRenderer.invoke("account:devices"),
+    removeDevice: (deviceId) => ipcRenderer.invoke("account:remove-device", deviceId),
     onAccountStatusChange: (callback) => {
         ipcRenderer.on("account-status-change", (_, data) => callback(data));
     },

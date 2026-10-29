@@ -75,36 +75,41 @@ function persistSession(): void {
     }, 100);
 }
 
+type SessionRow = {
+    session_id: string; current_goal: string; started_at: string;
+    last_activity: string; turn_count: number; short_summary: string;
+    recent_turns_json: string; last_compression_summary: string | null;
+};
+const SESSION_COLS = "session_id, current_goal, started_at, last_activity, turn_count, short_summary, recent_turns_json, last_compression_summary";
+
+function rowToSession(row: SessionRow): SessionState {
+    return {
+        session_id: row.session_id,
+        current_goal: row.current_goal,
+        started_at: row.started_at,
+        last_activity: row.last_activity,
+        turn_count: row.turn_count,
+        short_summary: row.short_summary,
+        recent_turns: JSON.parse(row.recent_turns_json || "[]"),
+        lastCompressionSummary: row.last_compression_summary ?? "",
+    };
+}
+
 /** Load the most recent session from SQLite (if within timeout) */
 function loadLastSession(): SessionState | null {
     const raw = getRawDb();
     if (!raw) return null;
     try {
         const row = raw.prepare(
-            `SELECT session_id, current_goal, started_at, last_activity, turn_count, short_summary, recent_turns_json, last_compression_summary
-             FROM sessions ORDER BY last_activity DESC LIMIT 1`
-        ).get() as {
-            session_id: string; current_goal: string; started_at: string;
-            last_activity: string; turn_count: number; short_summary: string;
-            recent_turns_json: string; last_compression_summary: string | null;
-        } | undefined;
+            `SELECT ${SESSION_COLS} FROM sessions ORDER BY last_activity DESC LIMIT 1`
+        ).get() as SessionRow | undefined;
 
         if (!row) return null;
+        // Returned even when timed out: touchSession hands an expired one on for
+        // reflection (it used to be dropped here, so a session that ended across a
+        // restart was never summarised), and the previous-session block reads it.
 
-        // Check if within timeout
-        const lastActivity = new Date(row.last_activity).getTime();
-        if (Date.now() - lastActivity > SESSION_TIMEOUT_MS) return null;
-
-        return {
-            session_id: row.session_id,
-            current_goal: row.current_goal,
-            started_at: row.started_at,
-            last_activity: row.last_activity,
-            turn_count: row.turn_count,
-            short_summary: row.short_summary,
-            recent_turns: JSON.parse(row.recent_turns_json || "[]"),
-            lastCompressionSummary: row.last_compression_summary ?? "",
-        };
+        return rowToSession(row);
     } catch {
         return null;
     }
@@ -126,6 +131,14 @@ export function startSession(): SessionState {
     };
     console.log(`📋 Session started: ${currentSession.session_id}`);
     persistSession();
+    // One row per session, written on every turn: keep two weeks of them.
+    try {
+        getRawDb()
+            ?.prepare("DELETE FROM sessions WHERE last_activity < ?")
+            .run(new Date(Date.now() - 14 * 24 * 3600_000).toISOString());
+    } catch {
+        /* pruning is best-effort */
+    }
     return currentSession;
 }
 
@@ -161,7 +174,7 @@ export function touchSession(_userMessage: string): {
         const loaded = loadLastSession();
         if (loaded) {
             currentSession = loaded;
-            console.log(`📋 Session restored from DB: ${loaded.session_id} (${loaded.turn_count} turns)`);
+            if (getSessionState()) console.log(`📋 Session restored from DB: ${loaded.session_id} (${loaded.turn_count} turns)`);
         }
     }
 
@@ -277,8 +290,35 @@ function recompressSummary(summary: string): string {
 
 export function updateSessionGoal(goal: string): void {
     if (!currentSession) return;
-    currentSession.current_goal = goal;
+    // Masked like appendTurn: the buffer is at-rest data.
+    currentSession.current_goal = protect(goal, { credentials: true });
     persistSession();
+}
+
+/** Blank whatever `hit` matches in a session (memory_forget). True if anything changed. */
+export function redactSession(
+    s: Pick<SessionState, "recent_turns" | "short_summary" | "current_goal" | "lastCompressionSummary">,
+    hit: (text: string) => boolean,
+): boolean {
+    let changed = false;
+    for (const t of s.recent_turns) {
+        if (hit(t.content)) {
+            t.content = "[forgotten]";
+            changed = true;
+        }
+    }
+    for (const k of ["short_summary", "current_goal", "lastCompressionSummary"] as const) {
+        if (hit(s[k] ?? "")) {
+            s[k] = "";
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/** memory_forget on the live session; its row is rewritten by the next persist. */
+export function redactCurrentSession(hit: (text: string) => boolean): void {
+    if (currentSession && redactSession(currentSession, hit)) persistSession();
 }
 
 // ── End Session ───────────────────────────────
@@ -300,18 +340,18 @@ export function endSession(): SessionState | null {
  * Returns the rolling short summary for reflection input.
  * Combines short_summary + recent_turns into a complete picture.
  */
-export function getShortSummary(): string {
-    if (!currentSession) return "";
+export function getShortSummary(s: SessionState | null = currentSession): string {
+    if (!s) return "";
 
     const parts: string[] = [];
 
-    if (currentSession.short_summary) {
-        parts.push(currentSession.short_summary);
+    if (s.short_summary) {
+        parts.push(s.short_summary);
     }
 
     // Add recent turns as brief lines
-    if (currentSession.recent_turns.length > 0) {
-        const recentText = currentSession.recent_turns
+    if (s.recent_turns.length > 0) {
+        const recentText = s.recent_turns
             .map(t => `${t.role === "user" ? "User" : "AI"}: ${t.content.substring(0, 100)}`)
             .join("; ");
         parts.push(recentText);
@@ -328,7 +368,7 @@ export function getSessionSummary(): string {
         const parts: string[] = [];
 
         if (session.current_goal) {
-            parts.push(`- Current goal: ${session.current_goal}`);
+            parts.push(`- Latest task: ${session.current_goal}`);
         }
 
         if (session.short_summary) {
@@ -344,26 +384,41 @@ export function getSessionSummary(): string {
         const elapsed = Math.round((Date.now() - new Date(session.started_at).getTime()) / 60000);
         parts.push(`- Session duration: ${elapsed} min`);
 
-        if (parts.length === 0) return "";
-
-        return "📋 ACTIVE SESSION:\n" + parts.join("\n");
+        // The first turns after a break have no rolling summary yet: carry the last session over.
+        const previous = session.short_summary ? "" : previousSessionContext(session.session_id);
+        return "📋 ACTIVE SESSION:\n" + parts.join("\n") + (previous ? `\n\n${previous}` : "");
     }
 
-    // Fallback: load previous session summary from DB so new sessions have context
-    try {
-        const lastSession = loadLastSession();
-        if (lastSession && lastSession.short_summary) {
-            const parts: string[] = [];
-            if (lastSession.current_goal) {
-                parts.push(`- Previous goal: ${lastSession.current_goal}`);
-            }
-            parts.push(`- Previous session context: ${lastSession.short_summary.substring(0, 400)}`);
-            parts.push(`- Previous session turns: ${lastSession.turn_count}`);
-            return "📋 PREVIOUS SESSION (for continuity):\n" + parts.join("\n");
-        }
-    } catch { /* no previous session available */ }
+    return previousSessionContext();
+}
 
-    return "";
+/**
+ * The newest session other than `excludeId`, any age: the reflection's LLM summary
+ * when it has one, else the newest end of its rolling summary.
+ */
+function previousSessionContext(excludeId = ""): string {
+    const raw = getRawDb();
+    if (!raw) return "";
+    try {
+        const row = raw.prepare(
+            `SELECT ${SESSION_COLS} FROM sessions WHERE session_id != ? ORDER BY last_activity DESC LIMIT 1`
+        ).get(excludeId) as SessionRow | undefined;
+        if (!row) return "";
+        const prev = rowToSession(row);
+        const llm = raw.prepare(
+            "SELECT summary FROM conversations WHERE session_id = ? AND summary IS NOT NULL ORDER BY id DESC LIMIT 1"
+        ).get(prev.session_id) as { summary: string } | undefined;
+        const context = llm?.summary?.slice(0, 600) || getShortSummary(prev).slice(-400);
+        if (!context) return "";
+
+        const parts: string[] = [];
+        if (prev.current_goal) parts.push(`- Previous task: ${prev.current_goal}`);
+        parts.push(`- Previous session context: ${context}`);
+        parts.push(`- Previous session turns: ${prev.turn_count}`);
+        return "📋 PREVIOUS SESSION (for continuity):\n" + parts.join("\n");
+    } catch {
+        return "";
+    }
 }
 
 // ── Check if session should trigger reflection ─

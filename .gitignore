@@ -187,7 +187,6 @@ desktop/hostinger-upload/
 !src/skills/site/mint/__tests__/
 !src/skills/site/mint/__tests__/**
 !src/skills/site/mint/__tests__/self-heal.test.ts
-!src/memory/active-inference.test.ts
 !src/memory/traits-decay.test.ts
 !src/memory/embedding-cache.test.ts
 !src/memory/resolve-embedding.test.ts
@@ -229,7 +228,14 @@ desktop/hostinger-upload/
 !src/proactive/observer-config-reload.test.ts
 !src/proactive/observer-state-persist.test.ts
 !src/memory/at-rest-scrub.test.ts
+!src/memory/session-expiry.test.ts
+!src/tools/browser/secret-fields.test.ts
+!src/overlay/overlay-turns.test.ts
+!src/tools/browser/bridge-heartbeat.test.ts
+!src/tools/browser/extension-frame-offset.test.ts
+!src/tools/mac-wifi.test.ts
 !src/tools/browser/extension-agent-tab.test.ts
+!convex/devices.test.ts
 !src/llm-guest.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
@@ -337,11 +343,20 @@ desktop/hostinger-upload/
 !src/proactive/composer-templates.test.ts
 !src/proactive/heartbeat-wake-adaptation.test.ts
 # Session 2026-10-29: memory pure-logic bugfixes (NaN/div-by-zero, gate ordering)
-!src/memory/reranker.test.ts
+!src/memory/session-continuity.test.ts
+!src/memory/__tests__/forget.test.ts
+!src/memory/__tests__/supersede.test.ts
+!src/memory/__tests__/pin.test.ts
+!src/memory/__tests__/cards.test.ts
+!src/memory/__tests__/commitments.test.ts
+!src/memory/__tests__/bhai-did.test.ts
+!src/memory/__tests__/memory-digest.test.ts
+!src/memory/episodic.test.ts
 !src/memory/classifier.test.ts
 !src/memory/value-gate.test.ts
 !src/memory/strategy-library.test.ts
 !src/memory/sleep-gate.test.ts
+!src/memory/goals.test.ts
 !src/proactive/heartbeat-morning-boundary.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js

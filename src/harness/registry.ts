@@ -117,10 +117,8 @@ function buildRegistry(): void {
         numericDim("memory.fusion.recencyWeight", "Weight given to recency (exponential decay) in the generative-agents blend", 0.25, "src/memory/sqlite.ts", "1421"),
         numericDim("memory.fusion.importanceWeight", "Weight given to stored importance score in the generative-agents blend", 0.25, "src/memory/sqlite.ts", "1421"),
 
-        // SAN + Hopfield weights (sqlite.ts:1440,1473)
+        // SAN weight (sqlite.ts:1440)
         numericDim("memory.san.weight", "Spreading activation network boost multiplier applied to existing+new nodes", 0.3, "src/memory/sqlite.ts", "1440"),
-        numericDim("memory.hopfield.weight", "Hopfield associative recall boost multiplier (similarity > 0.3 gate)", 0.15, "src/memory/sqlite.ts", "1473"),
-        numericDim("memory.hopfield.similarityThreshold", "Minimum Hopfield similarity for recall inclusion", 0.3, "src/memory/sqlite.ts", "1469"),
 
         // Cross-encoder blend (sqlite.ts:1508)
         numericDim("memory.crossEncoder.blend", "Cross-encoder re-rank blend: (blend)×RRF_score + (1-blend)×rerankSim×0.02", 0.6, "src/memory/sqlite.ts", "1508"),
@@ -129,7 +127,6 @@ function buildRegistry(): void {
         intDim("memory.recall.k", "Top-k memories returned by semantic recall()", 5, "src/agent.ts", "1423", 3, 50),
         intDim("memory.coreMemory.k", "Top-k core memories injected at iteration 1", 10, "src/agent.ts", "1403", 3, 30),
         intDim("memory.conversationRecall.k", "Top-k conversation memories recalled", 3, "src/agent.ts", "1426", 1, 10),
-        intDim("memory.kgEntities.k", "Top-k knowledge graph entities injected at iteration 1", 5, "src/agent.ts", "1457", 1, 15),
 
         // HyDE trigger (sqlite.ts:1570)
         intDim("memory.hyde.minResults", "Minimum results below which HyDE is triggered", 3, "src/memory/sqlite.ts", "1570", 0, 10),

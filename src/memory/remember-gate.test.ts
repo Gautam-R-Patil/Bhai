@@ -51,6 +51,14 @@ describe.skipIf(!hasBinding)("remember() with the real DB", () => {
         expect(row(seven as number)?.decay_score).toBe(1);
         expect(row(seven as number)?.importance).toBeGreaterThan(row(five as number)?.importance ?? 99);
     });
+
+    it("reinforces an exact duplicate instead of storing a second row", async () => {
+        const a = await sqlite.remember("User drives a blue Honda City", "fact");
+        const b = await sqlite.remember("user drives a blue Honda city.", "fact");
+        expect(b).toBe(a);
+        const rows = sqlite.getRawDb()?.prepare("SELECT id FROM memories WHERE content LIKE '%Honda%'").all();
+        expect(rows).toHaveLength(1);
+    });
 });
 
 let DatabaseSync: (new (p: string) => { prepare(s: string): { all(...a: unknown[]): Record<string, unknown>[]; run(...a: unknown[]): unknown } }) | undefined;

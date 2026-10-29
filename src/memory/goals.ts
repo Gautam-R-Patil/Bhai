@@ -37,10 +37,20 @@ export interface DetectedGoal {
 
 let db: Database | null = null;
 
+// Nothing updates progress, so a goal untouched for 30 days counts as stale.
+const VISIBLE_GOALS = "status NOT IN ('completed', 'abandoned') AND updated_at > datetime('now', '-30 days')";
+
 // ── Init ──────────────────────────────────────
 
 export function initGoals(database: Database): void {
     db = database;
+
+    // proactive/goal-engine.ts used to share this table name; move its rows out of the way.
+    if (db.exec("SELECT 1 FROM pragma_table_info('goals') WHERE name = 'title'").length) {
+        db.run("ALTER TABLE goals RENAME TO proactive_goals");
+        // The index moved with the table; free its name for the new goals table.
+        db.run("DROP INDEX IF EXISTS idx_goals_status");
+    }
 
     db.run(`
         CREATE TABLE IF NOT EXISTS goals (
@@ -65,10 +75,13 @@ export function initGoals(database: Database): void {
 // ── CRUD Operations ───────────────────────────
 
 /**
- * Create a new goal. Returns the ID of the inserted goal.
+ * Create a new goal. Returns the ID of the inserted goal, or -1 if it already exists.
  */
 export function createGoal(description: string, deadline?: string, parentGoalId?: number): number {
     if (!db) return -1;
+
+    const dup = db.exec(`SELECT 1 FROM goals WHERE ${VISIBLE_GOALS} AND lower(description) = lower(?)`, [description]);
+    if (dup[0]?.values.length) return -1;
 
     db.run(
         `INSERT INTO goals (description, deadline, parent_goal_id) VALUES (?, ?, ?)`,
@@ -139,7 +152,7 @@ export function getActiveGoals(): Goal[] {
     const results = db.exec(
         `SELECT id, description, deadline, status, progress, parent_goal_id, created_at, updated_at, tags
          FROM goals
-         WHERE status NOT IN ('completed', 'abandoned')
+         WHERE ${VISIBLE_GOALS}
          ORDER BY updated_at DESC`,
         []
     );
@@ -167,10 +180,10 @@ export function getGoalsSnippet(): string {
     if (goals.length === 0) return "";
 
     const lines = goals.slice(0, 5).map(g => {
-        const pct = Math.round(g.progress * 100);
+        const pct = g.progress > 0 ? ` — ${Math.round(g.progress * 100)}% done` : "";
         const deadline = g.deadline ? ` (due: ${g.deadline})` : "";
         const status = g.status === "paused" ? " [paused]" : "";
-        return `- ${g.description} — ${pct}% done${deadline}${status}`;
+        return `- ${g.description}${pct}${deadline}${status}`;
     });
 
     const remaining = goals.length - 5;
@@ -196,7 +209,6 @@ const GOAL_PATTERNS: Array<{ pattern: RegExp; weight: number }> = [
     { pattern: /\bcomplete(?:ing)?\b.*\bby\b/i, weight: 0.7 },
     { pattern: /\bship(?:ping)?\b.*\bby\b/i, weight: 0.6 },
     { pattern: /\bmust\b.*\bdone\b/i, weight: 0.6 },
-    { pattern: /\bremind me to\b/i, weight: 0.5 },
     { pattern: /\bhelp me\b.*\bachieve\b/i, weight: 0.7 },
 ];
 

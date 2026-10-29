@@ -147,7 +147,7 @@ describe("vault IPC: the renderer can't read raw secrets", () => {
         );
         expect(r.success).toBe(true);
         expect((await call("vault:reveal", id, "correct horse")).values.password).toBe(PASSWORD); // blank kept the old one
-    });
+    }, 30_000); // scrypt (the vault password hash) is slow by design; busy CI machines need room
 
     it("delete needs Touch ID (or the vault password) like viewing", async () => {
         const denied = setup({ touchOk: false });
@@ -162,7 +162,7 @@ describe("vault IPC: the renderer can't read raw secrets", () => {
         const id2 = (await pw.call("vault:list")).entries[0].id;
         expect(await pw.call("vault:delete", id2, "wrong")).toMatchObject({ success: false, error: "auth_failed" });
         expect((await pw.call("vault:delete", id2, "correct horse")).entries).toHaveLength(0);
-    });
+    }, 30_000); // scrypt (the vault password hash) is slow by design; busy CI machines need room
 
     it("one Touch ID covers that entry for a minute: Edit (load + save) asks once", async () => {
         let t = 1_000_000;

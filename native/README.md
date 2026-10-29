@@ -1,6 +1,6 @@
 # Bhai Native Module
 
-78-module Rust performance layer for Bhai. Exposes SIMD-accelerated vector math, the model/tool routers, HNSW search, swarm/mesh orchestration state, MCTS, the meta-harness optimizer, the outbound secrets sanitizer, and more, to TypeScript via napi-rs. Every consumer of this binary has a pure-JS fallback in `src/` — `src/native/index.ts` loads the `.node` file at runtime and gracefully falls back if it's missing.
+~80-module Rust performance layer for Bhai. Exposes SIMD-accelerated vector math, the model/tool routers, HNSW search, swarm/mesh orchestration state, MCTS, the meta-harness optimizer, the outbound secrets sanitizer, and more, to TypeScript via napi-rs. Every consumer of this binary has a pure-JS fallback in `src/` — `src/native/index.ts` loads the `.node` file at runtime and gracefully falls back if it's missing.
 
 ## Prerequisites
 
@@ -8,7 +8,7 @@
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
-2. **Node.js >= 20**
+2. **Node.js >= 18** (`native/package.json`; the main app needs 20.19+ / 22.12+)
 3. (Optional) **C toolchain** — only required if building with the `vad` cargo feature (libfvad). Skipped by default.
 
 ## Building
@@ -47,7 +47,7 @@ Output is a platform-specific `.node` file written to `native/`:
 - `panic = "abort"`
 - `strip = true` (stripped binaries)
 
-## Module map (78 .rs files in `src/`)
+## Module map (~80 .rs files in `src/`, incl. `forge_sandbox/`)
 
 | Group | Files | Purpose |
 |-------|-------|---------|
@@ -59,9 +59,10 @@ Output is a platform-specific `.node` file written to `native/`:
 | World/user models | `world_model.rs`, `user_model.rs`, `credibility_model.rs` | Predictive state |
 | Proactive | `proactive_scheduler.rs`, `proactive_monitor.rs`, `proactive_intent.rs`, `proactive_calendar.rs`, `proactive_news.rs`, `proactive_stale_email.rs`, `proactive_tasks.rs`, `proactive_weather.rs`, `proactive_source_gate.rs`, `inner_thoughts.rs`, `goal_engine.rs`, `habit_detector.rs`, `notification_tracker.rs` | Intent queue, per-source scoring, rate limit + DND |
 | Browser | `browser_agent.rs`, `browser_guard.rs`, `chrome_bridge.rs`, `ip_guard.rs` | Element scoring, stealth, CAPTCHA detection |
+| Desktop | `glass_effect.rs` | Window glass effect |
 | Vision Nav | `ax_walker.rs` (opt-in via `ATLAS_NATIVE_AX=true`) | Cross-OS accessibility-tree flatten/find |
 | Voice | `pcm_vad.rs` (cargo feature `vad`, opt-in) | libfvad-backed barge-in for hybrid voice |
-| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON, 1.44–2.00× faster than TS) | Encryption helpers + multi-pattern outbound secrets scrubber |
+| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON), `pii_protect.rs` (opt-in `ATLAS_NATIVE_PROTECT`, linear-time `maskCredentials`/`findPii`) | Encryption helpers + multi-pattern outbound secrets scrubber |
 | Research | `research_engine.rs`, `info_gain.rs`, `citation_graph.rs`, `skill_scorer.rs` | Source scoring, info gain, citation graphs |
 | Harness | `harness_optimizer.rs` | NSGA-II Pareto + GP surrogate + TextGrad scoring |
 | Skill Forge sandbox | `forge_sandbox/` (`api.rs`, `pool.rs`, `worker.rs`, `strikes.rs`, `linux_seccomp.rs`, `linux_landlock.rs`, `linux.rs`, `macos.rs`, `windows_appcontainer.rs`, `windows_jobobject.rs`, `windows.rs`, …) | OS-level kernel-sandbox supervisor for persisted dynamic tools: warm-pool LRU, three-strike auto-archive, per-platform seccomp/Landlock · sandbox-exec · AppContainer |
@@ -75,7 +76,7 @@ Output is a platform-specific `.node` file written to `native/`:
 | cosine similarity (768-dim) | 12 μs | 0.8 μs | 15× |
 | findTopK (1000 vectors) | 15 ms | 0.9 ms | 17× |
 | batch similarity | 14 ms | 0.7 ms | 20× |
-| multi-pattern secrets scan (1KB–100KB) | baseline | 1.44–2.00× faster | — |
+| multi-pattern secrets scan (1KB–200KB) | baseline | 1.9–3.4× faster (vs ReDoS-fixed TS) | — |
 
 ## Empirical port rule
 
@@ -95,12 +96,12 @@ native/
 ├── package.json        # @napi-rs/cli config
 ├── index.js            # JS wrapper with graceful fallback
 ├── index.d.ts          # Auto-generated TypeScript definitions
-└── src/                # 78 .rs modules (see Module map above)
+└── src/                # ~80 .rs modules (see Module map above)
     ├── lib.rs          # napi-rs entry — re-exports per-module #[napi] fns
     ├── vector.rs / batch.rs / hnsw.rs
     ├── model_router.rs / tool_router.rs / …
     ├── ax_walker.rs                    # opt-in (ATLAS_NATIVE_AX)
     ├── pcm_vad.rs                      # opt-in cargo feature `vad`
     ├── secrets_sanitizer.rs            # default-ON
-    └── … 58 more
+    └── … more (see module map)
 ```

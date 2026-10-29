@@ -43,7 +43,7 @@ export async function runMemoryRecallBenchmark(): Promise<BenchmarkResult> {
 
         for (const testCase of RECALL_CASES) {
             try {
-                const results = await recall(testCase.query, k);
+                const results = await recall(testCase.query, k, undefined, undefined, undefined, undefined, { touch: false });
                 const allContent = results.map(r => r.content.toLowerCase()).join(" ");
 
                 const hit = testCase.expectedKeywords.some(kw =>

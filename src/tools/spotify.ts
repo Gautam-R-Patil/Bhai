@@ -752,6 +752,15 @@ async function doSimple(
     // intent is no longer bound to that specific track.
     if (kind === "pause" || kind === "next" || kind === "previous") {
         forgetLastPlayed();
+        // The desktop app playing here takes these in ~100ms; spogo goes through Spotify's servers (~2s).
+        if ((await osNowPlayingLocal()).playing) {
+            try {
+                await (kind === "pause" ? osPause() : kind === "next" ? osNext() : osPrev());
+                return ok({ action: kind, mode: "local_app" });
+            } catch {
+                /* fall through to spogo */
+            }
+        }
     }
     let args: string[];
     switch (kind) {
@@ -876,11 +885,28 @@ async function doQueue(action: "queue_add" | "queue_get", input: Record<string, 
 }
 
 async function doStatus(which: "now_playing" | "playback_state"): Promise<string> {
-    const r = await call(["status"]);
+    // spogo asks Spotify's servers (~7s); the desktop app answers in ms. When this
+    // Mac's app is the one playing, it is the answer; otherwise wait for spogo
+    // (another device may be playing).
+    const status = call(["status"]).catch((e: Error) => ({ ok: false as const, error: e.message, exitCode: 1 }));
+    const local = which === "now_playing" ? await osNowPlayingLocal() : undefined;
+    if (local?.playing && local.track) {
+        return ok({
+            action: which,
+            mode: "local_app",
+            playing: true,
+            track: local.track,
+            artist: local.artist,
+            album: local.album,
+            position_ms: local.position_ms,
+            duration_ms: local.duration_ms,
+            uri: local.track_uri,
+        });
+    }
+    const r = await status;
     if (r.ok) return ok({ action: which, mode: "spogo", state: r.data });
     // OS fallback for now_playing only
-    if (which === "now_playing") {
-        const local = await osNowPlayingLocal();
+    if (local) {
         if (local.track) {
             return ok({
                 action: which,

@@ -114,18 +114,20 @@ for (var i = 0; i < screens.count; i++) {
     allScreens.push({ id: String(i), x: f.origin.x, y: cgY, w: f.size.width, h: f.size.height, scale: s.backingScaleFactor });
 }
 var focus = null;
+// The front app's frontmost normal window, from the window server: half the time of
+// asking System Events, and no Accessibility permission needed. Bounds are CG coords.
 try {
-    var se = Application("System Events");
-    var frontApps = se.processes.whose({frontmost: true});
-    if (frontApps.length > 0) {
-        var wins = frontApps[0].windows;
-        if (wins.length > 0) {
-            var pos = wins[0].position();
-            var sz = wins[0].size();
-            focus = { x: pos[0], y: pos[1], w: sz[0], h: sz[1] }; // already in CG coords
-        }
+    ObjC.import("CoreGraphics");
+    var pid = $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+    var list = ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0));
+    for (var k = 0; k < list.count; k++) {
+        var w = list.objectAtIndex(k);
+        if (w.objectForKey("kCGWindowOwnerPID").intValue !== pid || w.objectForKey("kCGWindowLayer").intValue !== 0) continue;
+        var b = w.objectForKey("kCGWindowBounds");
+        focus = { x: b.objectForKey("X").doubleValue, y: b.objectForKey("Y").doubleValue, w: b.objectForKey("Width").doubleValue, h: b.objectForKey("Height").doubleValue };
+        break;
     }
-} catch (e) { /* no accessibility permission yet — fall through */ }
+} catch (e) { /* fall through to the primary screen */ }
 var picked = allScreens[0];
 if (focus) {
     var cx = focus.x + focus.w / 2;

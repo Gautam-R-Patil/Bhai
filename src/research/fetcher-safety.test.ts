@@ -94,3 +94,55 @@ describe("tagsToText — linear, ReDoS-proof HTML→text", () => {
         expect(_tagsToText("before<h1 no close here")).toBe("before");
     });
 });
+
+describe("fetched page text", () => {
+    const page = async (body: string, type: string) => {
+        nextResponse = () => new Response(body, { headers: { "content-type": type } });
+        return (await fetchPages([{ url: `https://x.com/${Math.random()}`, title: "T" }]))[0].content;
+    };
+
+    it("keeps offsets right after characters that lowercase longer (İ)", async () => {
+        const text = await page(`<p>${"İstanbul ".repeat(5)}</p><script>var secret = 1;</script><p>after the script</p>`, "text/html");
+        expect(text).toContain("after the script");
+        expect(text).not.toContain("secret");
+    });
+
+    it("leaves plain text alone and accepts Text/HTML and XHTML", async () => {
+        expect(await page("x < 10 and y > 5", "text/plain; charset=utf-8")).toBe("x < 10 and y > 5");
+        expect(await page("<p>Hello upper</p>", "Text/HTML")).toContain("Hello upper");
+        expect(await page("<p>Hello xhtml</p>", "application/xhtml+xml")).toContain("Hello xhtml");
+    });
+
+    it("drops whole comments and decodes numeric entities", async () => {
+        const text = await page("<p>kept</p><!-- <div>old > markup</div> --><p>it&#8217;s &mdash; &#x1F600;</p>", "text/html");
+        expect(text).not.toContain("markup");
+        expect(text).toContain("it’s — 😀");
+    });
+});
+
+describe("web_asset_download body cap", () => {
+    it("stops reading a body without Content-Length once it passes max_bytes", async () => {
+        const { webAssetDownload } = await import("../tools/coding/web-asset-download.js");
+        let pulled = 0;
+        nextResponse = () =>
+            new Response(
+                new ReadableStream({
+                    pull(c) {
+                        pulled++;
+                        c.enqueue(new Uint8Array(512)); // never closes
+                    },
+                }),
+                { headers: { "content-type": "image/png" } },
+            );
+        const os = await import("node:os");
+        const out = JSON.parse(
+            await webAssetDownload.handler({
+                url: "https://x.com/a.png",
+                dest_path: `${os.tmpdir()}/bhai-cap-${Date.now()}.png`,
+                max_bytes: 1024,
+            }),
+        );
+        expect(out.error).toMatch(/too large/);
+        expect(pulled).toBeLessThan(10);
+    });
+});

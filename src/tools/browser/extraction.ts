@@ -101,7 +101,16 @@ export const browserAnalyze: ToolDefinition = {
                                     type: inp.type || "text",
                                     x: Math.round(rect.x + rect.width / 2),
                                     y: Math.round(rect.y + rect.height / 2),
-                                    value: inp.value?.substring(0, 50) || "",
+                                    // Passwords, card fields, one-time codes: filled or not, never the value.
+                                    value:
+                                        inp.type === "password" ||
+                                        /\b(cc-[a-z-]+|one-time-code|current-password|new-password)\b/.test(
+                                            inp.getAttribute("autocomplete") || "",
+                                        )
+                                            ? inp.value
+                                                ? "[filled, hidden]"
+                                                : ""
+                                            : inp.value?.substring(0, 50) || "",
                                 });
                         }
                     });
@@ -358,9 +367,24 @@ export const browserExtract: ToolDefinition = {
                 /* javascript-obfuscator:disable */ ({ sel, at }: { sel: string; at: string }) =>
                     Array.from(document.querySelectorAll(sel))
                         .slice(0, 50)
-                        .map((el) =>
-                            at === "textContent" ? (el as HTMLElement).textContent?.trim() : el.getAttribute(at),
-                        ),
+                        // innerText is what is rendered: textContent also carried <script>/<style>
+                        // source and hidden text (instructions planted for the model). Each value
+                        // is capped: 50 × a whole <body> was megabytes.
+                        .map((el) => {
+                            // A password, card or one-time-code field's value (a pre-filled
+                            // value attribute) is never handed to the model.
+                            const secret =
+                                (el as HTMLInputElement).type === "password" ||
+                                /\b(cc-[a-z-]+|one-time-code|current-password|new-password)\b/.test(
+                                    el.getAttribute("autocomplete") || "",
+                                );
+                            if (secret && at === "value") return el.getAttribute("value") ? "[filled, hidden]" : "";
+                            return (
+                                at === "textContent"
+                                    ? ((el as HTMLElement).innerText ?? el.textContent)?.trim()
+                                    : el.getAttribute(at)
+                            )?.slice(0, 2000);
+                        }),
                 /* javascript-obfuscator:enable */ { sel: selector, at: attr },
             );
             return JSON.stringify({ success: true, elements, count: (elements as unknown[]).length });

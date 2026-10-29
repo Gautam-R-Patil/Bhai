@@ -2,7 +2,14 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { describe, expect, it } from "vitest";
-import { antiGivingUpFailures, finalReplyText, planToolsBlock, toolFailed } from "./agent.js";
+import {
+    antiGivingUpFailures,
+    asksLeaveToLook,
+    finalReplyText,
+    isDeferrable,
+    planToolsBlock,
+    toolFailed,
+} from "./agent.js";
 
 const msg = (content: string): ChatCompletionMessageParam => ({ role: "user", content });
 
@@ -11,6 +18,17 @@ describe("toolFailed", () => {
         expect(toolFailed({ isError: false })).toBe(false);
         expect(toolFailed({ isError: true })).toBe(true);
         expect(toolFailed({ isError: false, reportedFailure: true })).toBe(true);
+    });
+});
+
+describe("isDeferrable", () => {
+    const call = (name: string, args: object) => ({ function: { name, arguments: JSON.stringify(args) } });
+    it("runs pins and supersedes in the foreground so a refusal reaches the model", () => {
+        expect(isDeferrable(call("memory_store", { content: "x" }))).toBe(true);
+        expect(isDeferrable(call("memory_store", { content: "x", pin_id: 42 }))).toBe(false);
+        expect(isDeferrable(call("memory_store", { content: "x", supersedes: 7 }))).toBe(false);
+        expect(isDeferrable(call("memory_store", { content: "x", pin: true }))).toBe(false);
+        expect(isDeferrable(call("memory_search", { query: "x" }))).toBe(false);
     });
 });
 
@@ -58,5 +76,33 @@ describe("antiGivingUpFailures", () => {
         expect(
             antiGivingUpFailures(history, "open my bank site and download the statement", `${handoff}\n[[STUCK]]`, 2),
         ).toBe(0);
+    });
+});
+
+describe("asksLeaveToLook", () => {
+    it("catches an unfinished task that stops to ask about a look-only step", () => {
+        expect(
+            asksLeaveToLook(
+                "Downloads shows as the active location. I haven’t read the first three file names yet, so the task isn't finished. Want me to take a screenshot and read them?",
+            ),
+        ).toBe(true);
+    });
+    it("leaves real questions alone: outward actions, finished tasks, stuck reports", () => {
+        expect(asksLeaveToLook("The draft is ready but not sent yet. Want me to send it to Priya?")).toBe(false);
+        expect(asksLeaveToLook("Done — Downloads has a.pdf, b.png and c.zip. Want me to open one?")).toBe(false);
+        expect(asksLeaveToLook("I haven't found it yet. Want me to check again?\n[[STUCK]]")).toBe(false);
+    });
+    it("catches handing the looking to the owner, but only when Bhai can see the screen itself", () => {
+        const reply =
+            "I still can't name the network: the SSID is redacted. If you can see it in the Wi-Fi menu, tell me and I'll take it from there.";
+        expect(asksLeaveToLook(reply, true)).toBe(true);
+        expect(asksLeaveToLook(reply, false)).toBe(false);
+        expect(
+            asksLeaveToLook(
+                "I still can't name the network: the output redacts the SSID. If you check the Wi-Fi menu bar icon, the name will be there.",
+                true,
+            ),
+        ).toBe(true);
+        expect(asksLeaveToLook("Done. If you can see any typo, tell me.", true)).toBe(false);
     });
 });

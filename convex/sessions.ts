@@ -4,6 +4,7 @@
 
 import { v } from "convex/values";
 import { internalQuery, internalMutation } from "./_generated/server";
+import { noteDevice } from "./devices";
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -128,6 +129,7 @@ export const validateSessionInternal = internalQuery({
       plan: account.plan,
       ai_credits: account.ai_credits,
       sharedKey: session.sharedKey || null,
+      deviceFingerprint: session.deviceFingerprint ?? null,
     };
   },
 });
@@ -179,8 +181,10 @@ export const createSessionInternal = internalMutation({
     clientPublicKey: v.optional(v.string()),
     serverPublicKey: v.optional(v.string()),
     sharedKey: v.optional(v.string()),
+    // A fresh OTPless-verified sign-in (validate-token): brings back a removed device.
+    reactivate: v.optional(v.boolean()),
   },
-  handler: async (ctx, { otplessUserId, deviceFingerprint, clientPublicKey, serverPublicKey, sharedKey }) => {
+  handler: async (ctx, { otplessUserId, deviceFingerprint, clientPublicKey, serverPublicKey, sharedKey, reactivate }) => {
     const account = await ctx.db
       .query("accounts")
       .withIndex("by_otpless_id", (q) => q.eq("otplessUserId", otplessUserId))
@@ -191,6 +195,11 @@ export const createSessionInternal = internalMutation({
     }
     if (account.status !== "active") {
       throw new Error(`Account is ${account.status}`);
+    }
+
+    // A device the owner removed gets no session until someone signs in on it again.
+    if (deviceFingerprint && !(await noteDevice(ctx, otplessUserId, deviceFingerprint, reactivate === true))) {
+      throw new Error("device_removed");
     }
 
     // Clean up expired sessions

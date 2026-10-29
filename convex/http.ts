@@ -299,6 +299,7 @@ async function validateRequest(
     plan: string;
     ai_credits: number;
     sharedKey: string | null;
+    deviceFingerprint: string | null;
   };
 } | Response> {
   const authHeader = request.headers.get("Authorization");
@@ -992,7 +993,8 @@ http.route({
       const msg = typeof err?.message === "string" ? err.message : "";
       const status = msg.includes("not found") ? 404 : 403;
       return new Response(
-        JSON.stringify({ error: "Session creation failed" }),
+        // The app tells a removed device apart: it must sign in again, not retry.
+        JSON.stringify({ error: msg.includes("device_removed") ? "device_removed" : "Session creation failed" }),
         { status, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -1043,14 +1045,56 @@ http.route({
         { status: 404, headers: { "Content-Type": "application/json" } }
       );
     }
+    // Activations = the devices actually signed in (the stored counter never changed).
+    const devices = await ctx.runQuery(internal.devices.listDevices, {
+      otplessUserId: account.otplessUserId,
+      currentFingerprint: account.deviceFingerprint,
+    });
 
     return await buildResponse(
-      fullAccount,
+      { ...fullAccount, activations: Math.max(devices.length, 1) },
       200,
       request.headers.get("X-Encryption") === "ecdh-aes-256-gcm",
       account.sharedKey,
       request,
     );
+  }),
+});
+
+// GET /api/account/devices — the owner's signed-in devices (Account → Devices)
+http.route({
+  path: "/api/account/devices",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    const devices = await ctx.runQuery(internal.devices.listDevices, {
+      otplessUserId: account.otplessUserId,
+      currentFingerprint: account.deviceFingerprint,
+    });
+    const encrypted = request.headers.get("X-Encryption") === "ecdh-aes-256-gcm";
+    return await buildResponse({ devices }, 200, encrypted, account.sharedKey, request);
+  }),
+});
+
+// POST /api/account/devices/remove { deviceId } — sign another device out
+http.route({
+  path: "/api/account/devices/remove",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const deviceId = typeof body?.deviceId === "string" ? body.deviceId.slice(0, 64) : "";
+    if (!deviceId) return await buildResponse({ ok: false, error: "deviceId is required" }, 400, encrypted, account.sharedKey, request);
+    const r = await ctx.runMutation(internal.devices.removeDevice, {
+      otplessUserId: account.otplessUserId,
+      deviceId,
+      currentFingerprint: account.deviceFingerprint,
+    });
+    return await buildResponse(r, r.ok ? 200 : 400, encrypted, account.sharedKey, request);
   }),
 });
 
@@ -2696,6 +2740,7 @@ http.route({
       const session = await ctx.runMutation(internal.sessions.createSessionInternal, {
         otplessUserId: identity.userId,
         deviceFingerprint: deviceFingerprint || undefined,
+        reactivate: true, // OTPless just verified this sign-in: a removed device comes back
       });
       return new Response(JSON.stringify({ session, ...identity }), { status: 200, headers: { "Content-Type": "application/json" } });
     } catch (err: any) {

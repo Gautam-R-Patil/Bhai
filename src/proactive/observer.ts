@@ -30,7 +30,7 @@ import {
 } from "./kill-switches.js";
 import * as native from "../../native/index.js";
 import { getToneReminder } from "../setup/personality-sync.js";
-import { getChannelSender } from "../tools/channel-send.js";
+import { getChannelSender, type ProactiveButton } from "../tools/channel-send.js";
 import { SourceRegistry } from "./sources/registry.js";
 import type { IntentSourceModule } from "./sources/source.js";
 import { getInboxManager } from "./inbox/manager.js";
@@ -61,6 +61,8 @@ const SOURCE_WEIGHTS: Record<IntentSource, number> = {
     // They're soft, time-gated, and never urgent; the dispatcher should
     // hold them when anything else competes for the same channel slot.
     onboarding_graduation: 0.4,
+    commitment_due: 1.3,
+    memory_digest: 1.0,
 };
 
 const BOUNDARY_WINDOW_MS = 120_000;          // 2-minute window after a boundary
@@ -89,6 +91,18 @@ export function resolveChannel(pref: Channel | "any"): Channel {
         if (c && getChannelSender(c)) return c;
     }
     return pref === "any" ? "telegram" : pref;
+}
+
+/**
+ * Nothing went out (sender refused, compose failed): the scheduler gives the channel its slot
+ * back. A morning batch took one slot and `topics` topics.
+ */
+function refund(channel: Channel, topics = 1): void {
+    try {
+        native.schedulerRefund?.(channel, topics); // an older native binary lacks it
+    } catch {
+        /* native scheduler unavailable */
+    }
 }
 
 export class Observer {
@@ -393,10 +407,14 @@ export class Observer {
                 if (intent) intents.push(intent);
             }
             if (intents.length > 0) {
+                let sent = false;
                 try {
                     const composed = await composeMorningBatch(intents, channel, recent, { llm: this.deps.llm });
                     if (composed) {
-                        await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                        if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag)) {
+                            sent = true;
+                            for (const intent of intents) this.registry.dispatched(intent);
+                        }
                         this.telemetry().log({
                             intentId: intents[0].id,
                             source: intents[0].source,
@@ -422,6 +440,7 @@ export class Observer {
                     debugProactive("observer_morning_batch_failed", { channel, err: (err as Error).message });
                 } finally {
                     for (const intent of intents) this.intentsById.delete(intent.id);
+                    if (!sent) refund(channel, intents.length);
                 }
             }
         }
@@ -437,6 +456,7 @@ export class Observer {
                 decision: "released",
             });
             const intentRecent = this.recentSendsByChannel.get(channel) ?? [];
+            let sent = false;
             try {
                 const composed = await compose(intent, channel, { tone: getToneReminder() ?? "warm" }, intentRecent, {
                     llm: this.deps.llm,
@@ -458,6 +478,7 @@ export class Observer {
                     const inbox = getInboxManager();
                     if (inbox) {
                         inbox.enqueue(intent, composed.text);
+                        sent = true;
                         debugProactive("observer_routed_to_inbox", { id: intent.id });
                         // Inbox-routed dispatch: log under "overlay" as the
                         // effective channel where the user sees the prompt.
@@ -477,7 +498,12 @@ export class Observer {
                     debugProactive("observer_inbox_absent_fallback", { id: intent.id });
                 }
 
-                await dispatchProactiveMessage(channel, composed.text, composed.modeTag);
+                const buttons = intent.payload.buttons as ProactiveButton[] | undefined;
+                const ownerOnly = intent.payload.ownerOnly === true;
+                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag, buttons, ownerOnly)) {
+                    sent = true;
+                    this.registry.dispatched(intent);
+                }
                 this.telemetry().log({
                     intentId: intent.id,
                     source: intent.source,
@@ -498,6 +524,7 @@ export class Observer {
                 });
             } finally {
                 this.intentsById.delete(id);
+                if (!sent) refund(channel);
             }
         }
     }

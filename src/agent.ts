@@ -78,22 +78,29 @@ import type { ChatCompletionMessageParam, LLMClient, ThinkingLevel } from "./llm
 import { MODEL_DISPLAY, MODELS } from "./llm.js";
 import { getLocationSnippet, getTimezone } from "./location/index.js";
 import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
-import { BRIEFING_MIN_CHARS, generateMemoryBriefing, USE_MEMORY_BRIEFING } from "./memory/briefing.js";
+import { bhaiDidMemory, didLine } from "./memory/bhai-did.js";
+import { buildMemoryCards } from "./memory/cards.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
 import { getEpisodicSnippet } from "./memory/episodic.js";
 import { createGoal, detectGoalFromMessage, getGoalsSnippet } from "./memory/goals.js";
 import { getIdentityPromptSnippet } from "./memory/identity.js";
-import { findEntities, getKnowledgeGraphDB } from "./memory/knowledge-graph.js";
 import { getProjectMemorySnippet } from "./memory/project-memory.js";
 import { runReflection } from "./memory/reflection.js";
 import { getRelationshipSnippet } from "./memory/relationship.js";
-import { getSelfModelSnippet, recordOutcome as recordSelfModelOutcome } from "./memory/self-model.js";
 import { getSelfStateSnippet } from "./memory/self-state.js";
-import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./memory/session.js";
+import {
+    appendTurn,
+    getSessionState,
+    getSessionSummary,
+    getShortSummary,
+    shouldReflect,
+    touchSession,
+    updateSessionGoal,
+} from "./memory/session.js";
 // ── Dynamic Context Injections ────────────────
-import { getCoreMemory, recall, recallConversation } from "./memory/sqlite.js";
+import { ageLabel, getCoreMemory, parseDateWindow, recall, recallConversation, remember } from "./memory/sqlite.js";
 import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
 import {
     buildPlaybook,
@@ -105,9 +112,7 @@ import {
 } from "./memory/playbooks.js";
 import { demoteLearnings, getTaskLearningsContext, upsertLearning } from "./memory/task-learnings.js";
 import { getTraitsForInjection, resetSessionTraitCaps } from "./memory/traits.js";
-import { getUserModelSnippet } from "./memory/user-model.js";
 import { getWMSnippet, reflect as wmReflect, retain as wmRetain } from "./memory/working-memory.js";
-import { recordFailure as recordWorldFailure, recordSuccess as recordWorldSuccess } from "./memory/world-model.js";
 import {
     classifyOrchestratorComplexity,
     claudeTier,
@@ -144,11 +149,13 @@ import {
     recordToolSuccess,
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
+import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
-import { withSendLedger } from "./tools/send-ledger.js";
+import { sendFailed, withSendLedger } from "./tools/send-ledger.js";
+import { ownerMemoryTool } from "./tools/tool-intelligence.js";
 
 // ── Music fast-path helpers ──────────────────────
-// Short-circuits the Sonnet orchestrator + heavy memory briefing when the LLM
+// Short-circuits the Sonnet orchestrator + memory injection when the LLM
 // classifier is highly confident the user is asking for simple music playback.
 // Fails open: any misfire falls through to the normal agent path.
 
@@ -170,7 +177,7 @@ interface MusicFastPathContext {
 /**
  * True iff the current turn is a simple, high-confidence music-playback command.
  * When this returns true, the agent skips the Sonnet orchestrator, the
- * full memory briefing, and the auto-verification loop.
+ * memory injection, and the auto-verification loop.
  */
 function isMusicFastPathEligible(opts: {
     userMessage: string;
@@ -238,7 +245,7 @@ async function musicMemoryPeek(userMessage: string, llmForRecall: LLMClient): Pr
 }
 
 // Cheap synchronous heuristic used BEFORE the LLM classifier has run. It's used
-// only to skip the expensive memory briefing — any false positive here just
+// only to skip the memory injection — any false positive here just
 // means the user gets a lighter memory context on a non-music turn, not a
 // broken agent. Keep it conservative to minimise those misses.
 const MUSIC_HEURISTIC_PATTERN =
@@ -421,6 +428,17 @@ const HARD_DECISION_TOOLS = new Set(["web_search", "shell_exec", "memory_store"]
 /** Tools whose results don't affect conversation flow — executed in background, synthetic success returned immediately */
 const DEFERRABLE_TOOLS = new Set(["memory_store"]);
 
+/** A pin or supersede can be refused, so the model must see the real result rather than "Saved.". */
+export function isDeferrable(tc: { function: { name: string; arguments: string } }): boolean {
+    if (!DEFERRABLE_TOOLS.has(tc.function.name)) return false;
+    try {
+        const a = JSON.parse(tc.function.arguments || "{}");
+        return a.pin_id == null && a.supersedes == null && a.pin !== true;
+    } catch {
+        return true;
+    }
+}
+
 /** Strip internal debug tags and LLM artifacts from responses before returning to channels */
 function sanitizeAgentResponse(text: string): string {
     return text
@@ -506,6 +524,39 @@ export function antiGivingUpFailures(
     const fire = (isDelegatingToUser && isActionTask && responseText.length < 200) || isGivingUp;
     return fire ? failures : 0;
 }
+
+/**
+ * A reply that says the task isn't finished and asks leave for its own next step, when
+ * that step only looks ("Want me to take a screenshot and read them?"). Looking is part
+ * of the task the owner already gave; asking first just stalls it. A step with effects
+ * outside (send, pay, delete…) still gets asked.
+ */
+export function asksLeaveToLook(responseText: string, canSeeScreen = false): boolean {
+    if (takeStuckMarker(responseText).stuck) return false;
+    const l = responseText.toLowerCase().replace(/[’‘]/g, "'");
+    // "I can't read the name. If you can see it in the Wi-Fi menu, tell me": with screen
+    // tools in hand, looking is Bhai's job, not the owner's.
+    if (
+        canSeeScreen &&
+        /\b(can't|cannot|couldn't|unable to|not able to)\b/.test(l) &&
+        /\bif you (can )?(see|check|look|open|click)\b|\b(check|look at|read) (it|that|the [a-z -]{1,30}) (yourself|on your screen)\b|\byou(?:'ll| will| can) (see|find) (it|the [a-z -]{1,30}) (in|on|under)\b/.test(
+            l,
+        )
+    )
+        return true;
+    if (!/\b(haven't|have not|not yet|isn't (finished|done|complete)|not (finished|done|complete))\b/.test(l)) return false;
+    const ask = /\b(?:do you want me to|want me to|should i|shall i)\b([^?]{0,100})\?/.exec(l)?.[1];
+    return (
+        !!ask &&
+        /\b(screenshot|read|look|check|scan|list|inspect|search|see|open it)\b/.test(ask) &&
+        !/\b(send|post|buy|pay|delete|remove|submit|order|book|reply|email|message|call|share|install)\b/.test(ask)
+    );
+}
+
+// There is no in-app purchase yet (Account shows the balance only), so don't send people
+// looking for a top-up button.
+const OUT_OF_CREDITS_REPLY =
+    "You're out of AI credits, so I can't do this right now. Credits can't be bought in the app yet: reach the TRUSCOR team for more, then ask me again.";
 
 // ── Milestone tool descriptions ───────────────
 
@@ -632,6 +683,8 @@ export interface AgentResponse {
     stuck?: boolean;
     /** The screenshot taken after the turn's last action, for the owner's private chat (pickReceipt). */
     receipt?: Receipt;
+    /** The memory this owner turn stored last, for a one-tap "Forget that" (memoryUndoAction). */
+    memoryUndo?: { id: number; at: number };
 }
 
 export interface ChannelContext {
@@ -925,7 +978,7 @@ async function executeAndProcessToolCall(
             reason: (fnArgs.reason as string) || "",
         });
         console.log(`  🔧 Tool call: ${fnName}`, JSON.stringify(fnArgs));
-        console.log(`  ✅ Tool result: ${result.substring(0, 500)}`);
+        console.log(`  ✅ Tool result: ${ownerMemoryTool(fnName) ? `(${result.length} chars)` : result.substring(0, 500)}`);
         return {
             toolCallId: toolCall.id,
             fnName,
@@ -937,7 +990,7 @@ async function executeAndProcessToolCall(
         };
     }
 
-    console.log(`  🔧 Tool call: ${fnName}`, JSON.stringify(fnArgs));
+    console.log(`  🔧 Tool call: ${fnName}`, JSON.stringify(ownerMemoryTool(fnName) ? Object.keys(fnArgs) : fnArgs));
 
     // ── Pre-flight: catch obvious precondition failures before wasting
     // an actual tool round-trip. Fails open on any error; only short-circuits
@@ -1023,7 +1076,7 @@ async function executeAndProcessToolCall(
     }
     // Stop reaches long waits on the owner, also inside sub-agents/swarms this call starts.
     const runTool = () => {
-        const run = () => withTurnSignal(signal, () => executeTool(fnName, execArgs));
+        const run = () => runAsMainLoopTool(fnName, () => withTurnSignal(signal, () => executeTool(fnName, execArgs)));
         return vault ? runVaultCall(vault, run) : run();
     };
     let rawResult = await runTool();
@@ -1129,7 +1182,7 @@ async function executeAndProcessToolCall(
     }
 
     let result = truncateToolResult(fnName, workingResult);
-    console.log(`  ✅ Tool result: ${result.substring(0, 500)}`);
+    console.log(`  ✅ Tool result: ${ownerMemoryTool(fnName) ? `(${result.length} chars)` : result.substring(0, 500)}`);
 
     // Fence attacker-influenceable tool output (web/browser/MCP/research) so the
     // model treats it as data, not instructions (indirect prompt-injection
@@ -1210,7 +1263,7 @@ async function executeToolCallsBatch(
         const fnName = tc.function.name;
         if (isBrowserTool(fnName)) {
             browserCalls.push(tc);
-        } else if (DEFERRABLE_TOOLS.has(fnName)) {
+        } else if (isDeferrable(tc)) {
             deferrableCalls.push(tc);
         } else {
             nonBrowserCalls.push(tc);
@@ -1413,11 +1466,17 @@ export async function runAgent(
         const mod = await import("./tools/cron-tool.js");
         let res: AgentResponse;
         const nudges = new Set<object>();
+        const caller: import("./tools/cron-tool.js").CronCallerContext = {
+            isOwner: callerIsOwner,
+            autonomous: channelContext?.autonomous === true,
+            isPrivate: channelContext?.isPrivate === true,
+            message: stripChannelTags(userMessage),
+        };
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
             const turn = () =>
                 runWithTurnNudges(nudges, () =>
-                    mod.runWithCallerContext({ isOwner: callerIsOwner }, () => trackCursorTurn(fn)),
+                    mod.runWithCallerContext(caller, () => trackCursorTurn(fn)),
                 );
             // Turns share one send ledger (send-ledger.ts); an autonomous run gets its own,
             // so a recurring cron job may send the same text on its next tick.
@@ -1454,6 +1513,8 @@ export async function runAgent(
             res.text = reveal(res.text);
         }
         if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") noteOwnerReply(res.text, userMessage);
+        // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
+        if (caller.storedMemory && channelContext?.isPrivate === true && res) res.memoryUndo = caller.storedMemory;
         return res;
     };
     if (!isForked) {
@@ -1581,15 +1642,16 @@ async function _runAgentBody(
             .catch(() => {});
     }
 
-    // ── Goal detection: check if user mentioned a goal ──
-    try {
-        const detectedGoal = ownerTurn ? detectGoalFromMessage(userIntentText) : null;
-        if (detectedGoal) {
-            createGoal(detectedGoal.description, detectedGoal.deadline ?? undefined);
-            console.log(`  🎯 Goal detected: "${detectedGoal.description}"`);
+    // ── Goal detection: only the owner's own words become the owner's goals ──
+    if (channelContext?.isOwner && !channelContext.autonomous) {
+        try {
+            const detectedGoal = detectGoalFromMessage(userIntentText);
+            if (detectedGoal && createGoal(detectedGoal.description, detectedGoal.deadline ?? undefined) > 0) {
+                console.log(`  🎯 Goal detected: "${detectedGoal.description}"`);
+            }
+        } catch {
+            /* non-fatal */
         }
-    } catch {
-        /* non-fatal */
     }
 
     // When running on a fork, use the fork instead of global history
@@ -1599,7 +1661,9 @@ async function _runAgentBody(
     const maybeReflect = () => {
         if (!isForked && shouldReflect()) {
             console.log(`  🔄 Triggering async reflection (periodic)`);
-            runReflection(llm, [...workingHistory]).catch((err) => console.error("Reflection error (non-fatal):", err));
+            runReflection(llm, [...workingHistory], getSessionState()?.session_id).catch((err) =>
+                console.error("Reflection error (non-fatal):", err),
+            );
         }
     };
 
@@ -1647,7 +1711,8 @@ async function _runAgentBody(
         workingHistory.push({ role: "user", content: content as unknown as string });
 
         // ── Multimodal Memory: store image embeddings for cross-modal retrieval ──
-        try {
+        // The owner's images only: a contact's photo isn't the owner's memory.
+        if (ownerTurn) try {
             const { storeImageEmbedding } = await import("./memory/multimodal-embedding.js");
             const { embedText } = await import("./memory/embeddings.js");
             for (const m of media) {
@@ -1691,6 +1756,7 @@ async function _runAgentBody(
     let lastUsedModel: string | undefined; // Track model for credit deduction
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
+    let lookNudged = false; // asksLeaveToLook fires once per run
     const receiptFor = async (text: string): Promise<Receipt | undefined> => {
         const receipt = pickReceipt(verifyGate, {
             stuck: takeStuckMarker(text).stuck,
@@ -1702,17 +1768,34 @@ async function _runAgentBody(
     // Playbooks: every tool call this turn, and the learnings shown to it.
     const turnCalls: PlaybookCall[] = [];
     const injectedLearnings = new Set<string>();
+    // What went out this turn (sends, files, calendar events), for its 'bhai_did' memory.
+    const didLines: string[] = [];
     const recordBatch = (batch: ToolCallResult[]) => {
         recordBatchForVerifyGate(verifyGate, batch);
         // Lane order, like the gate: a screen check batched with a browser action may have run before it.
         for (const r of inLaneOrder(batch)) {
             turnCalls.push({ fnName: r.fnName, fnArgs: r.fnArgs, failed: toolFailed(r) });
+            const did =
+                !toolFailed(r) && !sendFailed(r.fnName, r.result) && didLine(r.fnName, r.fnArgs, userIntentText);
+            if (did) didLines.push(did);
         }
     };
     // A verified win teaches a playbook; a failed replay demotes what it was shown.
     // A Retry/Skip handoff turn is keyed by the report it replies to, or learns nothing.
     const playbookTask = playbookTaskText(rawUserMessage, userIntentText);
     const settleLearnings = (reply: string, stuck = takeStuckMarker(reply).stuck) => {
+        const did = bhaiDidMemory(didLines.splice(0), {
+            isOwner: channelContext?.isOwner === true,
+            autonomous: channelContext?.autonomous === true,
+            stuck,
+            secret: verifyGate.secretSeen === true,
+            failed: verifyGate.lastMutatorFailed === true,
+        });
+        if (did) {
+            remember(did, "bhai_did", "", 3, "tool").catch((err) =>
+                console.warn("[MEMORY] bhai_did skipped:", (err as Error).message),
+            );
+        }
         if (channelContext?.isOwner !== true || playbookTask === undefined) return;
         try {
             const pb = buildPlaybook(playbookTask, turnCalls, reply, stuck);
@@ -2103,9 +2186,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // Auto-inject relevant memory and strategies on the first iteration of a user's prompt
         let activeInjection = "";
         // Music fast-path state. Phase-1 is set BEFORE the tool-selection await
-        // (heuristic only — skips the heavy memory briefing). Phase-2 is set
+        // (heuristic only — skips the memory injection). Phase-2 is set
         // AFTER the await when the LLM classifier has populated its output.
-        let musicFastPathPhase1 = false; // heuristic match — skip briefing only
+        let musicFastPathPhase1 = false; // heuristic match — skip memory injection only
         let musicFastPathActive = false; // full classifier match — skip orchestrator + verification + auto-reply
         let musicFastPathHint: string | undefined;
         let toolSelectionPromise: Promise<Awaited<ReturnType<typeof selectTools>>> | null = null;
@@ -2156,7 +2239,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     // Give reflection a moment so its DB writes usually land before
                     // memory retrieval, but never hold the user's first message
                     // after a break for its 2-4 LLM calls; it finishes in the background.
-                    const reflection = runReflection(llm, preSessionHistory).catch((err) =>
+                    const reflection = runReflection(
+                        llm,
+                        preSessionHistory,
+                        expiredSession.session_id,
+                        getShortSummary(expiredSession),
+                    ).catch((err) =>
                         console.error("[MEMORY][REFLECTION] Expired session reflection failed:", err),
                     );
                     await Promise.race([reflection, new Promise((r) => setTimeout(r, 1500))]);
@@ -2231,9 +2319,62 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // starved its timeout (a 5s budget took 15s on "… my code doesn't build.
             // roast me"), so they start once routing settles and are skipped on a
             // chat-lane turn. Memory retrieval below does not wait for either; the
-            // parts are spliced back in at this position before the context cap.
+            // parts go last, so the context cap cuts them before core memory.
             const buildCodingContext = async (): Promise<string[]> => {
                 const parts: string[] = [];
+                // ── Coding complexity classification ──
+                // Inject a short reminder telling the agent which flow to
+                // follow: trivial skips design-docs, standard implements
+                // directly with Pro tier, complex triggers the full PRD →
+                // approval → walkthrough ceremony.
+                try {
+                    const { classifyCodingComplexity } = await import("./model-router.js");
+                    const c = classifyCodingComplexity(userMessage);
+                    if (c === "complex") {
+                        parts.push(
+                            '<coding_complexity level="complex">\n' +
+                                "This task is classified as COMPLEX (multi-file / architectural / new-system / high-stakes).\n" +
+                                "YOU MUST follow the full flow in prompts/coding.md §Complex coding:\n" +
+                                "  1. generate_design_docs → auto-enters awaiting_approval mode\n" +
+                                "  2. render_md_to_pdf (TG/WA) or deliver MD (overlay/Discord/Slack)\n" +
+                                "  3. Wait for the user to approve, then call approve_design_docs\n" +
+                                "  4. Implement on Pro tier\n" +
+                                "  5. demo_project (if runnable) → generate_walkthrough → deliver with screenshots/recording\n" +
+                                "Do NOT skip Phase 1 — the tool machinery will refuse code edits until approval lands.\n" +
+                                "</coding_complexity>",
+                        );
+                    } else if (c === "trivial") {
+                        parts.push(
+                            '<coding_complexity level="trivial">\n' +
+                                "This is a trivial edit (one-liner / typo / rename / log statement). Skip the design-docs flow and implement directly. Light tier is acceptable.\n" +
+                                "</coding_complexity>",
+                        );
+                    } else {
+                        parts.push(
+                            '<coding_complexity level="standard">\n' +
+                                "Standard-scope coding task: debug / single feature / targeted fix. Implement directly on Pro tier. Skip design docs, but still finish with a short recap of what changed.\n" +
+                                "</coding_complexity>",
+                        );
+                    }
+                } catch {
+                    /* classifier unavailable — don't block the agent */
+                }
+
+                // ── Past coding-strategy recall (Phase 4E read side) ──
+                // For coding tasks, surface the code-category task-learnings separately
+                // from the general recall so previously-validated patterns aren't
+                // crowded out by browser/os/app entries when the top-3 is shared.
+                // Owner-only: playbooks quote the owner's own task messages.
+                try {
+                    const codingLearnings =
+                        channelContext?.isOwner === false
+                            ? ""
+                            : getTaskLearningsContext(rawUserMessage, "code", injectedLearnings);
+                    if (codingLearnings) parts.push(codingLearnings);
+                } catch {
+                    /* task-learnings not initialized */
+                }
+
                 // ── Project memory (ATLAS.md walk-up) ──
                 // Only for coding-classified queries to avoid injecting
                 // project conventions into chat/research flows.
@@ -2303,62 +2444,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 const safeArch = await guardContext("architecture", arch);
                 if (safeRepoMap) parts.push(safeRepoMap);
                 if (safeArch) parts.push(safeArch);
-
-                // ── Past coding-strategy recall (Phase 4E read side) ──
-                // For coding tasks, surface the code-category task-learnings ahead
-                // of the general recall so previously-validated patterns aren't
-                // crowded out by browser/os/app entries when the top-3 is shared.
-                // Owner-only: playbooks quote the owner's own task messages.
-                try {
-                    const codingLearnings =
-                        channelContext?.isOwner === false
-                            ? ""
-                            : getTaskLearningsContext(rawUserMessage, "code", injectedLearnings);
-                    if (codingLearnings) parts.push(codingLearnings);
-                } catch {
-                    /* task-learnings not initialized */
-                }
-
-                // ── Coding complexity classification ──
-                // Inject a short reminder telling the agent which flow to
-                // follow: trivial skips design-docs, standard implements
-                // directly with Pro tier, complex triggers the full PRD →
-                // approval → walkthrough ceremony.
-                try {
-                    const { classifyCodingComplexity } = await import("./model-router.js");
-                    const c = classifyCodingComplexity(userMessage);
-                    if (c === "complex") {
-                        parts.push(
-                            '<coding_complexity level="complex">\n' +
-                                "This task is classified as COMPLEX (multi-file / architectural / new-system / high-stakes).\n" +
-                                "YOU MUST follow the full flow in prompts/coding.md §Complex coding:\n" +
-                                "  1. generate_design_docs → auto-enters awaiting_approval mode\n" +
-                                "  2. render_md_to_pdf (TG/WA) or deliver MD (overlay/Discord/Slack)\n" +
-                                "  3. Wait for the user to approve, then call approve_design_docs\n" +
-                                "  4. Implement on Pro tier\n" +
-                                "  5. demo_project (if runnable) → generate_walkthrough → deliver with screenshots/recording\n" +
-                                "Do NOT skip Phase 1 — the tool machinery will refuse code edits until approval lands.\n" +
-                                "</coding_complexity>",
-                        );
-                    } else if (c === "trivial") {
-                        parts.push(
-                            '<coding_complexity level="trivial">\n' +
-                                "This is a trivial edit (one-liner / typo / rename / log statement). Skip the design-docs flow and implement directly. Light tier is acceptable.\n" +
-                                "</coding_complexity>",
-                        );
-                    } else {
-                        parts.push(
-                            '<coding_complexity level="standard">\n' +
-                                "Standard-scope coding task: debug / single feature / targeted fix. Implement directly on Pro tier. Skip design docs, but still finish with a short recap of what changed.\n" +
-                                "</coding_complexity>",
-                        );
-                    }
-                } catch {
-                    /* classifier unavailable — don't block the agent */
-                }
                 return parts;
             };
-            const codingInsertAt = parts.length;
             const codingPartsPromise: Promise<string[]> =
                 detectTaskType(rawUserMessage) !== "coding"
                     ? Promise.resolve([])
@@ -2441,23 +2528,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 }
             }
 
-            // ── 10. User model (aggregated profile: projects, routines, style) ──
-            if (queryMode !== "llm_only") {
-                try {
-                    const userModelSnippet = await getUserModelSnippet();
-                    if (userModelSnippet) parts.push(userModelSnippet);
-                } catch {
-                    /* user model not initialized */
-                }
-            }
-
             try {
                 // Core Identity & Important Facts (Always injected)
                 const coreMems = getCoreMemory(getDimensionValue<number>("memory.coreMemory.k") ?? 10);
                 if (coreMems && coreMems.length > 0) {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    noteShownMemories(coreMems.map((m) => m.id));
                     parts.push(
-                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")}`,
+                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}${m.pinned ? " · pinned" : ""}) ${m.content}`).join("\n")}`,
                     );
                 }
 
@@ -2490,14 +2567,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     }
 
                     const [queriedMems, pastConvos, learningsCtx] = await Promise.all([
-                        recall(enrichedQuery, recallK, llm, queryMode, undefined, embeddingPromise).catch(() => []),
-                        Promise.resolve().then(() => {
-                            try {
-                                return recallConversation(rawUserMessage, convRecallK);
-                            } catch {
-                                return [];
-                            }
-                        }),
+                        // Summaries already arrive as PAST CONVERSATIONS; the window comes from this message only.
+                        recall(enrichedQuery, recallK, llm, queryMode, undefined, embeddingPromise, {
+                            excludeCategories: ["session_summary"],
+                            ...parseDateWindow(rawUserMessage),
+                        }).catch(() => []),
+                        recallConversation(rawUserMessage, convRecallK).catch(() => []),
                         Promise.resolve().then(() => {
                             // Owner-only: playbooks quote the owner's own task messages.
                             if (channelContext?.isOwner === false) return null;
@@ -2515,34 +2590,26 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const topScore = queriedMems.length > 0 ? ((queriedMems[0] as any).score ?? 0) : 0;
                     if (_harnessTraceId) recordMemoryHit(_harnessTraceId, uniqueMems.length, topScore);
-                    if (uniqueMems && uniqueMems.length > 0) {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    // Owner-only, never in groups: contacts, group chats and autonomous runs keep the plain list.
+                    const { cards, ids, rest } =
+                        channelContext?.isOwner !== false &&
+                        channelContext?.isPrivate === true &&
+                        !channelContext?.autonomous
+                            ? buildMemoryCards(rawUserMessage, uniqueMems, new Set(coreMems.map((c) => c.id)))
+                            : { cards: "", ids: [], rest: uniqueMems };
+                    if (cards) {
+                        noteShownMemories(ids);
+                        parts.push(cards);
+                    }
+                    if (rest.length > 0) {
+                        noteShownMemories(rest.map((m) => m.id));
                         parts.push(
-                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")}`,
+                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${rest.map((m) => `- (#${m.id} · ${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
                         );
                     }
 
-                    // Knowledge graph entity lookup (sync — fast SQLite)
-                    try {
-                        const kgDb = getKnowledgeGraphDB();
-                        if (kgDb) {
-                            const entities = findEntities(kgDb, rawUserMessage);
-                            if (entities.length > 0) {
-                                const entityLines = entities
-                                    .slice(0, 5)
-                                    .map(
-                                        (e) =>
-                                            `- [${e.type}] ${e.name}${e.properties && Object.keys(e.properties).length > 0 ? ` (${JSON.stringify(e.properties)})` : ""}`,
-                                    );
-                                parts.push(`🔗 RELATED ENTITIES:\n${entityLines.join("\n")}`);
-                            }
-                        }
-                    } catch {
-                        /* KG not initialized */
-                    }
-
                     if (pastConvos.length > 0) {
-                        const convoLines = pastConvos.map((c) => `- [${c.created_at}] ${c.summary}`);
+                        const convoLines = pastConvos.map((c) => `- [${ageLabel(c.created_at)}] ${c.summary}`);
                         parts.push(`💬 PAST CONVERSATIONS:\n${convoLines.join("\n")}`);
                     }
 
@@ -2580,19 +2647,11 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── Working memory (active context from recent tool results & facts) ──
             try {
-                await wmReflect(rawUserMessage);
+                if (ownerTurn) await wmReflect(rawUserMessage); // working memory is the owner's
                 const wmSnippet = getWMSnippet();
                 if (wmSnippet) parts.push(wmSnippet);
             } catch {
                 /* working memory not initialized */
-            }
-
-            // ── Self-model (capability confidence) ──
-            try {
-                const selfSnippet = getSelfModelSnippet();
-                if (selfSnippet) parts.push(selfSnippet);
-            } catch {
-                /* self-model not ready */
             }
 
             // ── Active goals ──
@@ -2612,17 +2671,6 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 if (cfSnippet) parts.push(cfSnippet);
             } catch {
                 /* counterfactual not ready */
-            }
-
-            // ── Prospective triggers ──
-            // Surfaces user-set reminders / triggers that might fire on this
-            // turn (e.g. "when I mention the deploy, show me the runbook").
-            try {
-                const { getProspectiveSnippet } = await import("./memory/prospective.js");
-                const proSnippet = getProspectiveSnippet();
-                if (proSnippet) parts.push(proSnippet);
-            } catch {
-                /* prospective not ready */
             }
 
             try {
@@ -2751,7 +2799,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 - After this chat, you'll remember everything. Never re-introduce or re-ask.`);
             }
 
-            parts.splice(codingInsertAt, 0, ...(await codingPartsPromise));
+            parts.push(...(await codingPartsPromise));
 
             // Contact agents: drain ALL owner memory that was just collected and
             // replace with only the contact's own profile. The LLM must not have
@@ -2829,53 +2877,14 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 }
 
                 // Phase-1 heuristic: if this looks like a simple music command, skip the
-                // expensive memory briefing. False positives here are low-cost — the user
+                // memory injection. False positives here are low-cost — the user
                 // just gets a leaner context on a non-music turn.
                 if (iterations === 1 && !isPlanMode() && isLikelyMusicCommand(rawUserMessage)) {
                     musicFastPathPhase1 = true;
-                    console.log(`  ⚡ Music fast-path phase-1 (heuristic) — skipping memory briefing`);
+                    console.log(`  ⚡ Music fast-path phase-1 (heuristic) — skipping memory injection`);
                 }
 
-                // ── LLM Memory Briefing ──
-                // When enabled, synthesize raw memory fragments into a cohesive briefing
-                // via a cheap Haiku call. Falls back to raw injection on failure.
-                // Small injections go in raw: cheaper than a briefing call, which
-                // also sits on the critical path (see BRIEFING_MIN_CHARS).
-                if (
-                    USE_MEMORY_BRIEFING &&
-                    queryMode !== "llm_only" &&
-                    !musicFastPathPhase1 &&
-                    totalChars > BRIEFING_MIN_CHARS
-                ) {
-                    try {
-                        const rawMemories: Record<string, string> = {};
-                        for (const part of cappedParts) {
-                            // Extract section headers from the parts
-                            const headerMatch = part.match(/^[^\n]+/);
-                            const key = headerMatch
-                                ? headerMatch[0]
-                                      .replace(/[^a-zA-Z0-9_ ]/g, "")
-                                      .trim()
-                                      .substring(0, 40)
-                                : "context";
-                            rawMemories[key] = part;
-                        }
-                        const briefing = await generateMemoryBriefing(llm, rawMemories, rawUserMessage, 400);
-                        if (briefing) {
-                            activeInjection = `[Memory Briefing — synthesized from ${cappedParts.length} memory sources]\n${briefing}`;
-                            console.log(
-                                `  📋 Memory briefing generated (${briefing.length} chars from ${cappedParts.length} sources)`,
-                            );
-                        } else {
-                            // Briefing returned null — fall back to raw injection
-                            activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
-                        }
-                    } catch {
-                        // Briefing failed — fall back to raw injection (fail-open)
-                        activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
-                    }
-                } else if (!musicFastPathPhase1) {
-                    // Briefing disabled or query is llm_only — fall back to raw injection.
+                if (!musicFastPathPhase1) {
                     activeInjection = `[Auto-Injected Memory & Strategy Context]\n${cappedParts.join("\n\n")}`;
                 }
                 // If musicFastPathPhase1 is true, we intentionally inject nothing here.
@@ -3231,14 +3240,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     : "";
 
                 // Include session summary for cases where messages were pruned
-                let sessionCtx = "";
-                try {
-                    const { getSessionSummary } = await import("./memory/session.js");
-                    const summary = getSessionSummary();
-                    if (summary) sessionCtx = `\n\n${summary}`;
-                } catch {
-                    /* session not initialized */
-                }
+                // Owner's session: never in a contact's plan prompt.
+                const summary = isContactAgent ? "" : getSessionSummary();
+                const sessionCtx = summary ? `\n\n${summary}` : "";
 
                 const planRequest = {
                     messages: [
@@ -3407,7 +3411,7 @@ PLAN:`,
             if ((llmErr as { status?: number }).status === 402) {
                 if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
                 return {
-                    text: "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again.",
+                    text: OUT_OF_CREDITS_REPLY,
                     toolCalls: totalToolCalls,
                 };
             }
@@ -3438,7 +3442,7 @@ PLAN:`,
                     const outOfCredits = /run out of (AI )?credits|insufficient credits/i.test(lastLlmError);
                     return {
                         text: outOfCredits
-                            ? "You're out of AI credits, so I can't do this right now. Top up in Settings → Account and ask me again."
+                            ? OUT_OF_CREDITS_REPLY
                             : stuckExitText(
                                   messages,
                                   "I lost my connection to the AI model",
@@ -3548,6 +3552,8 @@ PLAN:`,
         // as a system-role "your own done-criterion".
         if (totalToolCalls === 0 && !turnContract && (!channelContext || channelContext.isOwner)) {
             turnContract = extractDoneContract(assistantMessage.content);
+            if (turnContract && !isForked)
+                updateSessionGoal((findAckLine(assistantMessage.content) ?? turnContract).slice(0, 200));
             const ackLine = contractProgressLine(assistantMessage.content, hasToolCalls);
             if (ackLine && onProgress) {
                 try {
@@ -3723,6 +3729,25 @@ PLAN:`,
                 messages.push({
                     role: "user",
                     content: `Your previous approach didn't work, but the task is NOT done. Don't ask me — try a different approach yourself. ${continuationHint} If your dedicated tool failed, that's fine — you have dozens of other tools. Complete the task, then verify the result.`,
+                });
+                lastToolCalls = undefined;
+                continue;
+            }
+
+            if (
+                !lookNudged &&
+                asksLeaveToLook(
+                    responseText,
+                    toolSelection.categories.some((c) => c === "os_control" || c === "system_controls"),
+                )
+            ) {
+                lookNudged = true;
+                console.log("  🔄 Asked leave to look before finishing — continuing instead");
+                messages.push({ role: "assistant", content: responseText });
+                messages.push({
+                    role: "user",
+                    content:
+                        "You can see my screen yourself: don't ask me to look or ask leave to look. Open what shows it (e.g. the right System Settings pane), read it with os_inspect or a screenshot, finish the task, and give me the actual answer.",
                 });
                 lastToolCalls = undefined;
                 continue;
@@ -4079,30 +4104,8 @@ PLAN:`,
             if (toolFailed(r)) {
                 recordToolFailure(r.fnName, content.substring(0, 200));
                 lastFailedTool = r.fnName;
-                // World model + self-model: track tool failure
-                try {
-                    recordWorldFailure(r.fnName, "tool");
-                } catch {
-                    /* non-fatal */
-                }
-                try {
-                    recordSelfModelOutcome(r.fnName, false, 0);
-                } catch {
-                    /* non-fatal */
-                }
             } else {
                 recordToolSuccess(r.fnName);
-                // World model + self-model: track tool success
-                try {
-                    recordWorldSuccess(r.fnName, "tool");
-                } catch {
-                    /* non-fatal */
-                }
-                try {
-                    recordSelfModelOutcome(r.fnName, true, 0);
-                } catch {
-                    /* non-fatal */
-                }
                 // If previous tool failed and this one succeeded → record recovery
                 if (lastFailedTool) {
                     recordToolRecovery(lastFailedTool, r.fnName, `${lastFailedTool} failed → ${r.fnName} succeeded`);
@@ -4144,7 +4147,7 @@ PLAN:`,
                 const resultText = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
                 const importance = r.isError ? 0.3 : resultText.length > 200 ? 0.7 : 0.5;
                 const summary = resultText.length > 150 ? `${resultText.substring(0, 150)}...` : resultText;
-                wmRetain(`tool_${r.toolCallId}`, "tool_result", `[${r.fnName}] ${summary}`, importance);
+                if (ownerTurn) wmRetain(`tool_${r.toolCallId}`, "tool_result", `[${r.fnName}] ${summary}`, importance);
             } catch {
                 /* working memory not initialized */
             }

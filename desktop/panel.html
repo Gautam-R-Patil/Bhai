@@ -65,15 +65,6 @@
                     </svg>
                     <span>Chats</span>
                 </button>
-                <button class="nav-item" data-tab="memory" onclick="switchTab('memory')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path
-                            d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
-                        <line x1="10" y1="22" x2="14" y2="22" />
-                    </svg>
-                    <span>Memory</span>
-                </button>
                 <button class="nav-item" data-tab="channels" onclick="switchTab('channels')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -117,15 +108,6 @@
                         <circle cx="12" cy="7" r="4"></circle>
                     </svg>
                     <span>Account</span>
-                </button>
-                <button class="nav-item" data-tab="about" onclick="switchTab('about')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="16" x2="12" y2="12"></line>
-                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                    </svg>
-                    <span>About</span>
                 </button>
                 <span class="nav-pill" aria-hidden="true"></span>
             </div>
@@ -304,27 +286,17 @@
             <div class="tab-content" id="tab-settings">
                 <div class="tab-header">
                     <h2 class="tab-title">Settings</h2>
-                    <button class="btn btn-primary btn-sm" id="saveSettingsBtn" onclick="saveSettings()">
-                        Save Changes
-                    </button>
+                    <input class="settings-search" id="settingsSearch" type="search" placeholder="Search settings" oninput="filterSettings(this.value)" autocomplete="off">
                 </div>
 
                 <div class="settings-scroll">
 
-                    <!-- ═════════ APP ═════════ -->
-                    <div class="settings-group-heading">App</div>
+                    <!-- ═════════ GENERAL ═════════ -->
+                    <div class="settings-group-heading">General</div>
 
-                    <!-- Appearance Section -->
                     <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🎨</span>
-                            <div>
-                                <h3 class="pref-section-title">Appearance</h3>
-                                <p class="pref-section-desc">Customize visual appearance</p>
-                            </div>
-                        </div>
                         <div class="pref-items">
-                            <div class="pref-select-group">
+                            <div class="pref-select-group" data-keywords="appearance dark light mode colour color">
                                 <span class="pref-select-label">Theme</span>
                                 <div class="pref-theme-buttons">
                                     <button class="pref-theme-btn" id="themeBtnLight" onclick="setTheme('light')">
@@ -357,101 +329,41 @@
                                     </button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Startup Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🚀</span>
-                            <div>
-                                <h3 class="pref-section-title">Startup</h3>
-                                <p class="pref-section-desc">Control how Bhai launches</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Launch at login</span>
+                            <label class="pref-toggle" data-keywords="startup launch login boot">
+                                <span class="pref-toggle-label">Open Bhai when I log in</span>
                                 <input type="checkbox" id="prefLaunchAtLogin" onchange="setPref('launchAtLogin', this.checked)">
                                 <span class="pref-toggle-switch"></span>
                             </label>
-                        </div>
-                    </div>
-
-                    <!-- Notifications Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🔔</span>
-                            <div>
-                                <h3 class="pref-section-title">Notifications</h3>
-                                <p class="pref-section-desc">Manage system notifications</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Enable notifications</span>
-                                <input type="checkbox" id="prefNotifications" onchange="setPref('notificationsEnabled', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Notify on task completion</span>
-                                <input type="checkbox" id="prefNotifyTask" onchange="setPref('notifyOnTask', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                            <label class="pref-toggle">
-                                <span class="pref-toggle-label">Notify on updates</span>
-                                <input type="checkbox" id="prefNotifyUpdate" onchange="setPref('notifyOnUpdate', this.checked)">
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- Keyboard Shortcuts -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">⌨️</span>
-                            <div>
-                                <h3 class="pref-section-title">Keyboard Shortcuts</h3>
-                                <p class="pref-section-desc">Global hotkeys</p>
-                            </div>
-                        </div>
-                        <div class="pref-items">
-                            <div class="pref-shortcut">
-                                <span class="pref-shortcut-label">Show/Hide Bhai</span>
+                            <div class="pref-shortcut" data-keywords="keyboard shortcut hotkey overlay">
+                                <span class="pref-shortcut-label">Show or hide Bhai</span>
                                 <div class="pref-shortcut-control">
                                     <kbd id="prefHotkeyShow" tabindex="0" title="Click to change" onclick="startHotkeyRecording(this)">Alt + Space</kbd>
                                     <button class="pref-hotkey-reset" id="prefHotkeyReset" onclick="resetOverlayHotkey()" title="Reset to default" style="display:none;">Reset</button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Updates Section -->
-                    <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">⬆️</span>
-                            <div>
-                                <h3 class="pref-section-title">Updates</h3>
-                                <p class="pref-section-desc">Check for new versions</p>
+                            <label class="pref-toggle">
+                                <span class="pref-toggle-label">Notifications</span>
+                                <input type="checkbox" id="prefNotifications" onchange="setPref('notificationsEnabled', this.checked)">
+                                <span class="pref-toggle-switch"></span>
+                            </label>
+                            <div class="pref-subs">
+                                <label class="pref-toggle">
+                                    <span class="pref-toggle-label">When a task finishes</span>
+                                    <input type="checkbox" id="prefNotifyTask" onchange="setPref('notifyOnTask', this.checked)">
+                                    <span class="pref-toggle-switch"></span>
+                                </label>
+                                <label class="pref-toggle">
+                                    <span class="pref-toggle-label">When an update is ready</span>
+                                    <input type="checkbox" id="prefNotifyUpdate" onchange="setPref('notifyOnUpdate', this.checked)">
+                                    <span class="pref-toggle-switch"></span>
+                                </label>
                             </div>
-                        </div>
-                        <div class="pref-items">
                             <div class="pref-update-status">
-                                <span id="prefUpdateStatus">Last checked: Never</span>
-                                <button class="btn btn-sm btn-secondary" id="checkUpdateBtn" onclick="manualCheckUpdate()">
-                                    Check Now
-                                </button>
-                            </div>
-                            <div class="pref-update-status" style="align-items:flex-start;">
                                 <div>
-                                    <div>Update channel</div>
-                                    <small style="color:var(--text-secondary);">Alpha gets new builds first. Stable only publishes tested releases.</small>
+                                    <div>Version <span id="settingsVersion"></span></div>
+                                    <small id="prefUpdateStatus" style="color:var(--text-secondary);"></small>
                                 </div>
-                                <select id="prefUpdateChannel" onchange="setUpdateChannel(this.value)" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;outline:none;cursor:pointer;">
-                                    <option value="stable">Stable</option>
-                                    <option value="alpha">Alpha (early access)</option>
-                                    <option value="beta">Beta</option>
-                                </select>
+                                <button class="btn btn-sm btn-secondary" id="checkUpdateBtn" onclick="manualCheckUpdate()">Check for updates</button>
                             </div>
                         </div>
                     </div>
@@ -466,50 +378,48 @@
                             </div>
                         </div>
                         <div class="pref-items" style="flex-direction:column;gap:8px;align-items:stretch;">
-                            <div id="personalityPresets" style="display:flex;flex-direction:column;gap:8px;">
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                            <div id="personalityPresets" class="pp-pills" onchange="showPersonalityDesc()">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="casual_playful" id="ppPresetCasual" style="margin-top:3px;" onchange="savePersonality()" checked>
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Casual &amp; playful</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Warm, witty, a little swag. Reacts like a close friend.</div>
+                                        <div class="pp-desc">Warm, witty, a little swag. Reacts like a close friend.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="professional_concise" id="ppPresetProfessional" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Professional &amp; concise</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Clear and to the point. No slang, minimal emoji.</div>
+                                        <div class="pp-desc">Clear and to the point. No slang, minimal emoji.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="warm_supportive" id="ppPresetWarm" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Warm &amp; supportive</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Patient and encouraging, no sarcasm. Best for stressful days.</div>
+                                        <div class="pp-desc">Patient and encouraging, no sarcasm. Best for stressful days.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="direct_terse" id="ppPresetDirect" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Direct &amp; no-nonsense</div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">Results first, zero fluff. Good for power users.</div>
+                                        <div class="pp-desc">Results first, zero fluff. Good for power users.</div>
                                     </div>
                                 </label>
-                                <label class="radio-row" style="display:flex;gap:10px;padding:10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;align-items:flex-start;">
+                                <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="unhinged" id="ppPresetUnhinged" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
                                         <div style="font-weight:600;margin-bottom:2px;">Unhinged 😈 <span style="font-size:0.8em;font-weight:600;color:var(--text-secondary);border:1px solid var(--border);border-radius:5px;padding:0 5px;margin-left:4px;">18+</span></div>
-                                        <div style="font-size:0.9em;color:var(--text-secondary);">No filter: blunt opinions, swears freely, savage roasts, dirty and very dark jokes. Only with you, never your contacts. Turns serious when it really matters.</div>
+                                        <div class="pp-desc">No filter: blunt opinions, swears freely, savage roasts, dirty and very dark jokes. Only with you, never your contacts. Turns serious when it really matters.</div>
                                     </div>
                                 </label>
                             </div>
+                            <div id="ppDescShown" class="pp-desc-shown"></div>
                             <label style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-                                <span style="font-size:0.9em;color:var(--text-secondary);">Custom notes (optional)</span>
-                                <textarea id="personalityNotes" rows="3" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
+                                <span style="font-size:0.9em;color:var(--text-secondary);">Anything else? (optional)</span>
+                                <textarea id="personalityNotes" oninput="onPersonalityNotesInput()" rows="2" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
                             </label>
-                            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
-                                <button class="btn btn-sm btn-secondary" id="personalitySaveBtn" onclick="savePersonality()">Save personality</button>
-                            </div>
                             <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);margin-top:4px;min-height:1em;"></div>
                         </div>
                     </div>
@@ -521,18 +431,54 @@
                     <div class="settings-section">
                         <div class="settings-section-header">
                             <span class="settings-section-icon">🐙</span>
-                            <div>
+                            <div style="flex:1;">
                                 <h3 class="settings-section-title">GitHub</h3>
-                                <p class="settings-section-desc">Personal access token for repo operations</p>
+                                <p class="settings-section-desc">Lets Bhai clone, commit, push and open pull requests on your repos</p>
                             </div>
+                            <span class="integration-state" id="ghState">Not connected</span>
                         </div>
                         <div class="settings-fields">
-                            <div class="input-group">
-                                <label class="input-label">GitHub Token</label>
-                                <input class="clean-input" type="password" id="settingGithubToken" placeholder="ghp_..."
-                                    autocomplete="off">
-                                <span class="input-hint">Optional — enables Git operations</span>
+                            <div id="ghConnected" style="display:none;">
+                                <div class="integration-row">
+                                    <span id="ghWho"></span>
+                                    <button class="btn btn-secondary btn-sm" onclick="disconnectGithub()">Disconnect</button>
+                                </div>
                             </div>
+                            <div id="ghSetup">
+                                <p class="integration-help">Create a token on GitHub (the right permissions are already ticked), copy it, and come back. Bhai picks it up and checks it.</p>
+                                <a class="wizard-link" target="_blank" href="https://github.com/settings/tokens/new?description=Bhai&scopes=repo,workflow,read:org">Create a GitHub token</a>
+                                <div class="input-group" style="margin-top:12px;">
+                                    <input class="clean-input" type="password" id="settingGithubToken" placeholder="ghp_… or github_pat_…" autocomplete="off" oninput="onGithubTokenInput()">
+                                </div>
+                            </div>
+                            <div class="channel-test-result" id="ghStatus"></div>
+                        </div>
+                    </div>
+
+                    <!-- Google Section -->
+                    <div class="settings-section">
+                        <div class="settings-section-header">
+                            <span class="settings-section-icon">📅</span>
+                            <div style="flex:1;">
+                                <h3 class="settings-section-title">Google</h3>
+                                <p class="settings-section-desc">Calendar, Gmail and Tasks</p>
+                            </div>
+                            <span class="integration-state" id="googleState">Not connected</span>
+                        </div>
+                        <div class="settings-fields" id="googleFields">
+                            <div id="googleAccounts"></div>
+                            <div style="display:flex;align-items:center;gap:12px;">
+                                <button class="google-btn btn-sm" onclick="connectGoogleAccount()" id="googleConnectBtn">
+                                    <svg viewBox="0 0 24 24" width="18" height="18">
+                                        <path fill="#4285F4" d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z" />
+                                        <path fill="#34A853" d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z" />
+                                        <path fill="#FBBC05" d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z" />
+                                        <path fill="#EA4335" d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z" />
+                                    </svg>
+                                    <span id="googleConnectLabel">Connect Google</span>
+                                </button>
+                            </div>
+                            <div class="channel-test-result" id="googleStatus"></div>
                         </div>
                     </div>
 
@@ -540,52 +486,19 @@
                     <div class="settings-section">
                         <div class="settings-section-header">
                             <span class="settings-section-icon">📁</span>
-                            <div>
-                                <h3 class="settings-section-title">Workspace</h3>
-                                <p class="settings-section-desc">Where Bhai saves files (screenshots, research,
-                                    exports)</p>
+                            <div style="flex:1;">
+                                <h3 class="settings-section-title">Workspace folder</h3>
+                                <p class="settings-section-desc">Where Bhai saves screenshots, research, documents and code</p>
                             </div>
                         </div>
                         <div class="settings-fields">
-                            <div class="input-group">
-                                <label class="input-label">Workspace Path</label>
-                                <div class="workspace-preview">
-                                    <input class="clean-input" type="text" id="settingWorkspace"
-                                        placeholder="C:\Users\You\Desktop\Bhai Files" readonly
-                                        style="flex: 1; cursor: default;">
-                                    <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Browse</button>
+                            <div class="integration-row">
+                                <code id="settingWorkspace" class="workspace-path"></code>
+                                <div style="display:flex;gap:6px;">
+                                    <button class="btn btn-secondary btn-sm" onclick="atlas.openWorkspace()">Open</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Change…</button>
+                                    <button class="btn btn-secondary btn-sm" id="workspaceResetBtn" onclick="resetWorkspace()" style="display:none;">Use default</button>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Google Section -->
-                    <div class="settings-section">
-                        <div class="settings-section-header">
-                            <span class="settings-section-icon">🔗</span>
-                            <div>
-                                <h3 class="settings-section-title">Google Account</h3>
-                                <p class="settings-section-desc">Calendar and Gmail integration</p>
-                            </div>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                <button class="google-btn btn-sm" onclick="connectGoogleAccount()"
-                                    id="googleConnectBtn">
-                                    <svg viewBox="0 0 24 24" width="18" height="18">
-                                        <path fill="#4285F4"
-                                            d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z" />
-                                        <path fill="#34A853"
-                                            d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z" />
-                                        <path fill="#FBBC05"
-                                            d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z" />
-                                        <path fill="#EA4335"
-                                            d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z" />
-                                    </svg>
-                                    Connect Google
-                                </button>
-                                <span id="googleStatus" style="font-size: 13px; color: var(--text-secondary);">Not
-                                    connected</span>
                             </div>
                         </div>
                     </div>
@@ -594,24 +507,82 @@
                     <div class="settings-group-heading">Advanced</div>
 
                     <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🔬</span>
-                            <div>
-                                <h3 class="pref-section-title">Advanced</h3>
-                                <p class="pref-section-desc">Power user features — use at your own risk</p>
-                            </div>
-                        </div>
                         <div class="pref-items">
+                            <div class="pref-update-status">
+                                <div>
+                                    <div>Update channel</div>
+                                    <small style="color:var(--text-secondary);">Beta and Alpha get new versions sooner, with less testing.</small>
+                                </div>
+                                <select id="prefUpdateChannel" onchange="setUpdateChannel(this.value)" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;outline:none;cursor:pointer;">
+                                    <option value="stable">Stable</option>
+                                    <option value="beta">Beta</option>
+                                    <option value="alpha">Alpha (earliest)</option>
+                                </select>
+                            </div>
                             <label class="pref-toggle">
                                 <div>
-                                    <span class="pref-toggle-label">Enable Sideloading</span>
-                                    <span class="pref-toggle-hint" style="display:block; font-size:11px; color:var(--text-secondary); margin-top:2px;">Allow installing skills and plugins from external ZIP files (e.g. ClawHub). Sideloaded items are unvetted and may pose security risks.</span>
+                                    <span class="pref-toggle-label">Allow sideloading</span>
+                                    <span class="pref-toggle-hint" style="display:block; font-size:11px; color:var(--text-secondary); margin-top:2px;">Install skills from ZIP files outside the Store. They aren't checked, so only use ones you trust.</span>
                                 </div>
                                 <input type="checkbox" id="prefSideloading" onchange="setPref('sideloadingEnabled', this.checked); toggleSideloadButton(this.checked);">
                                 <span class="pref-toggle-switch"></span>
                             </label>
                         </div>
                     </div>
+
+<div class="settings-group-heading">Data &amp; privacy</div>
+
+                    <div class="pref-section surface-card">
+                        <div class="pref-items">
+                            <div class="pref-update-status data-row" data-keywords="memory memories remember forget privacy">
+                                <div>
+                                    <div>What Bhai remembers</div>
+                                    <small style="color:var(--text-secondary);">See, edit or delete memories</small>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" onclick="switchTab('memory')">Open Memory</button>
+                            </div>
+                            <div class="pref-update-status data-row" data-keywords="chats chat history conversations delete clear privacy">
+                                <div>
+                                    <div>Chat history</div>
+                                    <small style="color:var(--text-secondary);">Chats with Bhai saved on this Mac</small>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" id="clearChatsBtn" onclick="clearChatHistory()">Clear</button>
+                            </div>
+                            <div class="pref-update-status data-row" data-keywords="logs data folder files debug support">
+                                <div>
+                                    <div>Logs and data</div>
+                                    <small style="color:var(--text-secondary);">For troubleshooting or sending to support</small>
+                                </div>
+                                <div style="display:flex;gap:6px;">
+                                    <button class="btn btn-sm btn-secondary" onclick="atlas.openLogsDir()">Logs</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="atlas.openDataDir()">Data folder</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-group-heading">About</div>
+
+                    <div class="pref-section surface-card">
+                        <div class="pref-items">
+                            <div class="pref-update-status data-row" data-keywords="about version legal terms privacy policy copyright">
+                                <div style="display:flex;align-items:center;gap:12px;">
+                                    <img src="logo.png" alt="" style="width:36px;height:36px;border-radius:8px;">
+                                    <div>
+                                        <div>Bhai <span id="aboutVersion" style="color:var(--text-secondary);"></span></div>
+                                        <small style="color:var(--text-secondary);">© 2024-2026 TRUSCOR Private Limited</small>
+                                    </div>
+                                </div>
+                                <small class="about-links">
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
+                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">All legal</a>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-empty" id="settingsEmpty" style="display:none;">No settings match.</div>
 
                     <div class="settings-note">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -620,7 +591,7 @@
                             <line x1="12" y1="16" x2="12" y2="12"></line>
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
                         </svg>
-                        Integration credentials require a restart to take effect. All values are encrypted with AES-256-GCM.
+                        Everything here saves by itself. Integration changes restart Bhai for a few seconds. Secrets are encrypted with AES-256-GCM.
                     </div>
                 </div>
             </div>
@@ -1060,44 +1031,6 @@
                         </div>
                     </div>
 
-                    <!-- ── Overlay (always enabled) ── -->
-                    <div class="settings-section" id="channel-overlay">
-                        <div class="settings-section-header">
-                            <div style="display:flex;align-items:center;gap:10px;">
-                                <span class="channel-status-dot connected" id="chStatusOverlay"></span>
-                                <span>🖥️ Desktop Overlay</span>
-                            </div>
-                            <label class="pref-toggle" style="margin:0;">
-                                <input type="checkbox" id="chToggleOverlay" checked disabled>
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
-                                Always on. Change its keyboard shortcut in Settings.
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ── Web Widget (always enabled) ── -->
-                    <div class="settings-section" id="channel-webwidget">
-                        <div class="settings-section-header">
-                            <div style="display:flex;align-items:center;gap:10px;">
-                                <span class="channel-status-dot connected" id="chStatusWebWidget"></span>
-                                <span>🌐 Web Widget</span>
-                            </div>
-                            <label class="pref-toggle" style="margin:0;">
-                                <input type="checkbox" id="chToggleWebWidget" checked disabled>
-                                <span class="pref-toggle-switch"></span>
-                            </label>
-                        </div>
-                        <div class="settings-fields">
-                            <div style="font-size:12px;color:var(--text-secondary);padding:4px 0;">
-                                Always enabled. Shares port 18792 with the overlay WebSocket server.
-                            </div>
-                        </div>
-                    </div>
-
                     <div class="settings-note">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1126,6 +1059,7 @@
                                 <div class="auth-icon">🔐</div>
                                 <h3 class="auth-title">Sign in to Bhai</h3>
                                 <p class="auth-subtitle">Use your phone number or Google account to sign in securely</p>
+                                <p class="auth-device-removed" id="authDeviceRemoved" style="display:none;">This Mac was removed from your account on another device. Sign in again to use Bhai here.</p>
                             </div>
                             <div style="margin-top:24px;">
                                 <button class="btn btn-primary auth-submit-btn" id="signInBtn" onclick="openSignIn()" style="font-size:15px;padding:14px;">
@@ -1163,45 +1097,35 @@
 
                         <div class="account-details-grid">
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">📋</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></div>
                                 <div class="account-detail-label">Plan</div>
                                 <div class="account-detail-value" id="accountPlan">Free</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">⚡</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
                                 <div class="account-detail-label">AI Credits</div>
                                 <div class="account-detail-value" id="accountCredits">0</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">🔑</div>
-                                <div class="account-detail-label">Activations</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg></div>
+                                <div class="account-detail-label">Devices</div>
                                 <div class="account-detail-value" id="accountActivations">0 / 3</div>
                             </div>
                             <div class="account-detail-card surface-card">
-                                <div class="account-detail-icon">📅</div>
+                                <div class="account-detail-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
                                 <div class="account-detail-label">Member Since</div>
                                 <div class="account-detail-value" id="accountCreatedAt">—</div>
                             </div>
                         </div>
 
-                        <div class="coming-soon-section">
-                            <div class="coming-soon-card surface-card">
-                                <div class="coming-soon-icon">🛒</div>
-                                <div class="coming-soon-info">
-                                    <div class="coming-soon-title">Subscription & Credits</div>
-                                    <div class="coming-soon-desc">Manage your plan and AI credit balance</div>
-                                </div>
-                                <span class="coming-soon-badge">Coming Soon</span>
+                        <section class="account-devices surface-card">
+                            <div class="account-devices-head">
+                                <h3>Devices</h3>
+                                <span class="account-devices-count" id="accountDevicesCount"></span>
                             </div>
-                            <div class="coming-soon-card surface-card">
-                                <div class="coming-soon-icon">💻</div>
-                                <div class="coming-soon-info">
-                                    <div class="coming-soon-title">Device Activations</div>
-                                    <div class="coming-soon-desc">Manage your activated devices</div>
-                                </div>
-                                <span class="coming-soon-badge">Coming Soon</span>
-                            </div>
-                        </div>
+                            <p class="account-devices-sub">Where you're signed in to Bhai. Removing a device signs it out until someone signs in on it again.</p>
+                            <div class="account-devices-list" id="accountDevicesList"><div class="account-devices-empty">Loading…</div></div>
+                        </section>
 
                         <button class="btn btn-secondary account-logout-btn" onclick="accountLogout()">
                             Sign Out
@@ -1213,71 +1137,15 @@
             <!-- ═══════════════════════════════════ -->
             <!-- TAB: About                     -->
             <!-- ═══════════════════════════════════ -->
-            <div class="tab-content" id="tab-about">
-                <div class="tab-header">
-                    <h2 class="tab-title">About Bhai</h2>
-                </div>
-
-                <div class="about-content">
-                    <div class="about-hero surface-card">
-                        <img src="logo.png" alt="Bhai" class="about-logo">
-                        <div class="about-info">
-                            <h3 class="about-name">Bhai</h3>
-                            <div class="about-version" id="aboutVersion">Version 0.2.0</div>
-                            <div class="about-tagline">Personal AI Agent · All Systems</div>
-                        </div>
-                    </div>
-
-                    <div class="about-details surface-card">
-                        <div class="about-row">
-                            <span class="about-label">Architecture</span>
-                            <span class="about-value">SAC-DR · HNSW · RRF · SAN</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Memory</span>
-                            <span class="about-value">SQLite + Vector Search + Knowledge Graph</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Embedding Model</span>
-                            <span class="about-value">Xenova/all-MiniLM-L6-v2</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Security</span>
-                            <span class="about-value">AES-256-GCM · DPAPI</span>
-                        </div>
-                        <div class="about-row">
-                            <span class="about-label">Hotkey</span>
-                            <span class="about-value" id="aboutHotkey"><kbd>Alt + Space</kbd></span>
-                        </div>
-                    </div>
-
-                    <div class="about-details surface-card" style="margin-top:16px;">
-                        <div class="about-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                            <span class="about-label">Legal documents</span>
-                            <span class="about-value" style="font-size:13px;line-height:1.6;">
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">Legal Hub (index)</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/acceptable-use');">Acceptable Use</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/disclaimer');">Disclaimer</a> ·
-                                <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/refund');">Refund</a>
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="copyright" style="margin-top: 16px;">
-                        Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
-                    </div>
-                </div>
-            </div>
-
-
             <!-- ═══════════════════════════════ -->
             <!-- TAB: Memory Studio             -->
             <!-- ═══════════════════════════════ -->
             <div class="tab-content" id="tab-memory">
                 <div class="tab-header">
-                    <h2 class="tab-title">Memory Studio</h2>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <button class="btn btn-secondary btn-sm" onclick="switchTab('settings')" title="Back to Settings">← Settings</button>
+                        <h2 class="tab-title">Memory</h2>
+                    </div>
                     <div style="display:flex;gap:8px">
                         <button class="btn btn-secondary btn-sm" id="studioDeletedToggle">View deleted</button>
                         <button class="btn btn-secondary btn-sm" id="studioAdvancedToggle">Show advanced</button>
@@ -1619,7 +1487,9 @@
 
         function switchTab(tabId) {
             const tabEl = document.getElementById(`tab-${tabId}`);
-            const navEl = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
+            // Pages without a sidebar item light up the item they're opened from.
+            const SUBPAGE_OF = { memory: 'settings' };
+            const navEl = document.querySelector(`.nav-item[data-tab="${SUBPAGE_OF[tabId] || tabId}"]`);
             if (!tabEl || !navEl) return; // tab removed or unknown — ignore silently
 
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -1628,7 +1498,7 @@
             navEl.classList.add('active');
             moveNavPill();
 
-            if (tabId === 'settings') { loadSettings(); loadPreferences(); }
+            if (tabId === 'settings') { loadSettings(); loadPreferences(); autoCheckUpdates(); }
             if (tabId === 'memory') {
                 if (window.MemoryStudio && typeof window.MemoryStudio.mount === 'function') {
                     window.MemoryStudio.mount();
@@ -1961,7 +1831,7 @@
                     // Block if out of credits. null means data temporarily unavailable
                     // (bot process will enforce credits itself via account-guard).
                     if (info.ai_credits === 0) {
-                        showToast('⛔ Out of AI credits. Purchase more credits to continue.');
+                        showToast('⛔ Out of AI credits. Reach the TRUSCOR team for more.');
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('startBtn').textContent = 'Start Bhai';
                         startFailed();
@@ -2004,75 +1874,206 @@
 
         // ── Settings ──────────────────────────────────
 
-        let currentSettings = {};
+
+        // Search: show only the rows (and cards/headings) that match.
+        function filterSettings(raw) {
+            const q = raw.trim().toLowerCase();
+            const scroll = document.querySelector('#tab-settings .settings-scroll');
+            const matches = (el) => !q || (el.textContent + ' ' + (el.dataset.keywords || '')).toLowerCase().includes(q);
+            let shown = 0;
+            scroll.querySelectorAll(':scope > .pref-section, :scope > .settings-section').forEach(card => {
+                const head = card.querySelector('.pref-section-header, .settings-section-header');
+                const headHit = !!head && matches(head);
+                let any = false;
+                card.querySelectorAll('.pref-toggle, .pref-select-group, .pref-shortcut, .pref-update-status').forEach(row => {
+                    const hit = headHit || matches(row);
+                    row.style.display = hit ? '' : 'none';
+                    any = any || hit;
+                });
+                const visible = headHit || any || (!head && !q);
+                card.style.display = visible ? '' : 'none';
+                if (visible) shown++;
+            });
+            scroll.querySelectorAll(':scope > .settings-group-heading').forEach(h => {
+                let el = h.nextElementSibling;
+                let any = false;
+                while (el && !el.classList.contains('settings-group-heading')) {
+                    if ((el.classList.contains('pref-section') || el.classList.contains('settings-section')) && el.style.display !== 'none') any = true;
+                    el = el.nextElementSibling;
+                }
+                h.style.display = any ? '' : 'none';
+            });
+            document.getElementById('settingsEmpty').style.display = shown ? 'none' : '';
+        }
+
+        // Press twice to clear: no confirm() dialog.
+        async function clearChatHistory() {
+            const btn = document.getElementById('clearChatsBtn');
+            if (btn.dataset.armed !== '1') {
+                btn.dataset.armed = '1';
+                btn.textContent = 'Press again to clear';
+                setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Clear'; }, 4000);
+                return;
+            }
+            btn.dataset.armed = '';
+            await atlas.clearChats();
+            btn.textContent = 'Cleared';
+            setTimeout(() => { btn.textContent = 'Clear'; }, 2000);
+        }
+
+        // Opening Settings checks for updates quietly, at most every 6 hours.
+        async function autoCheckUpdates() {
+            try {
+                const status = await atlas.getUpdateStatus();
+                if (status && status.lastCheck && Date.now() - new Date(status.lastCheck).getTime() < 6 * 60 * 60 * 1000) return;
+                const result = await atlas.checkForUpdates();
+                updateLastCheckDisplay();
+                if (result && result.available) document.getElementById('prefUpdateStatus').textContent = `Version ${result.version} is available`;
+            } catch { /* offline: try next time */ }
+        }
+
+        // Settings save by themselves; integration changes restart the bot so it picks them up.
+        async function restartBotForChanges(message) {
+            const status = await atlas.getBotStatus().catch(() => null);
+            if (!status || status.status !== 'running') return;
+            showToast(message || 'Saved. Restarting Bhai…');
+            await atlas.stopBot();
+            for (let i = 0; i < 15; i++) {
+                await new Promise(r => setTimeout(r, 1000));
+                const st = await atlas.getBotStatus();
+                if (st.status === 'stopped') break;
+            }
+            await atlas.startBot();
+        }
 
         async function loadSettings() {
-            const result = await atlas.getSettings();
-            if (!result.success) return;
-            currentSettings = result.settings;
-
-            document.getElementById('settingGithubToken').value = currentSettings.GITHUB_TOKEN || '';
-            document.getElementById('settingWorkspace').value = currentSettings.ATLAS_WORKSPACE || '';
-        }
-
-        async function saveSettings() {
-            const btn = document.getElementById('saveSettingsBtn');
-            btn.disabled = true;
-            btn.textContent = 'Saving...';
-
-            // Telegram credentials are managed in the Channels tab. settings:save
-            // uses saveEnvKVs (merge), so omitting these keys leaves the
-            // Channels-written values untouched. Including them with an empty
-            // fallback would silently blank a user's bot token on every save.
-            const settings = {
-                GITHUB_TOKEN: document.getElementById('settingGithubToken').value.trim(),
-                ATLAS_WORKSPACE: document.getElementById('settingWorkspace').value.trim(),
-            };
-
-            const result = await atlas.saveSettings(settings);
-
-            btn.disabled = false;
-            btn.textContent = 'Save Changes';
-
-            if (result.success) {
-                showToast('✅ Settings saved! Restart Bhai for changes to take effect.');
+            const info = await atlas.getIntegrations().catch(() => null);
+            if (!info) return;
+            // Workspace
+            document.getElementById('settingWorkspace').textContent = info.workspace;
+            document.getElementById('workspaceResetBtn').style.display = info.workspaceIsDefault ? 'none' : '';
+            // GitHub: show whose token is saved
+            if (info.githubSaved) {
+                const r = await atlas.testGithubToken('');
+                showGithub(r && r.success ? r : null, !(r && r.success) ? (r && r.message) : '');
             } else {
-                showToast('❌ Failed to save: ' + result.error);
+                showGithub(null, '');
             }
+            // Google
+            const accounts = info.googleAccounts || [];
+            document.getElementById('googleState').textContent = accounts.length ? 'Connected' : 'Not connected';
+            document.getElementById('googleState').classList.toggle('on', accounts.length > 0);
+            const list = document.getElementById('googleAccounts');
+            list.innerHTML = '';
+            for (const email of accounts) {
+                const row = document.createElement('div');
+                row.className = 'integration-row';
+                const who = document.createElement('span');
+                who.textContent = email;
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-secondary btn-sm';
+                btn.textContent = 'Disconnect';
+                btn.onclick = () => disconnectGoogle(email);
+                row.append(who, btn);
+                list.append(row);
+            }
+            document.getElementById('googleConnectLabel').textContent = accounts.length ? 'Add another account' : 'Connect Google';
+            document.getElementById('googleConnectBtn').style.display = info.googleAvailable ? '' : 'none';
+            const comingSoon = !info.googleAvailable && !accounts.length;
+            if (comingSoon) document.getElementById('googleState').textContent = 'Coming soon';
+            document.getElementById('googleFields').style.display = comingSoon ? 'none' : '';
         }
 
+        // ── GitHub ──
+        function showGithub(user, problem) {
+            const state = document.getElementById('ghState');
+            document.getElementById('ghConnected').style.display = user ? 'block' : 'none';
+            document.getElementById('ghSetup').style.display = user ? 'none' : 'block';
+            state.textContent = user ? 'Connected' : 'Not connected';
+            state.classList.toggle('on', !!user);
+            if (user) document.getElementById('ghWho').textContent = '@' + user.login + (user.name ? ' (' + user.name + ')' : '');
+            setStatus(document.getElementById('ghStatus'), problem ? problem + ' Paste a new token below.' : '', 'error');
+        }
+
+        let ghTimer = null;
+        function onGithubTokenInput() {
+            clearTimeout(ghTimer);
+            ghTimer = setTimeout(connectGithub, 500);
+        }
+
+        async function connectGithub() {
+            const token = fieldVal('settingGithubToken');
+            const st = document.getElementById('ghStatus');
+            if (!token) return setStatus(st, '', '');
+            if (!/^(ghp_|github_pat_|gho_)/.test(token)) return setStatus(st, 'GitHub tokens start with ghp_ or github_pat_.', 'error');
+            setStatus(st, 'Checking…', 'loading');
+            const r = await atlas.testGithubToken(token);
+            if (token !== fieldVal('settingGithubToken')) return;
+            if (!r || !r.success) return setStatus(st, (r && r.message) || 'GitHub rejected this token.', 'error');
+            const saved = await atlas.saveSettings({ GITHUB_TOKEN: token });
+            if (!saved || !saved.success) return setStatus(st, "Couldn't save the token.", 'error');
+            document.getElementById('settingGithubToken').value = '';
+            showGithub(r, '');
+            await restartBotForChanges('GitHub connected. Restarting Bhai…');
+        }
+
+        async function disconnectGithub() {
+            await atlas.saveSettings({ GITHUB_TOKEN: '' });
+            showGithub(null, '');
+            await restartBotForChanges('GitHub disconnected. Restarting Bhai…');
+        }
+
+        // ── Workspace ──
         async function chooseWorkspace() {
             const result = await atlas.chooseSettingsWorkspace();
-            if (!result.canceled && result.path) {
-                document.getElementById('settingWorkspace').value = result.path;
-            }
+            if (result.canceled || !result.path) return;
+            await atlas.saveSettings({ ATLAS_WORKSPACE: result.path });
+            await loadSettings();
+            await restartBotForChanges('Workspace changed. Restarting Bhai…');
         }
 
+        async function resetWorkspace() {
+            await atlas.saveSettings({ ATLAS_WORKSPACE: '' });
+            await loadSettings();
+            await restartBotForChanges('Workspace reset. Restarting Bhai…');
+        }
+
+        // ── Google ──
         async function connectGoogleAccount() {
             const btn = document.getElementById('googleConnectBtn');
+            const st = document.getElementById('googleStatus');
             btn.disabled = true;
-            btn.textContent = 'Waiting...';
-
-            const result = await atlas.googleOAuth();
-            if (result.success) {
-                document.getElementById('googleStatus').textContent = '✓ Connected: ' + result.email;
-                document.getElementById('googleStatus').style.color = 'var(--accent-success)';
-            } else {
-                showToast('Google sign-in failed: ' + (result.error || 'Unknown error'));
+            setStatus(st, 'Finish signing in in your browser…', 'loading');
+            try {
+                const result = await atlas.googleOAuth();
+                if (!result.success) return setStatus(st, 'Google sign-in failed: ' + (result.error || 'unknown error'), 'error');
+                setStatus(st, '', '');
+                await loadSettings();
+                await restartBotForChanges('Google connected. Restarting Bhai…');
+            } finally {
+                btn.disabled = false;
             }
-            btn.disabled = false;
-            btn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18">
-                <path fill="#4285F4" d="M23.7 12.3c0-.8-.1-1.6-.2-2.3H12.2v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.5v2.9h3.8c2.3-2.1 3.6-5.2 3.6-8.6z"/>
-                <path fill="#34A853" d="M12.2 24c3.3 0 6-1.1 8-2.9l-3.8-2.9c-1.1.7-2.5 1.1-4.2 1.1-3.2 0-6-2.2-6.9-5.1H1.4v3C3.4 21.4 7.5 24 12.2 24z"/>
-                <path fill="#FBBC05" d="M5.3 14.3c-.3-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.4C.5 8.4 0 10.1 0 12s.5 3.6 1.4 5.4l3.9-3.1z"/>
-                <path fill="#EA4335" d="M12.2 4.8c1.8 0 3.4.6 4.7 1.8L20.3 3C18.2 1.1 15.5 0 12.2 0 7.5 0 3.4 2.6 1.4 6.6l3.9 3.1c.9-2.9 3.7-4.9 6.9-4.9z"/>
-            </svg> Connect Google`;
         }
 
-        // Listen for Google OAuth success from main process
-        atlas.onGoogleOAuthSuccess((email) => {
-            document.getElementById('googleStatus').textContent = '✓ Connected: ' + email;
-            document.getElementById('googleStatus').style.color = 'var(--accent-success)';
+        async function disconnectGoogle(email) {
+            await atlas.googleDisconnect(email);
+            await loadSettings();
+            await restartBotForChanges('Google account removed. Restarting Bhai…');
+        }
+
+        atlas.onGoogleOAuthSuccess(() => {
+            if (document.getElementById('tab-settings').classList.contains('active')) loadSettings();
+        });
+
+        // Back from GitHub with a token copied? Fill it in (main only hands over a GitHub-shaped token).
+        window.addEventListener('focus', async () => {
+            if (!document.getElementById('tab-settings').classList.contains('active')) return;
+            if (document.getElementById('ghSetup').style.display === 'none' || fieldVal('settingGithubToken')) return;
+            const token = await atlas.clipboardToken('github').catch(() => '');
+            if (!token) return;
+            document.getElementById('settingGithubToken').value = token;
+            showToast('Pasted your GitHub token from the clipboard');
+            connectGithub();
         });
 
         // ── Channels ──────────────────────────────────
@@ -2651,6 +2652,21 @@
             });
         }
 
+        // Channels that are on first, off ones after.
+        // Runs on load and after an apply, never mid-toggle, so a card doesn't jump away.
+        function sortChannelCards() {
+            const list = document.querySelector('#tab-channels .settings-scroll');
+            const note = list.querySelector('.settings-note');
+            const cards = [...list.querySelectorAll(':scope > .settings-section')];
+            const rank = (card) => {
+                const toggle = card.querySelector('.settings-section-header input[type=checkbox]');
+                return toggle && toggle.checked ? 0 : 1;
+            };
+            cards.map((card, i) => ({ card, key: rank(card) * 100 + i }))
+                .sort((a, b) => a.key - b.key)
+                .forEach(({ card }) => list.insertBefore(card, note));
+        }
+
         async function loadChannelConfig() {
             try {
                 const config = await atlas.getChannelConfig();
@@ -2769,6 +2785,7 @@
                 if (mx.userId || mx.username) document.getElementById('chMatrixUsername').value = mx.userId || mx.username;
                 if (mx.allowedRooms || mx.rooms) document.getElementById('chMatrixRooms').value = mx.allowedRooms || mx.rooms;
 
+                sortChannelCards();
             } catch (err) {
                 console.error('Failed to load channel config:', err);
             }
@@ -2944,7 +2961,7 @@
         function friendlyError(raw) {
             const m = raw.toLowerCase();
             if (m.includes('session') && (m.includes('401') || m.includes('not_validated') || m.includes('auth'))) return 'Bhai couldn\'t sign in. Open Account and sign in again.';
-            if (m.includes('credit') || m.includes('402')) return 'You\'re out of credits. Check the Account tab.';
+            if (m.includes('credit') || m.includes('402')) return 'You\'re out of AI credits. Reach the TRUSCOR team for more.';
             if (m.includes('enotfound') || m.includes('econnrefused') || m.includes('network') || m.includes('timed out')) return 'Bhai can\'t reach the internet right now. It will retry.';
             if (m.includes('permission') || m.includes('not authorized')) return 'Bhai is missing a macOS permission. See Settings → Permissions.';
             if (m.includes('exited with code')) return 'Bhai stopped unexpectedly. Click Start to try again, or open Logs for details.';
@@ -3024,6 +3041,7 @@
                 if (!info || !info.signedIn) {
                     document.getElementById('accountAuthView').style.display = 'block';
                     document.getElementById('accountProfileView').style.display = 'none';
+                    document.getElementById('authDeviceRemoved').style.display = info && info.deviceRemoved ? '' : 'none';
                     return;
                 }
 
@@ -3061,7 +3079,8 @@
                 // Details
                 document.getElementById('accountPlan').textContent = (info.plan || 'free').charAt(0).toUpperCase() + (info.plan || 'free').slice(1);
                 document.getElementById('accountCredits').textContent = info.ai_credits != null ? info.ai_credits : '—';
-                document.getElementById('accountActivations').textContent = `${info.activations ?? 0} / ${info.max_activations ?? 3}`;
+                document.getElementById('accountActivations').textContent = `${info.activations ?? 1} of ${info.max_activations ?? 3}`;
+                loadDevices();
 
                 if (info.created_at) {
                     const d = new Date(info.created_at);
@@ -3073,6 +3092,56 @@
                 document.getElementById('accountAuthView').style.display = 'block';
                 document.getElementById('accountProfileView').style.display = 'none';
             }
+        }
+
+        // ── Account → Devices ──
+        const DEVICE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>';
+        function lastActive(ms) {
+            const mins = Math.round((Date.now() - ms) / 60000);
+            if (mins < 10) return 'Active now';
+            if (mins < 60) return `Last active ${mins} min ago`;
+            const hrs = Math.round(mins / 60);
+            if (hrs < 24) return `Last active ${hrs} h ago`;
+            const days = Math.round(hrs / 24);
+            return days < 30 ? `Last active ${days} day${days === 1 ? '' : 's'} ago` : `Last active ${new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        }
+        async function loadDevices() {
+            const list = document.getElementById('accountDevicesList');
+            const r = await atlas.getDevices().catch(() => null);
+            if (!r || !r.success) {
+                list.innerHTML = '<div class="account-devices-empty">Couldn\'t load your devices. Check your connection and reopen this page.</div>';
+                return;
+            }
+            document.getElementById('accountDevicesCount').textContent = r.devices.length ? String(r.devices.length) : '';
+            list.innerHTML = r.devices.length ? r.devices.map((d) => `
+                <div class="account-device-row">
+                    <span class="account-device-icon">${DEVICE_ICON}</span>
+                    <div class="account-device-main">
+                        <div class="account-device-name">${escapeHtml(d.name)}</div>
+                        <div class="account-device-detail">${escapeHtml(d.platform)} · ${escapeHtml(lastActive(d.lastSeen))}</div>
+                    </div>
+                    ${d.current
+                        ? '<span class="account-device-badge">This device</span>'
+                        : `<button class="btn btn-secondary btn-sm account-device-remove" data-device="${escapeHtml(d.id)}" onclick="removeDevice(this)">Remove</button>`}
+                </div>`).join('') : '<div class="account-devices-empty">No devices yet.</div>';
+        }
+        // Two clicks: the first arms the button for a few seconds.
+        async function removeDevice(btn) {
+            if (!btn.classList.contains('armed')) {
+                btn.classList.add('armed');
+                btn.textContent = 'Remove?';
+                setTimeout(() => { btn.classList.remove('armed'); btn.textContent = 'Remove'; }, 4000);
+                return;
+            }
+            btn.disabled = true;
+            const r = await atlas.removeDevice(btn.dataset.device).catch((e) => ({ success: false, error: e.message }));
+            if (!r || !r.success) {
+                btn.disabled = false;
+                showToast(r && r.error ? r.error : "Couldn't remove that device", true);
+                return;
+            }
+            showToast('Device removed — it has been signed out');
+            loadAccountInfo();
         }
 
         let lastKnownCredits = null;
@@ -3197,7 +3266,7 @@
 
             const result = await atlas.checkForUpdates();
 
-            btn.textContent = 'Check Now';
+            btn.textContent = 'Check for updates';
             btn.disabled = false;
 
             if (result.isDev) {
@@ -3218,7 +3287,7 @@
                 if (status.lastCheck) {
                     const date = new Date(status.lastCheck);
                     document.getElementById('prefUpdateStatus').textContent =
-                        `Last checked: ${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+                        `Checked ${date.toLocaleDateString()}, ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
                 }
                 const channelEl = document.getElementById('prefUpdateChannel');
                 if (channelEl && status.channel) channelEl.value = status.channel;
@@ -3395,7 +3464,6 @@
                     const info = await atlas.getAppInfo();
                     const display = formatAccelerator(accelerator, info.platform);
                     el.textContent = display;
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${display}</kbd>`;
                     document.getElementById('prefHotkeyReset').style.display = '';
                     showToast('✓ Hotkey updated');
                 } else {
@@ -3415,7 +3483,6 @@
                     const info = await atlas.getAppInfo();
                     const defaultDisplay = info.platform === 'darwin' ? '⌘ Cmd + J' : 'Alt + Space';
                     document.getElementById('prefHotkeyShow').textContent = defaultDisplay;
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${defaultDisplay}</kbd>`;
                     document.getElementById('prefHotkeyReset').style.display = 'none';
                     showToast('✓ Hotkey reset to default');
                 } else {
@@ -3447,13 +3514,25 @@
                 }
                 const notes = document.getElementById('personalityNotes');
                 if (notes) notes.value = persona.notes || '';
+                showPersonalityDesc();
             } catch (e) {
                 // Non-fatal — leave defaults
             }
         }
 
+        function showPersonalityDesc() {
+            const row = document.querySelector('input[name="personality-preset"]:checked')?.closest('.pp-row');
+            document.getElementById('ppDescShown').textContent = row ? row.querySelector('.pp-desc').textContent : '';
+        }
+
+        let notesTimer = null;
+        function onPersonalityNotesInput() {
+            clearTimeout(notesTimer);
+            notesTimer = setTimeout(savePersonality, 800);
+        }
+
         async function savePersonality() {
-            const btn = document.getElementById('personalitySaveBtn');
+            const btn = null;
             const status = document.getElementById('personalitySaveStatus');
             if (btn) btn.disabled = true;
             if (status) status.textContent = 'Saving…';
@@ -3471,7 +3550,11 @@
                     if (status) status.textContent = 'Save failed: ' + ((res && res.error) || 'unknown error');
                     return;
                 }
-                if (status) status.textContent = 'Saved. Bhai talks like this from your next message.';
+                if (status) {
+                    status.textContent = 'Saved';
+                    clearTimeout(status._fade);
+                    status._fade = setTimeout(() => { status.textContent = ''; }, 2500);
+                }
             } catch (e) {
                 if (status) status.textContent = 'Save failed: ' + (e.message || e);
             } finally {
@@ -3783,15 +3866,9 @@
             try {
                 const info = await atlas.getAppInfo();
                 document.getElementById('sidebarVersion').textContent = `v${info.version}`;
-                document.getElementById('aboutVersion').textContent = `Version ${info.version}`;
+                document.getElementById('aboutVersion').textContent = info.version;
+                document.getElementById('settingsVersion').textContent = info.version;
 
-                const prefs = await atlas.getPrefs();
-                const activeHotkey = info.overlayShortcut || prefs.overlayHotkey;
-                if (activeHotkey) {
-                    document.getElementById('aboutHotkey').innerHTML = `<kbd>${formatAccelerator(activeHotkey, info.platform)}</kbd>`;
-                } else if (info.platform === 'darwin') {
-                    document.getElementById('aboutHotkey').innerHTML = '<kbd>⌘ Cmd + J</kbd>';
-                }
             } catch { /* */ }
 
             // Load account info on startup

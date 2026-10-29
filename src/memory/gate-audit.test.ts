@@ -50,13 +50,12 @@ describe("gate-audit", () => {
         expect(first.decision).toBe("reject");
         expect(first.reason).toBe("binary_blob");
         expect(first.source).toBe("tool");
-        expect(first.content_preview).toMatch(/^\{"screenshot_base64/);
-        expect(first.content_preview.length).toBeLessThanOrEqual(100);
+        expect(first.length).toBe(27);
         expect(first.sha).toMatch(/^[0-9a-f]{16}$/);
         expect(typeof first.ts).toBe("string");
     });
 
-    it("truncates content_preview to 100 chars", () => {
+    it("keeps no content, only its length and hash", () => {
         const long = "x".repeat(500);
         logGateDecision({
             decision: "allow",
@@ -67,7 +66,8 @@ describe("gate-audit", () => {
         });
         const line = readFileSync(auditPath, "utf8").trim();
         const obj = JSON.parse(line);
-        expect(obj.content_preview).toHaveLength(100);
+        expect(obj.length).toBe(500);
+        expect(line).not.toContain("xxx");
     });
 
     it("rotates at threshold by renaming to .1", () => {

@@ -11,4 +11,6 @@ export type SourceCtx = {
 export interface IntentSourceModule {
     name: IntentSource;
     collectIntents(ctx: SourceCtx): Promise<ProactiveIntent[]>;
+    /** The intent reached the owner (not suppressed); one-shot sources record it here. */
+    onDispatched?(intent: ProactiveIntent): void;
 }

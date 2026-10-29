@@ -4,7 +4,7 @@
 
 import BetterSqlite3 from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { selectCorpusMessages } from "./reflection.js";
+import { mergeStoredMessages, selectCorpusMessages } from "./reflection.js";
 
 // Mirrors the conversations DDL from sqlite.ts:172-180 so we can assert that
 // old (short) and new (full) messages_json rows coexist with no migration.
@@ -86,5 +86,19 @@ describe("conversations messages_json backward-compat (no migration needed)", ()
         expect(rows[1].messages_json).toBe(newRow);
 
         raw.close();
+    });
+});
+
+describe("mergeStoredMessages (one transcript row per session)", () => {
+    it("keeps earlier messages and appends only the new ones", () => {
+        const stored = JSON.stringify(makeHistory(4));
+        // History pruned since the last reflection: message 0 and 1 are gone.
+        const later = [...makeHistory(4).slice(2), { role: "user", content: "message number 4" }];
+        const merged = mergeStoredMessages(stored, later) as Array<{ content: string }>;
+        expect(merged.map((m) => m.content)).toEqual([0, 1, 2, 3, 4].map((i) => `message number ${i}`));
+    });
+
+    it("replaces an unparseable row", () => {
+        expect(mergeStoredMessages("not json", makeHistory(2))).toEqual(makeHistory(2));
     });
 });

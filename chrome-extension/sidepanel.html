@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>Bhai</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #fffaf5;
+      --surface: #ffffff;
+      --bubble: #f6ebe0;
+      --border: #f0e2d4;
+      --text: #2a1d12;
+      --text2: #7a6656;
+      --accent: #e8762c;
+      --accent-soft: rgba(232, 118, 44, .12);
+      --green: #1f9d4c;
+      --red: #d64545;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1b1410;
+        --surface: #261c16;
+        --bubble: #33261d;
+        --border: #3a2b21;
+        --text: #f5ebe2;
+        --text2: #b09a88;
+        --accent: #f08a45;
+        --accent-soft: rgba(240, 138, 69, .16);
+        --green: #46c873;
+        --red: #ef6b6b;
+      }
+    }
+
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+    .hidden { display: none !important; }
+    button { font: inherit; cursor: pointer; color: inherit; background: none; border: none; }
+
+    /* Header */
+    .header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    .header img { width: 24px; height: 24px; border-radius: 6px; }
+    .header-title { font-weight: 600; font-size: 15px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text2); }
+    .dot.on { background: var(--green); }
+    .dot.off { background: var(--red); }
+    .spacer { flex: 1; }
+    .icon-btn { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--text2); }
+    .icon-btn:hover { background: var(--accent-soft); color: var(--text); }
+
+    /* Conversation */
+    .messages { flex: 1; overflow-y: auto; padding: 16px 14px; display: flex; flex-direction: column; gap: 14px; }
+    .msg { max-width: 92%; word-wrap: break-word; }
+    .msg.you { align-self: flex-end; background: var(--bubble); padding: 8px 12px; border-radius: 14px 14px 4px 14px; white-space: pre-wrap; }
+    .msg.bhai { align-self: flex-start; }
+    .msg.error { align-self: flex-start; color: var(--red); font-size: 13px; }
+    .msg.bhai p + p, .msg.bhai pre, .msg.bhai ul { margin-top: 8px; }
+    .msg.bhai code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; }
+    .msg.bhai pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; overflow-x: auto; }
+    .msg.bhai pre code { background: none; padding: 0; }
+    .msg.bhai ul { padding-left: 18px; }
+    .msg.bhai a { color: var(--accent); }
+
+    /* Empty state */
+    .empty { margin: auto; text-align: center; padding: 20px; }
+    .empty img { width: 64px; height: 64px; border-radius: 16px; margin-bottom: 12px; }
+    .empty h2 { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+    .empty p { color: var(--text2); font-size: 13px; }
+
+    .notice { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; font-size: 13px; }
+    .notice strong { display: block; margin-bottom: 2px; }
+    .notice p { color: var(--text2); margin-bottom: 8px; }
+
+    /* Working row */
+    .working { display: flex; align-items: center; gap: 10px; margin: 0 14px 8px; padding: 8px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: 13px; }
+    .working-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text2); }
+    .spinner { width: 14px; height: 14px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .btn-small { font-size: 12px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); }
+    .btn-small:hover { border-color: var(--accent); }
+
+    /* Composer */
+    .composer { margin: 0 12px 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); padding: 10px 12px 8px; }
+    .composer:focus-within { border-color: var(--accent); }
+    .composer textarea { width: 100%; border: none; outline: none; resize: none; background: none; color: var(--text); font: inherit; max-height: 160px; }
+    .hint { font-size: 12px; color: var(--red); }
+    .hint:empty { display: none; }
+    .composer-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+    .chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--text2); }
+    .chip:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+    .send { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; }
+    button:disabled { opacity: .4; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <img src="icons/icon48.png" alt="">
+    <span class="header-title">Bhai</span>
+    <span class="dot" id="dot" title="Connecting…"></span>
+    <span class="spacer"></span>
+    <button class="icon-btn" id="btnNew" title="New chat" aria-label="New chat">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </div>
+
+  <div class="messages" id="messages">
+    <div class="notice hidden" id="offline">
+      <strong>Bhai isn't running</strong>
+      <p>Open the Bhai app on this computer. This panel connects by itself once it's open.</p>
+      <button class="btn-small" id="btnRetry">Try again</button>
+    </div>
+    <div class="empty" id="empty">
+      <img src="icons/icon128.png" alt="">
+      <h2>How can I help?</h2>
+      <p>Ask about this page, or tell Bhai to do something in Chrome for you.</p>
+    </div>
+  </div>
+
+  <div class="working hidden" id="working">
+    <div class="spinner"></div>
+    <div class="working-text" id="workingText">Working…</div>
+    <button class="btn-small" id="btnStop">Stop</button>
+  </div>
+
+  <div class="working hidden" id="drawNote">
+    <span>🖍️</span>
+    <div class="working-text">Drawing ready to send</div>
+    <button class="btn-small" id="btnDrawEdit">Edit</button>
+    <button class="btn-small" id="btnDrawRemove">Remove</button>
+  </div>
+
+  <div class="composer">
+    <textarea id="input" rows="1" placeholder="Ask Bhai anything…"></textarea>
+    <div class="hint" id="hint"></div>
+    <div class="composer-row">
+      <button class="chip" id="btnSummary" title="Send this page and ask for a summary">Summarize</button>
+      <button class="chip" id="btnExplain" title="Send your selected text and ask Bhai to explain it">Explain</button>
+      <button class="chip" id="btnDraw" title="Draw on the page to show Bhai what you mean">🖍️ Mark up</button>
+      <span class="spacer"></span>
+      <button class="send" id="btnSend" title="Send" aria-label="Send">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

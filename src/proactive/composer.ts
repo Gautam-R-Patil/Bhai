@@ -37,7 +37,8 @@ export async function compose(
     // 1. Template fast path
     const tpl = tryTemplate(intent, channel);
     if (tpl !== null) {
-        if (containsBannedPhrase(tpl) || mentionsThirdPerson(tpl)) {
+        // The digest quotes stored memories word for word ("User prefers…"): showing exactly what is kept is the point.
+        if (intent.payload.kind !== "memory_digest" && (containsBannedPhrase(tpl) || mentionsThirdPerson(tpl))) {
             debugProactive("composer_template_rejected", { id: intent.id, reason: "post_filter" });
             return null;
         }

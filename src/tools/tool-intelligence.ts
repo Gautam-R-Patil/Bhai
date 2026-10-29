@@ -36,20 +36,17 @@ const CACHEABLE_TOOLS = new Set([
     "dark_mode", // only the "status" action
     "bluetooth_control", // only "status" and "list" actions
     "wifi_control", // only "status" action
-    "clipboard", // only "read" action
     "file_metadata", // read-only file info
     "list_directory", // read-only directory listing
     "read", // read-only file contents
     "get_current_time", // current time (short TTL)
     "list_tasks", // scheduled tasks list
     "list_webhooks", // webhooks list
-    "memory_list", // memory listing
     "identity_view", // identity info
     "trait_list", // traits listing
     "google_accounts", // only "list" action
     // Expensive tools — caching saves significant cost
     "web_search", // search results are stable for minutes
-    "memory_search", // memory doesn't change within a conversation
     "glob", // file listing stable for short windows
     "grep", // codebase searches stable for short windows
 ]);
@@ -60,7 +57,6 @@ const CACHEABLE_ACTIONS: Record<string, Set<string>> = {
     dark_mode: new Set(["status"]),
     bluetooth_control: new Set(["status", "list"]),
     wifi_control: new Set(["status"]),
-    clipboard: new Set(["read"]),
     google_accounts: new Set(["list"]),
 };
 
@@ -74,7 +70,6 @@ const TOOL_TTL_MS: Record<string, number> = {
     list_directory: 120_000,
     file_metadata: 120_000,
     google_accounts: 120_000,
-    memory_list: 120_000,
     list_tasks: 120_000,
     list_webhooks: 120_000,
     // Somewhat volatile — standard TTL (60 seconds)
@@ -83,11 +78,9 @@ const TOOL_TTL_MS: Record<string, number> = {
     bluetooth_control: 60_000,
     wifi_control: 60_000,
     dark_mode: 60_000,
-    clipboard: 30_000, // Changes frequently
     get_current_time: 5_000, // Time changes constantly
     // Expensive tools — cache to reduce latency + cost
     web_search: 120_000, // Search results stable for 2 minutes
-    memory_search: 120_000, // Memory stable within conversation
     glob: 60_000, // File listings stable for short windows
     grep: 60_000, // Code search results stable for short windows
 };
@@ -117,12 +110,21 @@ export function isCacheable(toolName: string, args: Record<string, unknown>): bo
     // system_info has no actions, always cacheable
     if (toolName === "system_info") return true;
 
-    // For tools with mixed actions, check if the specific action is cacheable
-    const action = args.action as string | undefined;
+    // A mixed read/write tool is cached only when the call names a read action
+    // (dark_mode calls it `mode`); anything else may change what it reads.
     const allowed = CACHEABLE_ACTIONS[toolName];
-    if (allowed && action && !allowed.has(action)) return false;
+    if (allowed) return allowed.has(String(args.action ?? args.mode));
 
     return true;
+}
+
+/**
+ * Drop cached reads of local state after a call that may have changed it: a toggle
+ * leaves the cached status stale, an edit leaves the cached file, ⌘C the clipboard.
+ * Web search results don't depend on anything done here, so they stay.
+ */
+export function invalidateLocalState(): void {
+    for (const key of cache.keys()) if (!key.startsWith("web_search:")) cache.delete(key);
 }
 
 /**
@@ -233,6 +235,9 @@ function ensureAuditLog(): string {
     return auditLogPath;
 }
 
+/** Memory tools carry the owner's facts; those live in the memory DB, where forget can reach them, never in logs. */
+export const ownerMemoryTool = (name: string): boolean => /^(core_memory|memory|identity|trait)_/.test(name);
+
 /**
  * Log a tool call to the audit log.
  */
@@ -250,7 +255,7 @@ export function auditLog(entry: {
             ts: new Date().toISOString(),
             ...entry,
             // Truncate large args/errors
-            args: truncateObj(entry.args, 200),
+            args: ownerMemoryTool(entry.tool) ? Object.keys(entry.args) : truncateObj(entry.args, 200),
             error: entry.error?.substring(0, 200),
         });
         // Typing tools log revealed values (an OTP, a saved password): mask them.

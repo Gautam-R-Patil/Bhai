@@ -66,7 +66,8 @@ export function logGateDecision(entry: GateDecisionLog): void {
             reason: entry.reason,
             source: entry.source,
             category: entry.category,
-            content_preview: entry.content.slice(0, 100),
+            // No content: a forgotten fact must not survive here.
+            length: entry.content.length,
             sha: sha16(entry.content),
         });
         appendFileSync(path, `${line}\n`, "utf8");

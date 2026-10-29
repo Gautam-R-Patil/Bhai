@@ -254,7 +254,7 @@ export const browserFormState: ToolDefinition = {
     async handler() {
         try {
             const page = await getActivePage();
-            const state = await page.evaluate(GET_FORM_STATE_JS + "()");
+            const state = await page.evaluate(`(${GET_FORM_STATE_JS})()`);
             const count = Object.keys(state as object).length;
             return JSON.stringify({ success: true, field_count: count, fields: state });
         } catch (err) {

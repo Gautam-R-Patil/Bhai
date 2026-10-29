@@ -28,13 +28,21 @@ import { consolidateMemories } from "./consolidation.js";
 import { decayEmotions, recordEmotion } from "./emotional.js";
 import { recordEpisode } from "./episodic.js";
 import { getIdentityProfile, updateIdentityProfile } from "./identity.js";
-import { addEntity, getKnowledgeGraphDB } from "./knowledge-graph.js";
-import { cleanupTriggers } from "./prospective.js";
+import { getKnowledgeGraphDB } from "./knowledge-graph.js";
 import { updateRelationshipAfterSession } from "./relationship.js";
 import { findDuplicates, mergeDuplicates, reorganizeMemories, synapticPrune } from "./self-evolving.js";
 import { type EmotionalTone, updateSelfStateFromSession } from "./self-state.js";
 import { getShortSummary } from "./session.js";
-import { indexConversationMessages, recall, remember } from "./sqlite.js";
+import {
+    compactMemoryDB,
+    dbTimeMs,
+    extractMsgText,
+    getMsgRole,
+    indexConversationMessages,
+    listMemories,
+    remember,
+    withoutMedia,
+} from "./sqlite.js";
 import { type LearningCategory, upsertLearning } from "./task-learnings.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { contradictTrait, decayTraits, getAllTraits, recordSessionCoOccurrences, reinforceTrait } from "./traits.js";
@@ -46,26 +54,6 @@ const MAX_TRAIT_SIGNALS = 5;
 const MAX_RETRIES = 1;
 const HMAC_SECRET = "atlas-sacdr-audit-v1"; // Derived key for signing
 const CONSOLIDATION_EVERY_N_REFLECTIONS = 5; // Run lightweight consolidation every 5th reflection
-
-/**
- * Images and audio are not stored: screenshots now reach history as real
- * images, and every reflection would otherwise write full captures of the
- * user's screen into memory.db, indefinitely.
- */
-function withoutMedia<T extends { content?: unknown }>(messages: T[]): T[] {
-    return messages.map((m) =>
-        Array.isArray(m.content)
-            ? {
-                  ...m,
-                  content: (m.content as Array<{ type?: string }>).map((p) =>
-                      p?.type === "image_url" || p?.type === "input_audio"
-                          ? { type: "text", text: "[image omitted]" }
-                          : p,
-                  ),
-              }
-            : m,
-    );
-}
 
 // Default 0 = persist FULL conversation history into conversations.messages_json.
 // Emergency rollback to the legacy cap: set ATLAS_CORPUS_MAX_MESSAGES="20".
@@ -83,6 +71,26 @@ const CORPUS_MAX_MESSAGES = (() => {
  */
 export function selectCorpusMessages<T>(history: T[], max: number): T[] {
     return max > 0 ? history.slice(-max) : history;
+}
+
+/**
+ * The stored transcript plus the messages it lacks (same role+text match as
+ * indexConversationMessages), so history pruned since the last reflection stays.
+ */
+export function mergeStoredMessages(storedJson: string, messages: unknown[]): unknown[] {
+    let stored: unknown[] = [];
+    try {
+        const parsed = JSON.parse(storedJson);
+        if (Array.isArray(parsed)) stored = parsed;
+    } catch {
+        /* unparseable row: replace it */
+    }
+    const key = (m: unknown) => {
+        const text = extractMsgText(m);
+        return text ? `${getMsgRole(m)}\u0000${text}` : JSON.stringify(m);
+    };
+    const seen = new Set(stored.map(key));
+    return [...stored, ...messages.filter((m) => !seen.has(key(m)))];
 }
 
 // ── Frozen reflection instructions ────────────
@@ -231,12 +239,17 @@ interface ExtractionResult {
  * Runs asynchronously after a session ends or after N turns.
  * Non-blocking — errors logged but never thrown to user.
  */
-export async function runReflection(llm: LLMClient, conversationHistory: ChatCompletionMessageParam[]): Promise<void> {
+export async function runReflection(
+    llm: LLMClient,
+    conversationHistory: ChatCompletionMessageParam[],
+    sessionId: string = generateUUID(),
+    // An expired session passes its own: by then the live session is the new, empty one.
+    sessionSummaryInput: string = getShortSummary(),
+): Promise<void> {
     console.log("[MEMORY][REFLECTION] Starting post-session reflection...");
 
     try {
         // ── 1. Build input ────────────────────────
-        const sessionSummaryInput = getShortSummary();
         const transcript = buildTranscript(conversationHistory);
 
         const reflectionInput = sessionSummaryInput
@@ -259,22 +272,35 @@ export async function runReflection(llm: LLMClient, conversationHistory: ChatCom
             try {
                 const db = getKnowledgeGraphDB();
                 if (db) {
-                    const sessionId = generateUUID();
                     // The live history is raw (only LLM payloads are masked): mask before it hits disk.
                     const messagesToStore = protectForDisk(
                         withoutMedia(selectCorpusMessages(conversationHistory, CORPUS_MAX_MESSAGES)),
                     );
-                    const messagesJson = JSON.stringify(messagesToStore);
-                    db.run(`INSERT INTO conversations (session_id, messages_json, summary) VALUES (?, ?, ?)`, [
-                        sessionId,
-                        messagesJson,
-                        summary.summary,
-                    ]);
+                    // One row per session: periodic reflections append what is new to it.
+                    const existing = db.exec(
+                        "SELECT id, messages_json FROM conversations WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                        [sessionId],
+                    )[0]?.values[0];
+                    let convId = existing?.[0] as number | undefined;
+                    if (convId) {
+                        const merged = mergeStoredMessages(existing?.[1] as string, messagesToStore);
+                        db.run(
+                            "UPDATE conversations SET messages_json = ?, summary = ?, updated_at = datetime('now') WHERE id = ?",
+                            [
+                                JSON.stringify(selectCorpusMessages(merged, CORPUS_MAX_MESSAGES)),
+                                summary.summary,
+                                convId,
+                            ],
+                        );
+                    } else {
+                        db.run(`INSERT INTO conversations (session_id, messages_json, summary) VALUES (?, ?, ?)`, [
+                            sessionId,
+                            JSON.stringify(messagesToStore),
+                            summary.summary,
+                        ]);
+                        convId = db.exec("SELECT last_insert_rowid()")[0]?.values[0]?.[0] as number;
+                    }
                     console.log(`[MEMORY][REFLECTION] Conversation saved (session ${sessionId.substring(0, 8)})`);
-
-                    // ── Async: embed conversation summary for vector search ──
-                    const convIdResult = db.exec("SELECT last_insert_rowid()");
-                    const convId = convIdResult[0]?.values[0]?.[0] as number;
 
                     // ── Incremental write-side sync: decompose into per-message
                     // rows so session_search's FTS index picks up this session
@@ -409,28 +435,6 @@ export async function runReflection(llm: LLMClient, conversationHistory: ChatCom
             console.log(
                 `[MEMORY][REFLECTION] Processed ${traitUpdates} traits, ${extraction.emotions?.length || 0} emotions, ${extraction.episodes?.length || 0} episodes`,
             );
-
-            // ── 3f. Entity extraction from episodes + identity ──
-            try {
-                const kgDb = getKnowledgeGraphDB();
-                if (kgDb) {
-                    // Extract entities from episodic signals
-                    for (const ep of extraction.episodes || []) {
-                        if (ep.type && ep.description) {
-                            addEntity(kgDb, ep.description, ep.type, { importance: ep.importance });
-                        }
-                    }
-                    // Extract entities from identity updates
-                    for (const iu of extraction.identity_updates || []) {
-                        if (iu.field && iu.value) {
-                            addEntity(kgDb, `${iu.field}: ${iu.value}`, "identity_field", { explicit: iu.explicit });
-                        }
-                    }
-                    console.log(`[MEMORY][REFLECTION] Entities extracted`);
-                }
-            } catch {
-                /* non-fatal */
-            }
         }
 
         // ── 3g. Coding strategy extraction ────────
@@ -542,11 +546,9 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
 
     try {
         // ── 1. Load recent session summaries (last 7 days) ──
-        const summaries = await recall("session summary reflection", 20);
-        const recentSummaries = summaries.filter((m) => {
-            const daysAgo = (Date.now() - new Date(m.created_at).getTime()) / (1000 * 60 * 60 * 24);
-            return m.category === "session_summary" && daysAgo < 7;
-        });
+        const recentSummaries = listMemories("session_summary", 20).filter(
+            (m) => Date.now() - dbTimeMs(m.created_at) < 7 * 24 * 60 * 60 * 1000,
+        );
 
         if (recentSummaries.length < 2) {
             console.log("[MEMORY][REPLAY] Not enough summaries for clustering (need ≥2)");
@@ -606,13 +608,6 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
             }
         } catch (err) {
             console.error("[MEMORY][REPLAY] Consolidation failed (non-fatal):", err);
-        }
-
-        // ── 5d. Cleanup prospective memory triggers ──
-        try {
-            cleanupTriggers();
-        } catch {
-            /* non-fatal */
         }
 
         // ── 5e. Clear temporal cache (fresh start after reorganization) ──
@@ -1199,7 +1194,7 @@ function detectTraitInstability(
 
 // ── Daily Decay + Dream Replay (Scheduler) ────
 
-export function runDailyDecay(): void {
+export function runDailyDecay(nightly = false): void {
     console.log("[MEMORY][DECAY] Running daily decay...");
     const traitsPruned = decayTraits();
     const emotionsPruned = decayEmotions();
@@ -1234,4 +1229,5 @@ export function runDailyDecay(): void {
         console.error("[MEMORY][DECAY] Memory decay failed (non-fatal):", err);
         console.log(`[MEMORY][DECAY] Daily decay partial: ${traitsPruned} traits, ${emotionsPruned} emotions pruned`);
     }
+    compactMemoryDB(nightly);
 }

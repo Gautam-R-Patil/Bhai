@@ -35,6 +35,7 @@ import { audioVisualize } from "./audio-visualize.js";
 import { blenderScript } from "./blender.js";
 import { brandAudit } from "./brand-audit.js";
 import { captchaAfterAction } from "./browser/captcha.js";
+import { browserMark } from "./browser/mark.js";
 import { getActivePage } from "./browser/core.js";
 import {
     browserAnalyze,
@@ -119,7 +120,7 @@ import {
 } from "./deep-research.js";
 import { documentTools, initDocumentTools } from "./document.js";
 import { emailSend } from "./email-tool.js";
-import { compressFiles, fileMetadata, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
+import { compressFiles, fileMetadata, findFiles, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
 import { deleteFile, listDirectory } from "./files.js";
 import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { generateImage } from "./generate-image.js";
@@ -169,7 +170,7 @@ import { marketingSchedule } from "./marketing-schedule.js";
 import {
     identityUpdate,
     identityView,
-    memoryDelete,
+    memoryForget,
     memoryList,
     memorySearch,
     memorySnapshot,
@@ -211,6 +212,7 @@ import {
     clipboard,
     darkMode,
     lockScreen,
+    openSettings,
     setDoNotDisturb,
     setVolume,
     sleepDisplay,
@@ -222,6 +224,7 @@ import {
     auditLog,
     checkRateLimit,
     getCached,
+    invalidateLocalState,
     isCacheable,
     recordToolUsage,
     requiresConfirmation,
@@ -304,7 +307,7 @@ registry.set(cronTool.schema.function.name, cronTool);
 registry.set(memoryStore.schema.function.name, memoryStore);
 registry.set(memorySearch.schema.function.name, memorySearch);
 registry.set(memoryList.schema.function.name, memoryList);
-registry.set(memoryDelete.schema.function.name, memoryDelete);
+registry.set(memoryForget.schema.function.name, memoryForget);
 if (process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
     registry.set(sessionSearch.schema.function.name, sessionSearch);
 }
@@ -407,6 +410,7 @@ registry.set(setDoNotDisturb.schema.function.name, setDoNotDisturb);
 registry.set(darkMode.schema.function.name, darkMode);
 registry.set(lockScreen.schema.function.name, lockScreen);
 registry.set(sleepDisplay.schema.function.name, sleepDisplay);
+registry.set(openSettings.schema.function.name, openSettings);
 
 // App integration tools (cross-platform where possible)
 registry.set(spotifyTool.schema.function.name, spotifyTool);
@@ -441,6 +445,7 @@ registry.set(fileMetadata.schema.function.name, fileMetadata);
 registry.set(compressFiles.schema.function.name, compressFiles);
 registry.set(trashManager.schema.function.name, trashManager);
 registry.set(openInApp.schema.function.name, openInApp);
+registry.set(findFiles.schema.function.name, findFiles);
 
 // Google API tools
 registry.set(googleAccounts.schema.function.name, googleAccounts);
@@ -517,6 +522,7 @@ registry.set(browserExtract.schema.function.name, browserExtract);
 registry.set(browserBack.schema.function.name, browserBack);
 registry.set(browserAnalyze.schema.function.name, browserAnalyze);
 registry.set(browserRunJs.schema.function.name, browserRunJs);
+registry.set(browserMark.schema.function.name, browserMark);
 registry.set(browserWait.schema.function.name, browserWait);
 registry.set(browserSelect.schema.function.name, browserSelect);
 registry.set(browserSaveStrategy.schema.function.name, browserSaveStrategy);
@@ -1003,9 +1009,11 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         if (name.startsWith("browser_") && !NO_PAGE_CHECK.has(name)) result = await captchaAfterAction(result, stop);
         const durationMs = Date.now() - startTime;
 
-        // Cache the result if eligible
+        // Cache the result if eligible; any other call may have changed local state.
         if (isCacheable(name, effectiveInput)) {
             setCache(name, effectiveInput, result);
+        } else {
+            invalidateLocalState();
         }
 
         // Determine success

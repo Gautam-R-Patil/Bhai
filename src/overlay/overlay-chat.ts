@@ -30,6 +30,7 @@ import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/lo
 import { formatStepStatus, parseStepLine } from "../step-status.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
 import { classifyQuery } from "../memory/classifier.js";
+import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
 import { captureScreenshot } from "../tools/platform.js";
 import { getUserPresence } from "../proactive/activity.js";
 import {
@@ -168,6 +169,7 @@ function resolveSafePath(userPath: string): string | null {
 export { resolveSafePath as _resolveSafePathForTest };
 export { isDeniedServePath as _isDeniedServePathForTest };
 export { isScreenQuery as _isScreenQueryForTest };
+export { parseInteractiveElements as _parseInteractiveElementsForTest };
 
 let httpServer: ReturnType<typeof createServer> | null = null;
 let wss: WebSocketServer | null = null;
@@ -182,6 +184,8 @@ let recordingPath: string | null = null;
 // Which chat-bar session each socket is in (sent by overlay.html as `chat`).
 const chatIds = new WeakMap<WebSocket, string>();
 const chatOf = (ws: WebSocket) => chatIds.get(ws) || "overlay";
+// The "Forget that" this socket was last offered; a forget tap must match it (ids are guessable).
+const offeredUndo = new WeakMap<WebSocket, string>();
 
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
@@ -518,7 +522,9 @@ export function initOverlayChat(llm: LLMClient): void {
         console.log(`💬 ${isWidget ? "Widget" : "Overlay"} chat connected (${overlayClients.size} client${overlayClients.size > 1 ? "s" : ""})`);
 
         // Send ready signal
-        ws.send(JSON.stringify({ type: "ready" }));
+        // `busy`: an owner turn is still running (a reconnecting chat bar keeps waiting for it;
+        // if none is, its reply was lost and it unlocks).
+        ws.send(JSON.stringify({ type: "ready", busy: connKind === "native-overlay" && ownerTurnRunning() }));
 
         // Send current inbox state on connect (so a fresh overlay sees pending items).
         // Owner only: the inbox holds the owner's pending drafts and actions.
@@ -595,8 +601,12 @@ export function initOverlayChat(llm: LLMClient): void {
                 if (msg.type === "stop") {
                     // Stop button / Esc: abort this socket's running turn. No new
                     // tool starts after this (agent.ts checks the signal per tool).
-                    const ac = turnAborts.get(ws);
-                    if (ac && wsIsOwner(ws)) {
+                    // Any owner socket stops the owner's turn: after a reconnect the chat bar's
+                    // socket is not the one the turn started on.
+                    const ac = wsIsOwner(ws)
+                        ? (turnAborts.get(ws) ?? [...turnAborts].find(([w]) => wsIsOwner(w))?.[1])
+                        : undefined;
+                    if (ac) {
                         ac.abort();
                         // "Stopped." comes when the turn has really ended (an in-flight
                         // tool finishes first); until then the chat stays busy, so a
@@ -625,6 +635,11 @@ export function initOverlayChat(llm: LLMClient): void {
                     await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim());
                 } else if (msg.type === "quick_action" && msg.text) {
                     const actionText = msg.text.trim();
+                    if (actionText.startsWith("mem:forget:")) {
+                        const text = (wsIsOwner(ws) && offeredUndo.get(ws) === actionText && undoMemoryTap(actionText)) || "Only the owner can do that.";
+                        sendToClient(ws, { type: "response", text, toolCalls: 0, quickActions: [], files: [], links: [], widgets: [] });
+                        return;
+                    }
                     // Handle feedback actions locally (don't send to agent)
                     if (actionText === "feedback:good" || actionText === "feedback:bad") {
                         const isGood = actionText === "feedback:good";
@@ -859,6 +874,9 @@ export const pageText = (t: string, max: number): string =>
 
 /** The running turn per socket, so the Stop button can abort it. */
 const turnAborts = new Map<WebSocket, AbortController>();
+/** The owner's turns share one conversation history, so only one may run at a time. */
+const ownerTurnRunning = (): boolean => [...turnAborts.keys()].some(wsIsOwner);
+const BUSY_TEXT = "I'm still on your last message. Wait for my reply, or press Esc to stop it.";
 
 function ownerClients(): WebSocket[] {
     return [...overlayClients].filter(wsIsOwner);
@@ -871,6 +889,13 @@ function ownerClients(): WebSocket[] {
 async function handleOverlayMessage(ws: WebSocket, userMessage: string, source = "overlay", logText = userMessage): Promise<void> {
     if (!llmClient) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
+        return;
+    }
+    // A reloaded chat bar, a second owner window or the extension must not start a second
+    // turn on the shared history: it would interleave with the running one and take over
+    // its Stop handle.
+    if (wsIsOwner(ws) && ownerTurnRunning()) {
+        sendToClient(ws, { type: "error", text: BUSY_TEXT });
         return;
     }
     // "/new" (or "/clear") starts over without a model call: clears the shared
@@ -1020,11 +1045,17 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         }
 
         // Append feedback quick actions when the agent completed a multi-tool task
-        const feedbackActions = result.toolCalls >= 2 ? [
+        const feedbackActions: Array<string | { label: string; action: string }> = result.toolCalls >= 2 ? [
             ...(interactive.quickActions || []),
             { label: "👍", action: "feedback:good" },
             { label: "👎", action: "feedback:bad" },
         ] : (interactive.quickActions || []);
+        // Bhai just noted something: one tap takes it back (memoryUndo is set only for the owner's turn).
+        if (result.memoryUndo) {
+            const action = memoryUndoAction(result.memoryUndo);
+            offeredUndo.set(ws, action);
+            feedbackActions.push({ label: "Forget that", action });
+        }
 
         logChatMessage(chat, "assistant", interactive.text, source);
         sendToClient(ws, {
@@ -1057,6 +1088,13 @@ async function handleFileAttachment(
 ): Promise<void> {
     if (!llmClient) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
+        return;
+    }
+    // A reloaded chat bar, a second owner window or the extension must not start a second
+    // turn on the shared history: it would interleave with the running one and take over
+    // its Stop handle.
+    if (wsIsOwner(ws) && ownerTurnRunning()) {
+        sendToClient(ws, { type: "error", text: BUSY_TEXT });
         return;
     }
 
@@ -1164,7 +1202,8 @@ function parseInteractiveElements(rawText: string): InteractiveElements {
     const qaMatch = text.match(/<!--\s*QUICK_ACTIONS\s*:\s*(\[.*?\])\s*-->/s);
     if (qaMatch) {
         try {
-            quickActions = JSON.parse(qaMatch[1]);
+            // Strings only: a model-made {label, action} could show one text and send another.
+            quickActions = (JSON.parse(qaMatch[1]) as unknown[]).filter((a): a is string => typeof a === "string");
         } catch { /* malformed JSON, ignore */ }
         text = text.replace(qaMatch[0], '').trim();
     }
@@ -1248,7 +1287,16 @@ function sendToClient(ws: WebSocket, data: unknown): void {
     const json = JSON.stringify(data);
     if (ws.readyState === 1) {
         ws.send(json);
-    } else if (wsIsOwner(ws) && ownerClients().length === 1) {
+    } else if (wsIsOwner(ws)) {
+        // The turn's socket died (overlay hidden, reconnected): the same chat bar, back on a
+        // new socket, announces its chat id on open; deliver there.
+        const chat = chatIds.get(ws);
+        const same = ownerClients().find((c) => c !== ws && c.readyState === 1 && chatIds.get(c) === chat);
+        if (same) {
+            same.send(json);
+            return;
+        }
+        if (ownerClients().length !== 1) return;
         // Fallback: original ws died (overlay hidden/refocused) and there is exactly
         // one owner client connected — the reconnected native overlay. Never a
         // web-widget visitor.
@@ -1380,35 +1428,37 @@ function humanizeForOverlay(msg: string): string {
 
 // ── Send proactive message to overlay ─────────
 
-export function sendOverlayNotification(message: string): void {
+/** False when Smart DND held it or no owner overlay is connected, so a proactive sender can retry. */
+export async function sendOverlayNotification(message: string): Promise<boolean> {
     // Gate proactive overlay notifications through Smart DND
-    (async () => {
-        try {
-            const { shouldSuppressMessage } = await import("../proactive/dnd.js");
-            const suppress = await shouldSuppressMessage(message);
-            if (suppress) {
-                console.log("🔕 Proactive overlay notification suppressed by DND");
-                return;
-            }
-        } catch { /* DND check failed — deliver anyway */ }
-
-        const isResearchComplete =
-            message.includes("Deep research complete") ||
-            message.includes("research complete") ||
-            (message.includes("✅") && message.includes("sources"));
-        for (const client of ownerClients()) {
-            sendToClient(client, { type: "notification", text: message });
-            if (isResearchComplete) {
-                sendToClient(client, { type: "research_complete", text: message });
-            }
+    try {
+        const { shouldSuppressMessage } = await import("../proactive/dnd.js");
+        const suppress = await shouldSuppressMessage(message);
+        if (suppress) {
+            console.log("🔕 Proactive overlay notification suppressed by DND");
+            return false;
         }
+    } catch { /* DND check failed — deliver anyway */ }
 
-        // Record notification for engagement tracking
-        try {
-            const { recordNotification } = await import("../proactive/notification-tracker.js");
-            recordNotification("proactive", message);
-        } catch { /* non-fatal */ }
-    })();
+    const clients = ownerClients();
+    if (clients.length === 0) return false;
+    const isResearchComplete =
+        message.includes("Deep research complete") ||
+        message.includes("research complete") ||
+        (message.includes("✅") && message.includes("sources"));
+    for (const client of clients) {
+        sendToClient(client, { type: "notification", text: message });
+        if (isResearchComplete) {
+            sendToClient(client, { type: "research_complete", text: message });
+        }
+    }
+
+    // Record notification for engagement tracking
+    try {
+        const { recordNotification } = await import("../proactive/notification-tracker.js");
+        recordNotification("proactive", message);
+    } catch { /* non-fatal */ }
+    return true;
 }
 
 // ── Send image to overlay ─────────────────────

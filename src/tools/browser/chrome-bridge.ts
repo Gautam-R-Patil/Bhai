@@ -85,6 +85,7 @@ let extensionSocket: WebSocket | null = null;
 let bridgeToken: string = "";
 let authenticated = false;
 let heartbeatTimer: NodeJS.Timeout | null = null;
+let lastPong = 0;
 
 // Pending requests waiting for extension responses.
 // Bounded to protect against an extension that acks out of order, crashes
@@ -253,6 +254,27 @@ const NATIVE_OK_FILE = path.join(homedir(), ".atlas", "bridge-native-ok");
 let nativeHostRegistered = false;
 export const discoverServesTokens = (): boolean => !(nativeHostRegistered && fs.existsSync(NATIVE_OK_FILE));
 
+/**
+ * The /bin/sh launcher Chrome runs as the native host. Chrome can start it while Bhai is
+ * being reinstalled: running the half-copied app then dies in dyld/Electron startup
+ * ("Library missing"), leaving a crash report and a "Bhai quit unexpectedly" alert. So
+ * it checks the runtime is all there first and otherwise exits quietly (the extension
+ * retries discovery a few seconds later).
+ */
+export function nativeHostLauncher(execPath: string, hostScript: string): string {
+    const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+    const fw = execPath.includes(".app/Contents/MacOS/")
+        ? path.join(path.dirname(path.dirname(execPath)), "Frameworks", "Electron Framework.framework")
+        : null;
+    const ready = [`[ -x ${q(execPath)} ]`, `[ -r ${q(hostScript)} ]`];
+    if (fw)
+        ready.push(
+            `[ -e ${q(path.join(fw, "Electron Framework"))} ]`,
+            `[ -e ${q(path.join(fw, "Resources", "icudtl.dat"))} ]`,
+        );
+    return `#!/bin/sh\n${ready.join(" && ")} || exit 1\nELECTRON_RUN_AS_NODE=1 exec ${q(execPath)} ${q(hostScript)}\n`;
+}
+
 async function registerNativeMessagingHost(_port: number): Promise<void> {
     try {
         // Write the native host script next to the discovery file
@@ -307,13 +329,8 @@ function sendMessage(msg) {
         if (!ids) return; // Chrome rejects wildcard origins, so without Bhai's ID there's nothing to register
         let hostPath = hostScriptPath;
         if (process.platform !== "win32") {
-            const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
             hostPath = path.join(homedir(), ".atlas", "atlas-bridge-host");
-            fs.writeFileSync(
-                hostPath,
-                `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${q(process.execPath)} ${q(hostScriptPath)}\n`,
-                { mode: 0o755 },
-            );
+            fs.writeFileSync(hostPath, nativeHostLauncher(process.execPath, hostScriptPath), { mode: 0o755 });
         }
 
         // Write the native messaging host manifest
@@ -575,27 +592,11 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             }
         });
 
-        ws.on("close", () => {
-            if (ws === extensionSocket) {
-                extensionSocket = null;
-                authenticated = false;
-                clearPendingRequests("Extension disconnected");
-                stopHeartbeat();
-                // Reset backend so auto-mode falls back to Playwright
-                resetBackend();
-                notifyEvent({ type: "extension_disconnected", data: {} });
-                console.log("🔌 Chrome extension disconnected");
-            }
-        });
+        ws.on("close", () => dropExtension(ws, "Extension disconnected"));
 
         ws.on("error", (err) => {
             console.warn("🔌 Chrome bridge error:", (err as Error).message);
-            if (ws === extensionSocket) {
-                extensionSocket = null;
-                authenticated = false;
-                clearPendingRequests("Extension connection error");
-                stopHeartbeat();
-            }
+            dropExtension(ws, "Extension connection error");
             try {
                 ws.terminate();
             } catch {
@@ -715,6 +716,7 @@ function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, aut
 
     // Heartbeat pong
     if (msg.type === "pong") {
+        lastPong = Date.now();
         return;
     }
 
@@ -911,10 +913,10 @@ export function getBridgeToken(): string {
  */
 export function rotateBridgeToken(): string {
     // Disconnect current extension
-    if (extensionSocket) {
-        extensionSocket.close(4004, "Token rotated");
-        extensionSocket = null;
-        authenticated = false;
+    const current = extensionSocket;
+    if (current) {
+        dropExtension(current, "Token rotated");
+        current.close(4004, "Token rotated");
     }
 
     if (native) {
@@ -971,9 +973,35 @@ export function closeChromeBridge(): void {
 
 // ── Internal Helpers ─────────────────────────
 
+/**
+ * The one teardown for the extension's socket (close, error, token rotation, silence):
+ * pending calls fail now, the heartbeat stops, and the backend falls back to
+ * Playwright. Error and rotation used to skip the last part, leaving calls on a dead
+ * socket until their own timeouts.
+ */
+function dropExtension(ws: WebSocket, reason: string): void {
+    if (ws !== extensionSocket) return;
+    extensionSocket = null;
+    authenticated = false;
+    clearPendingRequests(reason);
+    stopHeartbeat();
+    resetBackend(); // auto mode falls back to Playwright
+    notifyEvent({ type: "extension_disconnected", data: {} });
+    console.log(`🔌 Chrome extension disconnected (${reason})`);
+}
+
 function startHeartbeat(ws: WebSocket): void {
     stopHeartbeat();
+    lastPong = Date.now();
     heartbeatTimer = setInterval(() => {
+        // A socket that stopped answering (laptop slept, extension worker killed) stays
+        // "open" until the OS notices, minutes later: until then every call waits out its
+        // timeout and the extension's reconnect is refused as a second connection.
+        if (Date.now() - lastPong > HEARTBEAT_INTERVAL_MS * 2.5) {
+            dropExtension(ws, "Extension stopped answering");
+            ws.terminate();
+            return;
+        }
         if (ws.readyState === 1) {
             try {
                 ws.send(JSON.stringify({ type: "ping" }));

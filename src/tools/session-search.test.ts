@@ -161,6 +161,26 @@ describe("session_search tool handler (arg-inferred op)", () => {
     });
 });
 
+describe("indexConversationMessages (append-only)", () => {
+    it("re-indexing a pruned-then-extended history adds only the new messages", () => {
+        const raw = sqlite.getRawDb();
+        if (!raw) throw new Error("raw DB unavailable");
+        const conv = 9001;
+        const first = [msg("user", "plan the lisbon trip"), msg("assistant", "Lisbon in May works well.")];
+        expect(sqlite.indexConversationMessages(conv, "session-C", first, "2025-01-01T00:00:00Z")).toBe(2);
+        // Pruned: the first message is gone, so every position shifted.
+        const later = [first[1], msg("user", "book the lisbon hotel"), msg("assistant", "Booked the Alfama hotel.")];
+        expect(sqlite.indexConversationMessages(conv, "session-C", later, "2025-01-01T00:00:00Z")).toBe(2);
+        const rows = raw
+            .prepare(
+                "SELECT msg_index, content FROM conversation_messages WHERE conversation_id = ? ORDER BY msg_index",
+            )
+            .all(conv) as Array<{ msg_index: number; content: string }>;
+        expect(rows.map((r) => r.msg_index)).toEqual([0, 1, 2, 3]);
+        expect(rows[3].content).toBe("Booked the Alfama hotel.");
+    });
+});
+
 describe("fail-open when the FTS table is missing", () => {
     it("searchSessionMessages returns [] and the handler returns a friendly note", async () => {
         const raw = sqlite.getRawDb();

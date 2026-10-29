@@ -3036,6 +3036,26 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         setTimeout(() => input.focus(), 300);
       }
 
+      // Sending while the socket is down used to do nothing at all (the glow that marked the
+      // connection is hidden), so a typed message just sat there. Say what's going on.
+      let connRefused = false;
+      let connNoticeShown = false;
+      function showConnNotice() {
+        const label = connRefused
+          ? "Bhai refused the connection. Quit and reopen Bhai."
+          : "Not connected to Bhai yet — reconnecting. Your message is still here.";
+        progress.innerHTML = `<div class="progress-card"><span class="progress-icon">🔌</span><span class="progress-label">${esc(label)}</span></div>`;
+        progress.classList.add('visible');
+        connNoticeShown = true;
+        announceToSR(label);
+      }
+      function clearConnNotice() {
+        if (!connNoticeShown) return;
+        connNoticeShown = false;
+        progress.classList.remove('visible');
+        progress.innerHTML = '';
+      }
+
       function connect() {
         // Authenticate the WS handshake with the server-injected loopback token.
         // The server rejects token-less connections (4001), which previously left
@@ -3050,9 +3070,19 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         const qs = _tok ? `?localToken=${encodeURIComponent(_tok)}` : '';
         ws = new WebSocket(`ws://${location.host}${qs}`);
         window._atlasWS = ws; // Expose for Electron IPC (live voice shortcut)
-        ws.onopen = () => { blobs.forEach(b => b.classList.add('on')); grabFocus(); };
+        ws.onopen = () => {
+          connRefused = false; clearConnNotice(); blobs.forEach(b => b.classList.add('on')); grabFocus();
+          // Name this chat on the new socket, so a reply to a turn that started before a
+          // reconnect still finds its way here.
+          ws.send(JSON.stringify({ type: 'hello', chat: chatId }));
+        };
         ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { console.error('[OVERLAY] handle() error:', err); } };
-        ws.onclose = () => { blobs.forEach(b => b.classList.remove('on')); setTimeout(connect, 2000); };
+        ws.onclose = (e) => {
+          // 4001/4003: the server refused this socket (token or origin) — retrying won't help.
+          connRefused = e.code === 4001 || e.code === 4003;
+          blobs.forEach(b => b.classList.remove('on'));
+          setTimeout(connect, 2000);
+        };
         ws.onerror = () => ws.close();
       }
 
@@ -3228,6 +3258,22 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
           grabFocus();
         }
+        else if (msg.type === 'ready') {
+          // Reconnected while waiting, and no turn is running any more: its reply was lost.
+          // Unlock instead of showing "thinking" forever.
+          if (waiting && !msg.busy) {
+            icon.classList.remove('thinking');
+            setMood('idle');
+            setAgentBusy(false);
+            input.disabled = false;
+            waiting = false;
+            const lost = "The connection dropped and I lost my reply. Ask me again.";
+            progress.innerHTML = `<div class="progress-card"><span class="progress-icon">🔌</span><span class="progress-label">${esc(lost)}</span></div>`;
+            progress.classList.add('visible');
+            announceToSR(lost);
+            grabFocus();
+          }
+        }
         else if (msg.type === 'silent') {
           icon.classList.remove('thinking');
           setMood('idle');
@@ -3371,7 +3417,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         const DANGER_WORDS = ['delete', 'remove', 'destroy', 'drop', 'erase', 'nuke', 'wipe', 'uninstall'];
         const CONFIRM_WORDS = ['yes', 'confirm', 'approve', 'accept', 'proceed', 'go ahead', 'do it', 'ok'];
 
-        actions.forEach(label => {
+        actions.forEach(a => {
+          // A string is both label and message; {label, action} sends the action (feedback, "Forget that").
+          const label = typeof a === 'string' ? a : a.label;
           const btn = document.createElement('button');
           btn.className = 'quick-action-btn';
           btn.textContent = label;
@@ -3386,7 +3434,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             input.disabled = true;
             replyBox.classList.remove('visible');
             clearInteractive();
-            ws.send(JSON.stringify({ type: 'quick_action', text: label, chat: chatId }));
+            ws.send(JSON.stringify({ type: 'quick_action', text: typeof a === 'string' ? a : a.action, chat: chatId }));
           };
           quickActionsBox.appendChild(btn);
         });
@@ -4149,6 +4197,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           if (e.key === 'ArrowUp') { e.preventDefault(); pickerSelectedIdx = Math.max(pickerSelectedIdx - 1, 0); highlightItem(pickerSelectedIdx); return; }
           if (e.key === 'Tab') { e.preventDefault(); if (pickerSelectedIdx >= 0) selectItem(pickerSelectedIdx); else if (pickerItems.length > 0) selectItem(0); return; }
         }
+        // Enter that commits an IME candidate (Japanese, Chinese, Korean, some Hindi
+        // keyboards) is part of typing, not a send.
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
         // Backspace on empty input removes last chip
         if (e.key === 'Backspace' && input.value === '') {
@@ -4160,7 +4211,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       // Override send to include chip context
       function send() {
         const text = buildFullMessage();
-        if (!text || !ws || ws.readyState !== 1 || waiting) return;
+        if (!text || waiting) return;
+        if (!ws || ws.readyState !== 1) return showConnNotice();
         waiting = true;
         input.disabled = true;
         setAgentBusy(true);

@@ -4,7 +4,7 @@
 
 import type { Channel, ProactiveMode } from "./intent.js";
 import { getToneReminder } from "../setup/personality-sync.js";
-import { getChannelSender } from "../tools/channel-send.js";
+import { getChannelSender, type ProactiveButton } from "../tools/channel-send.js";
 import { isProactiveDisabled, isChannelDisabled, isShadowMode, debugProactive } from "./kill-switches.js";
 
 // Fatigue-check hook. Returns true when the user shows signs of
@@ -38,25 +38,29 @@ const PREFIXED_CHANNELS: Channel[] = ["whatsapp", "telegram", "discord", "slack"
  * registered in the existing getChannelSender registry (tools/channel-send.ts).
  *
  * No separate registry — reuses what is already wired at boot.
+ * Resolves true only when the message was actually sent. An `ownerOnly` message
+ * quotes the owner's memory: owners' private chats only, and no preview in the logs.
  */
 export async function dispatchProactiveMessage(
     channel: Channel,
     text: string,
     mode: ProactiveMode,
-): Promise<void> {
+    buttons?: ProactiveButton[],
+    ownerOnly = false,
+): Promise<boolean> {
     if (isProactiveDisabled()) {
         debugProactive("suppressed_global", { channel, mode });
-        return;
+        return false;
     }
     if (isChannelDisabled(channel)) {
         debugProactive("suppressed_channel", { channel, mode });
-        return;
+        return false;
     }
     if (_fatigueCheck !== null) {
         try {
             if (_fatigueCheck()) {
                 debugProactive("suppressed_fatigue", { channel, mode });
-                return;
+                return false;
             }
         } catch {
             // Fail open — a broken fatigue check should never block sends.
@@ -69,20 +73,26 @@ export async function dispatchProactiveMessage(
     // Professional and Direct presets say "no emoji"; the prefix is one too.
     const plain = /PROFESSIONAL|DIRECT/.test(getToneReminder() ?? "");
     const prefixed = PREFIXED_CHANNELS.includes(channel) && !plain ? `${EMOJI[mode]} ${text}` : text;
+    const preview = ownerOnly ? {} : { preview: prefixed.slice(0, 80) };
     if (isShadowMode()) {
-        debugProactive("shadow_dispatch", { channel, mode, preview: prefixed.slice(0, 80) });
-        return;
+        debugProactive("shadow_dispatch", { channel, mode, ...preview });
+        return false;
     }
-    await sender(prefixed);
-    debugProactive("dispatched", { channel, mode, preview: prefixed.slice(0, 80) });
+    if ((await sender(prefixed, undefined, buttons, ownerOnly)) === false) {
+        debugProactive("suppressed_sender", { channel, mode });
+        return false;
+    }
+    debugProactive("dispatched", { channel, mode, ...preview });
     // Push subscribers follow the overlay. The push mirrors what was delivered — composed, past
     // every gate above — never the raw thought (heartbeat used to push it regardless of
     // "shut up", the kill switches, shadow mode or the night window).
-    if (channel === "overlay") {
+    // Never for owner-only text: push subscriptions aren't owner-gated (the web widget can subscribe).
+    if (channel === "overlay" && !ownerOnly) {
         import("../notifications/push.js")
             .then(({ getSubscriptionCount, sendPushNotification }) =>
                 getSubscriptionCount() > 0 ? sendPushNotification("Bhai", text.slice(0, 180)) : undefined,
             )
             .catch(() => {});
     }
+    return true;
 }

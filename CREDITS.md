@@ -16,6 +16,7 @@ We gratefully acknowledge their authors and communities.
 
 | Package | License | Description |
 |---------|---------|-------------|
+| [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-typescript) (`@anthropic-ai/sdk`) | MIT | Claude API types and client (the Convex proxy calls Claude)|
 | [OpenAI Node SDK](https://github.com/openai/openai-node) (`openai`) | Apache-2.0 | LLM API client |
 | [Google GenAI](https://github.com/googleapis/js-genai) (`@google/genai`) | Apache-2.0 | Google Generative AI SDK (Gemini Live + multimodal) |
 | [Xenova Transformers](https://github.com/xenova/transformers.js) (`@xenova/transformers`) | Apache-2.0 | Local embedding and transformer models |
@@ -43,7 +44,6 @@ We gratefully acknowledge their authors and communities.
 | Package | License | Description |
 |---------|---------|-------------|
 | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (`better-sqlite3`) | MIT | SQLite3 bindings for Node.js |
-| [sql.js](https://github.com/sql-js/sql.js) (`sql.js`) | MIT | SQLite compiled to WebAssembly |
 | [Supabase JS](https://github.com/supabase/supabase-js) (`@supabase/supabase-js`) | MIT | Supabase client |
 
 ## Browser Automation
@@ -105,7 +105,6 @@ We gratefully acknowledge their authors and communities.
 | Package | License | Description |
 |---------|---------|-------------|
 | [twitter-api-v2](https://github.com/PLhery/node-twitter-api-v2) (`twitter-api-v2`) | Apache-2.0 | Twitter/X API v2 client |
-| [snoowrap](https://github.com/not-an-aardvark/snoowrap) (`snoowrap`) | MIT | Reddit API wrapper |
 | [apify-client](https://github.com/apify/apify-client-js) (`apify-client`) | Apache-2.0 | Apify scraping platform client |
 
 ## DevOps & Containers
@@ -129,6 +128,9 @@ We gratefully acknowledge their authors and communities.
 | [gray-matter](https://github.com/jonschlinkert/gray-matter) (`gray-matter`) | MIT | Front-matter parser |
 | [Zod](https://zod.dev) (`zod`) | MIT | TypeScript-first schema validation |
 | [tar](https://github.com/isaacs/node-tar) (`tar`) | ISC | Archive creation and extraction |
+| [acorn](https://github.com/acornjs/acorn) (`acorn`) | MIT | JavaScript parser (Skill Forge compile check) |
+| [proper-lockfile](https://github.com/moxystudio/node-proper-lockfile) (`proper-lockfile`) | MIT | Cross-process file locking |
+| [psl](https://github.com/lupomontero/psl) (`psl`) | MIT | Public Suffix List parsing (domain scoping) |
 | [@hapi/boom](https://github.com/hapijs/boom) (`@hapi/boom`) | BSD-3-Clause | HTTP-friendly error objects |
 | [clipboardy](https://github.com/sindresorhus/clipboardy) (`clipboardy`) | MIT | Cross-platform clipboard access |
 | [screenshot-desktop](https://github.com/bencevans/screenshot-desktop) (`screenshot-desktop`) | MIT | Cross-platform desktop screenshot capture |
@@ -154,10 +156,26 @@ We gratefully acknowledge their authors and communities.
 | [@types/fluent-ffmpeg](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for fluent-ffmpeg |
 | [@types/markdown-it](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for markdown-it |
 | [@types/node-cron](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for node-cron |
-| [@types/nodemailer](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for Nodemailer |
-| [@types/snoowrap](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for snoowrap |
+| [@types/proper-lockfile](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for proper-lockfile |
 | [@types/tar](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for tar |
 | [@types/ws](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT | Type definitions for ws |
+
+## Desktop app (`desktop/`)
+
+| Package | License | Description |
+|---------|---------|-------------|
+| [Electron](https://www.electronjs.org) (`electron`) | MIT | Desktop shell |
+| [electron-builder](https://www.electron.build) (`electron-builder`) | MIT | Packaging and installers |
+| [electron-updater](https://www.electron.build/auto-update) (`electron-updater`) | MIT | Auto-update |
+| [electron-store](https://github.com/sindresorhus/electron-store) (`electron-store`) | MIT | Persistent settings |
+| [adm-zip](https://github.com/cthackers/adm-zip) (`adm-zip`) | MIT | Zip extraction |
+| [qrcode](https://github.com/soldair/node-qrcode) (`qrcode`) | MIT | QR code rendering (WhatsApp linking) |
+| [esbuild](https://esbuild.github.io) (`esbuild`) | MIT | Bot bundle |
+| [bytenode](https://github.com/bytenode/bytenode) (`bytenode`) | MIT | V8 bytecode compilation |
+| [javascript-obfuscator](https://github.com/javascript-obfuscator/javascript-obfuscator) (`javascript-obfuscator`) | BSD-2-Clause | Release obfuscation |
+| [jsdom](https://github.com/jsdom/jsdom) (`jsdom`) | MIT | DOM tests |
+
+The desktop app also uses Baileys, better-sqlite3 and imapflow (listed above) and Vitest.
 
 ---
 
@@ -185,6 +203,17 @@ The native performance layer is built in Rust via napi-rs. It links the followin
 | [getrandom](https://github.com/rust-random/getrandom) (`getrandom`) | MIT OR Apache-2.0 | Cryptographic random bytes |
 | [hex](https://github.com/KokaKiwi/rust-hex) (`hex`) | MIT OR Apache-2.0 | Hex encoding/decoding |
 | [libc](https://github.com/rust-lang/libc) (`libc`) | MIT OR Apache-2.0 | Raw FFI bindings to platform C libraries |
+| [tokio](https://github.com/tokio-rs/tokio) (`tokio`) | MIT | Async runtime (Skill Forge sandbox supervisor) |
+| [tempfile](https://github.com/Stebalien/tempfile) (`tempfile`) | MIT OR Apache-2.0 | Temporary files |
+| [uuid](https://github.com/uuid-rs/uuid) (`uuid`) | MIT OR Apache-2.0 | UUIDs |
+| [lru](https://github.com/jeromefroe/lru-rs) (`lru`) | MIT | LRU cache (warm sandbox pool) |
+| [which](https://github.com/harryfei/which-rs) (`which`) | MIT | Executable lookup |
+| [dashmap](https://github.com/xacrimon/dashmap) (`dashmap`) | MIT | Concurrent map |
+| [thiserror](https://github.com/dtolnay/thiserror) (`thiserror`) | MIT OR Apache-2.0 | Error derive |
+| [nix](https://github.com/nix-rust/nix) (`nix`) | MIT | Unix syscalls (Linux sandbox) |
+| [seccompiler](https://github.com/rust-vmm/seccompiler) (`seccompiler`) | Apache-2.0 OR BSD-3-Clause | seccomp filters (Linux sandbox) |
+| [landlock](https://github.com/landlock-lsm/rust-landlock) (`landlock`) | MIT OR Apache-2.0 | Landlock filesystem sandbox (Linux) |
+| [windows-sys](https://github.com/microsoft/windows-rs) (`windows-sys`) | MIT OR Apache-2.0 | Win32 bindings (Windows sandbox) |
 | [webrtc-vad](https://github.com/kpcyrd/webrtc-vad-rs) (`webrtc-vad`) | MIT OR Apache-2.0 | libfvad-backed voice activity detection (gated behind cargo feature `vad`, used by `pcm_vad.rs`) |
 
 ## Adapted Source Code

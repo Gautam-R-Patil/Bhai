@@ -6,8 +6,7 @@
 // Replicates the 12-system memory injection from agent.ts (lines 620-850)
 // but as a standalone, reusable function.
 
-import { recall, getCoreMemory } from "../../memory/sqlite.js";
-import { findEntities, getKnowledgeGraphDB } from "../../memory/knowledge-graph.js";
+import { ageLabel, recall, getCoreMemory } from "../../memory/sqlite.js";
 import { getIdentityPromptSnippet } from "../../memory/identity.js";
 import { getTraitsForInjection } from "../../memory/traits.js";
 import { getSessionSummary } from "../../memory/session.js";
@@ -16,7 +15,6 @@ import { getEmotionalContextSnippet } from "../../memory/emotional.js";
 import { getEpisodicSnippet } from "../../memory/episodic.js";
 import { getRelationshipSnippet } from "../../memory/relationship.js";
 import { getAnticipationSnippet } from "../../memory/anticipation.js";
-import { getUserModelSnippet } from "../../memory/user-model.js";
 import { getWMSnippet } from "../../memory/working-memory.js";
 import { getTimezone } from "../../location/index.js";
 
@@ -89,19 +87,13 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
         if (anticipationSnippet) parts.push(anticipationSnippet);
     } catch { /* */ }
 
-    // ── User model ──
-    try {
-        const userModelSnippet = await getUserModelSnippet();
-        if (userModelSnippet) parts.push(userModelSnippet);
-    } catch { /* */ }
-
     // ── Core memory ──
     try {
         const coreMems = getCoreMemory(10);
         if (coreMems && coreMems.length > 0) {
             parts.push(
                 "CORE MEMORY (Always remember these facts about the user):\n" +
-                coreMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")
+                coreMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")
             );
         }
     } catch { /* DB not initialized */ }
@@ -113,22 +105,8 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
             if (queriedMems && queriedMems.length > 0) {
                 parts.push(
                     "RELEVANT MEMORIES:\n" +
-                    queriedMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")
+                    queriedMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")
                 );
-            }
-        } catch { /* */ }
-
-        // ── Knowledge graph ──
-        try {
-            const kgDb = getKnowledgeGraphDB();
-            if (kgDb) {
-                const entities = findEntities(kgDb, userHint);
-                if (entities.length > 0) {
-                    const entityLines = entities.slice(0, 5).map(e =>
-                        `- [${e.type}] ${e.name}${e.properties && Object.keys(e.properties).length > 0 ? ` (${JSON.stringify(e.properties)})` : ""}`
-                    );
-                    parts.push("RELATED ENTITIES:\n" + entityLines.join("\n"));
-                }
             }
         } catch { /* */ }
     }
@@ -156,11 +134,11 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
 
     // ── Recent memories — last few high-score entries, regardless of topic. ──
     try {
-        const recent = await recall("", 5);
+        const recent = await recall("", 5, undefined, undefined, undefined, undefined, { touch: false });
         if (recent && recent.length > 0) {
             parts.push(
                 "RECENT MEMORIES:\n" +
-                recent.map((m: any) => `- (${m.category}) ${m.content}`).join("\n"),
+                recent.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n"),
             );
         }
     } catch { /* */ }

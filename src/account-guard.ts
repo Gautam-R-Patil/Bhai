@@ -126,7 +126,7 @@ export async function checkAccountStatus(): Promise<{ allowed: boolean; reason?:
 
         if (data.ai_credits <= 0) {
             console.log("[AccountGuard] Credits exhausted — blocking");
-            return { allowed: false, reason: "You've run out of AI credits. Top up to continue." };
+            return { allowed: false, reason: "You've run out of AI credits. Reach the TRUSCOR team for more." };
         }
 
         console.log(`[AccountGuard] Account OK (status: ${data.status}, credits: ${data.ai_credits})`);

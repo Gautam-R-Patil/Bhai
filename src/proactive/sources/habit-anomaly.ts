@@ -5,7 +5,7 @@
 import type { IntentSourceModule, SourceCtx } from "./source.js";
 import type { ProactiveIntent } from "../intent.js";
 import * as native from "../../../native/index.js";
-import { getMemoryDB } from "../../memory/sqlite.js";
+import { dbTimeMs, getMemoryDB } from "../../memory/sqlite.js";
 import { buildIntent } from "./_shared/build-intent.js";
 import { debugProactive } from "../kill-switches.js";
 
@@ -35,11 +35,11 @@ export const HABIT_ANOMALY: IntentSourceModule = {
             const recentCutoff = new Date(ctx.now - RECENT_EVENT_DAYS * 86400_000).toISOString();
 
             const historyRows = db.exec(
-                `SELECT content, created_at FROM conversations WHERE role = 'user' AND created_at > ? ORDER BY created_at LIMIT 500`,
+                `SELECT content, created_at FROM conversation_messages WHERE role = 'user' AND datetime(created_at) > datetime(?) ORDER BY created_at LIMIT 500`,
                 [historyCutoff]
             );
             habitEvents = (historyRows[0]?.values ?? []).map((r: unknown[]) => {
-                const ts = new Date(r[1] as string);
+                const ts = new Date(dbTimeMs(r[1] as string));
                 return {
                     timestampMs: ts.getTime(),
                     eventType: labelTopic(r[0] as string),
@@ -49,12 +49,12 @@ export const HABIT_ANOMALY: IntentSourceModule = {
             });
 
             const recentRows = db.exec(
-                `SELECT content, created_at FROM conversations WHERE role = 'user' AND created_at > ? ORDER BY created_at LIMIT 100`,
+                `SELECT content, created_at FROM conversation_messages WHERE role = 'user' AND datetime(created_at) > datetime(?) ORDER BY created_at LIMIT 100`,
                 [recentCutoff]
             );
             recentEvents = (recentRows[0]?.values ?? []).map((r: unknown[]) => ({
                 eventType: labelTopic(r[0] as string),
-                tsMs: new Date(r[1] as string).getTime(),
+                tsMs: dbTimeMs(r[1] as string),
             }));
         } catch (err) {
             debugProactive("habit_anomaly_db_failed", { err: (err as Error).message });

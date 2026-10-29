@@ -33,6 +33,17 @@ export default defineSchema({
     .index("by_user", ["otplessUserId"])
     .index("by_expires", ["expiresAt"]),
 
+  // ── Devices (Account → Devices; see devices.ts) ─────────────────────────
+  devices: defineTable({
+    otplessUserId: v.string(),
+    fingerprint: v.string(),         // "platform:host:user", as sent with sessions
+    firstSeen: v.number(),
+    lastSeen: v.number(),
+    removedAt: v.optional(v.number()), // removed by the owner: no new sessions until a verified sign-in
+  })
+    .index("by_user", ["otplessUserId"])
+    .index("by_user_and_fingerprint", ["otplessUserId", "fingerprint"]),
+
   // ── Rate Limits (per-session sliding window counters) ───────────────────
   rate_limits: defineTable({
     sessionToken: v.string(),        // Links to sessions.token
