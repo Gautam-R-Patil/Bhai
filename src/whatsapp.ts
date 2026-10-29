@@ -2484,6 +2484,11 @@ export async function closeWhatsApp(): Promise<void> {
     }
 }
 
+/** The owner's per-chat histories, for memory_forget to redact. */
+export function getOwnerConversations(): ChatCompletionMessageParam[][] {
+    return [...ownerConversations.values()];
+}
+
 export function getWhatsAppQR(): string | null {
     return currentQR;
 }

@@ -142,11 +142,12 @@ export const memoryForget: ToolDefinition = {
             });
         }
         const { getConversationHistory } = await import("../agent.js");
+        const { getOwnerConversations } = await import("../whatsapp.js");
         const res = executeForget(
             input.token,
             typeof input.user_quote === "string" ? input.user_quote : "",
             typeof input.reason === "string" ? input.reason : "",
-            getConversationHistory(),
+            [getConversationHistory(), ...getOwnerConversations()],
         );
         if ("error" in res) return JSON.stringify({ success: false, error: res.error });
         return JSON.stringify({

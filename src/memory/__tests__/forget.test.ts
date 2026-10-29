@@ -39,6 +39,11 @@ beforeAll(async () => {
         { role: "user", content: "I'm seeing Priya" },
         { role: "assistant", content: "Nice!" },
         { role: "user", content: "remind me about chai" },
+        {
+            role: "assistant",
+            content: null,
+            tool_calls: [{ id: "c1", type: "function", function: { name: "memory_store", arguments: '{"content":"Seeing Priya"}' } }],
+        },
     ];
     raw.prepare("INSERT INTO conversations (session_id, messages_json, summary) VALUES ('s1', ?, 'Talked about Priya')").run(
         JSON.stringify(msgs),
@@ -81,7 +86,10 @@ describe("memory_forget across tiers", () => {
 
         consent.noteOwnerMessage("yes forget it");
         const live = [{ role: "user", content: "forget that I'm seeing Priya" }, { role: "assistant", content: "ok" }];
-        expect(forget.executeForget(token, "yes forget it", "private now", live)).toEqual({ forgotten: tiers.length });
+        const wa = [{ role: "assistant", tool_calls: [{ id: "c2", function: { arguments: '{"query":"priya"}' } }] }];
+        expect(forget.executeForget(token, "yes forget it", "private now", [live, wa])).toEqual({
+            forgotten: tiers.length,
+        });
         expect(forget.executeForget(token, "yes forget it", "again")).toHaveProperty("error"); // single use
 
         expect(forget.findForgettable("priya")).toEqual([]);
@@ -92,14 +100,19 @@ describe("memory_forget across tiers", () => {
             messages_json: string;
             summary: string | null;
         };
-        expect(JSON.parse(conv.messages_json).map((m: { content: string }) => m.content)).toEqual([
+        const stored = JSON.parse(conv.messages_json);
+        expect(stored.map((m: { content: string }) => m.content)).toEqual([
             "[forgotten]",
             "Nice!",
             "remind me about chai",
+            null,
         ]);
+        // Tool-call arguments go too; the id stays so the call still pairs with its result.
+        expect(stored[3].tool_calls[0]).toMatchObject({ id: "c1", function: { arguments: "{}" } });
         expect(conv.summary).toBeNull();
         expect(live[0].content).toBe("[forgotten]");
         expect(live[1].content).toBe("ok");
+        expect(wa[0].tool_calls[0].function.arguments).toBe("{}");
 
         // Identity: only the matching project went; the others kept their order.
         const profile = JSON.parse(
@@ -130,12 +143,21 @@ describe("memory_forget across tiers", () => {
         const tools = await import("../../tools/tool-intelligence.js");
         tools.setCache("memory_search", { query: "маша" }, "Маша moved to Pune");
         fs.writeFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "memory-gate.jsonl"), '{"content_preview":"x\\nМаша moved"}\n{"sha":"1"}\n');
+        // Only memory lines leave the audit trail; a shell command naming Маша is the owner's security record.
+        fs.writeFileSync(
+            path.join(process.env.ATLAS_DATA_DIR as string, "audit.jsonl"),
+            '{"tool":"memory_store","args":{"content":"Маша"}}\n{"action":"memory_identity_updated","value":"Маша"}\n{"action":"shell_exec","command":"echo Маша"}\n',
+        );
+        // A chat log where the fact sits only in a tool call's arguments is still found.
+        raw.prepare("INSERT INTO conversations (session_id, messages_json) VALUES ('s2', ?)").run(
+            JSON.stringify([{ role: "assistant", tool_calls: [{ id: "c3", function: { arguments: '{"q":"x\\nМаша"}' } }] }]),
+        );
 
         expect(forget.findForgettable("sam")).toEqual([]); // not "same", "sample" or "Samsung"
         const p = forget.previewForget("маша");
-        expect(p.preview.split("\n")[0]).toBe("4 items: 1 memory (fact), 1 goal, 1 graph entity, 1 insight");
+        expect(p.preview.split("\n")[0]).toBe("5 items: 1 memory (fact), 1 goal, 1 graph entity, 1 insight, 1 chat log");
         consent.noteOwnerMessage("yes");
-        expect(forget.executeForget(p.token as string, "yes", "")).toEqual({ forgotten: 4 });
+        expect(forget.executeForget(p.token as string, "yes", "")).toEqual({ forgotten: 5 });
 
         expect(raw.prepare("DELETE FROM memories WHERE content LIKE 'Same%'").run().changes).toBe(1);
         for (const t of ["goals", "entities WHERE id = 1", "relationships", "memory_insights"]) {
@@ -145,6 +167,8 @@ describe("memory_forget across tiers", () => {
         const gate = fs.readFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "memory-gate.jsonl"), "utf8");
         expect(gate).not.toContain("Маша");
         expect(gate).toContain('"sha":"1"');
+        const audit = fs.readFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "audit.jsonl"), "utf8");
+        expect(audit.trim().split("\n")).toEqual(['{"action":"shell_exec","command":"echo Маша"}']);
     });
 
     it("forgetMemoryById drops one memory without keeping its content", () => {

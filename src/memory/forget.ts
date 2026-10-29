@@ -59,14 +59,40 @@ function snippet(text: string, term: string): string {
     return (i > 0 ? "…" : "") + flat.slice(i, i + 120) + (flat.length > i + 120 ? "…" : "");
 }
 
-/** Redact matching messages in place (content only, so tool-call pairing survives). */
+// JSON escapes newlines; unescape so a word right after one still matches.
+const unescapeJson = (s: string) => s.replace(/\\[nrt]/g, " ");
+
+function toolCalls(m: unknown): Array<{ function?: { arguments?: unknown } }> {
+    const tcs = (m as { tool_calls?: unknown } | null)?.tool_calls;
+    return Array.isArray(tcs) ? tcs : [];
+}
+
+/** The message's text, or failing that its tool-call arguments, when they match. */
+function matchedText(m: unknown, hit: (text: unknown) => boolean): string | undefined {
+    const text = extractMsgText(m);
+    if (hit(text)) return text;
+    for (const tc of toolCalls(m)) {
+        const args = tc.function?.arguments;
+        if (typeof args === "string" && hit(unescapeJson(args))) return args;
+    }
+}
+
+/**
+ * Redact matching messages in place: the content, and the arguments of matching
+ * tool calls. Ids stay, so tool-call pairing survives.
+ */
 export function redactMessages(msgs: unknown[], hit: (text: unknown) => boolean): number {
     let n = 0;
     for (const m of msgs) {
-        if (hit(extractMsgText(m))) {
-            (m as { content: unknown }).content = FORGOTTEN;
-            n++;
+        let changed = hit(extractMsgText(m));
+        if (changed) (m as { content: unknown }).content = FORGOTTEN;
+        for (const tc of toolCalls(m)) {
+            if (tc.function && typeof tc.function.arguments === "string" && hit(unescapeJson(tc.function.arguments))) {
+                tc.function.arguments = "{}";
+                changed = true;
+            }
         }
+        if (changed) n++;
     }
     return n;
 }
@@ -185,7 +211,11 @@ export function findForgettable(query: string): ForgetItem[] {
     for (const r of rows<{ id: number; messages_json: string; summary: string | null; updated_at: string }>(
         "SELECT id, messages_json, summary, updated_at FROM conversations WHERE instr(lower(messages_json), @t) > 0 OR instr(lower(summary), @t) > 0",
     )) {
-        const text = hit(r.summary) ? (r.summary as string) : parseMsgs(r.messages_json).map(extractMsgText).find(hit);
+        const text = hit(r.summary)
+            ? (r.summary as string)
+            : parseMsgs(r.messages_json)
+                  .map((m) => matchedText(m, hit))
+                  .find(Boolean);
         if (text) add("chat log", r.id, r.updated_at, text);
     }
     for (const r of rows<SessionRow>(
@@ -302,13 +332,16 @@ function forgetItems(query: string, items: ForgetItem[]): void {
     } catch {
         /* the boot rebuild drops vectors whose memory is gone */
     }
-    // Plaintext copies in the tool audit and value-gate logs (and their rotations).
+    // Plaintext copies in the value-gate log, and in the audit log's memory lines
+    // only (memory tools before they logged keys only, signed memory_* entries):
+    // the rest of the audit trail is the owner's security record and stays whole.
     for (const file of ["audit.jsonl", "memory-gate.jsonl"]) {
+        const ours = file === "audit.jsonl" ? memoryAuditLine : () => true;
         for (const f of [join(getDataDir(), file), join(getDataDir(), `${file}.1`)]) {
             try {
                 const lines = readFileSync(f, "utf8").split("\n");
-                // JSON escapes newlines; unescape so a word right after one still matches.
-                const kept = lines.filter((l) => !hit(l.replace(/\\[nrt]/g, " ")));
+                // ponytail: read-then-rewrite can drop an audit append that lands in between; rare (legacy lines only).
+                const kept = lines.filter((l) => !(ours(l) && hit(unescapeJson(l))));
                 if (kept.length < lines.length) writeFileSync(f, kept.join("\n"));
             } catch {
                 /* no log yet */
@@ -316,6 +349,15 @@ function forgetItems(query: string, items: ForgetItem[]): void {
         }
     }
     dropCaches();
+}
+
+function memoryAuditLine(line: string): boolean {
+    try {
+        const e = JSON.parse(line) as { tool?: unknown; action?: unknown };
+        return /^(memory|identity|trait)_/.test(String(e.tool ?? "")) || String(e.action ?? "").startsWith("memory_");
+    } catch {
+        return false;
+    }
 }
 
 function hasTable(name: string): boolean {
@@ -329,7 +371,7 @@ function dropCaches(): void {
 }
 
 /**
- * Step 2: the owner confirmed. `live` is the in-memory chat, redacted too so the
+ * Step 2: the owner confirmed. `live` holds the in-memory chats, redacted too so the
  * next reflection can't write the fact back. Re-runs the preview's query, so
  * echoes of the fact made since (the preview itself) go as well.
  */
@@ -337,7 +379,7 @@ export function executeForget(
     token: string,
     userQuote: string,
     reason: string,
-    live: unknown[] = [],
+    live: unknown[][] = [],
 ): { forgotten: number } | { error: string } {
     const p = pending.get(token);
     if (!p || Date.now() - p.at > TOKEN_TTL_MS) {
@@ -352,7 +394,7 @@ export function executeForget(
     pending.delete(token);
     const items = findForgettable(p.query);
     forgetItems(p.query, items);
-    redactMessages(live, forgetMatcher(p.query));
+    for (const h of live) redactMessages(h, forgetMatcher(p.query));
     logForget(items.length, reason);
     return { forgotten: items.length };
 }
