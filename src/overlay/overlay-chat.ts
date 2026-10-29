@@ -163,6 +163,7 @@ function resolveSafePath(userPath: string): string | null {
 export { resolveSafePath as _resolveSafePathForTest };
 export { isDeniedServePath as _isDeniedServePathForTest };
 export { isScreenQuery as _isScreenQueryForTest };
+export { parseInteractiveElements as _parseInteractiveElementsForTest };
 
 let httpServer: ReturnType<typeof createServer> | null = null;
 let wss: WebSocketServer | null = null;
@@ -177,6 +178,8 @@ let recordingPath: string | null = null;
 // Which chat-bar session each socket is in (sent by overlay.html as `chat`).
 const chatIds = new WeakMap<WebSocket, string>();
 const chatOf = (ws: WebSocket) => chatIds.get(ws) || "overlay";
+// The "Forget that" this socket was last offered; a forget tap must match it (ids are guessable).
+const offeredUndo = new WeakMap<WebSocket, string>();
 
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
@@ -616,7 +619,7 @@ export function initOverlayChat(llm: LLMClient): void {
                 } else if (msg.type === "quick_action" && msg.text) {
                     const actionText = msg.text.trim();
                     if (actionText.startsWith("mem:forget:")) {
-                        const text = (wsIsOwner(ws) && undoMemoryTap(actionText)) || "Only the owner can do that.";
+                        const text = (wsIsOwner(ws) && offeredUndo.get(ws) === actionText && undoMemoryTap(actionText)) || "Only the owner can do that.";
                         sendToClient(ws, { type: "response", text, toolCalls: 0, quickActions: [], files: [], links: [], widgets: [] });
                         return;
                     }
@@ -1020,7 +1023,11 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             { label: "👎", action: "feedback:bad" },
         ] : (interactive.quickActions || []);
         // Bhai just noted something: one tap takes it back (memoryUndo is set only for the owner's turn).
-        if (result.memoryUndo) feedbackActions.push({ label: "Forget that", action: memoryUndoAction(result.memoryUndo) });
+        if (result.memoryUndo) {
+            const action = memoryUndoAction(result.memoryUndo);
+            offeredUndo.set(ws, action);
+            feedbackActions.push({ label: "Forget that", action });
+        }
 
         logChatMessage(chat, "assistant", interactive.text, source);
         sendToClient(ws, {
@@ -1160,7 +1167,8 @@ function parseInteractiveElements(rawText: string): InteractiveElements {
     const qaMatch = text.match(/<!--\s*QUICK_ACTIONS\s*:\s*(\[.*?\])\s*-->/s);
     if (qaMatch) {
         try {
-            quickActions = JSON.parse(qaMatch[1]);
+            // Strings only: a model-made {label, action} could show one text and send another.
+            quickActions = (JSON.parse(qaMatch[1]) as unknown[]).filter((a): a is string => typeof a === "string");
         } catch { /* malformed JSON, ignore */ }
         text = text.replace(qaMatch[0], '').trim();
     }
