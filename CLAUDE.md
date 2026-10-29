@@ -59,6 +59,16 @@ Client-side layers in `.chat()`:
 4. **Each iteration**: `chooseModel()` (native router) → semantic tool selection → LLM call → tool execution → completion check
 5. Browser tools sequential (shared page state), and so are screen-driving tools (os_*, app_manager, apple_script, window_manage, run_shortcut) in call order; others parallel. Tool results carrying `screenshot_base64`/`zoomed_base64` are turned into image parts before offload/truncation (≤1568px), and only the newest few screenshots stay in history. Cascade escalation on errors (Haiku → Sonnet → Opus). Max 200 iters; credit check every 5 tool calls.
 
+**Reliability layer (Oct 2026):**
+- **Per-turn nudges** — steering messages go through `pushNudge` and are stripped at turn end; a context prune is computed after the turn and applied before the next turn's history cap.
+- **Send ledger** (`src/tools/send-ledger.ts`) — the same message/file to the same recipient within 10 min is refused unless the call passes `resend: true`; in-flight sends report "still being sent".
+- **Task contract** — the first line of real work is "on it — …; done = …" (prompts/rules.md); the `[ACK] ` progress line shows it and the verify nudge quotes the done-criterion back.
+- **Stuck report** — "never give up silently, never fake done": after 2-3 different attempts, or when only the owner can unblock, the reply ends with `[[STUCK]]` (stripped by `takeStuckMarker`, `src/channel-text.ts`); Telegram shows I'll take over / Retry / Skip, other channels a reply line. Failing exits (circuit breaker, LLM failures, iteration cap) return a stuck report too.
+- **Done receipt** — after a mutator plus a later screenshot, the owner's private chat gets the clean (ungridded) screenshot; never on vault/withheld turns, failed last actions or stuck turns.
+- **Step heartbeat** (`src/step-status.ts`) — progress reads "step N · status · Ns", re-sent every ~20s while a tool batch runs.
+- **Playbooks** (`src/memory/playbooks.ts`) — a programmatically verified win stores its tool steps in task-learnings (no bodies, secrets, emails or phones); a failed replay demotes it.
+- **Swarm approval gate** (`src/agents/swarm-context.ts`) — inside swarm runs, explicit external-action tools, per-call-consent tools and shell launchers are held until the owner's fresh yes (`swarm_task confirmed: true`, enforced by `src/security/consent.ts`); payments/orders never run in a swarm. Accepted limit: effects through generic UI clicks or self-written scripts.
+
 ### Model Router (`src/model-router.ts` + `native/src/model_router.rs`)
 TS wrapper around napi-rs native binary (falls back to JS-only). Factors: iteration count, errors, last tool calls, media, user hint. Every id lands on one of three Claude models (`convex/claude.ts` toClaudeModel), billed per call: **Haiku** 0.25cr, **Sonnet** 1cr, **Opus** 2cr.
 
