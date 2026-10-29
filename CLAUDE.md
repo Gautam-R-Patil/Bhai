@@ -223,7 +223,7 @@ Most privilege-differentiated channel. Baileys (`@whiskeysockets/baileys`). Stat
 - **Add flow** (`groups.upsert`, `whatsapp.ts:1499`): owner in participants → auto-`active`; else `pending` + DMs owner. Silent until approved.
 - **Lifecycle**: `pending` → `active` → optional `muted`. Commands: `approve X`, `decline X`, `groups`, `mute/unmute group X`.
 - **Response gating** (`handleGroupMessage`, `whatsapp.ts:1033`): must be `active`; always respond if @mentioned/replied; else throttle (<30s since last send OR bot >15% of messages) then Haiku YES/NO chime-in.
-- **Tool allowlist**: `senderIsOwner ? undefined : getPersona().allowedToolNames`.
+- **Tool allowlist**: DMs: `senderIsOwner ? undefined : getPersona().allowedToolNames`. Groups: `GROUP_TOOLS` (time/weather/web search) for everyone, owner included, run as non-owner and non-private — a group's text is anyone's, and its replies are everyone's. Same rule on Discord/Slack/Matrix: owner powers and proactive sends only in the owner's DM.
 
 ### Web Portals (`portals/`)
 Next.js + Tailwind, own `package.json` + `.env.example`: `admin-panel/` (users, store submissions, system prompts/skills), `developer-portal/` (skill/tool/MCP publishing).
