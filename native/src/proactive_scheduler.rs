@@ -102,8 +102,27 @@ fn now_ms() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// The owner's local day, so the daily cap resets at their midnight (it was UTC's: 05:30 in
+/// India, late afternoon on the US west coast).
 fn day_index(ms: f64) -> i64 {
-    (ms / 86_400_000.0) as i64
+    ((ms + local_offset_ms(ms)) / 86_400_000.0).floor() as i64
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn local_offset_ms(ms: f64) -> f64 {
+    let t = (ms / 1000.0) as libc::time_t;
+    // SAFETY: localtime_r only writes the caller-owned `tm`; a zeroed tm is a valid input.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return 0.0;
+    }
+    tm.tm_gmtoff as f64 * 1000.0
+}
+
+// ponytail: Windows keeps UTC days; use GetTimeZoneInformation if a Windows owner notices.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn local_offset_ms(_ms: f64) -> f64 {
+    0.0
 }
 
 fn cosine(a: &[f64], b: &[f64]) -> f64 {
@@ -614,6 +633,26 @@ mod tests {
             "the single waits for the next gap, not right behind the batch"
         );
         assert!(scheduler_debug_state("mb".into()).contains("sent_today=1"));
+    }
+
+    #[test]
+    fn the_daily_cap_rolls_over_at_local_midnight() {
+        let now = now_ms();
+        let off = local_offset_ms(now);
+        // Local midnight today, in UTC ms.
+        let local_midnight = ((now + off) / 86_400_000.0).floor() * 86_400_000.0 - off;
+        assert_ne!(
+            day_index(local_midnight - 60_000.0),
+            day_index(local_midnight + 60_000.0)
+        );
+        if off.abs() >= 120_000.0 {
+            // UTC midnight is no longer a boundary.
+            let utc_midnight = (now / 86_400_000.0).floor() * 86_400_000.0;
+            assert_eq!(
+                day_index(utc_midnight - 60_000.0),
+                day_index(utc_midnight + 60_000.0)
+            );
+        }
     }
 
     #[test]
