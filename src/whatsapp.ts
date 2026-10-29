@@ -21,7 +21,7 @@ import {
     registerOwnerRelaySender,
     resolveLatestQueryForOwner,
     resolveQueryByContactName,
-    setRelayContactContext,
+    withRelayContact,
 } from "./tools/ask-owner.js";
 import { getChannelSender } from "./tools/channel-send.js";
 import type { ToolDefinition } from "./tools/get-current-time.js";
@@ -51,6 +51,7 @@ import {
     getPendingGroups,
     getPendingRequests,
     findGroupByName,
+    phoneJidOf,
     pendingRequestFrom,
     pickPendingRequest,
     getPersona,
@@ -1660,11 +1661,8 @@ ${persona.systemPrompt}`.trimEnd();
     }
     const contactProgressTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // Set relay context so ask_owner tool knows who is being served
+    // ask_owner learns who is being served from this run's own context (see withRelayContact).
     const ownerJid = getOwners()[0]?.jid;
-    if (ownerJid) {
-        setRelayContactContext({ contactJid: jid, contactName, ownerJid });
-    }
 
     try {
         // Subscribe + show typing indicator
@@ -1679,7 +1677,7 @@ ${persona.systemPrompt}`.trimEnd();
         const baseAllowlist = persona.allowedToolNames?.length ? persona.allowedToolNames : [];
         const toolAllowlist = baseAllowlist.includes("ask_owner") ? baseAllowlist : [...baseAllowlist, "ask_owner"];
 
-        const result = await runAgent(
+        const runTurn = () => runAgent(
             llm,
             text,
             progressCallback,
@@ -1696,6 +1694,9 @@ ${persona.systemPrompt}`.trimEnd();
                 contactProfile: profile,
             },
         );
+        const result = ownerJid
+            ? await withRelayContact({ contactJid: jid, contactName, ownerJid }, runTurn)
+            : await runTurn();
 
         if (contactProgressTimer) clearTimeout(contactProgressTimer);
 
@@ -1730,7 +1731,6 @@ ${persona.systemPrompt}`.trimEnd();
         await sendMessage(jid, getErrorMessage(errorType));
     } finally {
         await socket?.sendPresenceUpdate("paused", jid);
-        setRelayContactContext(null);
     }
 }
 
@@ -2042,7 +2042,10 @@ async function handleIncomingMessage(message: WAMessage, llm: LLMClient): Promis
     // Skip status broadcasts
     if (message.key.remoteJid === "status@broadcast") return;
 
-    const jid = message.key.remoteJid;
+    // Newer WhatsApp can address a person by an anonymous LID (…@lid) instead of their phone
+    // JID. Owners, contacts and blocks are stored by phone JID, so a LID-addressed owner was
+    // treated as a stranger. Baileys passes the phone form alongside: use it when it's there.
+    const jid = phoneJidOf(message.key.remoteJid, (message.key as { remoteJidAlt?: string }).remoteJidAlt);
     if (!jid) return;
 
     const pushName = message.pushName;
@@ -2122,7 +2125,8 @@ async function handleIncomingMessage(message: WAMessage, llm: LLMClient): Promis
     // Group message detection — route before individual user handling
     const isGroup = jid.endsWith("@g.us");
     if (isGroup) {
-        const senderJid = message.key.participant || "";
+        const senderJid =
+            phoneJidOf(message.key.participant, (message.key as { participantAlt?: string }).participantAlt) || "";
         const senderPushName = message.pushName || "";
         await handleGroupMessage(jid, senderJid, senderPushName, effectiveText, contentType || "text", llm, message);
         return;

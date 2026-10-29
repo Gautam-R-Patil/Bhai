@@ -32,3 +32,12 @@ describe("group names", () => {
         expect(users.findGroupByName(groups, "")).toBeUndefined();
     });
 });
+
+describe("LID addresses", () => {
+    it("uses the phone JID Baileys passes alongside a LID", () => {
+        expect(users.phoneJidOf("123456789012345@lid", "919811111111@s.whatsapp.net")).toBe("919811111111@s.whatsapp.net");
+        expect(users.phoneJidOf("919811111111@s.whatsapp.net", undefined)).toBe("919811111111@s.whatsapp.net");
+        expect(users.phoneJidOf("123456789012345@lid", undefined)).toBe("123456789012345@lid");
+        expect(users.phoneJidOf("1203630@g.us", "x@lid")).toBe("1203630@g.us");
+    });
+});

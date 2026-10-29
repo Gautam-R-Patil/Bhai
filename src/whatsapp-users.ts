@@ -583,6 +583,11 @@ export function findGroupByName<G extends { name: string }>(groups: G[], name: s
     return partial.length === 1 ? partial[0] : undefined;
 }
 
+/** A LID-addressed JID (…@lid) as its phone JID when Baileys gave one; anything else unchanged. */
+export function phoneJidOf(jid: string | null | undefined, alt: string | null | undefined): string | null | undefined {
+    return jid?.endsWith("@lid") && alt?.endsWith("@s.whatsapp.net") ? alt : jid;
+}
+
 /** The pending request from `jid`, if they are already waiting. */
 export function pendingRequestFrom(jid: string): ContactRequest | undefined {
     return getPendingRequests().find((r) => r.jid === jid);

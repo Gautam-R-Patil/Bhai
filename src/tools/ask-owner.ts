@@ -6,11 +6,11 @@
 // Allows a contact-facing agent to escalate questions to the owner when it
 // cannot answer them directly (tool failure, personal preference needed, etc.).
 //
-// Architecture note: JS is single-threaded and contact messages process
-// sequentially (handleIncomingMessage uses `await` in a for-loop), so the
-// module-level _currentContact is safe — it is always set/cleared atomically
-// around a single runAgent call.
+// Which contact a run serves travels with that run (AsyncLocalStorage): contact messages
+// from separate WhatsApp events run concurrently, and a module-level "current contact"
+// let one contact's ask_owner be filed (and the owner's answer sent) under another's.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolDefinition } from "./get-current-time.js";
 
 export interface PendingOwnerQuery {
@@ -34,13 +34,12 @@ export function registerOwnerRelaySender(fn: Sender): void {
     _sender = fn;
 }
 
-// Set/cleared around each handleContactMessage → runAgent call
-let _currentContact: { contactJid: string; contactName: string; ownerJid: string } | null = null;
+type RelayContact = { contactJid: string; contactName: string; ownerJid: string };
+const relayContact = new AsyncLocalStorage<RelayContact>();
 
-export function setRelayContactContext(
-    ctx: { contactJid: string; contactName: string; ownerJid: string } | null,
-): void {
-    _currentContact = ctx;
+/** Run `fn` (a contact's agent turn) with ask_owner knowing which contact it serves. */
+export function withRelayContact<T>(ctx: RelayContact, fn: () => Promise<T>): Promise<T> {
+    return relayContact.run(ctx, fn);
 }
 
 // ── Query management ─────────────────────────
@@ -109,7 +108,7 @@ export const askOwnerTool: ToolDefinition = {
 
         if (!question) return JSON.stringify({ error: "question is required" });
 
-        const ctx = _currentContact;
+        const ctx = relayContact.getStore() ?? null;
         if (!ctx || !_sender) {
             return JSON.stringify({ error: "Relay not available in this context." });
         }
