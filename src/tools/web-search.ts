@@ -62,6 +62,42 @@ async function searchClaudeLite(query: string): Promise<SearchResult[]> {
     }
 }
 
+// ── Parallel Search (proxied via Convex; the key never leaves the server) ──
+
+async function searchParallelLite(query: string): Promise<SearchResult[]> {
+    try {
+        const sessionToken = await getSessionToken();
+        if (!sessionToken) {
+            engineFailed("parallel", "no session");
+            return [];
+        }
+        const response = await encryptedFetch(`${getConvexSiteUrl()}/api/search/parallel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ query, maxResults: 8, country: searchLocale().country }),
+            signal: AbortSignal.timeout(12000),
+        });
+        if (!response.ok) {
+            engineFailed("parallel", `HTTP ${response.status} ${(await response.text().catch(() => "")).slice(0, 120)}`);
+            return [];
+        }
+        const data = (await response.json()) as {
+            results?: Array<{ url: string; title: string; snippet?: string; page_age?: string | null }>;
+        };
+        return (data.results || [])
+            .filter((r) => r.url && r.title)
+            .map((r) => ({
+                url: r.url,
+                title: r.title,
+                snippet: htmlText(r.snippet || "").substring(0, 300),
+                ...(r.page_age ? { age: r.page_age } : {}),
+            }));
+    } catch (err) {
+        engineFailed("parallel", (err as Error).message);
+        return [];
+    }
+}
+
 // ── Web Search Tool ───────────────────────────
 // Lightweight, fetch-only search. NO Playwright, NO headless browser.
 // Uses DuckDuckGo Lite + Brave as fast fallbacks via plain HTTP.
@@ -448,8 +484,9 @@ export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResu
 async function lightweightSearch(query: string): Promise<{ results: SearchResult[]; engine: string; empty: string[] }> {
     // No Google scraper: google.com/search now serves a JavaScript-only page, so it never
     // returned a result — it only sent Google a scraping request from the owner's IP.
-    const names = ["claude", "tavily", "exa", "brave", "duckduckgo", "bing"];
+    const names = ["parallel", "claude", "tavily", "exa", "brave", "duckduckgo", "bing"];
     const lists = await Promise.all([
+        searchParallelLite(query),
         searchClaudeLite(query),
         searchTavilyLite(query),
         searchExaLite(query),

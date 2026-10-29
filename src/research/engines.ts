@@ -59,7 +59,7 @@ process.on("beforeExit", closeSearchBrowser);
 
 // ── Engine Health Tracking ──────────────────
 
-type EngineName = "google" | "brave" | "duckduckgo" | "bing" | "searxng" | "mojeek" | "tavily" | "exa" | "wikipedia" | "openalex" | "semantic_scholar" | "arxiv";
+type EngineName = "google" | "brave" | "duckduckgo" | "bing" | "searxng" | "mojeek" | "tavily" | "exa" | "parallel" | "wikipedia" | "openalex" | "semantic_scholar" | "arxiv";
 
 interface EngineHealth {
     consecutiveFailures: number;
@@ -583,6 +583,33 @@ async function searchTavily(query: string): Promise<SearchResult[]> {
     } catch { markFailure("tavily"); return []; }
 }
 
+// ── Parallel Search API (proxied via Convex; the key stays server-side) ─────
+
+async function searchParallel(query: string): Promise<SearchResult[]> {
+    if (!isAvailable("parallel")) return [];
+    try {
+        const sessionToken = await getSessionToken();
+        if (!sessionToken) return [];
+        const response = await encryptedFetch(`${getConvexSiteUrl()}/api/search/parallel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${sessionToken}` },
+            body: JSON.stringify({ query, maxResults: 15 }),
+            signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) {
+            if (response.status === 429) markFailure("parallel");
+            return [];
+        }
+        const data = await response.json() as { results?: Array<{ url?: string; title?: string; snippet?: string }> };
+        const results: SearchResult[] = (data.results || [])
+            .filter((r) => r.url && r.title)
+            .map((r) => ({ url: r.url as string, title: r.title as string, snippet: (r.snippet || "").substring(0, 400), source: "parallel" }));
+        if (results.length > 0) markSuccess("parallel");
+        else markFailure("parallel");
+        return results;
+    } catch { markFailure("parallel"); return []; }
+}
+
 // ── Exa Search API (proxied via Convex) ─────
 
 async function searchExa(query: string): Promise<SearchResult[]> {
@@ -739,6 +766,7 @@ export async function multiEngineSearch(
     console.log(`[RESEARCH] 🔎 Searching: "${query.substring(0, 60)}..."`);
 
     const searches: Promise<SearchResult[]>[] = [
+        searchParallel(query),   // AI-optimized, dated pages with excerpts
         searchTavily(query),     // AI-optimized, most reliable
         searchExa(query),        // AI-optimized deep search with content
         searchBing(query),       // Large index, fetch-only

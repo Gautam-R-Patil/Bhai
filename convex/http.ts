@@ -2110,6 +2110,76 @@ http.route({
   }),
 });
 
+// POST /api/search/parallel — Parallel Search proxy (PARALLEL_API_KEY in Convex env only).
+// Only a bounded query, a country code and a result count are forwarded; the reply is
+// trimmed to what web_search uses.
+http.route({
+  path: "/api/search/parallel",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const query = typeof body.query === "string" ? body.query.trim().slice(0, 400) : "";
+    if (!query) {
+      return await buildResponse({ error: "query is required" }, 400, encrypted, account.sharedKey, request);
+    }
+    const country = typeof body.country === "string" && /^[A-Za-z]{2}$/.test(body.country) ? body.country.toLowerCase() : undefined;
+    const maxResults = Math.min(Math.max(Number(body.maxResults) || 8, 1), 15);
+
+    const key = process.env.PARALLEL_API_KEY;
+    if (!key) {
+      return await buildResponse({ error: "Parallel not configured" }, 500, encrypted, account.sharedKey, request);
+    }
+
+    try {
+      const response = await fetch("https://api.parallel.ai/v1/search", {
+        method: "POST",
+        headers: { "x-api-key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objective: query,
+          search_queries: [query],
+          mode: "fast",
+          advanced_settings: {
+            max_results: maxResults,
+            excerpt_settings: { max_chars_per_result: 600 },
+            ...(country ? { location: country } : {}),
+          },
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = (await response.json()) as {
+        results?: Array<{ url?: string; title?: string; publish_date?: string | null; excerpts?: string[] }>;
+        error?: unknown;
+      };
+      if (!response.ok) {
+        return await buildResponse({ error: `Parallel HTTP ${response.status}` }, response.status, encrypted, account.sharedKey, request);
+      }
+      const results = (data.results ?? [])
+        .filter((r) => typeof r.url === "string" && typeof r.title === "string")
+        .map((r) => ({
+          url: r.url,
+          title: r.title,
+          // Excerpts are markdown: keep the words, drop link targets, images and heading marks.
+          snippet: (r.excerpts ?? [])
+            .join(" ")
+            .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+            .replace(/^#+\s*/gm, "")
+            .replace(/[*_`>]+/g, "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 600),
+          page_age: r.publish_date ?? null,
+        }));
+      return await buildResponse({ results }, 200, encrypted, account.sharedKey, request);
+    } catch (err: any) {
+      return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey, request);
+    }
+  }),
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // GET /api/updates/* — Generic auto-updater endpoint for electron-updater.
 //
