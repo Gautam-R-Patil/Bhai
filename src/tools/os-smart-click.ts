@@ -89,6 +89,8 @@ async function base64ToTempFile(base64: string, ext = "png"): Promise<string> {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Extra wait before a click that changed nothing at 300ms is judged a no-op (and retried). */
+export const SLOW_UI_MS = 1200;
 
 /**
  * Raise an app to the foreground before grounding, so the AX dump and the
@@ -299,8 +301,25 @@ export const osSmartClick: ToolDefinition = {
             const r = await dispatchClick(action, x, y, dims);
             if (!r.success) return { dispatchErr: r.error || "click_dispatch_failed" };
             await sleep(300); // let the UI settle
-            const after = await snap({ x, y });
+            let after = await snap({ x, y });
             const rect = before?.rect ?? after?.rect ?? { x: 0, y: 0, w: dims.width, h: dims.height };
+            const judge = () =>
+                classifyOutcomeFromImages(
+                    before?.buf ?? null,
+                    after?.buf ?? null,
+                    x - rect.x,
+                    y - rect.y,
+                    rect.w,
+                    rect.h,
+                );
+            let outcome = await judge();
+            // A slow UI (a network round-trip, an app launching) shows nothing at 300ms, and a
+            // no-op gets clicked again — a second Send. Look once more before calling it one.
+            if (outcome.outcome === "no_op") {
+                await sleep(SLOW_UI_MS);
+                after = (await snap({ x, y })) ?? after;
+                outcome = await judge();
+            }
             const verdict = await reportClickOutcome(
                 site,
                 { x, y },
@@ -308,9 +327,7 @@ export const osSmartClick: ToolDefinition = {
                 after?.buf ?? null,
                 rect.w,
                 rect.h,
-                {
-                    origin: { x: rect.x, y: rect.y },
-                },
+                { origin: { x: rect.x, y: rect.y }, outcome },
             );
             return { verdict: verdict.outcome };
         };
@@ -687,18 +704,19 @@ export async function reportClickOutcome(
     after: Buffer | null,
     imageWidth: number,
     imageHeight: number,
-    opts?: { monitorId?: string; actual?: { x: number; y: number }; origin?: { x: number; y: number } },
+    opts?: {
+        monitorId?: string;
+        actual?: { x: number; y: number };
+        origin?: { x: number; y: number };
+        /** Already classified by the caller: only record it. */
+        outcome?: ReturnType<typeof classifyOutcome>;
+    },
 ): Promise<ReturnType<typeof classifyOutcome>> {
     const ox = opts?.origin?.x ?? 0;
     const oy = opts?.origin?.y ?? 0;
-    const outcome = await classifyOutcomeFromImages(
-        before,
-        after,
-        target.x - ox,
-        target.y - oy,
-        imageWidth,
-        imageHeight,
-    );
+    const outcome =
+        opts?.outcome ??
+        (await classifyOutcomeFromImages(before, after, target.x - ox, target.y - oy, imageWidth, imageHeight));
     try {
         if (outcome.outcome === "no_op" || outcome.outcome === "wrong_target") {
             recordClickMiss(site);

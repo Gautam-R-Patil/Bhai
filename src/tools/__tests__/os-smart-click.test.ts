@@ -95,7 +95,11 @@ describe("os_smart_click grounding", () => {
 
     it("re-grounds a verified Haiku miss once with Sonnet", async () => {
         findClickTarget.mockResolvedValueOnce(cloudHit(100)).mockResolvedValueOnce(cloudHit(140));
-        classify.mockResolvedValueOnce({ outcome: "no_op" }).mockResolvedValueOnce({ outcome: "success" });
+        // no_op twice: still nothing after the slow-UI second look.
+        classify
+            .mockResolvedValueOnce({ outcome: "no_op" })
+            .mockResolvedValueOnce({ outcome: "no_op" })
+            .mockResolvedValueOnce({ outcome: "success" });
         const out = JSON.parse(await osSmartClick.handler({ instruction: "the 2 button" }));
         expect(out.success).toBe(true);
         expect(findClickTarget).toHaveBeenCalledTimes(2);
@@ -103,6 +107,15 @@ describe("os_smart_click grounding", () => {
         expect(findClickTarget.mock.calls[1][1].groundingModel).toBe(MODELS.SONNET);
         expect(findClickTarget.mock.calls[1][1].skipTiers).not.toContain("cloud_grounding");
         expect(click).toHaveBeenCalledTimes(2);
+    });
+
+    it("a click whose effect is just slow (nothing at 300ms, changed after) is not clicked again", async () => {
+        findClickTarget.mockResolvedValueOnce(cloudHit(100)).mockResolvedValueOnce(cloudHit(140));
+        classify.mockResolvedValueOnce({ outcome: "no_op" }).mockResolvedValueOnce({ outcome: "success" });
+        const out = JSON.parse(await osSmartClick.handler({ instruction: "Send" }));
+        expect(out.success).toBe(true);
+        expect(click).toHaveBeenCalledTimes(1); // no second Send
+        expect(recordMiss).not.toHaveBeenCalled();
     });
 
     it("a click that changed something elsewhere (wrong_target) is not clicked again", async () => {
@@ -136,7 +149,7 @@ describe("os_smart_click grounding", () => {
             lastScreenWidth: 1000,
             lastScreenHeight: 800,
         });
-        classify.mockResolvedValueOnce({ outcome: "no_op" });
+        classify.mockResolvedValueOnce({ outcome: "no_op" }).mockResolvedValueOnce({ outcome: "no_op" });
         findClickTarget.mockResolvedValueOnce({ x: 10, y: 10, confidence: 0.99, source: "ax_exact" });
         const out = JSON.parse(await osSmartClick.handler({ instruction: "=" }));
         expect(recordMiss).toHaveBeenCalledTimes(1);
