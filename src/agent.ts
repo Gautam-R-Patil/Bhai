@@ -294,6 +294,20 @@ function stripChannelTags(text: string): string {
     );
 }
 
+/**
+ * The message points at Bhai itself: its repo, its site, Bhai Bridge, or text
+ * naming Bhai together with XAGI. A friend called "bhai" never counts, nor does
+ * a <name>.bhai@xagilab.com mail address.
+ */
+export function isAboutBhai(text: string): boolean {
+    return (
+        /github\.com\/xagi-lab\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b/i.test(text) ||
+        (/\bbhai\b/i.test(text) && /\bxagi\b/i.test(text))
+    );
+}
+const ABOUT_SELF_NOTE =
+    "This message may show something about Bhai itself (its repo, site, app or extension). If so, that's you: speak first person (\"that's my own repo\"), never about Bhai as someone else. Still nothing beyond what's shown, no model or provider names, and don't claim you wrote the code yourself.";
+
 /** Categories a plain desktop-driving turn uses, plus the always-on ones. */
 const GUI_LOOP_CATEGORIES = new Set([
     "os_control",
@@ -1649,6 +1663,7 @@ async function _runAgentBody(
     // telegram.ts always emits, so a `]` inside the quote can't end it early.
     const userIntentText =
         rawUserMessage.replace(/^\[Replying to [^\n]*?message: "[\s\S]*?"\]\n\n/, "").trim() || rawUserMessage;
+    const aboutSelf = channelContext?.isOwner === true && !channelContext.autonomous && isAboutBhai(userIntentText);
     // Only a message the owner actually sent can answer a consent question.
     if (channelContext?.isOwner && !channelContext.autonomous) {
         noteOwnerMessage(userIntentText);
@@ -3106,6 +3121,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             if (lateNote) iterationMessages.push({ role: "system", content: lateNote });
             const sigNote = signaturePhraseNote();
             if (sigNote) iterationMessages.push({ role: "system", content: sigNote });
+            if (aboutSelf) iterationMessages.push({ role: "system", content: ABOUT_SELF_NOTE });
         }
 
         // ── Orchestrator Planning: Sonnet 4.6 generates execution plan for interactive tasks ──

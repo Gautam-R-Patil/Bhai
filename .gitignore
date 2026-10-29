@@ -88,6 +88,7 @@ desktop/hostinger-upload/
 !src/proactive/timed-quiet.test.ts
 !src/language-persist.test.ts
 !src/prompts/dynamic-assembler.test.ts
+!src/agent.about-self.test.ts
 !src/alive-ux.test.ts
 !src/memory/relationship.test.ts
 !src/memory/identity.test.ts
