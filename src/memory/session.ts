@@ -105,10 +105,9 @@ function loadLastSession(): SessionState | null {
         ).get() as SessionRow | undefined;
 
         if (!row) return null;
-
-        // Check if within timeout
-        const lastActivity = new Date(row.last_activity).getTime();
-        if (Date.now() - lastActivity > SESSION_TIMEOUT_MS) return null;
+        // Returned even when timed out: touchSession hands an expired one on for
+        // reflection (it used to be dropped here, so a session that ended across a
+        // restart was never summarised), and the previous-session block reads it.
 
         return rowToSession(row);
     } catch {
@@ -132,6 +131,14 @@ export function startSession(): SessionState {
     };
     console.log(`📋 Session started: ${currentSession.session_id}`);
     persistSession();
+    // One row per session, written on every turn: keep two weeks of them.
+    try {
+        getRawDb()
+            ?.prepare("DELETE FROM sessions WHERE last_activity < ?")
+            .run(new Date(Date.now() - 14 * 24 * 3600_000).toISOString());
+    } catch {
+        /* pruning is best-effort */
+    }
     return currentSession;
 }
 
@@ -167,7 +174,7 @@ export function touchSession(_userMessage: string): {
         const loaded = loadLastSession();
         if (loaded) {
             currentSession = loaded;
-            console.log(`📋 Session restored from DB: ${loaded.session_id} (${loaded.turn_count} turns)`);
+            if (getSessionState()) console.log(`📋 Session restored from DB: ${loaded.session_id} (${loaded.turn_count} turns)`);
         }
     }
 

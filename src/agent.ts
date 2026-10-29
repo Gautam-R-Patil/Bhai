@@ -525,6 +525,24 @@ export function antiGivingUpFailures(
     return fire ? failures : 0;
 }
 
+/**
+ * A reply that says the task isn't finished and asks leave for its own next step, when
+ * that step only looks ("Want me to take a screenshot and read them?"). Looking is part
+ * of the task the owner already gave; asking first just stalls it. A step with effects
+ * outside (send, pay, delete…) still gets asked.
+ */
+export function asksLeaveToLook(responseText: string): boolean {
+    if (takeStuckMarker(responseText).stuck) return false;
+    const l = responseText.toLowerCase().replace(/[’‘]/g, "'");
+    if (!/\b(haven't|have not|not yet|isn't (finished|done|complete)|not (finished|done|complete))\b/.test(l)) return false;
+    const ask = /\b(?:do you want me to|want me to|should i|shall i)\b([^?]{0,100})\?/.exec(l)?.[1];
+    return (
+        !!ask &&
+        /\b(screenshot|read|look|check|scan|list|inspect|search|see|open it)\b/.test(ask) &&
+        !/\b(send|post|buy|pay|delete|remove|submit|order|book|reply|email|message|call|share|install)\b/.test(ask)
+    );
+}
+
 // ── Milestone tool descriptions ───────────────
 
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
@@ -1723,6 +1741,7 @@ async function _runAgentBody(
     let lastUsedModel: string | undefined; // Track model for credit deduction
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
+    let lookNudged = false; // asksLeaveToLook fires once per run
     const receiptFor = async (text: string): Promise<Receipt | undefined> => {
         const receipt = pickReceipt(verifyGate, {
             stuck: takeStuckMarker(text).stuck,
@@ -3695,6 +3714,19 @@ PLAN:`,
                 messages.push({
                     role: "user",
                     content: `Your previous approach didn't work, but the task is NOT done. Don't ask me — try a different approach yourself. ${continuationHint} If your dedicated tool failed, that's fine — you have dozens of other tools. Complete the task, then verify the result.`,
+                });
+                lastToolCalls = undefined;
+                continue;
+            }
+
+            if (!lookNudged && asksLeaveToLook(responseText)) {
+                lookNudged = true;
+                console.log("  🔄 Asked leave to look before finishing — continuing instead");
+                messages.push({ role: "assistant", content: responseText });
+                messages.push({
+                    role: "user",
+                    content:
+                        "Yes — that's part of what I asked. Don't ask before looking or reading: do it now, finish the task, and give me the actual answer.",
                 });
                 lastToolCalls = undefined;
                 continue;

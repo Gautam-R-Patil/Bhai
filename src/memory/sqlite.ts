@@ -1852,8 +1852,11 @@ export async function recall(
     ]);
     const words = query
         .toLowerCase()
-        .replace(/[^a-z0-9 ]/g, "")
-        .split(/\s+/);
+        // Letters, marks and digits of any script: an ASCII-only filter turned a Hindi or
+        // Russian query into "", whose LIKE "%%" matched (and bumped) every memory.
+        .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        .filter(Boolean);
     const keywords = words.filter((w) => w.length > 2 && !stopWords.has(w));
     const searchTerms = keywords.length > 0 ? keywords : words;
 
@@ -2235,7 +2238,7 @@ export async function recall(
     const records = kept.slice(0, limit).map((f) => f.record);
 
     // ── Layer 3: Fallback LIKE search ──
-    if (records.length === 0) {
+    if (records.length === 0 && searchTerms.length > 0) {
         // Sanitize search terms: escape SQL LIKE wildcards and use parameterized queries
         const sanitized = searchTerms.map((t) => t.replace(/[%_'\\]/g, ""));
         const likeConditions = sanitized.flatMap((t) => [`content LIKE ?`, `tags LIKE ?`]);
@@ -2741,8 +2744,11 @@ export async function recallConversation(query: string, limit = 5): Promise<Conv
     ]);
     const words = query
         .toLowerCase()
-        .replace(/[^a-z0-9 ]/g, "")
-        .split(/\s+/);
+        // Letters, marks and digits of any script: an ASCII-only filter turned a Hindi or
+        // Russian query into "", whose LIKE "%%" matched (and bumped) every memory.
+        .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        .filter(Boolean);
     const keywords = words.filter((w) => w.length > 2 && !stopWords.has(w));
     const searchTerms = keywords.length > 0 ? keywords : words;
 
@@ -2751,7 +2757,7 @@ export async function recallConversation(query: string, limit = 5): Promise<Conv
     const sanitizedTerms = searchTerms.map((t) => t.replace(/[%_'\\]/g, ""));
     const likeConditions = sanitizedTerms.map(() => `summary LIKE ?`);
     const likeParams = sanitizedTerms.map((t) => `%${t}%`);
-    const whereClause = likeConditions.length > 0 ? `WHERE ${likeConditions.join(" OR ")}` : "";
+    const whereClause = likeConditions.length > 0 ? `WHERE ${likeConditions.join(" OR ")}` : "WHERE 0";
 
     // Most matching terms first, so one shared word doesn't outrank an exact topic match.
     const matchOrder = likeConditions.length > 0 ? `(${likeConditions.map((c) => `(${c})`).join(" + ")}) DESC, ` : "";

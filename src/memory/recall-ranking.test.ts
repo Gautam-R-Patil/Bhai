@@ -135,3 +135,15 @@ describe("recall cache", () => {
         expect(await sqlite.recall("zebracorn", 10, undefined, undefined, ["session:abc"])).toHaveLength(scoped.length);
     });
 });
+
+describe("recall with non-Latin queries", () => {
+    it("matches Hindi words and returns nothing (not every memory) for an unrelated query", async () => {
+        sqlite
+            .getRawDb()
+            ?.prepare("INSERT INTO memories (content, category, importance, decay_score, scope) VALUES (?, ?, ?, ?, ?)")
+            .run("माँ का जन्मदिन बारह मार्च को है", "personal", 8, 1.0, "global");
+        expect((await sqlite.recall("जन्मदिन कब है", 5)).map((m) => m.content)).toContain("माँ का जन्मदिन बारह मार्च को है");
+        expect(await sqlite.recall("привет мир", 5)).toEqual([]);
+        expect(await sqlite.recall("?!", 5)).toEqual([]);
+    });
+});

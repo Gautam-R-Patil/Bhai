@@ -47,6 +47,17 @@ describe("cascade order", () => {
         expect(r?.matchedLabel).toBe("Mail");
     });
 
+    it("the Dock fallback doesn't take the front app's own icon for a target inside it", async () => {
+        cloudGroundClick.mockResolvedValue({ error: "not_found", confidence: 0 });
+        dumpDock.mockResolvedValue(
+            dump("Dock", [], n("AXApplication", "Dock", 0, 0, [n("AXDockItem", "Finder", 341, 895, [], true, 44, 56)], true, 0, 0)),
+        );
+        const r = await findClickTarget("Downloads in the Finder sidebar", opts(dump("Finder", [n("AXButton", "Close", 10, 10)])));
+        expect(r).toBeNull();
+        // Asking for the app itself still finds its icon.
+        expect((await findClickTarget("Finder in the Dock", opts(dump("Finder", []))))?.matchedLabel).toBe("Finder");
+    });
+
     it("a disabled-only AX match stops before vision clicks the greyed-out pixels", async () => {
         cloudGroundClick.mockResolvedValue({ x: 50, y: 60, confidence: 0.9 });
         let reason: string | undefined;

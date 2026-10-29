@@ -2,7 +2,14 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { describe, expect, it } from "vitest";
-import { antiGivingUpFailures, finalReplyText, isDeferrable, planToolsBlock, toolFailed } from "./agent.js";
+import {
+    antiGivingUpFailures,
+    asksLeaveToLook,
+    finalReplyText,
+    isDeferrable,
+    planToolsBlock,
+    toolFailed,
+} from "./agent.js";
 
 const msg = (content: string): ChatCompletionMessageParam => ({ role: "user", content });
 
@@ -69,5 +76,20 @@ describe("antiGivingUpFailures", () => {
         expect(
             antiGivingUpFailures(history, "open my bank site and download the statement", `${handoff}\n[[STUCK]]`, 2),
         ).toBe(0);
+    });
+});
+
+describe("asksLeaveToLook", () => {
+    it("catches an unfinished task that stops to ask about a look-only step", () => {
+        expect(
+            asksLeaveToLook(
+                "Downloads shows as the active location. I haven’t read the first three file names yet, so the task isn't finished. Want me to take a screenshot and read them?",
+            ),
+        ).toBe(true);
+    });
+    it("leaves real questions alone: outward actions, finished tasks, stuck reports", () => {
+        expect(asksLeaveToLook("The draft is ready but not sent yet. Want me to send it to Priya?")).toBe(false);
+        expect(asksLeaveToLook("Done — Downloads has a.pdf, b.png and c.zip. Want me to open one?")).toBe(false);
+        expect(asksLeaveToLook("I haven't found it yet. Want me to check again?\n[[STUCK]]")).toBe(false);
     });
 });
