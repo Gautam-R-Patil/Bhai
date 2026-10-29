@@ -115,6 +115,13 @@ desktop/hostinger-upload/
 !src/memory/traits-correction.test.ts
 !src/overlay/inline-scripts.test.ts
 !src/research/fetcher-links.test.ts
+!src/research/fetcher-safety.test.ts
+!src/research/scoring-dedup.test.ts
+!src/research/analysis-injection.test.ts
+!src/research/engines-backoff.test.ts
+!src/research/engines-brave.test.ts
+!src/research/executor-cap.test.ts
+!src/security/url-safety-pinning.test.ts
 !src/social/emotion-detector.test.ts
 !src/proactive/proactive-reward.test.ts
 !src/tools/__tests__/

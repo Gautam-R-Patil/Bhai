@@ -110,6 +110,11 @@ export function resetEngineHealth(): void {
     engineHealth.clear();
 }
 
+/** Test-only: observe whether an engine is currently available (not backing off). */
+export function __isEngineAvailable(engine: EngineName): boolean {
+    return isAvailable(engine);
+}
+
 // ── Google Search (Playwright) ───────────────
 
 async function searchGoogle(query: string): Promise<SearchResult[]> {
@@ -242,58 +247,59 @@ async function searchBrave(query: string): Promise<SearchResult[]> {
         const html = await response.text();
         if (html.includes("captcha") || html.includes("rate limit")) { markFailure("brave"); return []; }
 
-        const results: SearchResult[] = [];
-        const seenUrls = new Set<string>();
-
-        // Primary: structured snippet blocks
-        const snippetBlockPattern = /<div[^>]*class="[^"]*snippet[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
-        const snippetBlocks: string[] = [];
-        let sm;
-        while ((sm = snippetBlockPattern.exec(html)) !== null) {
-            snippetBlocks.push(sm[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
-        }
-
-        // Extract links from result blocks
-        const linkPattern = /href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-        let linkIdx = 0;
-        let m;
-        while ((m = linkPattern.exec(html)) !== null && results.length < 15) {
-            if (m[1].includes("brave.com")) continue;
-            const rawTitle = m[2].replace(/<[^>]+>/g, "").trim();
-            if (rawTitle.length > 5 && rawTitle.length < 200 && !seenUrls.has(m[1])) {
-                const snippet = snippetBlocks[linkIdx] || "";
-                if (snippet.length > 15 || rawTitle.length > 20) {
-                    seenUrls.add(m[1]);
-                    results.push({ url: m[1], title: rawTitle, snippet: snippet.substring(0, 300), source: "brave" });
-                    linkIdx++;
-                }
-            }
-        }
-
-        // Fallback: broader regex parsing
-        if (results.length === 0) {
-            const blocks = html.split("<div").slice(1).map(b => "<div" + b);
-            for (const block of blocks) {
-                const lm = /href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
-                if (lm && !lm[1].includes("brave.com")) {
-                    const title = lm[2].replace(/<[^>]+>/g, "").trim();
-                    if (title.length > 5 && title.length < 200 && !seenUrls.has(lm[1])) {
-                        const fullText = block.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-                        const snippet = fullText.replace(title, "").replace(/.*- Brave Search/, "").replace(/^[^\w]+/, "").trim();
-                        if (snippet.length > 20) {
-                            seenUrls.add(lm[1]);
-                            results.push({ url: lm[1], title, snippet: snippet.substring(0, 300), source: "brave" });
-                        }
-                    }
-                }
-                if (results.length >= 15) break;
-            }
-        }
+        const results = parseBraveResults(html);
 
         if (results.length > 0) markSuccess("brave");
         else markFailure("brave");
         return results;
     } catch { markFailure("brave"); return []; }
+}
+
+/**
+ * Parse Brave HTML. Each result's link + snippet are taken from within the SAME
+ * snippet block, so a snippet is never paired with an unrelated link — the old
+ * code scanned snippet blocks and links as two independent arrays and
+ * correlated them by index, which misaligned when a non-result link (nav/ad)
+ * appeared before the real results.
+ */
+export function parseBraveResults(html: string): SearchResult[] {
+    const results: SearchResult[] = [];
+    const seenUrls = new Set<string>();
+    const linkPattern = /href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i;
+
+    // Primary: one result per snippet block, link + snippet from that block.
+    const chunks = html.split(/<div[^>]*class="[^"]*snippet[^"]*"[^>]*>/i).slice(1);
+    for (const chunk of chunks) {
+        if (results.length >= 15) break;
+        const lm = linkPattern.exec(chunk);
+        if (!lm || lm[1].includes("brave.com")) continue;
+        const title = lm[2].replace(/<[^>]+>/g, "").trim();
+        if (title.length <= 5 || title.length >= 200 || seenUrls.has(lm[1])) continue;
+        const text = chunk.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        const snippet = text.replace(title, "").trim();
+        seenUrls.add(lm[1]);
+        results.push({ url: lm[1], title, snippet: snippet.substring(0, 300), source: "brave" });
+    }
+
+    // Fallback: broader per-div scan when no snippet blocks matched.
+    if (results.length === 0) {
+        const blocks = html.split("<div").slice(1).map(b => "<div" + b);
+        for (const block of blocks) {
+            if (results.length >= 15) break;
+            const lm = linkPattern.exec(block);
+            if (!lm || lm[1].includes("brave.com")) continue;
+            const title = lm[2].replace(/<[^>]+>/g, "").trim();
+            if (title.length <= 5 || title.length >= 200 || seenUrls.has(lm[1])) continue;
+            const fullText = block.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+            const snippet = fullText.replace(title, "").replace(/.*- Brave Search/, "").replace(/^[^\w]+/, "").trim();
+            if (snippet.length > 20) {
+                seenUrls.add(lm[1]);
+                results.push({ url: lm[1], title, snippet: snippet.substring(0, 300), source: "brave" });
+            }
+        }
+    }
+
+    return results;
 }
 
 // ── DuckDuckGo HTML ─────────────────────────
@@ -682,12 +688,12 @@ async function searchOpenAlex(query: string): Promise<SearchResult[]> {
 
 // ── Semantic Scholar API ─────────────────────
 
-async function searchSemanticScholar(query: string): Promise<SearchResult[]> {
+export async function searchSemanticScholar(query: string): Promise<SearchResult[]> {
     if (!isAvailable("semantic_scholar")) return [];
     try {
         const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=20&fields=title,url,abstract,citationCount,year,authors`;
         const response = await fetch(url, { headers: { "User-Agent": randomUA() }, signal: AbortSignal.timeout(12000) });
-        if (!response.ok) { if (response.status === 429) markFailure("semantic_scholar"); return []; }
+        if (!response.ok) { markFailure("semantic_scholar"); return []; }
         const data = await response.json() as any;
         const results = (data.data || []).map((p: any) => ({
             title: p.title || "",
@@ -698,17 +704,17 @@ async function searchSemanticScholar(query: string): Promise<SearchResult[]> {
         })).filter((r: SearchResult) => r.title && r.url);
         if (results.length > 0) markSuccess("semantic_scholar");
         return results;
-    } catch { return []; }
+    } catch { markFailure("semantic_scholar"); return []; }
 }
 
 // ── arXiv API ────────────────────────────────
 
-async function searchArxiv(query: string): Promise<SearchResult[]> {
+export async function searchArxiv(query: string): Promise<SearchResult[]> {
     if (!isAvailable("arxiv")) return [];
     try {
         const url = `http://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=15`;
         const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
-        if (!response.ok) return [];
+        if (!response.ok) { markFailure("arxiv"); return []; }
         const xml = await response.text();
         const results: SearchResult[] = [];
         const entries = xml.split("<entry>").slice(1);
@@ -720,7 +726,7 @@ async function searchArxiv(query: string): Promise<SearchResult[]> {
         }
         if (results.length > 0) markSuccess("arxiv");
         return results;
-    } catch { return []; }
+    } catch { markFailure("arxiv"); return []; }
 }
 
 // ── Unified Multi-Engine Search ──────────────
