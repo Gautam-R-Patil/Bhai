@@ -253,6 +253,27 @@ const NATIVE_OK_FILE = path.join(homedir(), ".atlas", "bridge-native-ok");
 let nativeHostRegistered = false;
 export const discoverServesTokens = (): boolean => !(nativeHostRegistered && fs.existsSync(NATIVE_OK_FILE));
 
+/**
+ * The /bin/sh launcher Chrome runs as the native host. Chrome can start it while Bhai is
+ * being reinstalled: running the half-copied app then dies in dyld/Electron startup
+ * ("Library missing"), leaving a crash report and a "Bhai quit unexpectedly" alert. So
+ * it checks the runtime is all there first and otherwise exits quietly (the extension
+ * retries discovery a few seconds later).
+ */
+export function nativeHostLauncher(execPath: string, hostScript: string): string {
+    const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+    const fw = execPath.includes(".app/Contents/MacOS/")
+        ? path.join(path.dirname(path.dirname(execPath)), "Frameworks", "Electron Framework.framework")
+        : null;
+    const ready = [`[ -x ${q(execPath)} ]`, `[ -r ${q(hostScript)} ]`];
+    if (fw)
+        ready.push(
+            `[ -e ${q(path.join(fw, "Electron Framework"))} ]`,
+            `[ -e ${q(path.join(fw, "Resources", "icudtl.dat"))} ]`,
+        );
+    return `#!/bin/sh\n${ready.join(" && ")} || exit 1\nELECTRON_RUN_AS_NODE=1 exec ${q(execPath)} ${q(hostScript)}\n`;
+}
+
 async function registerNativeMessagingHost(_port: number): Promise<void> {
     try {
         // Write the native host script next to the discovery file
@@ -307,13 +328,8 @@ function sendMessage(msg) {
         if (!ids) return; // Chrome rejects wildcard origins, so without Bhai's ID there's nothing to register
         let hostPath = hostScriptPath;
         if (process.platform !== "win32") {
-            const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
             hostPath = path.join(homedir(), ".atlas", "atlas-bridge-host");
-            fs.writeFileSync(
-                hostPath,
-                `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${q(process.execPath)} ${q(hostScriptPath)}\n`,
-                { mode: 0o755 },
-            );
+            fs.writeFileSync(hostPath, nativeHostLauncher(process.execPath, hostScriptPath), { mode: 0o755 });
         }
 
         // Write the native messaging host manifest
