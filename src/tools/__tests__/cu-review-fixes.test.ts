@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Regressions from the computer-use review: unconfirmed AXPress, menu-bar replay capture, loose app hint.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const findClickTarget = vi.fn();
 const click = vi.fn();
@@ -117,5 +117,42 @@ describe("os_smart_click review fixes", () => {
         findClickTarget.mockResolvedValueOnce({ x: 300, y: 900, confidence: 0.99, source: "ax_exact" });
         const out = JSON.parse(await osSmartClick.handler({ instruction: "Safari", app: "Dock" }));
         expect(out.success).toBe(true);
+    });
+
+    describe("window-level clicks", () => {
+        const row = { pid: 42, path: [1, 0, 0, 0, 6], role: "AXRow", bbox: { x: 303, y: 412, w: 148, h: 32 } };
+        const target = () => ({ x: 377, y: 428, confidence: 0.85, source: "ax_fuzzy", ax: { ...row }, matchedLabel: "Downloads" });
+        const actions = (byAction: Record<string, unknown>) =>
+            press.mockImplementation(async (...a: unknown[]) => byAction[a[2] as string] ?? { ok: false, error: "unsupported:x" });
+        afterEach(() => press.mockImplementation(async () => ({ ok: false, error: "unsupported:AXPress" })));
+
+        it("selects a row that has no AXPress instead of clicking pixels (works under other windows)", async () => {
+            actions({ select: { ok: true, frame: row.bbox } });
+            findClickTarget.mockResolvedValueOnce(target());
+            const out = JSON.parse(await osSmartClick.handler({ instruction: "Downloads in the Finder sidebar" }));
+            expect(out).toMatchObject({ success: true, verified: "ax_select" });
+            expect(click).not.toHaveBeenCalled();
+        });
+
+        it("raises the element's window, and refuses to click when another app still covers it", async () => {
+            actions({ focus: { ok: true, frame: row.bbox, hitPid: 777 } });
+            findClickTarget.mockResolvedValueOnce(target());
+            const out = JSON.parse(await osSmartClick.handler({ instruction: "Downloads in the Finder sidebar" }));
+            expect(out.error).toMatch(/element_covered/);
+            expect(press.mock.calls.map((c) => c[2])).toEqual(["press", "select", "focus"]);
+            expect(click).not.toHaveBeenCalled();
+        });
+
+        it("clicks once its own window is on top, at the element's current centre; Bhai's windows don't count", async () => {
+            for (const hitPid of [42, process.ppid]) {
+                click.mockClear();
+                actions({ focus: { ok: true, frame: { x: 303, y: 500, w: 148, h: 32 }, hitPid } });
+                findClickTarget.mockResolvedValueOnce(target());
+                const out = JSON.parse(await osSmartClick.handler({ instruction: "Downloads in the Finder sidebar" }));
+                expect(out.success).toBe(true);
+                expect(click).toHaveBeenCalledTimes(1);
+                expect(click.mock.calls[0][0]).toMatchObject({ coord: [377, 516] });
+            }
+        });
     });
 });

@@ -202,12 +202,14 @@ const _AX_REFUSED = /^(element_gone|element_changed|unsupported|unknown_action|n
 export async function axPerformAction(
     pid: number,
     el: Pick<AxFlatElement, "path" | "role" | "bbox">,
-    action: "press" | "reveal",
+    action: "press" | "reveal" | "select" | "focus",
 ): Promise<{
     ok: boolean;
     error?: string;
     unconfirmed?: boolean;
     frame?: { x: number; y: number; w: number; h: number };
+    /** focus only: the app whose UI is at the element's centre afterwards (0 = unknown). */
+    hitPid?: number;
 }> {
     if (process.platform !== "darwin") return { ok: false, error: "unsupported_platform" };
     if (!pid) return { ok: false, error: "no_pid" };
@@ -222,8 +224,9 @@ export async function axPerformAction(
             const error = out.replace(/^error\|/, "") || "no_output";
             return { ok: false, error, unconfirmed: !_AX_REFUSED.test(error) };
         }
-        const [x, y, w, hh] = out.slice(3).split(",").map(Number);
-        return { ok: true, frame: { x, y, w, h: hh } };
+        const [frame, hit] = out.slice(3).split("|");
+        const [x, y, w, hh] = frame.split(",").map(Number);
+        return { ok: true, frame: { x, y, w, h: hh }, ...(hit !== undefined && { hitPid: Number(hit) || 0 }) };
     } catch (err) {
         const e = err as NodeJS.ErrnoException;
         return { ok: false, error: e.message.slice(0, 200), unconfirmed: e.code !== "ENOENT" };

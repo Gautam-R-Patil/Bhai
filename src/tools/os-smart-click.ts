@@ -147,6 +147,19 @@ async function captureWindowRegion(fw: Rect): Promise<Buffer | null> {
 }
 
 const VISION_TIERS = new Set<CascadeTier>(["omniparser", "ui_tars", "cloud_grounding"]);
+/** AX roles clicked by setting AXSelected when they have no AXPress. */
+const SELECTABLE_ROLES = new Set(["AXRow", "AXCell", "AXOutlineRow", "AXTab"]);
+
+/** "Google Chrome" for a pid, for messages; the pid itself if ps can't say. */
+async function appNameOfPid(pid: number): Promise<string> {
+    try {
+        const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "comm="], { timeout: 2000 });
+        const comm = stdout.trim();
+        return /\/([^/]+)\.app\//.exec(comm)?.[1] || comm.split("/").pop() || `pid ${pid}`;
+    } catch {
+        return `pid ${pid}`;
+    }
+}
 
 function missTip(m?: CascadeMiss): string {
     switch (m?.reason) {
@@ -511,6 +524,13 @@ export const osSmartClick: ToolDefinition = {
                                 dispatchErr: `ax_press_unconfirmed: AXPress on "${target.matchedLabel}" did not report back (${pressed.error}); it may have worked. Take an os_screenshot before retrying; nothing else was clicked.`,
                             };
                         }
+                        // Rows and cells (Finder's sidebar, lists, tables) have no AXPress but
+                        // take AXSelected — like a press, it doesn't care what covers them.
+                        if (SELECTABLE_ROLES.has(target.ax.role)) {
+                            const selected = await axPerformAction(target.ax.pid, target.ax, "select");
+                            if (selected.ok)
+                                return { ok: true, target, calX: target.x, calY: target.y, verdict: "ax_select" };
+                        }
                     }
                     if (target.ax.offscreen) {
                         const shown = await axPerformAction(target.ax.pid, target.ax, "reveal");
@@ -525,6 +545,26 @@ export const osSmartClick: ToolDefinition = {
                         }
                         target.x = shown.frame.x + Math.floor(shown.frame.w / 2);
                         target.y = shown.frame.y + Math.floor(shown.frame.h / 2);
+                    }
+                    // A pixel click lands on whatever is on top there: raise the element's
+                    // own window first (another window of the same app, or another app's,
+                    // may be over it), then make sure it is what's under the point.
+                    const focused = await axPerformAction(target.ax.pid, target.ax, "focus");
+                    if (focused.ok && focused.frame) {
+                        target.x = focused.frame.x + Math.floor(focused.frame.w / 2);
+                        target.y = focused.frame.y + Math.floor(focused.frame.h / 2);
+                        const hit = focused.hitPid ?? 0;
+                        // Bhai's own windows (overlay, panel) step aside for its clicks.
+                        if (hit && hit !== target.ax.pid && hit !== process.pid && hit !== process.ppid) {
+                            const cover = await appNameOfPid(hit);
+                            return {
+                                ok: false,
+                                target,
+                                calX: target.x,
+                                calY: target.y,
+                                dispatchErr: `element_covered: "${target.matchedLabel}" is under a window of ${cover} that stays on top even after raising its own window. Move or close that window (or ask the owner to), then retry; nothing was clicked.`,
+                            };
+                        }
                     }
                 }
 
