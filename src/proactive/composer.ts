@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { fetchSystemPrompt } from "../config/system-prompts.js";
+import { getCurrentLanguage } from "../language.js";
 import { getToneReminder } from "../setup/personality-sync.js";
 import type { LLMClient } from "../llm.js";
 import { extractJSON } from "../utils/json-extract.js";
@@ -34,8 +35,11 @@ export async function compose(
     recentSends: string[],
     deps: { llm: LLMClient | null },
 ): Promise<ComposerResult | null> {
-    // 1. Template fast path
-    const tpl = tryTemplate(intent, channel);
+    // 1. Template fast path. Templates are casual English, so a Professional/Direct or non-English
+    // owner gets the LLM instead. The digest (their own words) and commitment nudges stay fixed.
+    const fixed = intent.payload.kind === "memory_digest" || intent.payload.kind === "commitment_due";
+    const casualEnglish = !/PROFESSIONAL|DIRECT/.test(persona.tone) && getCurrentLanguage() === "English";
+    const tpl = fixed || casualEnglish || !deps.llm ? tryTemplate(intent, channel) : null;
     if (tpl !== null) {
         // The digest quotes stored memories word for word ("User prefers…"): showing exactly what is kept is the point.
         if (intent.payload.kind !== "memory_digest" && (containsBannedPhrase(tpl) || mentionsThirdPerson(tpl))) {

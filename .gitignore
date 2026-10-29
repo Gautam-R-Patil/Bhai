@@ -84,6 +84,7 @@ desktop/hostinger-upload/
 # they survive the broad ignore. Add a new entry when you commit a
 # test you want to keep.
 # Session 2026-10-29: personalization/soul pure-logic fixes
+!src/language-persist.test.ts
 !src/prompts/dynamic-assembler.test.ts
 !src/alive-ux.test.ts
 !src/memory/relationship.test.ts

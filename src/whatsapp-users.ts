@@ -115,9 +115,9 @@ const MAX_MEMORIES = 100;
 const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 const DEFAULT_PERSONA: WhatsAppBotPersona = {
-    name: "Personal Assistant",
-    systemPrompt:
-        "You represent the owner and help people who contact them. You can check the owner's calendar availability and let people know when they're free. You CANNOT share the owner's emails, location, or any private details.",
+    name: "Bhai",
+    // The contact prompt in whatsapp.ts already sets the scope; this is only for the owner's own additions.
+    systemPrompt: "",
     allowedToolNames: [
         "get_current_time",
         "web_search",

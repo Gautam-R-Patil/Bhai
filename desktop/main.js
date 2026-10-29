@@ -6034,7 +6034,7 @@ ${body}`;
             const personaPath = path.join(DATA_DIR, "whatsapp-persona.json");
             if (fs.existsSync(personaPath)) return JSON.parse(fs.readFileSync(personaPath, "utf-8"));
         } catch {}
-        return { name: "Personal Assistant", systemPrompt: "", allowedToolNames: [], autoAllow: false };
+        return { name: "Bhai", systemPrompt: "", allowedToolNames: [], autoAllow: false };
     });
 
     ipcMain.handle("wa:save-persona", (_, persona) => {
