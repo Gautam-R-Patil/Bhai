@@ -298,14 +298,14 @@ export async function osNowPlayingLocal(): Promise<LocalNowPlaying> {
             const script = `
 tell application "Spotify"
     if it is running then
-        set st to player state as string
+        set pState to player state as string
         set n to name of current track
         set a to artist of current track
         set al to album of current track
         set d to duration of current track
         set p to player position
         set u to spotify url of current track
-        return st & "\t" & n & "\t" & a & "\t" & al & "\t" & d & "\t" & p & "\t" & u
+        return pState & "\t" & n & "\t" & a & "\t" & al & "\t" & d & "\t" & p & "\t" & u
     else
         return "not_running"
     end if

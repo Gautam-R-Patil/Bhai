@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
 import { cursorClick, cursorMove, withCursorHidden, withCursorTyping } from "../screen/agent-cursor.js";
+import { getFrontmostApp } from "../screen/frontmost.js";
 import { gridScreenshot } from "../screen/grid-overlay.js";
 import {
     captureRegionToFile,
@@ -213,18 +214,21 @@ export const osScreenshot: ToolDefinition = {
         const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
 
         try {
-            // Get dimensions of the screen containing the focused window (multi-monitor aware).
-            // Falls back to primary if AX permission isn't granted.
-            const dims = await getScreenDimensions({ focusedWindow: true, force: true });
+            // The frontmost app is looked up alongside the capture, not after it.
+            const frontmost = getFrontmostApp();
+            // Hide overlay so it doesn't appear in the screenshot; while it fades, find the
+            // screen containing the focused window (multi-monitor aware; falls back to
+            // primary if AX permission isn't granted).
+            hideOverlayForAgent();
+            const [dims] = await Promise.all([
+                getScreenDimensions({ focusedWindow: true, force: true }),
+                new Promise((r) => setTimeout(r, 100)), // opacity transition
+            ]);
             const screenWidth = dims.width;
             const screenHeight = dims.height;
 
             lastScreenWidth = screenWidth;
             lastScreenHeight = screenHeight;
-
-            // Hide overlay so it doesn't appear in the screenshot
-            hideOverlayForAgent();
-            await new Promise((r) => setTimeout(r, 100)); // Wait for opacity transition
 
             // Capture the focused window's monitor (Retina: at 2x pixel density) —
             // the same monitor os_click maps this image's coordinates onto. JPEG is
@@ -258,18 +262,7 @@ export const osScreenshot: ToolDefinition = {
             // Scale factor: maps image coordinates to logical screen points
             const scaleFactor = screenWidth / RESIZE_WIDTH;
 
-            // Get frontmost app info
-            let frontmostApp = "unknown";
-            try {
-                const { stdout: appOut } = await execFileAsync(
-                    "osascript",
-                    ["-e", 'tell application "System Events" to get name of first process whose frontmost is true'],
-                    { timeout: 2000 },
-                );
-                frontmostApp = appOut.trim();
-            } catch {
-                /* ignore */
-            }
+            const frontmostApp = (await frontmost)?.name || "unknown";
 
             return JSON.stringify({
                 success: true,

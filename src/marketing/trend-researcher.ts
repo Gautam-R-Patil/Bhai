@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { ApifyClient } from "apify-client";
+import type { ApifyClient } from "apify-client";
 
 export interface TrendingPost {
   platform: "instagram" | "tiktok";
@@ -25,9 +25,11 @@ export interface TrendResearchResult {
   recommendedPostingTime: string;
 }
 
-function getApifyClient(): ApifyClient {
+// Loaded on first use: the SDK is ~24MB and most sessions never research trends.
+async function getApifyClient(): Promise<ApifyClient> {
   const token = process.env.APIFY_TOKEN;
   if (!token) throw new Error("APIFY_TOKEN not set in environment");
+  const { ApifyClient } = await import("apify-client");
   return new ApifyClient({ token });
 }
 
@@ -35,7 +37,7 @@ export async function researchInstagramTrends(
   hashtags: string[],
   resultsLimit = 50
 ): Promise<TrendResearchResult> {
-  const client = getApifyClient();
+  const client = await getApifyClient();
   const run = await client.actor("apify/instagram-hashtag-scraper").call({
     hashtags: hashtags.slice(0, 5),
     resultsLimit,
@@ -69,7 +71,7 @@ export async function researchTikTokTrends(
   hashtags: string[],
   resultsLimit = 30
 ): Promise<TrendResearchResult> {
-  const client = getApifyClient();
+  const client = await getApifyClient();
   const run = await client.actor("clockworks/tiktok-scraper").call({
     hashtags: hashtags.slice(0, 3),
     resultsPerPage: resultsLimit,
@@ -104,7 +106,7 @@ export async function scrapeCompetitorPosts(
   instagramHandle: string,
   limit = 20
 ): Promise<TrendingPost[]> {
-  const client = getApifyClient();
+  const client = await getApifyClient();
   const run = await client.actor("apify/instagram-profile-scraper").call({
     usernames: [instagramHandle],
     resultsLimit: limit,

@@ -522,7 +522,9 @@ export function initOverlayChat(llm: LLMClient): void {
         console.log(`💬 ${isWidget ? "Widget" : "Overlay"} chat connected (${overlayClients.size} client${overlayClients.size > 1 ? "s" : ""})`);
 
         // Send ready signal
-        ws.send(JSON.stringify({ type: "ready" }));
+        // `busy`: an owner turn is still running (a reconnecting chat bar keeps waiting for it;
+        // if none is, its reply was lost and it unlocks).
+        ws.send(JSON.stringify({ type: "ready", busy: connKind === "native-overlay" && ownerTurnRunning() }));
 
         // Send current inbox state on connect (so a fresh overlay sees pending items).
         // Owner only: the inbox holds the owner's pending drafts and actions.
@@ -599,8 +601,12 @@ export function initOverlayChat(llm: LLMClient): void {
                 if (msg.type === "stop") {
                     // Stop button / Esc: abort this socket's running turn. No new
                     // tool starts after this (agent.ts checks the signal per tool).
-                    const ac = turnAborts.get(ws);
-                    if (ac && wsIsOwner(ws)) {
+                    // Any owner socket stops the owner's turn: after a reconnect the chat bar's
+                    // socket is not the one the turn started on.
+                    const ac = wsIsOwner(ws)
+                        ? (turnAborts.get(ws) ?? [...turnAborts].find(([w]) => wsIsOwner(w))?.[1])
+                        : undefined;
+                    if (ac) {
                         ac.abort();
                         // "Stopped." comes when the turn has really ended (an in-flight
                         // tool finishes first); until then the chat stays busy, so a
@@ -626,7 +632,16 @@ export function initOverlayChat(llm: LLMClient): void {
                         console.log(`🌐 [Chrome Extension] Browser context injected: ${browserUrl}`);
                     }
 
-                    await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim());
+                    // The extension may attach a screenshot of the tab (with the user's drawing).
+                    const image = msg.meta?.source === "chrome-extension" ? msg.image : undefined;
+                    const tabShot =
+                        image &&
+                        typeof image.base64 === "string" &&
+                        image.base64.length < 8_000_000 &&
+                        /^image\/(jpeg|png|webp)$/.test(image.mimeType)
+                            ? ({ type: "image", base64: image.base64, mimeType: image.mimeType } as MediaAttachment)
+                            : undefined;
+                    await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim(), tabShot);
                 } else if (msg.type === "quick_action" && msg.text) {
                     const actionText = msg.text.trim();
                     if (actionText.startsWith("mem:forget:")) {
@@ -868,6 +883,9 @@ export const pageText = (t: string, max: number): string =>
 
 /** The running turn per socket, so the Stop button can abort it. */
 const turnAborts = new Map<WebSocket, AbortController>();
+/** The owner's turns share one conversation history, so only one may run at a time. */
+const ownerTurnRunning = (): boolean => [...turnAborts.keys()].some(wsIsOwner);
+const BUSY_TEXT = "I'm still on your last message. Wait for my reply, or press Esc to stop it.";
 
 function ownerClients(): WebSocket[] {
     return [...overlayClients].filter(wsIsOwner);
@@ -877,9 +895,22 @@ function ownerClients(): WebSocket[] {
 
 // `logText` is what the transcript shows as the user's words (without injected
 // context such as the browser prefix or the voice-analysis prompt).
-async function handleOverlayMessage(ws: WebSocket, userMessage: string, source = "overlay", logText = userMessage): Promise<void> {
+async function handleOverlayMessage(
+    ws: WebSocket,
+    userMessage: string,
+    source = "overlay",
+    logText = userMessage,
+    tabShot?: MediaAttachment,
+): Promise<void> {
     if (!llmClient) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
+        return;
+    }
+    // A reloaded chat bar, a second owner window or the extension must not start a second
+    // turn on the shared history: it would interleave with the running one and take over
+    // its Stop handle.
+    if (wsIsOwner(ws) && ownerTurnRunning()) {
+        sendToClient(ws, { type: "error", text: BUSY_TEXT });
         return;
     }
     // "/new" (or "/clear") starts over without a model call: clears the shared
@@ -943,8 +974,17 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
 
     let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.]${chromeCtxNote}`;
 
-    // Only the owner's own chat bar may look at the screen — never a web-widget visitor.
-    if (wsIsOwner(ws) && isScreenQuery(userMessage)) {
+    if (tabShot) {
+        // The Chrome side panel sends what the user sees in the tab (never the panel itself,
+        // never the rest of the screen), drawing included.
+        media = [tabShot];
+        taggedMessage = `${userMessage}
+
+[SOURCE: Bhai's side panel in the user's Chrome — respond there, NOT on Telegram. Keep it short.
+Attached: a screenshot of the Chrome tab the user is looking at (the page only). Orange strokes or boxes on it are the user's own drawing: focus on what they marked. Answer as if you can see the page, without "based on the screenshot". To act on the page, use the browser tools on this tab; to point something out to them, use browser_mark.]${chromeCtxNote}`;
+    } else if (wsIsOwner(ws) && source !== "chrome-extension" && isScreenQuery(userMessage)) {
+        // Only the owner's own chat bar may look at the screen — never a web-widget visitor,
+        // and not the Chrome panel, which sends its tab instead.
         console.log("  📸 [Overlay] Screen query detected — capturing screenshot...");
         sendToClient(ws, { type: "progress", text: "📸 Looking at your screen…" });
 
@@ -1072,6 +1112,13 @@ async function handleFileAttachment(
 ): Promise<void> {
     if (!llmClient) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
+        return;
+    }
+    // A reloaded chat bar, a second owner window or the extension must not start a second
+    // turn on the shared history: it would interleave with the running one and take over
+    // its Stop handle.
+    if (wsIsOwner(ws) && ownerTurnRunning()) {
+        sendToClient(ws, { type: "error", text: BUSY_TEXT });
         return;
     }
 
@@ -1264,7 +1311,16 @@ function sendToClient(ws: WebSocket, data: unknown): void {
     const json = JSON.stringify(data);
     if (ws.readyState === 1) {
         ws.send(json);
-    } else if (wsIsOwner(ws) && ownerClients().length === 1) {
+    } else if (wsIsOwner(ws)) {
+        // The turn's socket died (overlay hidden, reconnected): the same chat bar, back on a
+        // new socket, announces its chat id on open; deliver there.
+        const chat = chatIds.get(ws);
+        const same = ownerClients().find((c) => c !== ws && c.readyState === 1 && chatIds.get(c) === chat);
+        if (same) {
+            same.send(json);
+            return;
+        }
+        if (ownerClients().length !== 1) return;
         // Fallback: original ws died (overlay hidden/refocused) and there is exactly
         // one owner client connected — the reconnected native overlay. Never a
         // web-widget visitor.

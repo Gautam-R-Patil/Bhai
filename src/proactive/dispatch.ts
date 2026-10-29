@@ -39,8 +39,9 @@ const PREFIXED_CHANNELS: Channel[] = ["whatsapp", "telegram", "discord", "slack"
  * No separate registry — reuses what is already wired at boot.
  * Resolves true only when the message was actually sent. An `ownerOnly` message
  * quotes the owner's memory: owners' private chats only, and no preview in the logs.
- * While the owner leaves sends unanswered, only FYIs and `urgent` ones go out;
- * while they've said "not now" or it's a serious moment, only `urgent` ones.
+ * While the owner leaves nudges unanswered, only FYIs and `bypassFatigue` sends
+ * (deadlines, reminders they asked for) go out; while they've said "not now" or
+ * it's a serious moment, only `bypassFatigue` ones.
  */
 export async function dispatchProactiveMessage(
     channel: Channel,
@@ -48,7 +49,8 @@ export async function dispatchProactiveMessage(
     mode: ProactiveMode,
     buttons?: ProactiveButton[],
     ownerOnly = false,
-    urgent = false,
+    /** A deadline or a reminder the owner asked for: never held back for "too many unanswered nudges". */
+    bypassFatigue = false,
 ): Promise<boolean> {
     if (isProactiveDisabled()) {
         debugProactive("suppressed_global", { channel, mode });
@@ -58,11 +60,11 @@ export async function dispatchProactiveMessage(
         debugProactive("suppressed_channel", { channel, mode });
         return false;
     }
-    if (isQuietNow() && !urgent) {
+    if (isQuietNow() && !bypassFatigue) {
         debugProactive("suppressed_quiet", { channel, mode }); // "not now", a serious moment
         return false;
     }
-    if (_fatigueCheck !== null && mode !== "fyi" && !urgent) {
+    if (_fatigueCheck !== null && !bypassFatigue && mode !== "fyi") {
         try {
             if (_fatigueCheck()) {
                 debugProactive("suppressed_fatigue", { channel, mode });

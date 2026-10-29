@@ -665,31 +665,37 @@ async function boot() {
                     "matrix",
                     "overlay",
                 ];
+                // The Observer holds quiet hours and picks one channel; without it, keep both:
+                // nothing in the night window, and the thought goes to ONE channel (it used to
+                // go to every channel at once, at any hour).
+                const { inWindow, loadProactiveConfig } = await import("./proactive/config.js");
+                const cfg = loadProactiveConfig(join(getDataDir(), "proactive-config.json"));
+                if (cfg.quiet || inWindow(cfg.nightWindows.default)) return;
                 const primary = channelOrder.find((c) => c === PRIMARY_CHANNEL);
-                const rest = channelOrder.filter((c) => c !== primary);
-                const sendOne = async (channel: (typeof channelOrder)[number]): Promise<void> => {
-                    const composed = await compose(intent, channel, { tone: getToneReminder() ?? "warm" }, [], { llm });
-                    if (!composed) return;
-                    await dispatchProactiveMessage(
-                        channel,
-                        composed.text,
-                        composed.modeTag,
-                        undefined,
-                        false,
-                        intent.urgency === "urgent",
-                    );
-                };
-                if (primary) {
+                for (const channel of primary
+                    ? [primary, ...channelOrder.filter((c) => c !== primary)]
+                    : channelOrder) {
                     try {
-                        await sendOne(primary);
+                        const composed = await compose(intent, channel, { tone: getToneReminder() ?? "warm" }, [], {
+                            llm,
+                        });
+                        if (
+                            composed &&
+                            (await dispatchProactiveMessage(
+                                channel,
+                                composed.text,
+                                composed.modeTag,
+                                undefined,
+                                false,
+                                intent.urgency === "urgent",
+                            ))
+                        )
+                            break;
                     } catch (err) {
-                        console.log(`proactive dispatch failed (${primary}):`, (err as Error).message);
+                        // e.g. no sender registered for this channel: try the next one
+                        console.log(`proactive dispatch failed (${channel}):`, (err as Error).message);
                     }
                 }
-                for (const c of rest)
-                    sendOne(c).catch((err) => {
-                        console.log(`proactive dispatch failed (${c}):`, (err as Error).message);
-                    });
             } catch (err) {
                 console.log("[proactive] Composer fallback also failed — staying silent:", (err as Error).message);
             }

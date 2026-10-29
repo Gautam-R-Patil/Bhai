@@ -23,8 +23,16 @@ because Chrome warns on unrecognized (`_`-prefixed) manifest keys.
   `/discover` stops serving the token over HTTP.
 
 - **`activeTab`, `tabs`, `scripting`, `storage`, `contextMenus`, `alarms`** — tab
-  targeting and content-script injection, popup/settings state, the right-click
-  menu, and service-worker keep-alive/reconnect timers.
+  targeting and content-script injection, the side panel's conversation and
+  settings state, the right-click menu, and service-worker keep-alive/reconnect
+  timers.
+
+- **`sidePanel`** — clicking the toolbar icon (or a right-click "Ask Bhai")
+  opens the chat with Bhai docked beside the page.
+
+- **Screenshots (`captureVisibleTab`, covered by `<all_urls>`)** — only when the
+  user has drawn on the page with "Mark up": the visible tab, drawing included,
+  goes with their next message so Bhai sees what they marked.
 
 - **`host_permissions: <all_urls>`** — the agent operates on whatever tab the
   user is on; we cannot enumerate a finite host list at install time.

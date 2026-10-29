@@ -423,6 +423,18 @@ async function switchTabInChrome(input: Record<string, unknown>): Promise<string
                 ? at(input.close_tab_index)
                 : tabs.find((t) => t.id === current?.id);
         if (!target) return JSON.stringify({ error: "No such tab.", tabs: view(tabs) });
+        // An index is a position in a list from an earlier call, across all of the owner's
+        // windows: if their tabs moved since, it names another tab. Close only the tab
+        // whose URL the caller saw there.
+        const norm = (u: unknown) => String(u ?? "").replace(/#.*$/, "").replace(/\/+$/, "");
+        if (typeof input.close_tab_index === "number" && norm(input.close_tab_url) !== norm(target.url)) {
+            return JSON.stringify({
+                error: input.close_tab_url
+                    ? "The tabs changed: that index is a different tab now. Nothing was closed; pick again from this list."
+                    : "Pass close_tab_url (the URL shown for that index) with close_tab_index. Nothing was closed.",
+                tabs: view(tabs),
+            });
+        }
         await sendBridgeCommand("close_tab", { tabId: target.id });
         tabs = await list();
         return JSON.stringify({
@@ -478,7 +490,12 @@ export const browserSwitchTab: ToolDefinition = {
                     close_active: { type: "boolean", description: "Close the currently active tab" },
                     close_tab_index: {
                         type: "number",
-                        description: "Close the tab at this index (0-based, from the list)",
+                        description: "Close the tab at this index (0-based, from the list). Needs close_tab_url.",
+                    },
+                    close_tab_url: {
+                        type: "string",
+                        description:
+                            "The URL the list showed at close_tab_index. If the tabs changed since, nothing is closed and you get the new list.",
                     },
                 },
                 required: [],

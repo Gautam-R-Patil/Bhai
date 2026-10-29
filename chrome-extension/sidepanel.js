@@ -1,0 +1,276 @@
+// Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+// Bhai side panel: the conversation with Bhai, docked next to the page.
+// Text from pages and replies is escaped before the small markdown pass, and
+// links are only ever http(s).
+
+const $ = (id) => document.getElementById(id);
+const messages = $('messages');
+const input = $('input');
+const sendBtn = $('btnSend');
+const chips = [$('btnSummary'), $('btnExplain'), $('btnDraw')];
+
+let canChat = false;
+
+// Lets the background worker know when the panel closes (it removes any drawing).
+chrome.runtime.connect({ name: 'sidepanel' });
+
+function send(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (resp) => {
+      void chrome.runtime.lastError; // worker may be waking up
+      resolve(resp);
+    });
+  });
+}
+
+// ── Markdown (small and safe) ────────────────
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function inline(s) {
+  return s
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function renderMarkdown(text) {
+  const parts = escapeHtml(text).split(/```(?:[a-z0-9-]*)\n?([\s\S]*?)```/i);
+  let html = '';
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) { html += `<pre><code>${part}</code></pre>`; return; }
+    for (const block of part.split(/\n{2,}/)) {
+      const lines = block.split('\n').filter((l) => l.trim());
+      if (!lines.length) continue;
+      if (lines.every((l) => /^\s*[-*•]\s+/.test(l))) {
+        html += `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*•]\s+/, ''))}</li>`).join('')}</ul>`;
+      } else {
+        html += `<p>${lines.map(inline).join('<br>')}</p>`;
+      }
+    }
+  });
+  return html;
+}
+
+// ── Rendering ────────────────────────────────
+
+function renderChat(chat) {
+  messages.querySelectorAll('.msg').forEach((el) => el.remove());
+  $('empty').classList.toggle('hidden', (chat || []).length > 0);
+  for (const m of chat || []) {
+    const el = document.createElement('div');
+    el.className = `msg ${m.role}`;
+    if (m.role === 'bhai') el.innerHTML = renderMarkdown(m.text);
+    else el.textContent = m.text;
+    messages.append(el);
+  }
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function renderStatus(resp) {
+  const browserOn = !!resp?.connected;
+  canChat = !!resp?.overlayConnected;
+  const searching = !browserOn && (resp?.discoveryAttempts || 0) > 0 && (resp?.discoveryAttempts || 0) < 3;
+  const dot = $('dot');
+  dot.className = `dot${canChat ? ' on' : searching ? '' : ' off'}`;
+  dot.title = canChat ? 'Connected to Bhai' : searching ? 'Connecting…' : browserOn ? 'Chat is reconnecting…' : 'Bhai isn\'t running';
+  $('offline').classList.toggle('hidden', browserOn || searching);
+  sendBtn.disabled = !canChat;
+  chips.forEach((c) => { c.disabled = !canChat; });
+  input.placeholder = canChat ? 'Ask Bhai anything…' : 'Open Bhai to chat';
+}
+
+function setBusy(on, text) {
+  $('working').classList.toggle('hidden', !on);
+  if (on && text) $('workingText').textContent = text;
+}
+
+async function refresh() {
+  renderStatus(await send({ type: 'get_status' }));
+}
+
+// ── Sending ──────────────────────────────────
+
+// ── @-mention a tab ──────────────────────────
+// Typing "@" lists the open tabs; picking one puts "@Title" in the message and
+// sends that tab's text along.
+
+const mentionMenu = $('mentionMenu');
+const mentioned = new Map(); // label -> tab id
+let menuItems = [];
+let menuIndex = 0;
+
+function mentionQuery() {
+  const upto = input.value.slice(0, input.selectionStart);
+  const m = /(^|\s)@([^\s@]*)$/.exec(upto);
+  return m ? { query: m[2].toLowerCase(), start: upto.length - m[2].length - 1 } : null;
+}
+
+function closeMenu() {
+  mentionMenu.classList.add('hidden');
+  menuItems = [];
+}
+
+async function updateMenu() {
+  const q = mentionQuery();
+  if (!q) return closeMenu();
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+  menuItems = tabs
+    .filter((t) => !q.query || (t.title || '').toLowerCase().includes(q.query) || host(t.url).includes(q.query))
+    .slice(0, 8);
+  menuIndex = 0;
+  mentionMenu.replaceChildren();
+  if (!menuItems.length) {
+    const empty = document.createElement('div');
+    empty.className = 'mention-empty';
+    empty.textContent = 'No open tab matches';
+    mentionMenu.append(empty);
+  }
+  menuItems.forEach((t, i) => {
+    const row = document.createElement('div');
+    row.className = 'mention-item';
+    row.setAttribute('role', 'option');
+    if (/^https?:/.test(t.favIconUrl || '')) {
+      const icon = document.createElement('img');
+      icon.src = t.favIconUrl;
+      icon.alt = '';
+      row.append(icon);
+    }
+    const title = document.createElement('span');
+    title.className = 'mention-title';
+    title.textContent = t.title || 'Untitled';
+    const site = document.createElement('span');
+    site.className = 'mention-host';
+    site.textContent = host(t.url);
+    row.append(title, site);
+    row.addEventListener('mousedown', (e) => { e.preventDefault(); pickMention(i); });
+    mentionMenu.append(row);
+  });
+  highlightMenu();
+  mentionMenu.classList.remove('hidden');
+}
+
+function highlightMenu() {
+  [...mentionMenu.querySelectorAll('.mention-item')].forEach((el, i) => el.classList.toggle('active', i === menuIndex));
+}
+
+function pickMention(i) {
+  const tab = menuItems[i];
+  const q = mentionQuery();
+  if (!tab || !q) return closeMenu();
+  const label = `@${(tab.title || 'tab').replace(/\s+/g, ' ').slice(0, 40).trim()}`;
+  mentioned.set(label, tab.id);
+  input.value = `${input.value.slice(0, q.start)}${label} ${input.value.slice(input.selectionStart)}`;
+  const caret = q.start + label.length + 1;
+  input.setSelectionRange(caret, caret);
+  closeMenu();
+  autosize();
+  input.focus();
+}
+
+input.addEventListener('input', updateMenu);
+input.addEventListener('click', updateMenu);
+input.addEventListener('blur', () => setTimeout(closeMenu, 150));
+
+async function sendText() {
+  const text = input.value.trim();
+  if (!text || !canChat) return;
+  const mentions = [...mentioned].filter(([label]) => text.includes(label)).map(([, id]) => id);
+  mentioned.clear();
+  input.value = '';
+  autosize();
+  const resp = await send({ type: 'send_message', text, mentions });
+  if (resp?.ok) {
+    setBusy(true, resp.drawing ? 'Looking at your drawing…' : 'Thinking…');
+    if (resp.drawing) $('drawNote').classList.add('hidden');
+  } else { input.value = text; autosize(); }
+}
+
+function autosize() {
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+}
+
+input.addEventListener('input', autosize);
+input.addEventListener('keydown', (e) => {
+  if (!mentionMenu.classList.contains('hidden') && menuItems.length) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      menuIndex = (menuIndex + (e.key === 'ArrowDown' ? 1 : menuItems.length - 1)) % menuItems.length;
+      return highlightMenu();
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); return pickMention(menuIndex); }
+  }
+  if (e.key === 'Escape') return closeMenu();
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendText(); }
+});
+sendBtn.addEventListener('click', sendText);
+
+$('btnSummary').addEventListener('click', async () => {
+  const resp = await send({ type: 'send_page', question: 'Summarize this page for me.', display: 'Summarize this page' });
+  if (resp?.ok) setBusy(true, 'Reading the page…');
+});
+$('btnExplain').addEventListener('click', async () => {
+  const resp = await send({ type: 'send_selection', question: 'Explain this simply.' });
+  if (resp?.ok) setBusy(true, 'Thinking…');
+});
+function showHint(text) {
+  $('hint').textContent = text || '';
+  if (text) setTimeout(() => { if ($('hint').textContent === text) $('hint').textContent = ''; }, 5000);
+}
+
+async function startDrawing() {
+  const resp = await send({ type: 'start_draw' });
+  if (!resp?.ok) return showHint(resp?.error || "Couldn't open drawing on this page.");
+  $('drawNote').classList.remove('hidden');
+  showHint('');
+}
+$('btnDraw').addEventListener('click', startDrawing);
+$('btnDrawEdit').addEventListener('click', startDrawing);
+$('btnDrawRemove').addEventListener('click', async () => {
+  await send({ type: 'clear_draw' });
+  $('drawNote').classList.add('hidden');
+});
+
+$('btnStop').addEventListener('click', () => {
+  send({ type: 'send_message', text: 'stop' });
+  setBusy(false);
+});
+$('btnNew').addEventListener('click', async () => {
+  await send({ type: 'clear_chat' });
+  renderChat([]);
+  setBusy(false);
+  input.focus();
+});
+$('btnRetry').addEventListener('click', async () => {
+  const btn = $('btnRetry');
+  btn.disabled = true;
+  btn.textContent = 'Looking for Bhai…';
+  await send({ type: 'reconnect' });
+  btn.disabled = false;
+  btn.textContent = 'Try again';
+  refresh();
+});
+
+// ── Live updates from the background worker ──
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'chat_update') {
+    renderChat(msg.chat);
+    const last = msg.chat[msg.chat.length - 1];
+    if (last && last.role !== 'you') setBusy(false);
+  } else if (msg.type === 'atlas_progress') {
+    setBusy(true, msg.text || 'Working…');
+  } else if (msg.type === 'atlas_action') {
+    setBusy(true, msg.entry?.detail || 'Working…');
+  }
+});
+
+send({ type: 'get_chat' }).then((resp) => renderChat(resp?.chat || []));
+refresh();
+setInterval(refresh, 3000);
+input.focus();

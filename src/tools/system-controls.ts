@@ -23,6 +23,7 @@ import {
     runPowerShell,
     runPowerShellInline,
 } from "./platform.js";
+import { macWifi, WIFI_NAME_HIDDEN_HINT, wifiNameFromSettings } from "./platform-bridge.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -567,10 +568,9 @@ export const wifiControl: ToolDefinition = {
 
             switch (action) {
                 case "status": {
-                    const { stdout } = await execFileAsync("networksetup", ["-getairportnetwork", iface], {
-                        timeout: 3000,
-                    });
-                    const ssidMatch = stdout.match(/Current Wi-Fi Network:\s*(.+)/);
+                    const w = await macWifi(iface);
+                    // macOS hides the name from command-line tools: read it off the Wi-Fi pane.
+                    const shown = w.nameHidden ? await wifiNameFromSettings() : null;
                     const powerResult = await execFileAsync("networksetup", ["-getairportpower", iface], {
                         timeout: 3000,
                     });
@@ -578,7 +578,12 @@ export const wifiControl: ToolDefinition = {
                     return JSON.stringify({
                         success: true,
                         power: isOn ? "on" : "off",
-                        connected_ssid: ssidMatch ? ssidMatch[1].trim() : null,
+                        connected: w.connected,
+                        connected_ssid: w.ssid ?? shown,
+                        ...(shown && {
+                            source: "read from the Wi-Fi pane in System Settings (opened in the background). networksetup saying \"not associated\" is macOS hiding the name, not a disconnect.",
+                        }),
+                        ...(w.nameHidden && !shown && { note: WIFI_NAME_HIDDEN_HINT }),
                     });
                 }
                 case "off":
@@ -994,29 +999,21 @@ export const darkMode: ToolDefinition = {
             }
 
             // macOS
+            // The global default reads in ~20ms; asking System Events cold takes ~2.5s.
+            // The key is absent in light mode, so a failed read means light.
+            const isDarkNow = () =>
+                execFileAsync("defaults", ["read", "-g", "AppleInterfaceStyle"], { timeout: 3000 }).then(
+                    ({ stdout }) => stdout.trim() === "Dark",
+                    () => false,
+                );
             if (mode === "status") {
-                const result = await runAppleScript(`
-tell application "System Events"
-    tell appearance preferences
-        return dark mode as text
-    end tell
-end tell`);
-                return JSON.stringify({
-                    success: true,
-                    dark_mode: result === "true",
-                    appearance: result === "true" ? "dark" : "light",
-                });
+                const dark = await isDarkNow();
+                return JSON.stringify({ success: true, dark_mode: dark, appearance: dark ? "dark" : "light" });
             }
 
             let setDark: boolean;
             if (mode === "toggle") {
-                const current = await runAppleScript(`
-tell application "System Events"
-    tell appearance preferences
-        return dark mode as text
-    end tell
-end tell`);
-                setDark = current !== "true";
+                setDark = !(await isDarkNow());
             } else {
                 setDark = mode === "dark";
             }
@@ -1032,6 +1029,148 @@ end tell`);
                 success: true,
                 dark_mode: setDark,
                 appearance: setDark ? "dark" : "light",
+            });
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+// ═══════════════════════════════════════════════
+// 7b. OPEN SETTINGS PANE (deep link, no clicking)
+// ═══════════════════════════════════════════════
+
+const SETTINGS_APPEX_DIR = "/System/Library/ExtensionKit/Extensions";
+// Words people say that are not in the pane's bundle id.
+const SETTINGS_ALIASES: Record<string, string> = {
+    darkmode: "appearance",
+    theme: "appearance",
+    privacy: "privacysecurity",
+    security: "privacysecurity",
+    power: "battery",
+    energy: "battery",
+    update: "softwareupdate",
+    updates: "softwareupdate",
+    language: "localization",
+    region: "localization",
+    vpn: "network",
+    background: "wallpaper",
+    screensaver: "wallpaper",
+    users: "usersgroups",
+    password: "touchid",
+    loginitems: "loginitems",
+    airdrop: "airdrophandoff",
+    handoff: "airdrophandoff",
+    dock: "desktop",
+    menubar: "controlcenter",
+    printer: "printscan",
+    reset: "transferreset",
+};
+// Privacy & Security sub-pages (anchor on the PrivacySecurity pane).
+const PRIVACY_ANCHORS: Record<string, string> = {
+    camera: "Privacy_Camera",
+    microphone: "Privacy_Microphone",
+    screenrecording: "Privacy_ScreenCapture",
+    accessibility: "Privacy_Accessibility",
+    fulldisk: "Privacy_AllFiles",
+    location: "Privacy_LocationServices",
+    locationservices: "Privacy_LocationServices",
+    automation: "Privacy_Automation",
+    contacts: "Privacy_Contacts",
+    calendars: "Privacy_Calendars",
+    photos: "Privacy_Photos",
+    inputmonitoring: "Privacy_ListenEvent",
+};
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+let settingsPanes: { id: string; key: string }[] | undefined;
+/** Settings panes installed on this Mac, keyed by the name in their bundle id. */
+export async function listSettingsPanes(): Promise<{ id: string; key: string }[]> {
+    if (settingsPanes) return settingsPanes;
+    const panes: { id: string; key: string }[] = [];
+    for (const f of await fs.readdir(SETTINGS_APPEX_DIR).catch(() => [] as string[])) {
+        const plist = await fs.readFile(`${SETTINGS_APPEX_DIR}/${f}/Contents/Info.plist`, "utf8").catch(() => "");
+        const id = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
+        if (
+            !id ||
+            !/settings|systempreferences|preferences|AboutExtension/i.test(id) ||
+            /intent|widget|search/i.test(id)
+        )
+            continue;
+        const key = norm(
+            id.replace(/^com\.apple\.(systempreferences\.|settings\.)?/, "").replace(/settings|extension/gi, ""),
+        );
+        if (key) panes.push({ id, key });
+    }
+    settingsPanes = panes;
+    return panes;
+}
+
+/** Resolve a spoken pane name ("wifi", "camera access", "dark mode") to an x-apple.systempreferences URL. */
+export async function resolveSettingsUrl(pane: string): Promise<string | null> {
+    const want = norm(pane.replace(/\b(settings?|preferences?|pane|access|permissions?)\b/gi, ""));
+    if (!want) return "x-apple.systempreferences:";
+    const panes = await listSettingsPanes();
+    const key = SETTINGS_ALIASES[want] ?? want;
+    // "accessibility" is its own pane; "accessibility access/permission" is the privacy page.
+    const privacy = PRIVACY_ANCHORS[want];
+    if (privacy && (/access\b|permission|privacy/i.test(pane) || !panes.some((x) => x.key === key))) {
+        const p = panes.find((x) => x.key === "privacysecurity");
+        return p ? `x-apple.systempreferences:${p.id}?${privacy}` : null;
+    }
+    const hit =
+        panes.find((x) => x.key === key) ??
+        panes
+            .filter((x) => x.key.includes(key) || (key.length >= 4 && key.includes(x.key)))
+            .sort((a, b) => a.key.length - b.key.length)[0];
+    return hit ? `x-apple.systempreferences:${hit.id}` : null;
+}
+
+export const openSettings: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "open_settings",
+            description:
+                "Open a System Settings pane directly (one call, no clicking through the sidebar): e.g. 'wifi', 'bluetooth', 'sound', 'displays', 'battery', 'wallpaper', 'keyboard', 'notifications', 'general', 'storage', 'software update', 'privacy', or a privacy page like 'camera', 'microphone', 'screen recording', 'accessibility access', 'full disk access'. On Windows pass an ms-settings page name (e.g. 'bluetooth', 'display', 'sound', 'network-wifi'). Use the dedicated tools (set_volume, wifi_control, bluetooth_control, dark_mode, set_brightness, set_do_not_disturb) when they cover the change; use this for everything else, then act on the pane with os_inspect/os_smart_click.",
+            parameters: {
+                type: "object",
+                properties: {
+                    pane: { type: "string", description: "Pane name, e.g. 'bluetooth' or 'camera'" },
+                },
+                required: ["pane"],
+            },
+        },
+    },
+
+    async handler(input) {
+        const pane = String(input.pane ?? "").trim();
+        try {
+            if (IS_WIN) {
+                const slug = pane
+                    .toLowerCase()
+                    .replace(/[^a-z0-9-]+/g, "-")
+                    .replace(/^-|-$/g, "");
+                await execFileAsync("cmd.exe", ["/c", "start", "", `ms-settings:${slug}`], { timeout: 5000 });
+                return JSON.stringify({ success: true, opened: `ms-settings:${slug}` });
+            }
+            if (!IS_MAC) return JSON.stringify({ success: false, error: "open_settings supports macOS and Windows." });
+            const url = await resolveSettingsUrl(pane);
+            if (!url) {
+                const names = (await listSettingsPanes()).map((p) => p.key).join(", ");
+                return JSON.stringify({ success: false, error: `No settings pane matches "${pane}". Panes: ${names}` });
+            }
+            await execFileAsync("open", [url], { timeout: 5000 });
+            // Return once the pane is in front: a screen read in the same batch (os_inspect)
+            // otherwise reads whatever was in front before (live: Chrome).
+            const { waitForFrontmost } = await import("../screen/frontmost.js");
+            const front = !!(await waitForFrontmost("System Settings", 5000));
+            if (front) await new Promise((r) => setTimeout(r, 500)); // the pane's content draws a moment later
+            return JSON.stringify({
+                success: true,
+                opened: url,
+                ...(front ? {} : { note: "System Settings isn't in front yet: check with os_inspect app='System Settings'." }),
             });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });

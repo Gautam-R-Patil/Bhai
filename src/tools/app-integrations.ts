@@ -56,13 +56,71 @@ async function runJXA(script: string, timeout = 10000): Promise<string> {
 // 2. MUSIC CONTROL (Apple Music)
 // ═══════════════════════════════════════════════
 
+// Storefront for catalog search: the Mac's region (AppleLocale "en_IN" → "IN").
+let storefront: string | undefined;
+async function getStorefront(): Promise<string> {
+    if (storefront) return storefront;
+    const { stdout } = await execFileAsync("defaults", ["read", "-g", "AppleLocale"], { timeout: 2000 }).catch(() => ({
+        stdout: "",
+    }));
+    storefront = /_([A-Z]{2})/.exec(stdout)?.[1] ?? "US";
+    return storefront;
+}
+
+/**
+ * Play a song that is not in the library: find it with the public iTunes Search
+ * API (no key), open its music:// link (Music selects the track row), then press
+ * Return on that row. No screenshot or model call. Needs an Apple Music
+ * subscription and Accessibility access; the caller verifies what is playing.
+ */
+export async function playCatalogTrack(query: string): Promise<{ track: string; artist: string } | { error: string }> {
+    const country = await getStorefront();
+    const res = await fetch(
+        `https://itunes.apple.com/search?entity=song&limit=1&country=${country}&term=${encodeURIComponent(query)}`,
+        { signal: AbortSignal.timeout(5000) },
+    );
+    const hit = ((await res.json()) as { results?: { trackName: string; artistName: string; trackViewUrl: string }[] })
+        .results?.[0];
+    if (!hit) return { error: "not found in the Apple Music catalog" };
+    if (!hit.trackViewUrl.startsWith("https://music.apple.com/")) return { error: "unexpected catalog link" };
+    await execFileAsync("open", [hit.trackViewUrl.replace(/^https:/, "music:")], { timeout: 5000 });
+    // Wait for the album page to load with the track row selected, then play it.
+    const pressed = await runAS(`
+tell application "System Events" to tell process "Music"
+    repeat 30 times
+        try
+            repeat with sa in (scroll areas of splitter group 1 of window 1)
+                repeat with t in (tables of sa whose description is "track list")
+                    repeat with r in (rows of t whose selected is true)
+                        set focused of t to true
+                        key code 36
+                        return "ok"
+                    end repeat
+                end repeat
+            end repeat
+        end try
+        delay 0.2
+    end repeat
+    return "no_row"
+end tell`);
+    if (pressed !== "ok") return { error: "the song page did not load in Music" };
+    for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 200));
+        const now = await runAS(
+            `tell application "Music" to if player state is playing then return name of current track`,
+        ).catch(() => "");
+        if (now.toLowerCase() === hit.trackName.toLowerCase()) return { track: hit.trackName, artist: hit.artistName };
+    }
+    return { error: `opened "${hit.trackName}" but it did not start (Apple Music subscription needed?)` };
+}
+
 export const musicControl: ToolDefinition = {
     schema: {
         type: "function",
         function: {
             name: "music_control",
             description:
-                "Control Apple Music: play/pause, skip, previous, get now-playing info, or search and play. Use this when Spotify is not available or the user prefers Apple Music.",
+                "Control Apple Music: play/pause, skip, previous, get now-playing info, or search and play any song (library first, then the Apple Music catalog, no screenshots needed). Use this when the user asks for Apple Music or Spotify is not available.",
             parameters: {
                 type: "object",
                 properties: {
@@ -73,7 +131,8 @@ export const musicControl: ToolDefinition = {
                     },
                     query: {
                         type: "string",
-                        description: "Search query for 'search_play' (e.g. 'Taylor Swift', 'Blinding Lights')",
+                        description:
+                            "Search query for 'search_play': a song, artist, or one of the user's playlist names (e.g. 'Blinding Lights', 'Taylor Swift', 'Favourite Songs playlist')",
                     },
                 },
                 required: ["action"],
@@ -144,9 +203,26 @@ end tell`);
                 case "search_play": {
                     const query = input.query as string;
                     if (!query) return JSON.stringify({ error: "Provide 'query' for search_play." });
-                    // Search in Music library and play first match
+                    // A playlist of the user's by that name ("my chill playlist"), else the
+                    // first library match. AppleScript's "is" ignores case.
+                    const listName = query.replace(/^(my|the)\s+/i, "").replace(/\s+playlist$/i, "");
                     const result = await runAS(`
 tell application "Music"
+    repeat with p in user playlists
+        if name of p is "${asStr(listName)}" then
+            play p
+            -- play returns before playback switches: wait until it plays from this list.
+            repeat 30 times
+                try
+                    if player state is playing and name of current playlist is name of p then
+                        return name of current track & "|" & artist of current track & "|" & name of p
+                    end if
+                end try
+                delay 0.1
+            end repeat
+            return "NOT_STARTED|" & name of p
+        end if
+    end repeat
     set results to (search playlist "Library" for "${asStr(query)}")
     if (count of results) > 0 then
         play item 1 of results
@@ -158,13 +234,28 @@ tell application "Music"
     end if
 end tell`);
                     if (result === "NO_RESULTS") {
+                        const catalog = await playCatalogTrack(query).catch((e: Error) => ({ error: e.message }));
+                        if ("track" in catalog) {
+                            return JSON.stringify({
+                                success: true,
+                                action: "search_play",
+                                source: "catalog",
+                                ...catalog,
+                            });
+                        }
                         return JSON.stringify({
                             success: false,
-                            error: `No results for "${query}" in Apple Music library. Try the spotify tool (action='play', query='...') instead, or use os_screenshot + os_click to play it visually in whichever music app is open.`,
+                            error: `No results for "${query}" in the Apple Music library, and the catalog play failed (${catalog.error}). Try the spotify tool (action='play', query='...') instead, or use os_screenshot + os_click to play it visually in whichever music app is open.`,
                         });
                     }
-                    const [track, artist] = result.split("|");
-                    return JSON.stringify({ success: true, action: "search_play", track, artist });
+                    if (result.startsWith("NOT_STARTED|")) {
+                        return JSON.stringify({
+                            success: false,
+                            error: `Asked Music to play the playlist "${result.slice(12)}" but it did not start.`,
+                        });
+                    }
+                    const [track, artist, playlist] = result.split("|");
+                    return JSON.stringify({ success: true, action: "search_play", track, artist, playlist });
                 }
 
                 default:

@@ -36,7 +36,6 @@ const CACHEABLE_TOOLS = new Set([
     "dark_mode", // only the "status" action
     "bluetooth_control", // only "status" and "list" actions
     "wifi_control", // only "status" action
-    "clipboard", // only "read" action
     "file_metadata", // read-only file info
     "list_directory", // read-only directory listing
     "read", // read-only file contents
@@ -58,7 +57,6 @@ const CACHEABLE_ACTIONS: Record<string, Set<string>> = {
     dark_mode: new Set(["status"]),
     bluetooth_control: new Set(["status", "list"]),
     wifi_control: new Set(["status"]),
-    clipboard: new Set(["read"]),
     google_accounts: new Set(["list"]),
 };
 
@@ -80,7 +78,6 @@ const TOOL_TTL_MS: Record<string, number> = {
     bluetooth_control: 60_000,
     wifi_control: 60_000,
     dark_mode: 60_000,
-    clipboard: 30_000, // Changes frequently
     get_current_time: 5_000, // Time changes constantly
     // Expensive tools — cache to reduce latency + cost
     web_search: 120_000, // Search results stable for 2 minutes
@@ -113,12 +110,21 @@ export function isCacheable(toolName: string, args: Record<string, unknown>): bo
     // system_info has no actions, always cacheable
     if (toolName === "system_info") return true;
 
-    // For tools with mixed actions, check if the specific action is cacheable
-    const action = args.action as string | undefined;
+    // A mixed read/write tool is cached only when the call names a read action
+    // (dark_mode calls it `mode`); anything else may change what it reads.
     const allowed = CACHEABLE_ACTIONS[toolName];
-    if (allowed && action && !allowed.has(action)) return false;
+    if (allowed) return allowed.has(String(args.action ?? args.mode));
 
     return true;
+}
+
+/**
+ * Drop cached reads of local state after a call that may have changed it: a toggle
+ * leaves the cached status stale, an edit leaves the cached file, ⌘C the clipboard.
+ * Web search results don't depend on anything done here, so they stay.
+ */
+export function invalidateLocalState(): void {
+    for (const key of cache.keys()) if (!key.startsWith("web_search:")) cache.delete(key);
 }
 
 /**

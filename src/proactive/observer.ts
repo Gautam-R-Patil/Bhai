@@ -501,14 +501,8 @@ export class Observer {
 
                 const buttons = intent.payload.buttons as ProactiveButton[] | undefined;
                 const ownerOnly = intent.payload.ownerOnly === true;
-                if (await dispatchProactiveMessage(
-                        channel,
-                        composed.text,
-                        composed.modeTag,
-                        buttons,
-                        ownerOnly,
-                        intent.urgency === "urgent",
-                    )) {
+                const due = intent.urgency === "urgent" || intent.payload.kind === "commitment_due";
+                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag, buttons, ownerOnly, due)) {
                     sent = true;
                     this.registry.dispatched(intent);
                 }

@@ -3,7 +3,7 @@
 // texts. The old executor re-filtered originals by `dedupedTexts.includes(text)`,
 // which re-admitted every copy of a surviving text (no-op for exact dupes).
 import { describe, expect, it } from "vitest";
-import { dedupeByText, deduplicateFindings } from "./scoring.js";
+import { dedupeByText, deduplicateFindings, normalizeUrl, UrlSet } from "./scoring.js";
 
 describe("dedupeByText", () => {
     it("collapses exact-duplicate texts to a single object", () => {
@@ -31,5 +31,30 @@ describe("dedupeByText", () => {
         const kept = dedupeByText(items, (i) => i.text);
         expect(kept).toHaveLength(1);
         expect(kept[0].text).toContain("last year");
+    });
+});
+
+describe("non-Latin findings and URL identity", () => {
+    it("keeps distinct Hindi and Japanese findings, still collapses true duplicates", () => {
+        const items = [
+            "भारत में 2025 में इलेक्ट्रिक वाहनों की बिक्री दोगुनी हुई",
+            "दिल्ली में मेट्रो का नया रूट अगले साल खुलेगा",
+            "東京の人口は二〇二五年に減少した",
+            "भारत में 2025 में इलेक्ट्रिक वाहनों की बिक्री दोगुनी हुई",
+        ];
+        expect(dedupeByText(items, (t) => t)).toHaveLength(3);
+    });
+
+    it("one key per page across scheme, www, slash, fragment and tracking params", () => {
+        const same = [
+            "https://www.example.com/report/?utm_source=x#top",
+            "http://example.com/report",
+            "https://EXAMPLE.com/report?fbclid=abc",
+        ];
+        expect(new Set(same.map(normalizeUrl)).size).toBe(1);
+        expect(normalizeUrl("https://example.com/item?id=1")).not.toBe(normalizeUrl("https://example.com/item?id=2"));
+        const visited = new UrlSet();
+        visited.add(same[0]);
+        expect(visited.has(same[1])).toBe(true);
     });
 });

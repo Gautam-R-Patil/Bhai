@@ -102,4 +102,23 @@ describe("asksLeaveToLook", () => {
         expect(asksLeaveToLook("Done — Downloads has a.pdf, b.png and c.zip. Want me to open one?")).toBe(false);
         expect(asksLeaveToLook("I haven't found it yet. Want me to check again?\n[[STUCK]]")).toBe(false);
     });
+    it("catches handing the looking to the owner, but only when Bhai can see the screen itself", () => {
+        const reply =
+            "I still can't name the network: the SSID is redacted. If you can see it in the Wi-Fi menu, tell me and I'll take it from there.";
+        expect(asksLeaveToLook(reply, true)).toBe(true);
+        expect(asksLeaveToLook(reply, false)).toBe(false);
+        expect(
+            asksLeaveToLook(
+                "I still can't name the network: the output redacts the SSID. If you check the Wi-Fi menu bar icon, the name will be there.",
+                true,
+            ),
+        ).toBe(true);
+        expect(
+            asksLeaveToLook(
+                "macOS is hiding the SSID from me, so I don't have it. Tell me the name from the Wi-Fi menu and I'll use it.",
+                true,
+            ),
+        ).toBe(true);
+        expect(asksLeaveToLook("Done. If you can see any typo, tell me.", true)).toBe(false);
+    });
 });

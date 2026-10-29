@@ -568,9 +568,19 @@ export function antiGivingUpFailures(
  * of the task the owner already gave; asking first just stalls it. A step with effects
  * outside (send, pay, delete…) still gets asked.
  */
-export function asksLeaveToLook(responseText: string): boolean {
+export function asksLeaveToLook(responseText: string, canSeeScreen = false): boolean {
     if (takeStuckMarker(responseText).stuck) return false;
     const l = responseText.toLowerCase().replace(/[’‘]/g, "'");
+    // "I can't read the name. If you can see it in the Wi-Fi menu, tell me": with screen
+    // tools in hand, looking is Bhai's job, not the owner's.
+    if (
+        canSeeScreen &&
+        /\b(can't|cannot|couldn't|unable to|not able to|don't have|do not have)\b/.test(l) &&
+        /\bif you (can )?(see|check|look|open|click)\b|\btell me (the|what|which|its) [a-z -]{0,30}(from|in|on) (the|your) |\b(check|look at|read) (it|that|the [a-z -]{1,30}) (yourself|on your screen)\b|\byou(?:'ll| will| can) (see|find) (it|the [a-z -]{1,30}) (in|on|under)\b/.test(
+            l,
+        )
+    )
+        return true;
     if (!/\b(haven't|have not|not yet|isn't (finished|done|complete)|not (finished|done|complete))\b/.test(l)) return false;
     const ask = /\b(?:do you want me to|want me to|should i|shall i)\b([^?]{0,100})\?/.exec(l)?.[1];
     return (
@@ -3742,14 +3752,20 @@ PLAN:`,
                 continue;
             }
 
-            if (!lookNudged && asksLeaveToLook(responseText)) {
+            if (
+                !lookNudged &&
+                asksLeaveToLook(
+                    responseText,
+                    toolSelection.categories.some((c) => c === "os_control" || c === "system_controls"),
+                )
+            ) {
                 lookNudged = true;
                 console.log("  🔄 Asked leave to look before finishing — continuing instead");
                 messages.push({ role: "assistant", content: responseText });
                 messages.push({
                     role: "user",
                     content:
-                        "Yes — that's part of what I asked. Don't ask before looking or reading: do it now, finish the task, and give me the actual answer.",
+                        "You can see my screen yourself: don't ask me to look or ask leave to look. Open what shows it (e.g. the right System Settings pane), read it with os_inspect or a screenshot, finish the task, and give me the actual answer.",
                 });
                 lastToolCalls = undefined;
                 continue;

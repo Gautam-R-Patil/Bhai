@@ -85,6 +85,7 @@ let extensionSocket: WebSocket | null = null;
 let bridgeToken: string = "";
 let authenticated = false;
 let heartbeatTimer: NodeJS.Timeout | null = null;
+let lastPong = 0;
 
 // Pending requests waiting for extension responses.
 // Bounded to protect against an extension that acks out of order, crashes
@@ -591,27 +592,11 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             }
         });
 
-        ws.on("close", () => {
-            if (ws === extensionSocket) {
-                extensionSocket = null;
-                authenticated = false;
-                clearPendingRequests("Extension disconnected");
-                stopHeartbeat();
-                // Reset backend so auto-mode falls back to Playwright
-                resetBackend();
-                notifyEvent({ type: "extension_disconnected", data: {} });
-                console.log("🔌 Chrome extension disconnected");
-            }
-        });
+        ws.on("close", () => dropExtension(ws, "Extension disconnected"));
 
         ws.on("error", (err) => {
             console.warn("🔌 Chrome bridge error:", (err as Error).message);
-            if (ws === extensionSocket) {
-                extensionSocket = null;
-                authenticated = false;
-                clearPendingRequests("Extension connection error");
-                stopHeartbeat();
-            }
+            dropExtension(ws, "Extension connection error");
             try {
                 ws.terminate();
             } catch {
@@ -731,6 +716,7 @@ function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, aut
 
     // Heartbeat pong
     if (msg.type === "pong") {
+        lastPong = Date.now();
         return;
     }
 
@@ -927,10 +913,10 @@ export function getBridgeToken(): string {
  */
 export function rotateBridgeToken(): string {
     // Disconnect current extension
-    if (extensionSocket) {
-        extensionSocket.close(4004, "Token rotated");
-        extensionSocket = null;
-        authenticated = false;
+    const current = extensionSocket;
+    if (current) {
+        dropExtension(current, "Token rotated");
+        current.close(4004, "Token rotated");
     }
 
     if (native) {
@@ -987,9 +973,35 @@ export function closeChromeBridge(): void {
 
 // ── Internal Helpers ─────────────────────────
 
+/**
+ * The one teardown for the extension's socket (close, error, token rotation, silence):
+ * pending calls fail now, the heartbeat stops, and the backend falls back to
+ * Playwright. Error and rotation used to skip the last part, leaving calls on a dead
+ * socket until their own timeouts.
+ */
+function dropExtension(ws: WebSocket, reason: string): void {
+    if (ws !== extensionSocket) return;
+    extensionSocket = null;
+    authenticated = false;
+    clearPendingRequests(reason);
+    stopHeartbeat();
+    resetBackend(); // auto mode falls back to Playwright
+    notifyEvent({ type: "extension_disconnected", data: {} });
+    console.log(`🔌 Chrome extension disconnected (${reason})`);
+}
+
 function startHeartbeat(ws: WebSocket): void {
     stopHeartbeat();
+    lastPong = Date.now();
     heartbeatTimer = setInterval(() => {
+        // A socket that stopped answering (laptop slept, extension worker killed) stays
+        // "open" until the OS notices, minutes later: until then every call waits out its
+        // timeout and the extension's reconnect is refused as a second connection.
+        if (Date.now() - lastPong > HEARTBEAT_INTERVAL_MS * 2.5) {
+            dropExtension(ws, "Extension stopped answering");
+            ws.terminate();
+            return;
+        }
         if (ws.readyState === 1) {
             try {
                 ws.send(JSON.stringify({ type: "ping" }));

@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { TwitterApi } from "twitter-api-v2";
+import type { TwitterApi } from "twitter-api-v2";
 import { resolveCredential } from "../brand-profile.js";
 
 export interface TwitterPostResult {
@@ -10,7 +10,7 @@ export interface TwitterPostResult {
   url: string;
 }
 
-function getTwitterClient(brandId: string): TwitterApi {
+async function getTwitterClient(brandId: string): Promise<TwitterApi> {
   const appKey = resolveCredential(`X_API_KEY_${brandId}`);
   const appSecret = resolveCredential(`X_API_SECRET_${brandId}`);
   const accessToken = resolveCredential(`X_ACCESS_TOKEN_${brandId}`);
@@ -18,6 +18,7 @@ function getTwitterClient(brandId: string): TwitterApi {
   if (!appKey || !appSecret || !accessToken || !accessSecret) {
     throw new Error(`Missing Twitter credentials for brand "${brandId}". Set X_API_KEY_${brandId}, X_API_SECRET_${brandId}, X_ACCESS_TOKEN_${brandId}, X_ACCESS_SECRET_${brandId} in .env`);
   }
+  const { TwitterApi } = await import("twitter-api-v2"); // loaded on first post
   return new TwitterApi({ appKey, appSecret, accessToken, accessSecret });
 }
 
@@ -26,7 +27,7 @@ export async function postTwitter(
   text: string,
   mediaPath?: string
 ): Promise<TwitterPostResult> {
-  const client = getTwitterClient(brandId);
+  const client = await getTwitterClient(brandId);
 
   if (mediaPath) {
     const mediaId = await client.v1.uploadMedia(mediaPath);

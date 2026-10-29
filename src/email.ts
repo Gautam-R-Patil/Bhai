@@ -6,8 +6,7 @@
 // IMAP listener (incoming) + SMTP sender (outgoing)
 // Uses Hostinger email: imap.hostinger.com / smtp.hostinger.com
 
-import { ImapFlow } from "imapflow";
-import nodemailer from "nodemailer";
+import type { ImapFlow } from "imapflow";
 import type { SendMailOptions, Transporter } from "nodemailer/lib/mailer";
 import { type ChannelContext, runAgent } from "./agent.js";
 import { withStuckReplyLine } from "./channel-text.js";
@@ -168,7 +167,9 @@ function emailRateLimitAllow(senderEmail: string): boolean {
 
 // ── SMTP Sender ───────────────────────────────
 
-function createSMTPTransport(config: Config): Transporter {
+// The mail SDKs (~30MB) load only when email is configured.
+async function createSMTPTransport(config: Config): Promise<Transporter> {
+    const { default: nodemailer } = await import("nodemailer");
     return nodemailer.createTransport({
         host: config.smtpHost || "smtp.hostinger.com",
         port: config.smtpPort || 465,
@@ -221,6 +222,7 @@ export async function sendEmailFromAtlas(
 // ── IMAP Listener ─────────────────────────────
 
 async function startIMAPListener(config: Config, llm: LLMClient): Promise<void> {
+    const { ImapFlow } = await import("imapflow");
     imapClient = new ImapFlow({
         host: config.imapHost || "imap.hostinger.com",
         port: config.imapPort || 993,
@@ -582,7 +584,7 @@ export async function initEmail(llm: LLMClient, config: Config): Promise<void> {
     isShuttingDown = false;
 
     // Create SMTP transport
-    smtpTransport = createSMTPTransport(config);
+    smtpTransport = await createSMTPTransport(config);
 
     // Verify SMTP connection
     try {

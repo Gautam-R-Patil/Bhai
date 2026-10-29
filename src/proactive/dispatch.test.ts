@@ -47,12 +47,22 @@ describe("proactive push", () => {
         expect(push).not.toHaveBeenCalled();
     });
 
-    it("while fatigued only FYIs and urgent sends go out", async () => {
-        _setFatigueCheckForTests(() => true);
-        expect(await dispatchProactiveMessage("telegram", "how'd it go?", "question")).toBe(false);
-        expect(await dispatchProactiveMessage("telegram", "your 5pm moved", "fyi")).toBe(true);
-        expect(await dispatchProactiveMessage("telegram", "server down?", "question", undefined, false, true)).toBe(
-            true,
-        );
+    describe("fatigue gate", () => {
+        afterEach(() => _setFatigueCheckForTests(null));
+        it("holds an ordinary nudge, but never an FYI, a deadline or a reminder the owner asked for", async () => {
+            _setFatigueCheckForTests(() => true); // the last two nudges went unanswered
+            expect(await dispatchProactiveMessage("telegram", "how'd the call go?", "question")).toBe(false);
+            expect(await dispatchProactiveMessage("telegram", "your 5pm moved", "fyi")).toBe(true);
+            expect(
+                await dispatchProactiveMessage(
+                    "telegram",
+                    "30m left on the report",
+                    "question",
+                    undefined,
+                    false,
+                    true,
+                ),
+            ).toBe(true);
+        });
     });
 });

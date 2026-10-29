@@ -8,6 +8,7 @@ import {
     clearCache,
     getCached,
     getToolAnalytics,
+    invalidateLocalState,
     isCacheable,
     isErrorResult,
     isDestructiveHotkey,
@@ -56,21 +57,28 @@ describe("tool-intelligence — result cache", () => {
             // app_manager is cacheable only for "list" action
             expect(isCacheable("app_manager", { action: "list" })).toBe(true);
             expect(isCacheable("app_manager", { action: "force_quit" })).toBe(false);
-            expect(isCacheable("dark_mode", { action: "status" })).toBe(true);
-            expect(isCacheable("dark_mode", { action: "enable" })).toBe(false);
+            // dark_mode's parameter is `mode`: a toggle must never be answered from cache.
+            expect(isCacheable("dark_mode", { mode: "status" })).toBe(true);
+            expect(isCacheable("dark_mode", { mode: "toggle" })).toBe(false);
+            expect(isCacheable("dark_mode", { mode: "dark" })).toBe(false);
         });
 
-        it("clipboard is cacheable only for read action", () => {
-            expect(isCacheable("clipboard", { action: "read" })).toBe(true);
-            expect(isCacheable("clipboard", { action: "write" })).toBe(false);
+        it("clipboard is never cached: ⌘C in any app changes it", () => {
+            expect(isCacheable("clipboard", { action: "read" })).toBe(false);
         });
 
-        it("mixed-action tool called WITHOUT an action passes the set check", () => {
-            // When args has no `action` field, the filter short-circuits to
-            // "no specific action → allowed". This is a deliberate choice
-            // so callers that invoke a tool's default behavior still benefit
-            // from caching.
-            expect(isCacheable("app_manager", {})).toBe(true);
+        it("a mixed-action tool called without its read action is not cached", () => {
+            expect(isCacheable("app_manager", {})).toBe(false);
+        });
+
+        it("invalidateLocalState drops local reads but keeps web search", () => {
+            setCache("bluetooth_control", { action: "status" }, '{"power":"off"}');
+            setCache("read", { path: "/x" }, "old text");
+            setCache("web_search", { query: "q" }, '{"results":[1]}');
+            invalidateLocalState();
+            expect(getCached("bluetooth_control", { action: "status" })).toBeNull();
+            expect(getCached("read", { path: "/x" })).toBeNull();
+            expect(getCached("web_search", { query: "q" })).toBe('{"results":[1]}');
         });
     });
 

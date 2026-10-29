@@ -362,6 +362,11 @@ const WIN_APP_MAP: Record<string, string> = {
     "visual studio code": "code",
 };
 
+/** A PowerShell single-quoted literal: nothing inside expands; ' (and its smart-quote forms) doubles. */
+export function psQuote(s: string): string {
+    return `'${s.replace(/['\u2018\u2019\u201A\u201B]/g, "''")}'`;
+}
+
 /**
  * Open a file, URL, or app using the system's default handler.
  * macOS: open
@@ -372,9 +377,19 @@ export async function nativeOpen(target: string, app?: string): Promise<void> {
         const args = app ? ["-a", app, target] : [target];
         await execFileAsync("open", args, { timeout: 5000 });
     } else if (IS_WIN) {
-        if (app) {
-            // Normalise: look up short exe name from friendly name, fallback to the raw string
-            const normalised = WIN_APP_MAP[app.toLowerCase()] ?? app;
+        const normalised = app ? (WIN_APP_MAP[app.toLowerCase()] ?? app) : undefined;
+        // cmd parses & | < > ^ % " in its arguments: a URL's "?a=1&b=2" would be cut at
+        // the & and the rest run as another command. Those go through Start-Process.
+        if (/[&|<>^%"]/.test(target + (normalised ?? ""))) {
+            await runPowerShellInline(
+                normalised
+                    ? `Start-Process -FilePath ${psQuote(normalised)} -ArgumentList ${psQuote(`"${target}"`)}`
+                    : `Start-Process -FilePath ${psQuote(target)}`,
+                5000,
+            );
+            return;
+        }
+        if (normalised) {
             // `cmd /c start "" <app> <target>` — the empty-string first arg is the window title
             // (required when app contains spaces, to distinguish it from the title arg)
             await execFileAsync("cmd.exe", ["/c", "start", "", normalised, target], { timeout: 5000 });

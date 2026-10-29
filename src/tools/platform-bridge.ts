@@ -14,6 +14,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { AxNode } from "../screen/ax-dump.js";
 import {
     captureScreenshot,
     clipboardRead,
@@ -237,6 +238,99 @@ Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; pu
 
 // ── System Info ─────────────────────────────────
 
+export interface MacWifi {
+    connected: boolean;
+    ssid: string | null;
+    /** Connected, but macOS hides the network's name from apps without Location Services access. */
+    nameHidden: boolean;
+}
+
+export const WIFI_NAME_HIDDEN_HINT =
+    "macOS hides the Wi-Fi name from apps without Location Services access. To read it, open the Wi-Fi pane (system_settings 'wifi') and read the network marked Connected with os_inspect.";
+
+/**
+ * networksetup alone said "not associated" whenever macOS redacted the name (recent
+ * macOS does for apps without Location access), so Bhai reported a connected Mac as
+ * disconnected. `ipconfig getsummary` still says whether the link is up.
+ */
+export function parseMacWifi(networksetupOut: string, summaryOut: string): MacWifi {
+    const named = /Current Wi-Fi Network:\s*(.+)/.exec(networksetupOut)?.[1]?.trim();
+    if (named) return { connected: true, ssid: named, nameHidden: false };
+    const connected = /LinkStatusActive\s*:\s*TRUE/i.test(summaryOut);
+    const ssid = /^\s*SSID\s*:\s*(.+)$/m.exec(summaryOut)?.[1]?.trim() ?? null;
+    if (!connected) return { connected: false, ssid: null, nameHidden: false };
+    return ssid && ssid !== "<redacted>" ? { connected, ssid, nameHidden: false } : { connected, ssid: null, nameHidden: true };
+}
+
+/**
+ * The Wi-Fi pane's status group reads: "Wi-Fi", blurb, toggle, <network name>,
+ * "Connected, …": the name is the text just before "Connected".
+ * ponytail: English "Connected" only; other UI languages fall back to the hint.
+ */
+export function wifiNameFromPane(root: AxNode): string | null {
+    const walk = (n: AxNode): string | null => {
+        const kids = n.children ?? [];
+        for (let i = 1; i < kids.length; i++) {
+            const prev = kids[i - 1];
+            const name = (prev.label || prev.value || "").trim();
+            if (
+                /^Connected\b/.test(kids[i].label || kids[i].value || "") &&
+                prev.role === "AXStaticText" &&
+                name &&
+                name.length <= 64
+            )
+                return name;
+        }
+        for (const c of kids) {
+            const hit = walk(c);
+            if (hit) return hit;
+        }
+        return null;
+    };
+    return walk(root);
+}
+
+/**
+ * The name macOS hides from command-line tools is on screen in System Settings: open
+ * the Wi-Fi pane without bringing it forward and read it through Accessibility.
+ */
+export async function wifiNameFromSettings(): Promise<string | null> {
+    try {
+        await execFileAsync("open", ["-g", "x-apple.systempreferences:com.apple.wifi-settings-extension"], {
+            timeout: 5000,
+        });
+        const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await new Promise((r) => setTimeout(r, 1200));
+            const pid = Number.parseInt(
+                (await execFileAsync("pgrep", ["-x", "System Settings"], { timeout: 2000 }).catch(() => ({ stdout: "" })))
+                    .stdout,
+                10,
+            );
+            if (!pid) continue;
+            const dump = await dumpAccessibilityTree({ pid, depth: 30, budgetMs: 8000, timeoutMs: 10_000 });
+            const name = dump.root && !dump.error ? wifiNameFromPane(dump.root) : null;
+            if (name) return name;
+        }
+    } catch {
+        /* no Accessibility access, or System Settings didn't open */
+    }
+    return null;
+}
+
+export async function macWifi(iface = "en0"): Promise<MacWifi> {
+    const run = (cmd: string, args: string[]) =>
+        execFileAsync(cmd, args, { timeout: 3000 }).then(
+            (r) => r.stdout,
+            () => "",
+        );
+    const [ns, summary] = await Promise.all([
+        run("networksetup", ["-getairportnetwork", iface]),
+        run("ipconfig", ["getsummary", iface]),
+    ]);
+    return parseMacWifi(ns, summary);
+}
+
 interface SystemInfoResult {
     battery: number; // 0-100, -1 if no battery
     wifi: string; // SSID or "disconnected" or "unknown"
@@ -260,31 +354,9 @@ export async function getSystemInfo(): Promise<SystemInfoResult> {
             /* no battery info */
         }
 
-        // WiFi
-        try {
-            const { stdout } = await execFileAsync(
-                "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport",
-                ["-I"],
-                { timeout: 3000 },
-            );
-            const ssidMatch = stdout.match(/\bSSID:\s*(.+)/);
-            if (ssidMatch) {
-                result.wifi = ssidMatch[1].trim();
-            } else {
-                result.wifi = "disconnected";
-            }
-        } catch {
-            // Newer macOS: try wdutil or system_profiler
-            try {
-                const { stdout } = await execFileAsync("networksetup", ["-getairportnetwork", "en0"], {
-                    timeout: 3000,
-                });
-                const m = stdout.match(/Current Wi-Fi Network:\s*(.+)/);
-                result.wifi = m ? m[1].trim() : "disconnected";
-            } catch {
-                result.wifi = "unknown";
-            }
-        }
+        // WiFi (the old airport -I tool is gone from current macOS)
+        const w = await macWifi();
+        result.wifi = w.ssid ?? (w.nameHidden ? "connected (name hidden by macOS)" : "disconnected");
 
         // Volume
         try {
