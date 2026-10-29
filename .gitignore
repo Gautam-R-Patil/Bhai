@@ -119,6 +119,8 @@ desktop/hostinger-upload/
 !src/tools/browser/extension-enter.test.ts
 !src/tools/browser/interaction-fixes.test.ts
 !src/tools/browser/scan-reliability.test.ts
+!src/__tests__/obfuscation-options.test.ts
+!src/skills/site/__tests__/host-boot.test.ts
 !src/tools/browser/tab-list-active.test.ts
 !src/tools/browser/tree-budget.test.ts
 !src/voice/transcribe.test.ts
