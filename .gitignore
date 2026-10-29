@@ -102,6 +102,7 @@ desktop/hostinger-upload/
 !src/memory/remember-gate.test.ts
 !src/memory/vector-index-rebuild.test.ts
 !src/security/vm-isolate.test.ts
+!src/security/sensitive-paths.test.ts
 !src/tools/coding/git-op.test.ts
 !src/tools/os-computer-action-keys.test.ts
 !src/tools/browser/active-tab.test.ts
