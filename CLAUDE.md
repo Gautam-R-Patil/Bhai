@@ -31,7 +31,7 @@ cd desktop && npm run build:mac   # macOS DMG (create-dmg.sh)
 cd desktop && npm run build:win   # Windows NSIS installer
 ```
 
-Requires Node.js >= 20. Vitest. CI runs on push/PR to `main` (`.github/workflows/ci.yml`): lint, typecheck, test (`npm run test:hermetic`), native build matrix, clippy + rustfmt.
+Requires Node.js 20.19+ or 22.12+ (below that, `npm ci` skips rolldown's optional native binding and Vitest won't start). Vitest. CI runs on push/PR to `main` (`.github/workflows/ci.yml`): lint, typecheck, test (`npm run test:hermetic`), native build matrix, clippy + rustfmt.
 
 ## Architecture
 

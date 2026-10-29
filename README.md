@@ -331,7 +331,7 @@ A registry (`src/harness/registry.ts`) catalogs 30+ tunable dimensions (numeric 
 
 ### Prerequisites
 
-- **Node.js >= 20**
+- **Node.js 20.19+ or 22.12+** (older 20.x/22.x silently skip Vitest's native bundler binding, so tests can't start)
 - **Rust toolchain** — required to build the native module; JS fallback is available but slower
 - **Docker** — optional, for sandboxed tool execution
 - **Swift** — macOS-only, for the OCR and CoreLocation helpers (skipped automatically elsewhere)
