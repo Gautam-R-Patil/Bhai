@@ -93,16 +93,21 @@ function pruneStaleEntries(): void {
  * Normalize a URL to domain + pathname (strip query params, hash, trailing slash).
  * This groups cache entries by "what page it is" rather than exact URL state.
  */
-function normalizeUrl(rawUrl: string): string {
+export function normalizeUrl(rawUrl: string): string {
     try {
         const parsed = new URL(rawUrl);
-        // Strip query params and hash — same page structure regardless of ?query=foo
+        // Strip query params and hash — same page structure regardless of ?query=foo.
         let pathname = parsed.pathname;
-        // Remove trailing slash for consistency (except root)
+        // Remove trailing slash for consistency (except root).
         if (pathname.length > 1 && pathname.endsWith("/")) {
             pathname = pathname.slice(0, -1);
         }
-        return `${parsed.hostname}${pathname}`;
+        // Drop a leading www.: www.site.com/login and site.com/login are the same
+        // page, so the learned action sequence for one should replay on the other
+        // instead of being relearned under a separate key. hostname is already
+        // lowercased by the URL parser.
+        const host = parsed.hostname.replace(/^www\./, "");
+        return `${host}${pathname}`;
     } catch {
         return rawUrl;
     }

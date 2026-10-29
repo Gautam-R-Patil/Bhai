@@ -105,6 +105,7 @@ desktop/hostinger-upload/
 !src/security/sensitive-paths.test.ts
 !src/tools/coding/git-op.test.ts
 !src/tools/os-computer-action-keys.test.ts
+!src/tools/browser/action-cache.test.ts
 !src/tools/browser/active-tab.test.ts
 !src/tools/browser/auth-wall-reload.test.ts
 !src/tools/browser/auth-wall.test.ts
