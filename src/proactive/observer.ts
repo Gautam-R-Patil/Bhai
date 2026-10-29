@@ -93,10 +93,13 @@ export function resolveChannel(pref: Channel | "any"): Channel {
     return pref === "any" ? "telegram" : pref;
 }
 
-/** Nothing went out (sender refused, compose failed): the scheduler gives the channel its slot back. */
-function refund(channel: Channel): void {
+/**
+ * Nothing went out (sender refused, compose failed): the scheduler gives the channel its slot
+ * back. A morning batch took one slot and `topics` topics.
+ */
+function refund(channel: Channel, topics = 1): void {
     try {
-        native.schedulerRefund?.(channel); // an older native binary lacks it
+        native.schedulerRefund?.(channel, topics); // an older native binary lacks it
     } catch {
         /* native scheduler unavailable */
     }
@@ -436,10 +439,8 @@ export class Observer {
                 } catch (err) {
                     debugProactive("observer_morning_batch_failed", { channel, err: (err as Error).message });
                 } finally {
-                    for (const intent of intents) {
-                        this.intentsById.delete(intent.id);
-                        if (!sent) refund(channel);
-                    }
+                    for (const intent of intents) this.intentsById.delete(intent.id);
+                    if (!sent) refund(channel, intents.length);
                 }
             }
         }

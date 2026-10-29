@@ -283,7 +283,8 @@ function recompressSummary(summary: string): string {
 
 export function updateSessionGoal(goal: string): void {
     if (!currentSession) return;
-    currentSession.current_goal = goal;
+    // Masked like appendTurn: the buffer is at-rest data.
+    currentSession.current_goal = protect(goal, { credentials: true });
     persistSession();
 }
 

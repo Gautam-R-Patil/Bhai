@@ -443,15 +443,18 @@ pub fn scheduler_release_grouped(channel: String) -> GroupedReleaseResult {
     }
 }
 
-/// The sender refused a released intent (Smart DND, nobody connected): give back its
-/// daily slot, the gap and its topic. Two refused from one release keep the gap (conservative).
+/// The sender refused a release (Smart DND, nobody connected): give back its one daily
+/// slot, the gap and its `topics` topics (a morning batch is one slot, one topic per item).
+/// Two refused from one release keep the gap (conservative).
 #[napi]
-pub fn scheduler_refund(channel: String) {
+pub fn scheduler_refund(channel: String, topics: u32) {
     let mut st = STATE.lock();
     if let Some(cs) = st.get_mut(&channel) {
         cs.sent_today = cs.sent_today.saturating_sub(1);
         cs.last_sent_ms = cs.prev_sent_ms;
-        cs.recent_topic_embeddings.pop_back();
+        for _ in 0..topics {
+            cs.recent_topic_embeddings.pop_back();
+        }
     }
 }
 
@@ -596,13 +599,14 @@ mod tests {
 
     #[test]
     fn refund_gives_back_slot_gap_and_topic() {
+        let _serial = fresh();
         configure("refund", 1, 120, false, false);
         scheduler_enqueue(mk("a", "refund", "normal", vec![1.0, 0.0]));
         assert_eq!(
             scheduler_try_release("refund".into()).released,
             vec!["a".to_string()]
         );
-        scheduler_refund("refund".into());
+        scheduler_refund("refund".into(), 1);
         assert_eq!(
             scheduler_enqueue(mk("b", "refund", "normal", vec![1.0, 0.0])),
             "enqueued"

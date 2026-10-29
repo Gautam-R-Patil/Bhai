@@ -86,7 +86,8 @@ export async function dispatchProactiveMessage(
     // Push subscribers follow the overlay. The push mirrors what was delivered — composed, past
     // every gate above — never the raw thought (heartbeat used to push it regardless of
     // "shut up", the kill switches, shadow mode or the night window).
-    if (channel === "overlay") {
+    // Never for owner-only text: push subscriptions aren't owner-gated (the web widget can subscribe).
+    if (channel === "overlay" && !ownerOnly) {
         import("../notifications/push.js")
             .then(({ getSubscriptionCount, sendPushNotification }) =>
                 getSubscriptionCount() > 0 ? sendPushNotification("Bhai", text.slice(0, 180)) : undefined,

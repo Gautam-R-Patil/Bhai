@@ -223,7 +223,26 @@ describe("owner-memory nudges", () => {
         await obs.tickAll();
         expect(calls).toHaveLength(1);
         expect(calls[0][3]).toBe(true); // ownerOnly
-        expect(native.schedulerRefund).toHaveBeenCalledWith("telegram");
+        expect(native.schedulerRefund).toHaveBeenCalledWith("telegram", 1);
+        obs.stop();
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("a morning batch that doesn't go out gives back its one slot, once, with every topic", async () => {
+        const native = await import("../../native/index.js");
+        const dir = mkdtempSync(join(tmpdir(), "atlas-obs-batch-"));
+        const obs = new Observer({ llm: null as never, configPath: join(dir, "c.json") });
+        for (const id of ["m1", "m2"]) {
+            expect(obs.enqueue({ ...validIntent(), id, payload: { kind: "tasks_today", text: id } })).toBe(true);
+        }
+        vi.mocked(native.schedulerRefund).mockClear();
+        const none = { morningBatch: [], singles: [], dropped: [] };
+        vi.mocked(native.schedulerReleaseGrouped).mockImplementation((ch) =>
+            ch === "telegram" ? { ...none, morningBatch: ["m1", "m2"] } : none,
+        );
+        await obs.tickAll();
+        expect(native.schedulerRefund).toHaveBeenCalledTimes(1);
+        expect(native.schedulerRefund).toHaveBeenCalledWith("telegram", 2);
         obs.stop();
         rmSync(dir, { recursive: true, force: true });
     });
