@@ -245,6 +245,16 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
     } catch {
         /* */
     }
+    // Pruned-context facts used to be filed as session_summary (now 'fact'), and
+    // recall used to bump summary importance on every read. Both are no-ops once applied.
+    try {
+        db.run(
+            "UPDATE memories SET category = 'fact' WHERE category = 'session_summary' AND tags LIKE 'context_pruning%'",
+        );
+        db.run("UPDATE memories SET importance = 6 WHERE category = 'session_summary' AND importance > 6");
+    } catch {
+        /* */
+    }
     // Memory Studio — append-only tombstone log so "forget with reason"
     // keeps an audit trail without forcing soft-delete filters everywhere.
     db.run(`
@@ -1196,9 +1206,7 @@ function _rememberDirect(
         }
     }
 
-    // Register in temporal cache bloom filter; drop cached recall results so a
-    // search right after a store sees the new memory.
-    getTemporalCache().registerContent(content);
+    // Drop cached recall results so a search right after a store sees the new memory.
     getTemporalCache().clearCache();
 
     // Async: generate embedding, store in DB + HNSW index (non-blocking)
@@ -1646,24 +1654,32 @@ export async function recall(
     // resulting promise here so the embedding happens in parallel with
     // those queries instead of sequentially inside recall.
     queryEmbedding?: Float32Array | Promise<Float32Array | null> | null,
+    // touch:false = read-only (no access/decay/importance writes). since/until (ISO)
+    // narrow results to a date window, falling back to unfiltered when it empties them.
+    opts: { touch?: boolean; excludeCategories?: string[]; since?: string; until?: string } = {},
 ): Promise<MemoryRecord[]> {
     if (!db) throw new Error("Memory DB not initialized");
-
-    // ── Layer 0: Temporal Cache (Prefrontal Working Memory) ──
-    const cache = getTemporalCache();
-    const cached = cache.get(query);
-    if (cached) {
-        return cached;
-    }
-
-    // Quick bloom check — if no content could possibly match, skip expensive search
-    if (!cache.mightHaveContent(query)) {
-        // Still do a basic search, but this hint can be used for metrics
-    }
 
     // ── Scope filtering: build SQL clause for memory visibility ──
     // Always include "global" scope; also include any explicitly provided scopes.
     const effectiveScopes = scopes && scopes.length > 0 ? [...new Set(["global", ...scopes])] : ["global"];
+
+    // ── Layer 0: Temporal Cache (Prefrontal Working Memory) ──
+    // The key covers everything that changes the result, so one group's rows are never served to another.
+    const cache = getTemporalCache();
+    const cacheKey = JSON.stringify([
+        query.toLowerCase().trim(),
+        limit,
+        [...effectiveScopes].sort(),
+        queryMode ?? "",
+        !!llm,
+        opts.excludeCategories ?? [],
+        opts.since ?? "",
+        opts.until ?? "",
+    ]);
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
     const scopePlaceholders = effectiveScopes.map(() => "?").join(",");
     const scopeWhereClause = `scope IN (${scopePlaceholders})`;
     // Shared visibility filter for the secondary paths (KG / SAN / HyDE).
@@ -1951,8 +1967,8 @@ export async function recall(
 
         // ── Generative Agents-style composite scoring (Park et al. 2023) ──
         // Score = α·recency + β·relevance + γ·importance (all terms 0-1)
-        const hoursAgo = record.created_at ? (Date.now() - new Date(record.created_at).getTime()) / 3600000 : 168; // default 1 week
-        const recencyWeight = Math.exp(-0.01 * hoursAgo); // exponential decay, half-life ~70h
+        const hoursAgo = record.created_at ? (Date.now() - dbTimeMs(record.created_at)) / 3600000 : 168; // default 1 week
+        const recencyWeight = Math.exp((-Math.LN2 * hoursAgo) / (30 * 24)); // exponential decay, half-life 30 days
         const importanceWeight = (record.importance || 5) / 10; // normalized 0-1
         const score = wRel * relevance + wRec * recencyWeight + wImp * importanceWeight;
 
@@ -2034,8 +2050,8 @@ export async function recall(
         }
     }
 
-    // ── Layer 2d: Re-Ranking (conditional LLM or heuristic) ──
-    if (fusedScores.length > 3) {
+    // ── Layer 2d: LLM re-ranking for explicit memory lookups (~300ms extra) ──
+    if (queryMode === "retrieve" && llm && fusedScores.length > 3) {
         try {
             fusedScores.sort((a, b) => b.score - a.score); // reranker takes the top slice
             const candidates = fusedScores.map((f) => ({
@@ -2043,36 +2059,17 @@ export async function recall(
                 content: f.record.content,
                 originalScore: f.score,
             }));
-
-            // Use LLM reranker for explicit memory lookups (higher quality, ~300ms extra)
-            // Use heuristic reranker for normal queries (instant, good enough)
-            if (queryMode === "retrieve" && llm) {
-                const { rerankWithLLM } = await import("./reranker.js");
-                const reranked = await rerankWithLLM(llm, query, candidates, limit);
-                const recordMap = new Map(fusedScores.map((f) => [f.id, f.record]));
-                fusedScores.length = 0;
-                for (const rr of reranked) {
-                    const rec = recordMap.get(rr.id);
-                    if (rec) fusedScores.push({ id: rr.id, record: rec, score: rr.score });
-                }
-                for (const [id, rec] of recordMap) {
-                    if (!fusedScores.find((f) => f.id === id)) {
-                        fusedScores.push({ id, record: rec, score: 0 });
-                    }
-                }
-            } else {
-                const { rerankHeuristic } = await import("./reranker.js");
-                const reranked = rerankHeuristic(query, candidates, limit);
-                const recordMap = new Map(fusedScores.map((f) => [f.id, f.record]));
-                fusedScores.length = 0;
-                for (const rr of reranked) {
-                    const rec = recordMap.get(rr.id);
-                    if (rec) fusedScores.push({ id: rr.id, record: rec, score: rr.score });
-                }
-                for (const [id, rec] of recordMap) {
-                    if (!fusedScores.find((f) => f.id === id)) {
-                        fusedScores.push({ id, record: rec, score: 0 });
-                    }
+            const { rerankWithLLM } = await import("./reranker.js");
+            const reranked = await rerankWithLLM(llm, query, candidates, limit);
+            const recordMap = new Map(fusedScores.map((f) => [f.id, f.record]));
+            fusedScores.length = 0;
+            for (const rr of reranked) {
+                const rec = recordMap.get(rr.id);
+                if (rec) fusedScores.push({ id: rr.id, record: rec, score: rr.score });
+            }
+            for (const [id, rec] of recordMap) {
+                if (!fusedScores.find((f) => f.id === id)) {
+                    fusedScores.push({ id, record: rec, score: 0 });
                 }
             }
         } catch {
@@ -2179,7 +2176,18 @@ export async function recall(
         }
     }
 
-    const records = fusedScores.slice(0, limit).map((f) => f.record);
+    const excluded = opts.excludeCategories ?? [];
+    let kept = fusedScores.filter((f) => !excluded.includes(f.record.category));
+    if (opts.since || opts.until) {
+        const lo = opts.since ? Date.parse(opts.since) : Number.NEGATIVE_INFINITY;
+        const hi = opts.until ? Date.parse(opts.until) : Number.POSITIVE_INFINITY;
+        const inWindow = kept.filter((f) => {
+            const t = dbTimeMs(f.record.created_at);
+            return t >= lo && t < hi;
+        });
+        if (inWindow.length > 0) kept = inWindow;
+    }
+    const records = kept.slice(0, limit).map((f) => f.record);
 
     // ── Layer 3: Fallback LIKE search ──
     if (records.length === 0) {
@@ -2203,13 +2211,14 @@ export async function recall(
 
         if (results.length > 0) {
             for (const row of results[0].values) {
-                records.push(rowToMemory(row));
+                const r = rowToMemory(row);
+                if (!excluded.includes(r.category)) records.push(r);
             }
         }
     }
 
     // ── Layer 4: Update access + Reconsolidation (Hippocampal Reconsolidation) ──
-    if (records.length > 0) {
+    if (opts.touch !== false && records.length > 0) {
         beginTransaction();
         try {
             for (const r of records) {
@@ -2276,13 +2285,12 @@ export async function recall(
                 }
             }
             commitTransaction();
-            // Only cache if transaction succeeded
-            cache.set(query, records);
         } catch {
             rollbackTransaction();
-            // Still return the records but don't cache stale data
+            return records; // don't cache stale data
         }
     }
+    if (records.length > 0) cache.set(cacheKey, records);
 
     return records;
 }
@@ -2517,6 +2525,43 @@ export interface MemoryRecord {
     access_count: number;
 }
 
+// SQLite datetime('now') is UTC without a zone marker; new Date() alone reads it as local time.
+export function dbTimeMs(ts: string): number {
+    if (!ts) return Number.NaN;
+    return new Date(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(ts) ? ts : `${ts.replace(" ", "T")}Z`).getTime();
+}
+
+export function ageLabel(ts: string, now = Date.now()): string {
+    const days = (now - dbTimeMs(ts)) / 86_400_000;
+    if (Number.isNaN(days)) return "undated";
+    if (days < 1) return "today";
+    if (days < 7) return `${Math.floor(days)}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+    return `${Math.floor(days / 365)}y ago`;
+}
+
+// "yesterday" / "last week" / "last month" / "N days|weeks ago" → a created_at window for recall().
+export function parseDateWindow(message: string, now = new Date()): { since?: string; until?: string } {
+    const m = message.toLowerCase();
+    const DAY = 86_400_000;
+    const ago = (days: number) => new Date(now.getTime() - days * DAY).toISOString();
+    if (/\byesterday\b/.test(m)) {
+        const today = new Date(now);
+        today.setHours(0, 0, 0, 0);
+        return { since: new Date(today.getTime() - DAY).toISOString(), until: today.toISOString() };
+    }
+    const n = m.match(/\b(\d+)\s+(day|week)s?\s+ago\b/);
+    if (n) {
+        const days = Number(n[1]) * (n[2] === "week" ? 7 : 1);
+        const slack = n[2] === "week" ? 7 : 1;
+        return { since: ago(days + slack), until: ago(Math.max(0, days - slack)) };
+    }
+    if (/\blast week\b/.test(m)) return { since: ago(14) };
+    if (/\blast month\b/.test(m)) return { since: ago(62) };
+    return {};
+}
+
 function rowToMemory(row: unknown[]): MemoryRecord {
     return {
         id: row[0] as number,
@@ -2583,13 +2628,15 @@ export async function recallConversation(query: string, limit = 5): Promise<Conv
     const likeParams = sanitizedTerms.map((t) => `%${t}%`);
     const whereClause = likeConditions.length > 0 ? `WHERE ${likeConditions.join(" OR ")}` : "";
 
+    // Most matching terms first, so one shared word doesn't outrank an exact topic match.
+    const matchOrder = likeConditions.length > 0 ? `(${likeConditions.join(" + ")}) DESC, ` : "";
     const likeRes = db.exec(
         `SELECT id, session_id, summary, created_at
      FROM conversations
      ${whereClause}
-     ORDER BY created_at DESC
+     ORDER BY ${matchOrder}created_at DESC
      LIMIT ?`,
-        [...likeParams, limit * 2],
+        [...likeParams, ...(matchOrder ? likeParams : []), limit * 2],
     );
 
     if (likeRes.length > 0) {
@@ -2611,11 +2658,15 @@ export async function recallConversation(query: string, limit = 5): Promise<Conv
         try {
             const queryEmbedding = await embedText(query);
 
+            // ponytail: brute-force cosine over the newest 500 sessions; older ones stay
+            // keyword/FTS-reachable. Move to an HNSW index if they need vector recall.
             const rows = rawDb
                 .prepare(
                     `SELECT c.id, c.session_id, c.summary, c.created_at, ce.embedding
          FROM conversation_embeddings ce
-         JOIN conversations c ON ce.conversation_id = c.id`,
+         JOIN conversations c ON ce.conversation_id = c.id
+         ORDER BY c.created_at DESC
+         LIMIT 500`,
                 )
                 .all() as Array<{
                 id: number;

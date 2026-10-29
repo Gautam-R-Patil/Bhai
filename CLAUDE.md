@@ -339,7 +339,7 @@ Original "more Rust = more speed" plan didn't hold. Captured so contributors don
 - **Parallelization with ordering**: Memory retrieval parallel; browser tools sequential, others parallel; boot I/O non-blocking where possible
 - **Token budget injection**: Memory snippets capped (traits: 600 tokens, total: ~2-3K)
 - **Cascade escalation**: Errors → upgrade model tier (works in sub-agents too)
-- **Multi-layer caching**: LLM responses semantic-cached; tool results per-tool TTL; memory queries via temporal cache + bloom filter
+- **Multi-layer caching**: LLM responses semantic-cached; tool results per-tool TTL; memory queries via the temporal LRU cache
 - **Graceful shutdown**: all subsystems have cleanup handlers
 - **Dependency injection**: `LLMClient` created once at boot, passed in — never a singleton
 - **OpenAI-compatible types**: all LLM uses `openai` types (`ChatCompletionMessageParam`, `ChatCompletionTool`) since Convex proxies via OpenRouter

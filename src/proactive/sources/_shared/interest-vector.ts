@@ -49,7 +49,7 @@ type InterestResult = {
 let cached: InterestResult | null = null;
 
 async function buildVector(): Promise<InterestResult> {
-    const results = await recall("interests topics learning technology", 20);
+    const results = await recall("interests topics learning technology", 20, undefined, undefined, undefined, undefined, { touch: false });
     const texts: string[] = results.map((r) => r.content ?? "").filter(Boolean);
 
     if (texts.length === 0) {

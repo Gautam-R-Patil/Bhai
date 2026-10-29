@@ -65,3 +65,49 @@ describe("visibility filters", () => {
         expect(hits).toEqual(["zebracorn: user prefers dark roast coffee"]);
     });
 });
+
+describe("ageLabel", () => {
+    const now = Date.parse("2026-10-29T12:00:00Z");
+    it("reads SQLite datetime('now') strings as UTC", () => {
+        expect(sqlite.dbTimeMs("2026-10-29 11:00:00")).toBe(Date.parse("2026-10-29T11:00:00Z"));
+        expect(sqlite.dbTimeMs("2026-10-29T11:00:00.000Z")).toBe(Date.parse("2026-10-29T11:00:00Z"));
+        expect(sqlite.dbTimeMs("2026-10-29T16:30:00+05:30")).toBe(Date.parse("2026-10-29T11:00:00Z"));
+    });
+
+    it("buckets by day, week, month and year", () => {
+        expect(sqlite.ageLabel("2026-10-29 11:00:00", now)).toBe("today");
+        expect(sqlite.ageLabel("2026-10-26 12:00:00", now)).toBe("3d ago");
+        expect(sqlite.ageLabel("2026-10-08 12:00:00", now)).toBe("3w ago");
+        expect(sqlite.ageLabel("2026-07-29 12:00:00", now)).toBe("3mo ago");
+        expect(sqlite.ageLabel("2024-10-01 12:00:00", now)).toBe("2y ago");
+        expect(sqlite.ageLabel("", now)).toBe("undated");
+    });
+});
+
+describe("parseDateWindow", () => {
+    const now = new Date("2026-10-29T12:00:00Z");
+    const daysBefore = (iso: string | undefined) => (now.getTime() - Date.parse(iso ?? "")) / 86_400_000;
+
+    it("returns no window for messages without a time phrase", () => {
+        expect(sqlite.parseDateWindow("what's my coffee order?", now)).toEqual({});
+    });
+
+    it("maps yesterday to the previous local day", () => {
+        const w = sqlite.parseDateWindow("What did I say yesterday?", now);
+        expect(Date.parse(w.until ?? "") - Date.parse(w.since ?? "")).toBe(86_400_000);
+        expect(Date.parse(w.until ?? "")).toBeLessThanOrEqual(now.getTime());
+    });
+
+    it("maps last week / last month to open-ended windows", () => {
+        expect(daysBefore(sqlite.parseDateWindow("the place from last week", now).since)).toBe(14);
+        expect(sqlite.parseDateWindow("the place from last week", now).until).toBeUndefined();
+        expect(daysBefore(sqlite.parseDateWindow("last month's trip", now).since)).toBe(62);
+    });
+
+    it("maps N days / weeks ago to a window around that point", () => {
+        const d = sqlite.parseDateWindow("the link I sent 3 days ago", now);
+        expect([daysBefore(d.since), daysBefore(d.until)]).toEqual([4, 2]);
+        const w = sqlite.parseDateWindow("2 weeks ago we talked", now);
+        expect([daysBefore(w.since), daysBefore(w.until)]).toEqual([21, 7]);
+    });
+});

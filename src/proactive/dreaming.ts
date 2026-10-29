@@ -289,7 +289,7 @@ async function runDreaming(llm: LLMClient, recentContext: string): Promise<void>
             const { recall } = await import("../memory/sqlite.js");
 
             // Look for repeated failures in recent memories
-            const recentFailures = await recall("failed error repeated", 10);
+            const recentFailures = await recall("failed error repeated", 10, undefined, undefined, undefined, undefined, { touch: false });
             const failureMessages = recentFailures
                 .filter((m: any) => m.content && (m.content.includes("failed") || m.content.includes("error")))
                 .map((m: any) => m.content);

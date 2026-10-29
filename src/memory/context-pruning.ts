@@ -126,7 +126,7 @@ async function flushToMemory(messages: ChatCompletionMessageParam[], llm: LLMCli
             seen.add(key);
             try {
                 if (alreadyKnown(trimmed)) continue;
-                await remember(trimmed, "session_summary", "context_pruning,auto", 5, "reflection");
+                await remember(trimmed, "fact", "context_pruning,auto", 5, "reflection");
                 flushed++;
             } catch {
                 /* remember() failure non-fatal */

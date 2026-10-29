@@ -90,7 +90,7 @@ import { getRelationshipSnippet } from "./memory/relationship.js";
 import { getSelfStateSnippet } from "./memory/self-state.js";
 import { appendTurn, getSessionSummary, shouldReflect, touchSession } from "./memory/session.js";
 // ── Dynamic Context Injections ────────────────
-import { getCoreMemory, recall, recallConversation } from "./memory/sqlite.js";
+import { ageLabel, getCoreMemory, parseDateWindow, recall, recallConversation } from "./memory/sqlite.js";
 import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
 import {
     buildPlaybook,
@@ -2430,7 +2430,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 if (coreMems && coreMems.length > 0) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     parts.push(
-                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")}`,
+                        `🧠 CORE MEMORY (Always remember these facts about the user):\n${coreMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
                     );
                 }
 
@@ -2463,14 +2463,12 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     }
 
                     const [queriedMems, pastConvos, learningsCtx] = await Promise.all([
-                        recall(enrichedQuery, recallK, llm, queryMode, undefined, embeddingPromise).catch(() => []),
-                        Promise.resolve().then(() => {
-                            try {
-                                return recallConversation(rawUserMessage, convRecallK);
-                            } catch {
-                                return [];
-                            }
-                        }),
+                        // Summaries already arrive as PAST CONVERSATIONS; the window comes from this message only.
+                        recall(enrichedQuery, recallK, llm, queryMode, undefined, embeddingPromise, {
+                            excludeCategories: ["session_summary"],
+                            ...parseDateWindow(rawUserMessage),
+                        }).catch(() => []),
+                        recallConversation(rawUserMessage, convRecallK).catch(() => []),
                         Promise.resolve().then(() => {
                             // Owner-only: playbooks quote the owner's own task messages.
                             if (channelContext?.isOwner === false) return null;
@@ -2491,7 +2489,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     if (uniqueMems && uniqueMems.length > 0) {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         parts.push(
-                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")}`,
+                            `🧠 RELEVANT RECALLED MEMORIES (Based on current prompt):\n${uniqueMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")}`,
                         );
                     }
 
@@ -2515,7 +2513,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     }
 
                     if (pastConvos.length > 0) {
-                        const convoLines = pastConvos.map((c) => `- [${c.created_at}] ${c.summary}`);
+                        const convoLines = pastConvos.map((c) => `- [${ageLabel(c.created_at)}] ${c.summary}`);
                         parts.push(`💬 PAST CONVERSATIONS:\n${convoLines.join("\n")}`);
                     }
 

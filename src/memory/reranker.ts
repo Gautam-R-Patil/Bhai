@@ -59,6 +59,7 @@ ${toRerank.map((c, i) => `[${i + 1}] ${c.content.substring(0, 200)}`).join("\n")
             messages,
             systemPrompt: "You are a relevance reranker. Output only comma-separated numbers, nothing else.",
             modelOverride: "openai/gpt-4.1-nano",
+            lean: true,
         });
 
         const content = response.choices?.[0]?.message?.content || "";
@@ -106,39 +107,4 @@ ${toRerank.map((c, i) => `[${i + 1}] ${c.content.substring(0, 200)}`).join("\n")
             id: c.id, originalRank: i, newRank: i, score: c.originalScore, content: c.content,
         }));
     }
-}
-
-/**
- * Simple reranking without LLM — uses keyword overlap and content quality signals.
- * Used when LLM is unavailable or for cost-sensitive paths.
- */
-export function rerankHeuristic(
-    query: string,
-    candidates: Array<{ id: number; content: string; originalScore: number }>,
-    topK = 5,
-): RerankResult[] {
-    const queryWords = new Set(query.toLowerCase().split(/\s+/).filter(w => w.length > 2));
-
-    const scored = candidates.map((c, i) => {
-        const contentWords = c.content.toLowerCase().split(/\s+/);
-        const overlap = contentWords.filter(w => queryWords.has(w)).length;
-        // Guard empty query set (all tokens ≤2 chars / empty query): overlap is
-        // always 0 then, so the score must be 0 — not 0/0 = NaN poisoning ranking.
-        const overlapScore = Math.min(overlap / (queryWords.size || 1), 1);
-
-        // Combine original embedding score with keyword overlap
-        const combinedScore = c.originalScore * 0.6 + overlapScore * 0.4;
-
-        return { ...c, originalRank: i, combinedScore };
-    });
-
-    scored.sort((a, b) => b.combinedScore - a.combinedScore);
-
-    return scored.slice(0, topK).map((c, newRank) => ({
-        id: c.id,
-        originalRank: c.originalRank,
-        newRank,
-        score: c.combinedScore,
-        content: c.content,
-    }));
 }

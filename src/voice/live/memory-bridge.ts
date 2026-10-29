@@ -6,7 +6,7 @@
 // Replicates the 12-system memory injection from agent.ts (lines 620-850)
 // but as a standalone, reusable function.
 
-import { recall, getCoreMemory } from "../../memory/sqlite.js";
+import { ageLabel, recall, getCoreMemory } from "../../memory/sqlite.js";
 import { findEntities, getKnowledgeGraphDB } from "../../memory/knowledge-graph.js";
 import { getIdentityPromptSnippet } from "../../memory/identity.js";
 import { getTraitsForInjection } from "../../memory/traits.js";
@@ -94,7 +94,7 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
         if (coreMems && coreMems.length > 0) {
             parts.push(
                 "CORE MEMORY (Always remember these facts about the user):\n" +
-                coreMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")
+                coreMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")
             );
         }
     } catch { /* DB not initialized */ }
@@ -106,7 +106,7 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
             if (queriedMems && queriedMems.length > 0) {
                 parts.push(
                     "RELEVANT MEMORIES:\n" +
-                    queriedMems.map((m: any) => `- (${m.category}) ${m.content}`).join("\n")
+                    queriedMems.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n")
                 );
             }
         } catch { /* */ }
@@ -149,11 +149,11 @@ export async function getFullMemoryContext(userHint?: string): Promise<string> {
 
     // ── Recent memories — last few high-score entries, regardless of topic. ──
     try {
-        const recent = await recall("", 5);
+        const recent = await recall("", 5, undefined, undefined, undefined, undefined, { touch: false });
         if (recent && recent.length > 0) {
             parts.push(
                 "RECENT MEMORIES:\n" +
-                recent.map((m: any) => `- (${m.category}) ${m.content}`).join("\n"),
+                recent.map((m: any) => `- (${m.category} · ${ageLabel(m.created_at)}) ${m.content}`).join("\n"),
             );
         }
     } catch { /* */ }

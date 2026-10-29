@@ -32,7 +32,7 @@ import { updateRelationshipAfterSession } from "./relationship.js";
 import { findDuplicates, mergeDuplicates, reorganizeMemories, synapticPrune } from "./self-evolving.js";
 import { type EmotionalTone, updateSelfStateFromSession } from "./self-state.js";
 import { getShortSummary } from "./session.js";
-import { indexConversationMessages, recall, remember } from "./sqlite.js";
+import { dbTimeMs, indexConversationMessages, listMemories, remember } from "./sqlite.js";
 import { type LearningCategory, upsertLearning } from "./task-learnings.js";
 import { getTemporalCache } from "./temporal-cache.js";
 import { contradictTrait, decayTraits, getAllTraits, recordSessionCoOccurrences, reinforceTrait } from "./traits.js";
@@ -539,11 +539,9 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
 
     try {
         // ── 1. Load recent session summaries (last 7 days) ──
-        const summaries = await recall("session summary reflection", 20);
-        const recentSummaries = summaries.filter((m) => {
-            const daysAgo = (Date.now() - new Date(m.created_at).getTime()) / (1000 * 60 * 60 * 24);
-            return m.category === "session_summary" && daysAgo < 7;
-        });
+        const recentSummaries = listMemories("session_summary", 20).filter(
+            (m) => Date.now() - dbTimeMs(m.created_at) < 7 * 24 * 60 * 60 * 1000,
+        );
 
         if (recentSummaries.length < 2) {
             console.log("[MEMORY][REPLAY] Not enough summaries for clustering (need ≥2)");
