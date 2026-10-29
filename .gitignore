@@ -220,6 +220,7 @@ desktop/hostinger-upload/
 !src/security/oauth-state.test.ts
 !src/guest-history.test.ts
 !src/security/extension-origin.test.ts
+!src/tools/browser/live-center.test.ts
 !src/config/paths.test.ts
 !src/tools/coding/checkpoint-manager.test.ts
 !src/language.test.ts
