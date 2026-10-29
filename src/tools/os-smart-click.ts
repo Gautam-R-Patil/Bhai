@@ -152,6 +152,8 @@ function missTip(m?: CascadeMiss): string {
             return "Accessibility permission is missing, so no on-screen element could be read (this is not a bad label). Ask the user to grant Bhai Accessibility in System Settings → Privacy & Security → Accessibility.";
         case "ambiguous":
             return "Several elements match equally (see `ambiguous`). Re-issue with the one you mean: quote its exact label, mention nearby text, or add top/bottom/left/right.";
+        case "ax_partial":
+            return "The app stopped answering mid-read, so its accessibility tree was incomplete and was not matched (`nearest` is empty for that reason). Retry in a moment, or call os_screenshot to reason about the layout.";
         case "disabled":
             return "The matching element is disabled — do whatever enables it first, then retry.";
         default:

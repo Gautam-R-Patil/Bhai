@@ -256,6 +256,12 @@ export const osClickId: ToolDefinition = {
             });
             if (fresh.error)
                 return JSON.stringify({ success: false, error: `Could not re-check the element: ${fresh.error}` });
+            // A cut-short tree may just be missing the target: don't report it as gone.
+            if (fresh.partial)
+                return JSON.stringify({
+                    success: false,
+                    error: "Could not re-check the element: the app was slow and its tree came back incomplete. Retry, or run os_inspect again.",
+                });
             const target = el;
             const same = flattenInteractive(fresh)
                 .filter(

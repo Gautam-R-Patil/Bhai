@@ -238,7 +238,8 @@ export async function dumpDock(): Promise<AxDump | null> {
         const pid = Number.parseInt(stdout.trim().split("\n")[0], 10);
         if (!pid) return null;
         const d = await dumpAccessibilityTree({ pid, depth: 6 });
-        return d.error ? null : d;
+        // A partial dump (cut short) can match a look-alike label: treat it as no Dock.
+        return d.error || d.partial ? null : d;
     } catch {
         return null;
     }

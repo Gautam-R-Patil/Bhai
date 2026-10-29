@@ -8,7 +8,7 @@ import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
-import { currentSwarmRun, outsideSwarm, shellText, swarmGate } from "../agents/swarm-context.js";
+import { currentSwarmRun, currentSwarmStep, outsideSwarm, shellText, swarmGate } from "../agents/swarm-context.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { sideloadSkillTool } from "../store/sideload.js";
@@ -862,6 +862,18 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             durationMs: 0,
             error: "needs_confirmation",
         });
+        // Only a payment gets here inside a swarm. A sub-agent can't ask the owner, so
+        // hold it like the swarm gate does: swarm_task then reports it to the main agent.
+        const run = currentSwarmRun();
+        if (run) {
+            const summary = `${name} → ${String(actionArgs.site ?? "unknown site")} (a payment can't be approved inside a swarm: make it yourself after the owner's OK)`;
+            run.blocked.push({ step: currentSwarmStep()?.stepId, tool: name, summary });
+            return JSON.stringify({
+                error: `needs_owner_approval: ${summary} was NOT run.`,
+                needs_owner_approval: true,
+                next_step: "Do not retry or work around this. Report that this payment needs the owner's OK.",
+            });
+        }
         return JSON.stringify({
             error: confirmCheck.warningMessage,
             needs_confirmation: true,

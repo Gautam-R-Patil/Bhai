@@ -16,6 +16,7 @@ vi.mock("../hooks/index.js", async (orig) => ({
 const { executeTool } = await import("./index.js");
 const { handleDesktopLine } = await import("../security/vault.js");
 const { _resetConsent, noteOwnerMessage } = await import("../security/consent.js");
+const { withSwarmRun, withSwarmStep } = await import("../agents/swarm-context.js");
 
 beforeEach(() => {
     delete process.env.ATLAS_NO_VAULT;
@@ -43,5 +44,16 @@ describe("vault_authorize_payment binds to the live merchant", () => {
         liveHost = "https://checkout.zomato.com/pay"; // back on the approved host
         const ok = JSON.parse(await pay(true));
         expect(ok).toMatchObject({ authorized: true, site: "checkout.zomato.com" });
+    });
+
+    it("inside an approved swarm step an unconfirmed payment is held and reported, not dead-ended", async () => {
+        const run = { consentKey: "k", consentGranted: false, blocked: [] as Array<{ step?: string; tool: string; summary: string }> };
+        const r = JSON.parse(
+            await withSwarmRun(run, () => withSwarmStep({ stepId: "s1", stepApproved: true }, () => pay())),
+        );
+        expect(r.needs_owner_approval).toBe(true);
+        expect(run.blocked).toEqual([
+            expect.objectContaining({ step: "s1", tool: "vault_authorize_payment", summary: expect.stringContaining("checkout.zomato.com") }),
+        ]);
     });
 });

@@ -79,7 +79,7 @@ export interface ClickTarget {
 
 /** Why the cascade found nothing — so a permission problem doesn't look like a bad label. */
 export interface CascadeMiss {
-    reason: "ambiguous" | "disabled" | "ax_permission_missing" | "ax_unavailable" | "not_found";
+    reason: "ambiguous" | "disabled" | "ax_permission_missing" | "ax_unavailable" | "ax_partial" | "not_found";
     app?: string;
     axElementCount?: number;
     axError?: string;
@@ -266,9 +266,11 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
         if (axDump?.error) {
             miss.axError = axDump.error;
             miss.reason = isAxPermissionError(axDump.error) ? "ax_permission_missing" : "ax_unavailable";
-        } else if (axDump && !axDump.partial) {
+        } else if (axDump?.partial) {
             // A partial dump (a read timed out) is missing elements: matching it could pick a
             // look-alike label read before the cut, so it counts as an AX miss.
+            miss.reason = "ax_partial";
+        } else if (axDump) {
             const hit = matchAx(axDump);
             if (hit) return hit;
             if (miss.reason === "ambiguous" || miss.reason === "disabled") return missed();
