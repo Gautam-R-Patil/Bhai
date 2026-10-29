@@ -271,6 +271,17 @@ describe("language — updateSessionLanguage: cooldown + high-confidence gating"
         expect(getCurrentLanguage()).toEqual("English");
     });
 
+    it("a too-short message does not arm the cooldown, so the next real message still detects", () => {
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+        // Short ack: inherited English at confidence 0 — must NOT refresh the cooldown.
+        updateSessionLanguage("ok haan");
+        expect(getCurrentLanguage()).toEqual("English");
+        // 5s later (well inside the 30s window) a real Hindi message must still switch.
+        vi.setSystemTime(new Date("2025-01-01T00:00:05Z"));
+        const result = updateSessionLanguage("नमस्ते आप कैसे हैं मैं ठीक हूँ धन्यवाद बहुत अच्छा है");
+        expect(result).toEqual("Hindi");
+    });
+
     it("respects 30s cooldown — repeated calls within window return cached language", () => {
         vi.spyOn(console, "log").mockImplementation(() => undefined);
         updateSessionLanguage("नमस्ते आप कैसे हैं मैं ठीक हूँ धन्यवाद बहुत अच्छा है");

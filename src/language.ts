@@ -151,7 +151,11 @@ export function updateSessionLanguage(userMessage: string): string {
         console.log(`[LANG] Language switch: ${currentLanguage} → ${detection.language} (confidence: ${detection.confidence.toFixed(2)}, script: ${detection.script})`);
         currentLanguage = detection.language;
         lastDetectionTime = now;
-    } else if (detection.language === currentLanguage) {
+    } else if (detection.confidence > 0 && detection.language === currentLanguage) {
+        // Only a REAL same-language detection refreshes the cooldown. A message
+        // too short to detect returns the inherited language at confidence 0 —
+        // if that armed the 30s window, a quick "ok" before a long foreign
+        // message would block its detection and keep replies in the old language.
         lastDetectionTime = now;
     }
 
