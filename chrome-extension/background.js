@@ -388,7 +388,7 @@ async function mentionedTabs(ids) {
       const [r] = await chrome.scripting.executeScript({ target: { tabId: id }, func: () => document.body?.innerText || "" }).catch(() => []);
       text = r?.result || "";
     }
-    out += `\n\n[Tab the user mentioned: "${tab.title || "Untitled"}" (${tab.url})\n${text.slice(0, 6000) || "(couldn't read this tab)"}]`;
+    out += `\n\n[Another tab the user shared with you: "${tab.title || "Untitled"}" (${tab.url})\n${text.slice(0, 6000) || "(couldn't read this tab)"}]`;
     titles.push(tab.title || "Untitled");
   }
   return { text: out, titles };

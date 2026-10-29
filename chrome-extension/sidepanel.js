@@ -11,7 +11,9 @@ const sendBtn = $('btnSend');
 let canChat = false;
 let busy = false;
 let activeTab = null; // { id, title, url, favIconUrl }
-let shareTab = true; // the ctx chip: send a screenshot of this tab with the message
+let shareTab = true; // send a screenshot of the current tab with the message
+const extraTabs = new Map(); // tabs added with @ (id -> tab); their text goes along
+let shareOpen = false;
 let selection = ''; // text selected in the active tab
 let selectionIgnored = false;
 
@@ -189,20 +191,9 @@ async function refreshTab() {
     renderSelection();
   }
   activeTab = tab;
-  const site = host(tab.url) || 'this tab';
+  extraTabs.delete(tab.id); // the current tab is shared as itself
   const sharable = /^(https?|file):/.test(tab.url || '');
-  const ctx = $('ctx');
-  ctx.hidden = !sharable;
-  $('ctxLabel').textContent = site;
-  const fav = $('ctxIcon');
-  const hasFav = /^https?:/.test(tab.favIconUrl || '');
-  fav.hidden = !hasFav;
-  $('ctxFallback').style.display = hasFav ? 'none' : '';
-  if (hasFav) fav.src = tab.favIconUrl;
-  ctx.toggleAttribute('data-off', !shareTab);
-  ctx.title = shareTab
-    ? 'Bhai sees this tab with your message. Click to stop sharing it.'
-    : 'Not sharing this tab. Click to let Bhai see it.';
+  renderSharing();
   const title = $('welcomeTitle');
   title.replaceChildren();
   if (sharable && host(tab.url)) {
@@ -218,6 +209,78 @@ function renderSelection() {
   const show = !!selection && !selectionIgnored;
   $('selChip').hidden = !show;
   if (show) $('selText').textContent = `“${selection}”`;
+}
+
+// ── Sharing row (like Gemini's "Sharing 3 tabs") ──
+
+const sharableTab = (t) => /^(https?|file):/.test(t?.url || '');
+
+function favicon(t, cls) {
+  if (/^https?:/.test(t.favIconUrl || '')) {
+    const img = document.createElement('img');
+    img.src = t.favIconUrl;
+    img.alt = '';
+    return img;
+  }
+  const ph = document.createElement('span');
+  if (cls) ph.className = cls;
+  ph.append(icon('tab', 10));
+  return ph;
+}
+
+function sharedTabs() {
+  const list = [];
+  if (sharableTab(activeTab) && shareTab) list.push(activeTab);
+  for (const t of extraTabs.values()) list.push(t);
+  return list;
+}
+
+function renderSharing() {
+  const tabs = sharedTabs();
+  const canShareActive = sharableTab(activeTab);
+  $('sharing').hidden = !tabs.length && !canShareActive;
+  $('shareLabel').textContent = !tabs.length
+    ? 'Not sharing any tab'
+    : tabs.length === 1 && tabs[0] === activeTab ? 'Sharing this tab' : `Sharing ${tabs.length} tab${tabs.length === 1 ? '' : 's'}`;
+  $('shareFavs').replaceChildren(...tabs.slice(0, 3).map((t) => favicon(t)));
+  $('shareHead').setAttribute('aria-expanded', String(shareOpen));
+  const list = $('shareList');
+  list.hidden = !shareOpen;
+  list.replaceChildren();
+  const rows = canShareActive ? [activeTab, ...extraTabs.values()] : [...extraTabs.values()];
+  for (const t of rows) {
+    const isActive = t === activeTab;
+    const off = isActive && !shareTab;
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 't';
+    name.textContent = t.title || 'Untitled';
+    const site = document.createElement('span');
+    site.className = 'h';
+    site.textContent = isActive ? 'This tab' : host(t.url);
+    li.append(favicon(t, 'ph'), name, site);
+    if (off) {
+      li.style.opacity = '.55';
+      const add = document.createElement('button');
+      add.className = 'link-btn';
+      add.textContent = 'Share';
+      add.addEventListener('click', () => { shareTab = true; renderSharing(); });
+      li.append(add);
+    } else {
+      const x = document.createElement('button');
+      x.className = 'icon-btn';
+      x.title = isActive ? "Don't share this tab" : 'Remove';
+      x.setAttribute('aria-label', x.title);
+      x.append(icon('x', 13));
+      x.addEventListener('click', () => {
+        if (isActive) shareTab = false;
+        else extraTabs.delete(t.id);
+        renderSharing();
+      });
+      li.append(x);
+    }
+    list.append(li);
+  }
 }
 
 // ── Sending ──────────────────────────────────
@@ -238,16 +301,14 @@ async function sendMessage(message) {
 async function sendText() {
   const text = input.value.trim();
   if (!text || !canChat) return;
-  const mentions = [...mentioned].filter(([label]) => text.includes(label)).map(([, id]) => id);
+  const mentions = [...extraTabs.keys()];
   input.value = '';
   autosize();
   closeMenu();
   if (!(await sendMessage({ type: 'send_message', text, mentions }))) {
     input.value = text;
     autosize();
-    return;
   }
-  mentioned.clear();
 }
 
 function stop() {
@@ -276,7 +337,6 @@ async function startDrawing() {
 // ── @-mention a tab ──────────────────────────
 
 const mentionMenu = $('mentionMenu');
-const mentioned = new Map(); // label -> tab id
 let menuItems = [];
 let menuIndex = 0;
 
@@ -296,18 +356,18 @@ async function updateMenu() {
   if (!q) return closeMenu();
   const tabs = await chrome.tabs.query({ currentWindow: true });
   menuItems = tabs
-    .filter((t) => t.id !== activeTab?.id)
+    .filter((t) => t.id !== activeTab?.id && !extraTabs.has(t.id))
     .filter((t) => !q.query || (t.title || '').toLowerCase().includes(q.query) || host(t.url).includes(q.query))
     .slice(0, 8);
   menuIndex = 0;
   const head = document.createElement('div');
   head.className = 'mention-head';
-  head.textContent = 'Add a tab for Bhai to read';
+  head.textContent = 'Share a tab with Bhai';
   mentionMenu.replaceChildren(head);
   if (!menuItems.length) {
     const empty = document.createElement('div');
     empty.className = 'mention-empty';
-    empty.textContent = 'No other open tab matches';
+    empty.textContent = 'No other open tab to add';
     mentionMenu.append(empty);
   }
   menuItems.forEach((t, i) => {
@@ -349,12 +409,17 @@ function pickMention(i) {
   const tab = menuItems[i];
   const q = mentionQuery();
   if (!tab || !q) return closeMenu();
-  const label = `@${(tab.title || 'tab').replace(/\s+/g, ' ').slice(0, 40).trim()}`;
-  mentioned.set(label, tab.id);
-  input.value = `${input.value.slice(0, q.start)}${label} ${input.value.slice(input.selectionStart)}`;
-  const caret = q.start + label.length + 1;
-  input.setSelectionRange(caret, caret);
+  if (extraTabs.size >= 3) {
+    showHint('You can share up to 3 other tabs.');
+    return closeMenu();
+  }
+  extraTabs.set(tab.id, tab);
+  const before = input.value.slice(0, q.start).replace(/\s+$/, '');
+  const after = input.value.slice(input.selectionStart).replace(/^\s+/, '');
+  input.value = before && after ? `${before} ${after}` : before || after;
+  input.setSelectionRange(before.length + (before && after ? 1 : 0), before.length + (before && after ? 1 : 0));
   closeMenu();
+  renderSharing();
   autosize();
   input.focus();
 }
@@ -393,9 +458,9 @@ $('btnAt').addEventListener('click', () => {
   input.setSelectionRange(pos + pad.length + 1, pos + pad.length + 1);
   updateMenu();
 });
-$('ctx').addEventListener('click', () => {
-  shareTab = !shareTab;
-  refreshTab();
+$('shareHead').addEventListener('click', () => {
+  shareOpen = !shareOpen;
+  renderSharing();
 });
 $('btnSelOff').addEventListener('click', () => {
   selectionIgnored = true;

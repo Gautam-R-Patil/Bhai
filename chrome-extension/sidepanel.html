@@ -136,10 +136,6 @@
     .tool:active:not(:disabled) { transform: scale(.95); }
     .tool:disabled { opacity: .4; cursor: default; }
     .tool.at { font-weight: 600; font-size: 14px; }
-    .ctx { min-width: 0; max-width: 170px; }
-    .ctx img { width: 14px; height: 14px; border-radius: 3px; }
-    .ctx span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ctx[data-off] span { text-decoration: line-through; color: var(--ink-3); }
     .send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); transition: transform .1s, opacity .15s, background .15s; }
     .send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, black); }
     .send:active:not(:disabled) { transform: scale(.92); }
@@ -151,6 +147,23 @@
     .hint { font-size: 12px; color: var(--bad); padding: 0 4px; }
     .hint:empty { display: none; }
 
+    .sharing { margin: -2px 0 6px -4px; }
+    .share-head { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px 0 4px; border-radius: var(--r-sm); font-size: 12.5px; color: var(--ink-2); transition: background .15s, color .15s; }
+    .share-head:hover { background: var(--sunk); color: var(--ink); }
+    .share-head .chev { transform: rotate(180deg); transition: transform .2s; color: var(--ink-3); }
+    .share-head[aria-expanded="true"] .chev { transform: none; }
+    .favs { display: inline-flex; }
+    .favs > * { width: 16px; height: 16px; border-radius: 50%; background: var(--sunk); border: 1.5px solid var(--raised); display: grid; place-items: center; color: var(--ink-3); overflow: hidden; }
+    .favs > * + * { margin-left: -6px; }
+    .favs img { object-fit: cover; }
+    .share-list { list-style: none; margin: 2px 0 4px; display: flex; flex-direction: column; gap: 1px; animation: rise .12s ease-out both; }
+    .share-list li { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 6px; border-radius: var(--r-sm); font-size: 12.5px; }
+    .share-list li:hover { background: var(--sunk); }
+    .share-list img, .share-list .ph { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+    .share-list .ph { background: var(--sunk); }
+    .share-list .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .share-list .h { color: var(--ink-3); flex: none; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .share-list .icon-btn { width: 22px; height: 22px; border-radius: 5px; }
     .mention-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 4px; box-shadow: var(--shadow); max-height: 264px; overflow-y: auto; animation: rise .12s ease-out both; z-index: 2; }
     .mention-head { font-size: 11.5px; color: var(--ink-3); padding: 6px 8px 4px; }
     .mention-item { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: var(--r-md); cursor: pointer; }
@@ -177,6 +190,8 @@
       <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-quote" viewBox="0 0 24 24"><path d="M5 5.5h14M5 10h14M5 14.5h8" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
+      <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6.5 14.5l5.5-5.5 5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
       <symbol id="i-tab" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M3.5 9.5h17" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
     </defs>
   </svg>
@@ -221,13 +236,18 @@
     <div class="hint" id="hint" role="alert"></div>
     <div class="composer">
       <div class="mention-menu" id="mentionMenu" role="listbox" hidden></div>
-      <textarea id="input" rows="1" placeholder="Ask Bhai…" aria-label="Message Bhai"></textarea>
+      <div class="sharing" id="sharing">
+        <button class="share-head" id="shareHead" aria-expanded="false" aria-controls="shareList">
+          <span class="favs" id="shareFavs"></span>
+          <span class="share-label" id="shareLabel">Sharing this tab</span>
+          <svg class="chev" width="14" height="14"><use href="#i-chev"/></svg>
+        </button>
+        <ul class="share-list" id="shareList" hidden></ul>
+      </div>
+      <textarea id="input" rows="1" placeholder="Ask Bhai, or type @ to add tabs" aria-label="Message Bhai"></textarea>
       <div class="tools">
         <button class="tool" id="btnDraw" title="Draw on the page to show Bhai what you mean" aria-label="Draw on the page"><svg width="16" height="16"><use href="#i-pen"/></svg></button>
         <button class="tool at" id="btnAt" title="Mention another tab" aria-label="Mention a tab">@</button>
-        <button class="tool ctx" id="ctx" title="Bhai sees this tab with your message. Click to stop sharing it.">
-          <svg width="14" height="14" id="ctxFallback"><use href="#i-tab"/></svg><img id="ctxIcon" alt="" hidden><span id="ctxLabel">This tab</span>
-        </button>
         <span class="grow"></span>
         <button class="send" id="btnSend" title="Send" aria-label="Send">
           <svg class="send-icon" width="16" height="16"><use href="#i-up"/></svg>
