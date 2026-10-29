@@ -35,7 +35,7 @@ const GRID = 10; // rows A-J × columns 1-10
 const BLOCKED_JS = `(() => { const e = document.querySelector(".rc-doscaptcha-header-text"); return !!e && e.offsetParent !== null; })()`;
 
 // Visible widget frames in CSS px. The challenge frame exists before it opens, hidden.
-const FRAMES_JS = `(() => {
+export const FRAMES_JS = `(() => {
   const vis = (el) => {
     const r = el.getBoundingClientRect();
     if (r.width < 40 || r.height < 40) return null;
@@ -161,6 +161,82 @@ async function boxes(frame: Frame | null, sels: string[]): Promise<Rect[]> {
     return [];
 }
 
+// reCAPTCHA swaps a clicked tile for a new one over ~1-5s, then fades its overlay out:
+// a screenshot before then shows blank tiles. Checked per tile, because mid-swap a
+// tile briefly has no image and no overlay at all.
+const SETTLED_JS = `(() => [...document.querySelectorAll("td.rc-imageselect-tile")].every((td) => {
+  if (td.classList.contains("rc-imageselect-dynamic-selected")) return false;
+  const img = td.querySelector("img"), ov = td.querySelector(".rc-image-tile-overlay");
+  return !!img && img.complete && img.naturalWidth > 0 && (!ov || Number(getComputedStyle(ov).opacity) === 0);
+}))()`;
+
+export type Frames = { challenge: Rect | null; checkbox: Rect | null };
+/** What the challenge frame shows, in page CSS px. */
+export type ChallengeView = {
+    tiles: Rect[];
+    submit: Rect | null;
+    instruction: string;
+    canvas: Rect | null;
+    header: Rect | null;
+    settled: boolean;
+    blocked: boolean;
+};
+
+/**
+ * How the solver sees and touches the page: Playwright (the built-in browser) or
+ * the Chrome extension (captcha-chrome.ts). Input must be real (trusted) events.
+ */
+export interface CaptchaDriver {
+    frames(): Promise<Frames | null>;
+    /** Null when the challenge frame can't be read from inside: the solver then reads the image only. */
+    challenge(frame: Rect): Promise<ChallengeView | null>;
+    tickBox(checkbox: Rect): Promise<Rect | null>;
+    /** PNG of a page area (CSS px), at any pixel density. */
+    shot(area: Rect): Promise<Buffer>;
+    move(x: number, y: number, steps?: number): Promise<void>;
+    click(x: number, y: number): Promise<void>;
+    down(): Promise<void>;
+    up(): Promise<void>;
+}
+
+export function playwrightDriver(page: Page): CaptchaDriver | null {
+    if (typeof page?.screenshot !== "function" || typeof page?.mouse?.click !== "function") return null;
+    return {
+        frames: () => page.evaluate(FRAMES_JS).catch(() => null),
+        async challenge() {
+            const fr = findFrame(page, CHALLENGE_URL);
+            if (!fr) return null;
+            const [tiles, submit, instruction, canvases, headers, isSettled, blocked] = await Promise.all([
+                boxes(fr, TILE_SEL),
+                boxes(fr, SUBMIT_SEL),
+                fr
+                    .evaluate(`(document.querySelector(${JSON.stringify(PROMPT_SEL)})?.innerText || "").trim()`)
+                    .then((t: unknown) => String(t ?? ""))
+                    .catch(() => ""),
+                boxes(fr, ["canvas"]),
+                boxes(fr, [".challenge-header"]),
+                fr.evaluate(SETTLED_JS).catch(() => true),
+                fr.evaluate(BLOCKED_JS).catch(() => false),
+            ]);
+            return {
+                tiles,
+                submit: submit[0] ?? null,
+                instruction,
+                canvas: canvases.sort((a, b) => b.w * b.h - a.w * a.h)[0] ?? null,
+                header: headers[0] ?? null,
+                settled: isSettled === true,
+                blocked: blocked === true,
+            };
+        },
+        tickBox: async () => (await boxes(findFrame(page, ANCHOR_URL), TICK_SEL))[0] ?? null,
+        shot: (r) => page.screenshot({ type: "png", clip: { x: r.x, y: r.y, width: r.w, height: r.h } }),
+        move: (x, y, steps = 1) => page.mouse.move(x, y, { steps }),
+        click: (x, y) => page.mouse.click(x, y),
+        down: () => page.mouse.down(),
+        up: () => page.mouse.up(),
+    };
+}
+
 // Labels must read on any picture: white text with a dark outline.
 const label = (x: number, y: number, size: number, text: string, anchor = "start") =>
     `<text x="${x}" y="${y}" font-size="${size}" font-family="Arial" font-weight="bold" fill="#fff" stroke="#000" stroke-width="${size / 5}" paint-order="stroke" text-anchor="${anchor}">${text}</text>`;
@@ -199,11 +275,8 @@ function overlaySvg(w: number, h: number, tiles: Rect[], grid: Rect): string {
  * Screenshot of the whole challenge frame (so the instruction shows), with the
  * numbered tiles, or the lettered grid over `grid` (page CSS px), drawn on.
  */
-async function snapshot(page: Page, frame: Rect, tiles: Rect[], grid: Rect) {
-    const png: Buffer = await page.screenshot({
-        type: "png",
-        clip: { x: frame.x, y: frame.y, width: frame.w, height: frame.h },
-    });
+async function snapshot(d: CaptchaDriver, frame: Rect, tiles: Rect[], grid: Rect) {
+    const png = await d.shot(frame);
     const img = await downscaleForVision(png, { maxSide: 1024 });
     if (!img.width) return null;
     const s = img.width / frame.w; // image px per CSS px
@@ -303,72 +376,49 @@ async function askModel(prompt: string, image: string, kind: "tiles" | "grid"): 
     return { answer: [...count].filter(([, n]) => n >= 2).map(([t]) => t), drag: [], unsolvable: false };
 }
 
-async function click(page: Page, [x, y]: [number, number]) {
-    await page.mouse.move(x, y, { steps: 5 });
-    await page.mouse.click(x, y);
+async function click(d: CaptchaDriver, [x, y]: [number, number]) {
+    await d.move(x, y, 5);
+    await d.click(x, y);
 }
 
 /** Press, travel on a slight arc with a small overshoot, settle, release: what slider checks expect. */
-async function drag(page: Page, [x0, y0]: [number, number], [x1, y1]: [number, number]) {
-    await page.mouse.move(x0, y0, { steps: 5 });
-    await page.mouse.down();
+async function drag(d: CaptchaDriver, [x0, y0]: [number, number], [x1, y1]: [number, number]) {
+    await d.move(x0, y0, 5);
+    await d.down();
     const steps = 18;
     const lift = Math.min(12, Math.hypot(x1 - x0, y1 - y0) / 10);
     for (let i = 1; i <= steps; i++) {
         const t = i / steps;
         const ease = 1 - (1 - t) ** 3;
         const over = i === steps - 2 ? 1.03 : 1; // a hand overshoots, then corrects
-        await page.mouse.move(
-            x0 + (x1 - x0) * ease * over,
-            y0 + (y1 - y0) * ease * over - Math.sin(Math.PI * t) * lift,
-        );
+        await d.move(x0 + (x1 - x0) * ease * over, y0 + (y1 - y0) * ease * over - Math.sin(Math.PI * t) * lift);
         await sleep(12 + Math.round(Math.random() * 14));
     }
-    await page.mouse.move(x1, y1);
+    await d.move(x1, y1);
     await sleep(80);
-    await page.mouse.up();
+    await d.up();
 }
 
-// reCAPTCHA swaps a clicked tile for a new one over ~1-5s, then fades its overlay out:
-// a screenshot before then shows blank tiles. Checked per tile, because mid-swap a
-// tile briefly has no image and no overlay at all.
-const SETTLED_JS = `(() => [...document.querySelectorAll("td.rc-imageselect-tile")].every((td) => {
-  if (td.classList.contains("rc-imageselect-dynamic-selected")) return false;
-  const img = td.querySelector("img"), ov = td.querySelector(".rc-image-tile-overlay");
-  return !!img && img.complete && img.naturalWidth > 0 && (!ov || Number(getComputedStyle(ov).opacity) === 0);
-}))()`;
-const settled = async (fr: Frame | null) => !fr || (await fr.evaluate(SETTLED_JS).catch(() => true)) === true;
-
 /** One challenge page: answer it and act. "clicked" = tiles refresh, ask again. */
-async function solveStep(page: Page, frame: Rect): Promise<"submitted" | "clicked" | null> {
-    const fr = findFrame(page, CHALLENGE_URL);
-    await waitFor(() => settled(fr), 10_000);
+async function solveStep(d: CaptchaDriver, frame: Rect): Promise<"submitted" | "clicked" | null> {
+    await waitFor(async () => (await d.challenge(frame))?.settled ?? true, 10_000);
+    const view = await d.challenge(frame);
     // Google's "Try again later": more answers won't help, hand it to the owner.
-    if (fr && (await fr.evaluate(BLOCKED_JS).catch(() => false)) === true) {
+    if (view?.blocked) {
         console.log("  👁️ CAPTCHA vision: the widget is rate-limiting this browser, stopping");
         return null;
     }
-    const [tiles, submitBoxes, instruction, canvases, headers] = await Promise.all([
-        boxes(fr, TILE_SEL),
-        boxes(fr, SUBMIT_SEL),
-        fr
-            ? fr
-                  .evaluate(`(document.querySelector(${JSON.stringify(PROMPT_SEL)})?.innerText || "").trim()`)
-                  .then((t: unknown) => String(t ?? ""))
-                  .catch(() => "")
-            : Promise.resolve(""),
-        boxes(fr, ["canvas"]),
-        boxes(fr, [".challenge-header"]),
-    ]);
-    const submit = submitBoxes[0] ?? null;
+    const tiles = view?.tiles ?? [];
+    const submit = view?.submit ?? null;
+    const instruction = view?.instruction ?? "";
     // Canvas challenges (hCaptcha) draw no tiles: the grid goes over the puzzle only,
     // below the instruction banner the canvas also covers.
-    const grid = belowHeader(canvases.sort((a, b) => b.w * b.h - a.w * a.h)[0] ?? frame, headers[0]);
+    const grid = belowHeader(view?.canvas ?? frame, view?.header ?? undefined);
     // A canvas paints a beat after the frame opens: a blank shot would be read as "nothing to click".
-    if (!tiles.length && !(await waitFor(async () => !(await blank(page, grid)), 6000, 300))) return null;
+    if (!tiles.length && !(await waitFor(async () => !(await blank(d, grid)), 6000, 300))) return null;
     // Belt and braces for tiles: a flat tile in the shot is still swapping, whatever the DOM says.
-    if (tiles.length) await waitFor(async () => !(await blank(page, frame, tiles)), 6000, 300);
-    const image = await snapshot(page, frame, tiles, grid);
+    if (tiles.length) await waitFor(async () => !(await blank(d, frame, tiles)), 6000, 300);
+    const image = await snapshot(d, frame, tiles, grid);
     if (!image) return null;
 
     if (tiles.length) {
@@ -379,7 +429,7 @@ async function solveStep(page: Page, frame: Rect): Promise<"submitted" | "clicke
             `  👁️ CAPTCHA vision: "${instruction.replace(/\s+/g, " ").slice(0, 60)}" → tiles ${picks.join(",") || "none"}`,
         );
         for (const n of picks) {
-            await click(page, centre(tiles[n - 1]));
+            await click(d, centre(tiles[n - 1]));
             await sleep(jitter(150));
         }
         // reCAPTCHA's "click verify once there are none left": clicked tiles turn into new ones.
@@ -397,15 +447,15 @@ async function solveStep(page: Page, frame: Rect): Promise<"submitted" | "clicke
             `  👁️ CAPTCHA vision (grid): "${instruction.slice(0, 60)}" → ${[...ans.answer, ...ans.drag.map((d) => d.join("→"))].join(",")}`,
         );
         for (const c of ans.answer as string[]) {
-            await click(page, at(c));
+            await click(d, at(c));
             await sleep(jitter(150));
         }
-        for (const [from, to] of ans.drag) await drag(page, at(from), at(to));
+        for (const [from, to] of ans.drag) await drag(d, at(from), at(to));
         // A slider drag submits itself; a page of clicks waits for its button.
         if (!submit) return ans.drag.length ? "submitted" : "clicked";
     }
     if (!submit) return null;
-    await click(page, centre(submit));
+    await click(d, centre(submit));
     return "submitted";
 }
 
@@ -418,8 +468,8 @@ function belowHeader(area: Rect, header: Rect | undefined): Rect {
  * True when the area, or any of `parts` inside it, is (near) one flat colour: the
  * puzzle hasn't painted yet, or a tile is mid-swap. One screenshot for all parts.
  */
-async function blank(page: Page, r: Rect, parts: Rect[] = [r]): Promise<boolean> {
-    const png: Buffer = await page.screenshot({ type: "png", clip: { x: r.x, y: r.y, width: r.w, height: r.h } });
+async function blank(d: CaptchaDriver, r: Rect, parts: Rect[] = [r]): Promise<boolean> {
+    const png = await d.shot(r);
     const sharp = (await import("sharp")).default;
     const { width = 0 } = await sharp(png).metadata();
     const s = width / r.w;
@@ -436,9 +486,6 @@ async function blank(page: Page, r: Rect, parts: Rect[] = [r]): Promise<boolean>
     return false;
 }
 
-type Frames = { challenge: Rect | null; checkbox: Rect | null };
-const readFrames = (page: Page) => page.evaluate(FRAMES_JS).catch(() => null) as Promise<Frames | null>;
-
 /**
  * True once the widget holds a response token. `solved` is captcha.ts's token check
  * (passed in to keep this file free of an import cycle). Models: ATLAS_CAPTCHA_MODELS.
@@ -446,33 +493,35 @@ const readFrames = (page: Page) => page.evaluate(FRAMES_JS).catch(() => null) as
 export async function solveWithVision(
     page: Page,
     solved: (page: unknown) => Promise<boolean>,
-    opts: { maxRounds?: number; signal?: AbortSignal } = {},
+    opts: { maxRounds?: number; signal?: AbortSignal; driver?: CaptchaDriver } = {},
 ): Promise<boolean> {
     if (!_llm || process.env.ATLAS_NO_CAPTCHA_VISION === "true") return false;
-    if (typeof page?.screenshot !== "function" || typeof page?.mouse?.click !== "function") return false;
+    const d = opts.driver ?? playwrightDriver(page);
+    if (!d) return false;
     const maxRounds = opts.maxRounds ?? 12; // one model call per challenge page
     let ticks = 0;
     for (let round = 0; round < maxRounds; round++) {
         if (opts.signal?.aborted) return false;
         if (await solved(page)) return true;
-        const f = await readFrames(page);
+        const f = await d.frames();
         if (!f) return false;
         if (!f.challenge) {
             // An expired answer closes the challenge and unticks the box: tick once more.
             if (ticks >= 2 || !f.checkbox) return false;
-            const box = (await boxes(findFrame(page, ANCHOR_URL), TICK_SEL))[0];
-            await click(page, box ? centre(box) : [f.checkbox.x + 28, f.checkbox.y + f.checkbox.h / 2]);
+            const box = await d.tickBox(f.checkbox).catch(() => null);
+            await click(d, box ? centre(box) : [f.checkbox.x + 28, f.checkbox.y + f.checkbox.h / 2]);
             ticks++;
             // Either the tick passes outright or a challenge opens; don't wait longer than that.
-            await waitFor(async () => (await solved(page)) || !!(await readFrames(page))?.challenge, 8000, 250);
+            await waitFor(async () => (await solved(page)) || !!(await d.frames())?.challenge, 8000, 250);
             continue;
         }
-        const step = await solveStep(page, f.challenge).catch(() => null);
+        const challenge = f.challenge;
+        const step = await solveStep(d, challenge).catch(() => null);
         if (!step) return false;
         // Give the widget a moment to react, then go as soon as it's done (or the next page is up).
         await sleep(step === "submitted" ? 900 : 400);
         if (step === "submitted")
-            await waitFor(async () => (await solved(page)) || (await settled(findFrame(page, CHALLENGE_URL))), 6000);
+            await waitFor(async () => (await solved(page)) || ((await d.challenge(challenge))?.settled ?? true), 6000);
     }
     return solved(page);
 }

@@ -523,6 +523,14 @@ async function handleCommand(cmd) {
         result = await rawCDP(payload);
         break;
 
+      case "captcha_frames":
+        result = await captchaFrames();
+        break;
+
+      case "mouse_path":
+        result = await mousePath(payload);
+        break;
+
       default:
         throw new Error(`Unknown command: ${type}`);
     }
@@ -1296,13 +1304,15 @@ async function executeJS(payload) {
   // because `new Function()` is equivalent to `eval()` which requires unsafe-eval.
   let result;
   try {
-    await chrome.debugger.attach({ tabId: tab.id }, "1.3").catch(() => {});
+    // Reuse a session rawCDP holds open (a CAPTCHA solve); otherwise attach just for this call.
+    const held = cdpSessions.has(tab.id);
+    if (!held) await chrome.debugger.attach({ tabId: tab.id }, "1.3").catch(() => {});
     result = await chrome.debugger.sendCommand(
       { tabId: tab.id },
       "Runtime.evaluate",
       { expression: payload.code, returnByValue: true, awaitPromise: true }
     );
-    chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
+    if (!held) chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
   } catch (cdpErr) {
     // CDP unavailable — try ISOLATED world as last resort. `code` is an
     // expression, so wrap it in `return (...)` or the result is always undefined;
@@ -1336,11 +1346,36 @@ async function executeJS(payload) {
 // Raw CDP passthrough for nativeType, setFileInput, and other CDP methods.
 // Allowlisted to prevent arbitrary CDP abuse.
 const CDP_ALLOWED_METHODS = new Set([
-  'Input.insertText', 'Input.dispatchKeyEvent',
+  'Input.insertText', 'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent',
   'DOM.setFileInputFiles', 'DOM.getBoxModel', 'DOM.getContentQuads',
   'Page.captureScreenshot', 'Network.enable', 'Network.disable',
   'Accessibility.getFullAXTree',
 ]);
+
+// One debugger session per tab while CDP calls keep coming (a CAPTCHA solve sends
+// dozens of mouse events), dropped after a quiet spell so Chrome's "debugging this
+// browser" bar doesn't stay up.
+const cdpSessions = new Map(); // tabId -> idle-detach timer
+const CDP_IDLE_MS = 15000;
+chrome.debugger.onDetach.addListener((source) => {
+  clearTimeout(cdpSessions.get(source.tabId));
+  cdpSessions.delete(source.tabId);
+});
+
+async function holdCDP(tabId) {
+  if (!cdpSessions.has(tabId)) {
+    try {
+      await chrome.debugger.attach({ tabId }, "1.3");
+    } catch (e) {
+      if (!/already attached/i.test(String(e && e.message))) throw e;
+    }
+  }
+  clearTimeout(cdpSessions.get(tabId));
+  cdpSessions.set(tabId, setTimeout(() => {
+    cdpSessions.delete(tabId);
+    chrome.debugger.detach({ tabId }).catch(() => {});
+  }, CDP_IDLE_MS));
+}
 
 async function rawCDP(payload) {
   if (!CDP_ALLOWED_METHODS.has(payload.method)) {
@@ -1348,8 +1383,78 @@ async function rawCDP(payload) {
   }
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) throw new Error("No active tab");
+  await holdCDP(tab.id);
   const result = await chrome.debugger.sendCommand({ tabId: tab.id }, payload.method, payload.params || {});
   return result || { success: true };
+}
+
+// A whole mouse gesture (move / click / drag) as trusted CDP input in one bridge
+// call: one round trip instead of one per event, and paced here, not over the socket.
+async function mousePath(payload) {
+  const events = Array.isArray(payload.events) ? payload.events.slice(0, 200) : [];
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab || !tab.id) throw new Error("No active tab");
+  await holdCDP(tab.id);
+  for (const e of events) {
+    if (!["mouseMoved", "mousePressed", "mouseReleased"].includes(e.type)) continue;
+    await chrome.debugger.sendCommand({ tabId: tab.id }, "Input.dispatchMouseEvent", {
+      type: e.type, x: Number(e.x) || 0, y: Number(e.y) || 0,
+      button: e.button || "left", buttons: e.buttons || 0, clickCount: e.clickCount || 0,
+    });
+    if (e.delayMs > 0) await new Promise((r) => setTimeout(r, Math.min(e.delayMs, 2000)));
+  }
+  return { success: true, events: events.length };
+}
+
+// The CAPTCHA widget frames (reCAPTCHA anchor/bframe, hCaptcha checkbox/challenge)
+// read from inside, for Bhai's picture-CAPTCHA solver. A fixed function, not eval:
+// those frames' CSP forbids eval. Rects are in each frame's own viewport; Bhai maps
+// them onto the page with the iframe's box. Keep the selectors in step with
+// src/tools/browser/captcha-vision.ts.
+async function captchaFrames() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab || !tab.id) throw new Error("No active tab");
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id, allFrames: true },
+    func: () => {
+      const href = location.href;
+      const kind = /\/recaptcha\/.*bframe|hcaptcha.*frame=challenge/.test(href) ? "challenge"
+        : /\/recaptcha\/.*anchor|hcaptcha.*frame=checkbox/.test(href) ? "checkbox" : null;
+      if (!kind) return null;
+      const rect = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 8 && r.height > 8 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null;
+      };
+      const all = (sels) => {
+        for (const s of sels) {
+          const rs = Array.from(document.querySelectorAll(s)).map(rect).filter(Boolean);
+          if (rs.length) return rs;
+        }
+        return [];
+      };
+      const tds = Array.from(document.querySelectorAll("td.rc-imageselect-tile"));
+      const settled = tds.every((td) => {
+        if (td.classList.contains("rc-imageselect-dynamic-selected")) return false;
+        const img = td.querySelector("img"), ov = td.querySelector(".rc-image-tile-overlay");
+        return !!img && img.complete && img.naturalWidth > 0 && (!ov || Number(getComputedStyle(ov).opacity) === 0);
+      });
+      const dos = document.querySelector(".rc-doscaptcha-header-text");
+      const prompt = document.querySelector(".rc-imageselect-desc-wrapper,.rc-imageselect-desc-no-canonical,.prompt-text,h2");
+      const canvases = all(["canvas"]).sort((a, b) => b.w * b.h - a.w * a.h);
+      return {
+        kind, vw: innerWidth, vh: innerHeight,
+        tiles: all(["td.rc-imageselect-tile", ".task-image", ".task-grid .task", ".challenge-view .task"]),
+        submit: all(["#recaptcha-verify-button", ".button-submit"])[0] || null,
+        tick: all(["#recaptcha-anchor", "#checkbox"])[0] || null,
+        canvas: canvases[0] || null,
+        header: all([".challenge-header"])[0] || null,
+        instruction: ((prompt && prompt.innerText) || "").trim(),
+        settled,
+        blocked: !!dos && dos.offsetParent !== null,
+      };
+    },
+  });
+  return results.map((r) => r.result).filter(Boolean);
 }
 
 async function navigate(payload) {

@@ -12,7 +12,8 @@ import { join } from "node:path";
 import { transcribeBuffer } from "../../voice/transcribe.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
-import { solveWithVision } from "./captcha-vision.js";
+import { chromeDriver } from "./captcha-chrome.js";
+import { type CaptchaDriver, playwrightDriver, solveWithVision } from "./captcha-vision.js";
 import { getActivePage, touchBrowserActivity } from "./core.js";
 import { isNativeBrowserAvailable } from "./native-browser.js";
 
@@ -340,19 +341,29 @@ async function turnstilePassed(page: any, timeoutMs: number): Promise<boolean> {
     return false;
 }
 
+/**
+ * Real (trusted) input for the page: Playwright's own in the built-in browser, CDP
+ * through the extension in the owner's Chrome (the bridge's click_at is synthetic,
+ * which widgets ignore and which can't reach into their frames).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function captchaDriver(page: any): CaptchaDriver | null {
+    return getCurrentMode() === "chrome" ? chromeDriver(page) : playwrightDriver(page);
+}
+
 /** "passive" when Turnstile let the browser through, "click" after ticking its box, else null. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function solveTurnstile(page: any): Promise<"passive" | "click" | null> {
     if (await turnstilePassed(page, 6000)) return "passive";
-    // The Chrome bridge's synthetic clicks don't count with Cloudflare: real input only.
-    if (getCurrentMode() === "chrome" || typeof page.mouse?.click !== "function") return null;
+    const d = captchaDriver(page);
+    if (!d) return null;
     const s = (await page.evaluate(TURNSTILE_JS).catch(() => null)) as TurnstileState | null;
     if (!s?.box) return null;
     // The box sits ~30px in from the widget's left edge, centred in its 65px-high strip.
     const x = s.box.x + 30;
     const y = s.box.y + Math.min(s.box.h, 65) / 2;
-    await page.mouse.move(x, y, { steps: 8 });
-    await page.mouse.click(x, y);
+    await d.move(x, y, 8);
+    await d.click(x, y);
     return (await turnstilePassed(page, 15000)) ? "click" : null;
 }
 
@@ -684,9 +695,10 @@ export async function handleCaptchaIfPresent(
         }
     }
 
-    // ── Tier 3: picture grid via vision models (built-in browser only: needs real input events) ──
-    if ((info.type === "hcaptcha" || info.type === "recaptcha-v2") && getCurrentMode() !== "chrome") {
-        if (await solveWithVision(page, captchaSolved, { signal: opts.signal })) {
+    // ── Tier 3: picture grid via vision models (built-in browser or the owner's Chrome) ──
+    if (info.type === "hcaptcha" || info.type === "recaptcha-v2") {
+        const driver = captchaDriver(page) ?? undefined;
+        if (driver && (await solveWithVision(page, captchaSolved, { signal: opts.signal, driver }))) {
             return { handled: true, type: info.type, method: "vision" };
         }
     }

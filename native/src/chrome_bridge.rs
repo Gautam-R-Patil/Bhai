@@ -339,6 +339,11 @@ fn is_allowed_command(cmd: &str) -> bool {
             | "select_option"
             | "wait_for"
             | "ping"
+            // Allowlisted CDP methods (the extension holds the allowlist)
+            | "cdp"
+            // The picture-CAPTCHA solver: read widget frames, play a mouse gesture
+            | "captcha_frames"
+            | "mouse_path"
     )
 }
 

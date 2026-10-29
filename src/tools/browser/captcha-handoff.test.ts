@@ -87,6 +87,7 @@ describe("Turnstile", () => {
                 if (typeof code !== "function") return false;
                 return s.includes("innerHTML") ? '<div class="cf-turnstile"></div>' : { type: "turnstile", siteKey: null };
             }),
+            screenshot: vi.fn(),
             mouse: {
                 move: vi.fn(async () => {}),
                 click: vi.fn(async () => {
