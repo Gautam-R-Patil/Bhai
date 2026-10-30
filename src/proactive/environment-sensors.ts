@@ -8,6 +8,8 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { IS_MAC, IS_WIN } from "../tools/platform.js";
 import { getLocation, type LocationData } from "../location/index.js";
+import { isOnline } from "../network-health.js";
+import { listUpcomingEvents } from "./monitors.js";
 const execFileAsync = promisify(execFile);
 
 export interface EnvironmentSnapshot {
@@ -19,13 +21,13 @@ export interface EnvironmentSnapshot {
 }
 
 export async function getEnvironmentSnapshot(): Promise<EnvironmentSnapshot> {
-    const [fsChanges, calendar, sysLoad, network] = await Promise.all([
+    const [fsChanges, calendar, sysLoad] = await Promise.all([
         getRecentFSChanges(),
         getUpcomingCalendarEvents(),
         getSystemLoad(),
-        checkNetwork(),
     ]);
-    return { fsChanges, upcomingCalendar: calendar, systemLoad: sysLoad, networkStatus: network, location: getLocation() };
+    // The network monitor's status: no extra request.
+    return { fsChanges, upcomingCalendar: calendar, systemLoad: sysLoad, networkStatus: isOnline(), location: getLocation() };
 }
 
 const FS_MARKER_PATH = `${tmpdir()}/.atlas-fs-marker`;
@@ -75,26 +77,10 @@ async function getRecentFSChanges(): Promise<string[]> {
 }
 
 async function getUpcomingCalendarEvents(): Promise<string[]> {
-    // Calendar integration via osascript is macOS only.
-    // Windows has no easy scriptable calendar API — return empty.
-    if (!IS_MAC) return [];
-
+    // Calendar integration via osascript is macOS only (the monitors' shared read).
     try {
-        const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", `
-            const app = Application("Calendar");
-            const now = new Date();
-            const soon = new Date(now.getTime() + 30*60*1000);
-            const cals = app.calendars();
-            const events = [];
-            for (const cal of cals) {
-                try {
-                    const evts = cal.events.whose({startDate: {_greaterThan: now}, startDate: {_lessThan: soon}})();
-                    for (const e of evts) events.push(e.summary() + " at " + e.startDate().toLocaleTimeString());
-                } catch {}
-            }
-            events.slice(0, 5).join("\\n");
-        `], { timeout: 5000 });
-        return stdout.trim().split("\n").filter(Boolean);
+        const events = await listUpcomingEvents();
+        return events.slice(0, 5).map((e) => `${e.title} at ${new Date(e.startTime).toLocaleTimeString()}`);
     } catch { return []; }
 }
 
@@ -131,11 +117,4 @@ async function getSystemLoad(): Promise<{ cpuPercent: number; memPercent: number
 
     // Linux fallback
     return { cpuPercent: 0, memPercent: 0, diskFreeGB: 0 };
-}
-
-async function checkNetwork(): Promise<boolean> {
-    try {
-        await fetch("https://1.1.1.1", { method: "HEAD", signal: AbortSignal.timeout(3000) });
-        return true;
-    } catch { return false; }
 }

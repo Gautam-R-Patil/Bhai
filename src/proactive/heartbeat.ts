@@ -264,15 +264,10 @@ export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
                 console.warn("💓 Habit detector error:", (err as Error).message);
             }
 
-            // Environment Sensors — gather system/calendar/fs context each heartbeat
-            try {
-                const { getEnvironmentSnapshot } = await import("./environment-sensors.js");
-                const snapshot = await getEnvironmentSnapshot();
-                if (snapshot.upcomingCalendar.length > 0) {
-                    console.log(`💓 Environment: ${snapshot.upcomingCalendar.length} upcoming event(s)`);
-                }
-            } catch (err) {
-                console.warn("💓 Environment sensors error:", (err as Error).message);
+            // Upcoming events, from the monitors' Calendar read above (the full environment
+            // snapshot, getEnvironmentSnapshot(), is computed only when something asks for it).
+            if (monitorResults.upcomingEventCount > 0) {
+                console.log(`💓 Environment: ${monitorResults.upcomingEventCount} upcoming event(s)`);
             }
 
             // Recommendations — check for user behavior pattern suggestions
