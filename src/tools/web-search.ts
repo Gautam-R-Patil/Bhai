@@ -489,24 +489,69 @@ export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResu
 
 // ── Lightweight multi-engine (fetch-only, parallel) ───────────
 
+/**
+ * Wait for every engine, but not for the slowest once one has a good answer: after the
+ * first list `isGood` accepts, the rest get `graceMs` more. Engines still out then count
+ * as having nothing (and are reported as slow, not empty). A failing engine is empty.
+ */
+export async function gatherWithGrace<T>(
+    jobs: Promise<T[]>[],
+    isGood: (list: T[]) => boolean,
+    graceMs: number,
+): Promise<{ lists: T[][]; finished: boolean[] }> {
+    const lists: T[][] = jobs.map(() => []);
+    const finished = jobs.map(() => false);
+    await new Promise<void>((resolve) => {
+        let left = jobs.length;
+        let grace: ReturnType<typeof setTimeout> | undefined;
+        const done = () => {
+            clearTimeout(grace);
+            resolve();
+        };
+        if (left === 0) return done();
+        jobs.forEach((job, i) => {
+            job.then(
+                (r) => {
+                    lists[i] = Array.isArray(r) ? r : [];
+                },
+                () => {},
+            ).finally(() => {
+                finished[i] = true;
+                if (--left === 0) return done();
+                if (!grace && isGood(lists[i])) grace = setTimeout(done, graceMs);
+            });
+        });
+    });
+    // Copies: an engine finishing after the deadline mustn't change what was returned.
+    return { lists: lists.map((l, i) => (finished[i] ? l : [])), finished: [...finished] };
+}
+
+const SLOW_ENGINE_GRACE_MS = 2500;
+
 async function lightweightSearch(query: string): Promise<{ results: SearchResult[]; engine: string; empty: string[] }> {
     // No Google scraper: google.com/search now serves a JavaScript-only page, so it never
     // returned a result — it only sent Google a scraping request from the owner's IP.
     const names = ["parallel", "claude", "tavily", "exa", "brave", "duckduckgo", "bing"];
-    const lists = await Promise.all([
-        searchParallelLite(query),
-        searchClaudeLite(query),
-        searchTavilyLite(query),
-        searchExaLite(query),
-        searchBraveLite(query),
-        searchDDGLite(query),
-        searchBingLite(query),
-    ]);
+    // A good on-topic list from one engine means the slow ones (Claude's route can take 12s)
+    // get a short grace, not the whole wait.
+    const { lists, finished } = await gatherWithGrace(
+        [
+            searchParallelLite(query),
+            searchClaudeLite(query),
+            searchTavilyLite(query),
+            searchExaLite(query),
+            searchBraveLite(query),
+            searchDDGLite(query),
+            searchBingLite(query),
+        ],
+        (list) => list.length >= 3 && bestCoverage(query, list) >= 0.5,
+        SLOW_ENGINE_GRACE_MS,
+    );
     const used = names.filter((_, i) => lists[i].length > 0);
     return {
         results: mergeAndRank(query, lists),
         engine: used.join(",") || "none",
-        empty: names.filter((_, i) => lists[i].length === 0),
+        empty: names.filter((_, i) => finished[i] && lists[i].length === 0),
     };
 }
 

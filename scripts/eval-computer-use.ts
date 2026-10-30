@@ -10,6 +10,7 @@
 //
 //   MODEL=gpt-4.1-nano AZ_ENDPOINT=... AZ_KEY=... npx tsx scripts/eval-computer-use.ts [taskId...]
 //   MODEL=claude-haiku-5-5 ANTHROPIC_API_KEY=... npx tsx scripts/eval-computer-use.ts
+//   RECORD=1 ...   also adds each result to the learned router's evidence (data/router-stats.json)
 //
 // It drives this Mac's screen, music apps and settings: run it when nobody is using the
 // machine. Only computer-use tools run (no shell, no AppleScript, no Wi-Fi toggles), and
@@ -17,7 +18,7 @@
 // (default data/eval-computer-use.jsonl). Spotify and Apple Music tasks need those apps signed in.
 import Anthropic from "@anthropic-ai/sdk";
 import { execFile } from "node:child_process";
-import { appendFileSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,7 @@ import { executeTool } from "../src/tools/index.js";
 import { initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
 import { ackWithoutAction } from "../src/agent.js";
 import { runQuickCommand } from "../src/quick-commands.js";
+import { ARMS, chooseArm, classifyTurn, recordOutcome } from "../src/routing/learned-router.js";
 import { getFrontmostApp } from "../src/screen/frontmost.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,6 +35,10 @@ const ex = promisify(execFile);
 const as = async (s: string) => (await ex("osascript", ["-e", s]).catch((e) => ({ stdout: `ERR ${e.message}` }))).stdout.trim();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MODEL = process.env.MODEL ?? "gpt-4.1-nano";
+// MODEL=router: the learned router (src/routing/learned-router.ts) picks each task's model from
+// the real tool-router classification, as the agent loop does.
+const ROUTER = MODEL === "router";
+let model = MODEL; // this task's model
 const OUT = process.env.OUT ?? join(ROOT, "data/eval-computer-use.jsonl");
 const REPO = basename(ROOT);
 
@@ -41,6 +47,9 @@ const ALLOWED = new Set([
     "find_files", "open_in_app", "app_manager", "window_manage", "os_smart_click", "os_inspect", "os_click_id",
     "os_type", "os_screenshot", "os_click", "os_visual_verify", "os_keyboard_shortcuts", "os_context",
     "list_directory", "glob", "get_current_time", "bluetooth_control", "wifi_control",
+    "write", "append_file", "compress_files", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
+    "browser_navigate", "browser_extract", "browser_extract_article", "browser_scan", "browser_click", "browser_type",
+    "browser_scroll", "browser_wait", "browser_back", "browser_close",
 ]);
 const SCREEN_DRIVERS = new Set(["os_smart_click", "os_click_id", "os_type", "os_click"]);
 const SHIELD = /terminal|iterm|claude|code|warp|ghostty/i;
@@ -49,6 +58,14 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
     if (!ALLOWED.has(name)) return JSON.stringify({ error: `${name} is not available in this test` });
     if ((name === "wifi_control" || name === "bluetooth_control") && args.action !== "status")
         return JSON.stringify({ error: "only status is allowed in this test" });
+    // Writes stay in the sandbox folder; nothing is deleted.
+    if (["write", "append_file", "compress_files"].includes(name)) {
+        const paths = JSON.stringify(args).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
+        if (!paths.length || paths.some((p) => !p.replace(/^~/, homedir()).startsWith(EVAL_DIR)))
+            return JSON.stringify({ error: `In this test, files may only be written inside ${EVAL_DIR}` });
+    }
+    if ((name === "apple_notes" || name === "reminders_tool") && /delete|remove|move/.test(String(args.action)))
+        return JSON.stringify({ error: "not available in this test" });
     if (SCREEN_DRIVERS.has(name)) {
         const f = await getFrontmostApp();
         if (f && SHIELD.test(f.name)) return JSON.stringify({ error: `The frontmost app is ${f.name}. Bring the target app forward first with app_manager action=activate.` });
@@ -57,7 +74,15 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
     return r.replace(/"(screenshot_base64|zoomed_base64)":"[^"]+"/g, '"$1":"[image omitted: no vision]"').slice(0, 3500);
 }
 
-type Task = { id: string; prompt: string; setup?: () => Promise<void>; check: (reply: string) => Promise<boolean>; cleanup?: () => Promise<void> };
+const EVAL_DIR = join(homedir(), "Desktop", "BhaiEval");
+const flat = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+const newestPdf = () => {
+    const dir = join(homedir(), "Downloads");
+    return readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".pdf")).map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t)[0]?.f ?? "";
+};
+type Task = { id: string; prompt: string; setup?: () => Promise<void>; check: (reply: string, trace: string[]) => Promise<boolean>; cleanup?: () => Promise<void> };
+/** A web page was actually read (not the answer from memory). */
+const readPage = (trace: string[]) => trace.some((t) => /^browser_(navigate|extract|extract_article|scan)\(/.test(t) && !/"error"|"success":false/.test(t));
 let vol0 = 43;
 const TASKS: Task[] = [
     { id: "spotify_play", prompt: "Play Levitating by Dua Lipa on Spotify",
@@ -133,6 +158,42 @@ const TASKS: Task[] = [
       setup: async () => { await as('tell application "Spotify" to play track "spotify:track:39LLxExYz6ewLAcYrzQQyP"'); await sleep(1500); },
       check: async () => (await as('tell application "Spotify" to player state as string')) !== "playing" && /blinding lights/i.test(await as('tell application "Music" to if player state is playing then name of current track')),
       cleanup: async () => { await as('tell application "Music" to pause'); await as('tell application "Spotify" to pause'); } },
+    // ── Files (sandboxed in ~/Desktop/BhaiEval), clipboard, system ──
+    { id: "write_file", prompt: "Create a text file called todo.txt in the BhaiEval folder on my Desktop with the text: buy milk",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); },
+      check: async () => { try { return /buy milk/i.test(readFileSync(join(EVAL_DIR, "todo.txt"), "utf8")); } catch { return false; } } },
+    { id: "zip_folder", prompt: "Zip the BhaiEval folder on my Desktop and save the zip inside that folder",
+      setup: async () => { mkdirSync(EVAL_DIR, { recursive: true }); writeFileSync(join(EVAL_DIR, "notes.txt"), "eval"); },
+      check: async () => readdirSync(EVAL_DIR).some((f) => f.toLowerCase().endsWith(".zip")) },
+    { id: "count_pdfs", prompt: "How many PDF files are in my Downloads folder?",
+      check: async (reply) => {
+          const n = readdirSync(join(homedir(), "Downloads")).filter((f) => f.toLowerCase().endsWith(".pdf")).length;
+          return new RegExp(`\\b${n}\\b`).test(reply.replace(/,/g, ""));
+      } },
+    { id: "clipboard_copy", prompt: "Copy the text 'bhai clipboard test' to my clipboard",
+      setup: async () => void (await ex("bash", ["-c", "printf x | pbcopy"])),
+      check: async () => (await ex("pbpaste", [])).stdout.trim() === "bhai clipboard test" },
+    { id: "pdf_name_to_clipboard", prompt: "Find the newest PDF in my Downloads folder and copy its file name to my clipboard",
+      setup: async () => void (await ex("bash", ["-c", "printf x | pbcopy"])),
+      check: async () => { const want = flat(newestPdf().replace(/\.pdf$/i, "")); return !!want && flat((await ex("pbpaste", [])).stdout).includes(want); } },
+    { id: "disk_space", prompt: "How much free disk space do I have?",
+      check: async (reply) => {
+          const freeGb = Number((await ex("df", ["-g", "/System/Volumes/Data"])).stdout.trim().split("\n")[1].split(/\s+/)[3]);
+          return (reply.match(/(\d+(?:\.\d+)?)\s*(GB|GiB|gigabytes)/gi) ?? []).some((m) => Math.abs(Number.parseFloat(m) - freeGb) <= Math.max(3, freeGb * 0.15));
+      } },
+    // ── Apps with their own tools ──
+    { id: "notes_create", prompt: "Create a note in Apple Notes titled 'Bhai eval note' that says: it works",
+      check: async () => /it works/i.test(await as('tell application "Notes" to get body of first note whose name contains "Bhai eval note"')),
+      cleanup: async () => void (await as('tell application "Notes" to delete (every note whose name contains "Bhai eval note")')) },
+    { id: "reminder_create", prompt: "Remind me tomorrow at 9am to water the plants",
+      check: async () => /water the plants/i.test(await as('tell application "Reminders" to get name of (every reminder whose name contains "water the plants")')),
+      cleanup: async () => void (await as('tell application "Reminders" to delete (every reminder whose name contains "water the plants")')) },
+    // ── Web pages (Bhai's own browser) ──
+    { id: "browser_heading", prompt: "Open example.com in the browser and tell me the page's main heading",
+      check: async (reply, trace) => readPage(trace) && /example domain/i.test(reply) },
+    { id: "browser_fact", prompt: "Open the Wikipedia page for Alan Turing and tell me the year he was born",
+      check: async (reply, trace) => readPage(trace) && /\b1912\b/.test(reply),
+      cleanup: async () => void (await guardedExec("browser_close", {})) },
 ];
 
 const SYSTEM = [
@@ -146,9 +207,10 @@ const PRICES: Record<string, [number, number, number]> = {
     "gpt-5-nano": [0.05, 0.005, 0.4], "gpt-4.1-nano": [0.1, 0.025, 0.4], "gpt-4o-mini": [0.15, 0.075, 0.6],
     "gpt-5-mini": [0.25, 0.025, 2], "gpt-6.1-terra": [1, 0.05, 5], "gpt-6-astra": [10, 1, 50],
     "claude-haiku-5-5": [0.1, 0.01, 0.5], // cache writes billed at 1.25x input, counted below
+    "claude-sonnet-5-5": [2, 0.2, 10],
 };
 const usage = { in: 0, cached: 0, out: 0 };
-const REASONING = process.env.REASONING_EFFORT ?? (/^gpt-6/.test(MODEL) ? "none" : undefined);
+const reasoning = () => process.env.REASONING_EFFORT ?? (/^gpt-6/.test(model) ? "none" : undefined);
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: { role: string; content: string | null; tool_calls?: ToolCall[] } }> {
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -156,7 +218,7 @@ async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: {
             method: "POST",
             headers: { "api-key": process.env.AZ_KEY ?? "", "content-type": "application/json" },
             // GPT-6 models take function tools on chat completions only with reasoning off.
-            body: JSON.stringify({ model: MODEL, messages, tools, tool_choice: "auto", ...(REASONING ? { reasoning_effort: REASONING } : {}) }),
+            body: JSON.stringify({ model, messages, tools, tool_choice: "auto", ...(reasoning() ? { reasoning_effort: reasoning() } : {}) }),
         });
         const d = (await r.json()) as { choices?: { message: never }[]; error?: { message: string }; usage?: { prompt_tokens: number; completion_tokens: number; prompt_tokens_details?: { cached_tokens?: number } } };
         if (d.choices) {
@@ -171,14 +233,14 @@ async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: {
 }
 
 // Claude, the way Bhai's proxy calls Haiku on simple desktop turns: adaptive thinking, effort low.
-const anthropic = MODEL.startsWith("claude-") ? new Anthropic() : null;
+const anthropicClient = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
 async function claudeLoop(system: string, prompt: string, tools: any[], used: string[], trace: string[]): Promise<{ reply: string; iters: number }> {
     const atools = tools.map((t) => ({ name: t.function.name, description: t.function.description ?? "", input_schema: t.function.parameters ?? { type: "object" } }));
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
     let acked = false;
     for (let i = 0; i < 10; i++) {
-        const res = await anthropic!.messages.create({
-            model: MODEL, max_tokens: 16000, system, tools: atools as Anthropic.Tool[], messages,
+        const res = await anthropicClient!.messages.create({
+            model, max_tokens: 16000, system, tools: atools as Anthropic.Tool[], messages,
             output_config: { effort: "low" }, cache_control: { type: "ephemeral" },
         } as never);
         const u = res.usage as unknown as { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
@@ -206,8 +268,28 @@ async function claudeLoop(system: string, prompt: string, tools: any[], used: st
     return { reply: "", iters: 10 };
 }
 
+// The browser backend the bot registers at boot (src/index.ts).
+{
+    const { registerPlaywrightBackend } = await import("../src/tools/browser/index.js");
+    const { PlaywrightPassthroughBackend } = await import("../src/tools/browser/playwright-backend.js");
+    registerPlaywrightBackend(() => new PlaywrightPassthroughBackend());
+}
 await initToolRouter();
-setToolRouterLLM({ chat: () => new Promise(() => {}) } as never);
+setToolRouterLLM(
+    ROUTER
+        ? ({
+              chat: async (o: { messages: { role: string; content: string }[]; systemPrompt?: string }) => {
+                  const r = await fetch(`${process.env.AZ_ENDPOINT}/chat/completions`, {
+                      method: "POST",
+                      headers: { "api-key": process.env.AZ_KEY ?? "", "content-type": "application/json" },
+                      body: JSON.stringify({ model: "gpt-4.1-nano", messages: [{ role: "system", content: o.systemPrompt ?? "" }, ...o.messages] }),
+                  });
+                  return r.json();
+              },
+          } as never)
+        : ({ chat: () => new Promise(() => {}) } as never),
+);
+if (ROUTER) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "10000";
 const only = process.argv.slice(2);
 const results = [];
 for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
@@ -215,6 +297,13 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     await ex("open", ["-a", "Finder"]); // never leave a terminal in front
     await sleep(400);
     const sel = await selectTools({ message: task.prompt, iteration: 1 });
+    if (ROUTER) {
+        // As the agent loop: complex work keeps Sonnet; everything else goes to the learned pick.
+        const c = sel.classification;
+        const arm = c?.tier === "complex" ? undefined : chooseArm(classifyTurn(c, false), { lowRisk: false }).arm;
+        model = !arm ? "claude-sonnet-5-5" : arm.model.startsWith("azure/") ? arm.model.slice(6) : arm.id === "haiku" ? "claude-haiku-5-5" : "claude-sonnet-5-5";
+        console.log(`     → ${c?.tier ?? "?"} ${classifyTurn(c, false)} → ${model}`);
+    }
     const tools = sel.tools.filter((t) => ALLOWED.has(t.function.name));
     const messages: any[] = [{ role: "system", content: SYSTEM }, { role: "user", content: task.prompt }];
     const used: string[] = [];
@@ -234,7 +323,7 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     if (quick?.reply) {
         reply = quick.reply;
         iters = -1; // no model call
-    } else if (anthropic) {
+    } else if (model.startsWith("claude-")) {
         const r = await claudeLoop(SYSTEM, task.prompt, tools, used, trace);
         reply = r.reply;
         iters = r.iters - 1;
@@ -261,16 +350,23 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
         }
     }
     const ms = Date.now() - t0;
-    const ok = await task.check(reply).catch(() => false);
+    const ok = await task.check(reply, trace).catch(() => false);
     await task.cleanup?.().catch(() => {});
-    const pr = PRICES[MODEL];
+    const pr = PRICES[model];
     const cost = pr ? (usage.in * pr[0] + usage.cached * pr[1] + usage.out * pr[2]) / 1e6 : null;
-    const row = { model: MODEL, task: task.id, ok, tokens: { ...usage }, cost, iters: iters + 1, toolCalls: used.length, used, ms, offered: tools.map((t) => t.function.name).length, reply: reply.slice(0, 160), trace, offeredNames: tools.map((t) => t.function.name) };
+    const row = { model, routed: ROUTER || undefined, task: task.id, ok, tokens: { ...usage }, cost, iters: iters + 1, toolCalls: used.length, used, ms, offered: tools.map((t) => t.function.name).length, reply: reply.slice(0, 160), trace, offeredNames: tools.map((t) => t.function.name) };
     results.push(row);
+    // RECORD=1: the result is evidence for the learned router (src/routing/learned-router.ts).
+    const arm = ARMS.find((a) => a.model === `azure/${model}` || (model.includes(a.id) && !a.model.startsWith("azure/")));
+    if (process.env.RECORD === "1" && arm && iters >= 0) {
+        const cls = ["chain_settings", "calc_to_textedit", "newest_pdf", "playlist_and_tell", "switch_players", "textedit_type", "calculator_multistep", "find_open_file", "camera_permissions", "pdf_name_to_clipboard", "zip_folder"].includes(task.id) ? "desktop" : task.id.startsWith("browser_") ? "browser" : "quick";
+        recordOutcome(cls, arm.id, { success: ok ? 1 : 0, failure: ok ? 0 : 1, calls: iters + 1, seconds: ms / 1000 });
+    }
     appendFileSync(OUT, `${JSON.stringify(row)}\n`);
     if (!ok) for (const t of trace) console.log("     · " + t);
     console.log(`${ok ? "✅" : "❌"} ${task.id.padEnd(22)} iters=${row.iters} calls=${used.length} ${ms}ms $${cost?.toFixed(5) ?? "?"} [${used.join(",")}] ${reply.slice(0, 80).replace(/\n/g, " ")}`);
     await sleep(500);
 }
+rmSync(EVAL_DIR, { recursive: true, force: true });
 console.log(`SCORE ${MODEL}: ${results.filter((r) => r.ok).length}/${results.length}`);
 process.exit(0);

@@ -170,7 +170,7 @@ async function boot() {
     for (let attempt = 1; attempt <= 3; attempt++) {
         sessionOk = await initSession();
         if (sessionOk) break;
-        if (sessionNeedsSignIn()) {
+        if (sessionNeedsSignIn() || !process.env.ATLAS_OTPLESS_USER_ID) {
             // 78: not allowed to run — the app shows "sign in again" and won't auto-restart.
             console.error("❌ This device needs to sign in again (Account in the Bhai app)");
             process.exit(78);
@@ -982,8 +982,38 @@ async function boot() {
         }
     }
 
+    // A scheduled message for the owner: the primary channel first, the others as backup.
+    const notifyOwnerEverywhere = async (message: string): Promise<void> => {
+        // Primary channel gets the message first
+        const sendPrimary: Record<string, () => Promise<unknown>> = {
+            whatsapp: () => sendWhatsAppProactiveMessage(message),
+            discord: () => sendDiscordProactiveMessage(message),
+            slack: () => sendSlackProactiveMessage(message),
+            matrix: () => sendMatrixProactiveMessage(message),
+            // The owner asked for it: Smart DND doesn't hold it back.
+            overlay: () => sendOverlayNotification(message, { requested: true }),
+        };
+        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
+        console.log(`📬 Scheduled message → ${PRIMARY_CHANNEL} + ${Object.keys(sendPrimary).length - 1} other channel(s)`);
+
+        // Send to primary channel
+        const primaryFn = sendPrimary[PRIMARY_CHANNEL];
+        if (primaryFn) {
+            try {
+                await primaryFn();
+            } catch {
+                /* primary failed, will try others */
+            }
+        }
+
+        // Send to other active channels as backup (non-blocking)
+        for (const [channel, fn] of Object.entries(sendPrimary)) {
+            if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
+        }
+    };
+
     // ── Scheduled Tasks ───────────────────────
-    setTaskTriggerHandler(async (taskId: string, action: string, description?: string) => {
+    setTaskTriggerHandler(async (taskId, action, description, opts) => {
         // ── Marketing scheduled post detection ──────────────────────────────
         // Actions encoded as JSON by marketing_schedule tool are executed directly.
         // Format: {"__marketing_post":true,"brandId":"...","itemId":N,"platform":"...","caption":"...","mediaPath":"...","hashtags":[...]}
@@ -1022,40 +1052,39 @@ async function boot() {
             return;
         }
 
+        // A task does its work and sends the answer ("summarize my inbox every morning").
+        if (opts.doTask) {
+            const response = await runAgent(
+                llm,
+                action,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                { channel: "cron", userId: "cron", isOwner: opts.isOwner, autonomous: true },
+            );
+            const text = response.text?.trim();
+            if (text && text.toUpperCase() !== "[NO_REPLY]") {
+                await notifyOwnerEverywhere(
+                    taskId.startsWith("reminder_") && description ? `⏰ ${description}\n\n${text}` : text,
+                );
+            }
+            return;
+        }
+
         // A reminder reads as one ("⏰ Check the oven"), not as the agent instruction behind it.
         const isReminder = taskId.startsWith("reminder_") && !!description;
         const message = isReminder ? `⏰ Reminder: ${description}` : `🔔 **Task Triggered**\n\n${action}`;
 
-        // Primary channel gets the message first
-        const sendPrimary: Record<string, () => Promise<unknown>> = {
-            whatsapp: () => sendWhatsAppProactiveMessage(message),
-            discord: () => sendDiscordProactiveMessage(message),
-            slack: () => sendSlackProactiveMessage(message),
-            matrix: () => sendMatrixProactiveMessage(message),
-            overlay: () => {
-                sendOverlayNotification(message);
-                return Promise.resolve();
-            },
-        };
-        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
-
-        // Send to primary channel
-        const primaryFn = sendPrimary[PRIMARY_CHANNEL];
-        if (primaryFn) {
-            try {
-                await primaryFn();
-            } catch {
-                /* primary failed, will try others */
-            }
-        }
-
-        // Send to other active channels as backup (non-blocking)
-        for (const [channel, fn] of Object.entries(sendPrimary)) {
-            if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
-        }
+        await notifyOwnerEverywhere(message);
 
         // Always send push notification for task triggers
-        sendPushNotification(isReminder ? "Reminder" : "Task Triggered", (isReminder ? description : action).substring(0, 180)).catch(() => {});
+        sendPushNotification(
+            isReminder ? "Reminder" : "Task Triggered",
+            (isReminder ? description : action).substring(0, 180),
+        ).catch(() => {});
     });
     const restored = restoreScheduledTasks();
     if (restored) console.log(`   Tasks   : ${restored} scheduled task(s) restored`);
@@ -1141,7 +1170,12 @@ async function boot() {
             },
             deliver: async (job, response) => {
                 const channel = job.deliverTo;
-                if (!channel || !response) return true;
+                if (!response) return true;
+                // No channel named: the owner's channels, as reminders do (it used to go nowhere).
+                if (!channel) {
+                    await notifyOwnerEverywhere(response);
+                    return true;
+                }
                 if (channel === "telegram") {
                     const {
                         getTelegramBot,
@@ -1171,8 +1205,7 @@ async function boot() {
                 }
                 if (channel === "overlay") {
                     const { sendOverlayNotification } = await import("./overlay/overlay-chat.js");
-                    sendOverlayNotification(response);
-                    return true;
+                    return sendOverlayNotification(response, { requested: true });
                 }
                 console.error(
                     `[CRON] MISROUTED — job ${job.id} had deliverTo="${channel}" which has no handler. Response (${response.length} chars) was dropped.`,

@@ -5614,7 +5614,7 @@ body.hig {
     --r-tile: 14px;
     --r-group: 18px;
     --r-hero: 20px;
-    --orb-k: 1;                       /* orb intensity; lower while Bhai naps */
+    --orb-k: 0.32;                    /* orb intensity: a quiet wash, lower while Bhai naps */
 }
 body.hig.theme-dark {
     --lg-color: saturate(170%) brightness(0.94);
@@ -5638,16 +5638,16 @@ body.hig .lg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
     overflow: hidden;
     pointer-events: none;
     background:
-        radial-gradient(90% 70% at 0% 0%, rgba(255, 216, 190, 0.6), transparent 70%),
-        radial-gradient(80% 60% at 100% 100%, rgba(255, 205, 214, 0.45), transparent 70%),
+        radial-gradient(90% 70% at 0% 0%, rgba(255, 216, 190, 0.3), transparent 70%),
+        radial-gradient(80% 60% at 100% 100%, rgba(255, 205, 214, 0.2), transparent 70%),
         var(--bg-window);
 }
 body.theme-dark :is(.ambient, .bg-canvas) {
     background:
-        radial-gradient(90% 70% at 0% 0%, rgba(110, 48, 16, 0.38), transparent 70%),
+        radial-gradient(90% 70% at 0% 0%, rgba(110, 48, 16, 0.2), transparent 70%),
         var(--bg-window);
 }
-body.hig:has(#heroCard[data-phase="stopped"]) { --orb-k: 0.78; }
+body.hig:has(#heroCard[data-phase="stopped"]) { --orb-k: 0.24; }
 
 /* Film grain: static, under the glass (so glass reads smooth on top of it). */
 :is(body.hig .ambient, .bg-canvas)::after {
@@ -5677,13 +5677,13 @@ body.theme-dark :is(.ambient, .bg-canvas)::after { opacity: 0.06; mix-blend-mode
     animation: lgOrbDrift var(--t) ease-in-out var(--delay) infinite alternate;
     transition: opacity 1.4s ease;
 }
-body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--orb-k, 1) * 0.62); mix-blend-mode: screen; }
+body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--orb-k, 1) * 0.4); mix-blend-mode: screen; }
 
 :is(.ambient, .bg-canvas) .orb-1 { --c: #E87B2D; --x: -18vw; --y: -26vh; --d: 62vmax; --o: 0.5; --t: 52s; --delay: -14s; --dx: 16vw; --dy: 14vh; --dx2: 4vw; --dy2: 26vh; --s1: 1.12; --s2: 0.94; }
 :is(.ambient, .bg-canvas) .orb-2 { --c: #FFB37A; --x: 52vw; --y: -30vh; --d: 58vmax; --o: 0.56; --t: 64s; --delay: -30s; --dx: -14vw; --dy: 20vh; --dx2: 8vw; --dy2: 32vh; --s1: 0.92; --s2: 1.1; }
 :is(.ambient, .bg-canvas) .orb-3 { --c: #FF7A8A; --x: 34vw; --y: 40vh; --d: 46vmax; --o: 0.4; --t: 46s; --delay: -8s; --dx: 18vw; --dy: -16vh; --dx2: -12vw; --dy2: -6vh; --s1: 1.14; --s2: 0.9; }
 :is(.ambient, .bg-canvas) .orb-4 { --c: #FFD36E; --x: -12vw; --y: 52vh; --d: 50vmax; --o: 0.54; --t: 70s; --delay: -40s; --dx: 20vw; --dy: -10vh; --dx2: 30vw; --dy2: 6vh; --s1: 1.08; --s2: 0.96; }
-:is(.ambient, .bg-canvas) .orb-5 { --c: #9B87F5; --x: 68vw; --y: 48vh; --d: 34vmax; --o: 0.38; --core: 84%; --rim: 95%; --t: 58s; --delay: -22s; --dx: -20vw; --dy: -14vh; --dx2: -6vw; --dy2: -26vh; --s1: 1.16; --s2: 0.92; }
+:is(.ambient, .bg-canvas) .orb-5 { --c: #FFC2A0; --x: 68vw; --y: 48vh; --d: 34vmax; --o: 0.38; --core: 84%; --rim: 95%; --t: 58s; --delay: -22s; --dx: -20vw; --dy: -14vh; --dx2: -6vw; --dy2: -26vh; --s1: 1.16; --s2: 0.92; }
 :is(.ambient, .bg-canvas) .orb-6 { --c: #FF9F5A; --x: 36vw; --y: 2vh; --d: 24vmax; --o: 0.5; --core: 86%; --rim: 96%; --t: 38s; --delay: -5s; --dx: -18vw; --dy: 24vh; --dx2: 14vw; --dy2: 30vh; --s1: 1.2; --s2: 0.86; }
 
 @keyframes lgOrbDrift {
@@ -6054,7 +6054,32 @@ body.hig .chats-layout {
     gap: 14px;
     padding: 0 28px 24px;
 }
-body.hig :is(.chats-list, .chats-thread) { min-height: 0; overflow-y: auto; border-radius: var(--r-group) !important; }
+body.hig .chats-list { min-height: 0; overflow-y: auto; border-radius: var(--r-group) !important; padding-left: 0 !important; }
+/* Chats is a focused page: the sidebar steps aside (← Dashboard brings it back). */
+body.hig:has(#tab-chats.active) .panel-sidebar { display: none; }
+html.platform-darwin body.hig #tab-chats .tab-header { padding-left: 92px; padding-top: 14px; }
+body.hig #tab-chats .chats-layout { grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); }
+body.hig .chats-compose-row { display: flex; gap: 8px; align-items: center; }
+body.hig .chats-add { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: none; color: var(--text-secondary); cursor: pointer; transition: color .15s, border-color .15s; }
+body.hig .chats-add:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+body.hig .chats-attachment { display: flex; align-items: center; gap: 8px; align-self: flex-start; max-width: 100%; padding: 4px 6px 4px 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; color: var(--text-secondary); }
+body.hig .chats-attachment[hidden] { display: none; }
+body.hig .chats-attachment img { width: 32px; height: 32px; object-fit: cover; border-radius: 6px; }
+body.hig .chats-attachment span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+body.hig .chats-attachment button { border: none; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; }
+body.hig .chats-pane.dropping { box-shadow: inset 0 0 0 2px var(--accent-text, var(--text-secondary)); }
+body.hig .chats-sent-file { max-width: 220px; max-height: 180px; border-radius: 12px; object-fit: cover; }
+body.hig div.chats-sent-file { padding: 8px 12px; border: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); }
+body.hig .chats-pane { min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-group) !important; }
+body.hig .chats-pane .chats-thread { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+body.hig .chats-composer { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+body.hig .chats-composer input { flex: 1; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); color: var(--text-primary); font: inherit; font-size: 13px; outline: none; }
+body.hig .chats-composer input:focus { border-color: var(--accent-text, var(--text-secondary)); }
+body.hig .chats-working { align-self: flex-start; font-size: 12.5px; color: var(--text-secondary); padding: 2px 4px; animation: chatsPulse 1.6s ease-in-out infinite; }
+@keyframes chatsPulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { body.hig .chats-working { animation: none; } }
+body.hig .is-error .chats-bubble { color: var(--accent-danger, #b42318); }
+body.hig .chats-bubble code { font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; padding: 1px 4px; border-radius: 4px; background: var(--surface-2); }
 body.hig .chats-list { display: flex; flex-direction: column; gap: 2px; padding: 8px; }
 body.hig .chats-item {
     display: flex;
@@ -6252,3 +6277,33 @@ body.hig .vault-modal-bg { background: rgba(20, 10, 4, 0.42); }
 .vault-field .clean-input { width: 100%; box-sizing: border-box; }
 .vault-modal .input-hint:empty { display: none; }
 .vault-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── Dashboard: greeting, ask box, lists (no hero card, no stat tiles) ── */
+body.hig .dash { max-width: 720px; display: flex; flex-direction: column; gap: 0; }
+body.hig .dash-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0 18px; }
+body.hig .dash-greeting {
+    font-family: ui-serif, "New York", Georgia, serif;
+    font-size: 30px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15;
+    color: var(--text-primary); margin: 0;
+}
+body.hig .dash-sub { margin: 6px 0 0; font-size: 13px; color: var(--text-secondary); }
+body.hig .dash-stop { margin-left: 8px; font-size: 12px; }
+body.hig .hero-mascot.dash-avatar { width: 64px; height: 64px; flex: none; }
+body.hig .hero-mascot.dash-avatar::before { display: none; }
+body.hig .dash-ask {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 12px 0 16px; height: 48px; margin-bottom: 26px;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface-1);
+    transition: border-color .15s, box-shadow .15s;
+}
+body.hig .dash-ask:focus-within { border-color: var(--accent-text, var(--text-secondary)); box-shadow: 0 0 0 3px var(--accent-tint, rgba(0,0,0,.05)); }
+body.hig .dash-ask input { flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: none; color: var(--text-primary); font: inherit; font-size: 14px; }
+body.hig .dash-ask input::placeholder { color: var(--text-muted, var(--text-secondary)); }
+body.hig .dash-ask .chat-kbd:empty { display: none; }
+body.hig .dash-start { margin-bottom: 26px; }
+body.hig .dash .recent-chats { margin: 0 0 22px; }
+body.hig #needsList .recent-row { cursor: pointer; }
+body.hig #needsList .recent-when { color: var(--accent-text, var(--text-primary)); }
+@media (prefers-reduced-motion: reduce) { body.hig .dash-ask { transition: none; } }
+body.hig .dash-ask .chat-kbd { margin: 0; background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }

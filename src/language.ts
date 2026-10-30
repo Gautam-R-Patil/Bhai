@@ -90,6 +90,7 @@ const ENGLISH_MARKERS =
 let currentLanguage = "English";
 let lastDetectionTime = 0;
 const DETECTION_COOLDOWN_MS = 30000; // Don't re-detect within 30s
+const CONFIDENT = 0.85; // plain English, Hinglish, a non-Latin script
 let loaded = false;
 // A switch is saved only when the next detection confirms it, so a one-off paste
 // (a text to translate, a quoted email) doesn't become the language after a restart.
@@ -120,12 +121,19 @@ function loadSavedLanguage(): void {
  */
 export function detectLanguage(text: string): LanguageMatch {
     // Strip code blocks, URLs, and technical content that might confuse detection
-    const cleanText = text
+    let cleanText = text
         .replace(/```[\s\S]*?```/g, "")
         .replace(/`[^`]+`/g, "")
         .replace(/https?:\/\/\S+/g, "")
         .replace(/\b[A-Z_]{2,}\b/g, "") // Constants like UPPERCASE_VAR
         .trim();
+    // Quoted text is what the owner asks about, not what they write in: "what does
+    // 'kya haal hai' mean?" is English. An opening quote must follow a space or the
+    // start, so "don't" is no quote. A message that is all quote keeps it.
+    const unquoted = cleanText
+        .replace(/(^|[\s(:])["“'‘][^"“”'‘’\n]{1,200}["”'’](?=[\s.,!?;:)]|$)/g, "$1")
+        .trim();
+    if ((unquoted.match(/[\p{L}]+/gu) || []).length >= 2) cleanText = unquoted;
 
     if (cleanText.length < 10) {
         return { language: currentLanguage, confidence: 0, script: "inherited" };
@@ -196,12 +204,14 @@ export function updateSessionLanguage(userMessage: string): string {
     loadSavedLanguage();
     const now = Date.now();
 
-    // Don't re-detect too frequently
-    if (now - lastDetectionTime < DETECTION_COOLDOWN_MS) {
+    const detection = detectLanguage(userMessage);
+
+    // Don't re-detect too frequently — unless the message is clearly in a language: the
+    // owner switching back ("what time is it" right after a Hinglish line) is mirrored at
+    // once, not 30s later. Only borderline detections wait out the cooldown.
+    if (now - lastDetectionTime < DETECTION_COOLDOWN_MS && detection.confidence < CONFIDENT) {
         return currentLanguage;
     }
-
-    const detection = detectLanguage(userMessage);
 
     // Only switch if confidence is high (avoid false positives from stray CJK chars)
     if (detection.confidence >= 0.80 && detection.language !== currentLanguage) {

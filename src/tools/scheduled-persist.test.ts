@@ -23,11 +23,13 @@ async function boot() {
     const mod = await import("./scheduled.js");
     const fired: string[] = [];
     const described: Array<string | undefined> = [];
-    mod.setTaskTriggerHandler(async (_id, action, description) => {
+    const runs: Array<{ doTask: boolean; isOwner: boolean }> = [];
+    mod.setTaskTriggerHandler(async (_id, action, description, opts) => {
         fired.push(action);
         described.push(description);
+        runs.push(opts);
     });
-    return { ...mod, fired, described, restored: mod.restoreScheduledTasks() };
+    return { ...mod, fired, described, runs, restored: mod.restoreScheduledTasks() };
 }
 
 describe("scheduled tasks across restarts", () => {
@@ -80,7 +82,39 @@ describe("scheduled tasks across restarts", () => {
         expect(fired).toEqual(["Renew passport"]);
 
         for (const minutes of ["soon", Number.NaN, 0, -5]) {
-            expect(JSON.parse(await setReminder.handler({ minutes, description: "x", action: "x" })).error).toBeTruthy();
+            expect(
+                JSON.parse(await setReminder.handler({ minutes, description: "x", action: "x" })).error,
+            ).toBeTruthy();
         }
+    });
+
+    it("tasks do their work as whoever scheduled them; plain reminders just remind", async () => {
+        const first = await boot();
+        const { runWithCallerContext } = await import("./cron-tool.js"); // the copy scheduled.js uses
+        await runWithCallerContext({ isOwner: true }, () =>
+            first.setReminder.handler({
+                minutes: 1,
+                description: "weather",
+                action: "Check the weather and tell me",
+                do_task: true,
+            }),
+        );
+        await first.setReminder.handler({ minutes: 2, description: "stretch", action: "Remind me to stretch" });
+        // Outside an owner turn (a contact, or the model passing isOwner itself): no owner tools.
+        await first.scheduleTask.handler({
+            expression: "0 9 * * *",
+            description: "inbox",
+            action: "Summarize my inbox",
+            isOwner: true,
+        });
+
+        const second = await boot(); // the flags survive a restart
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+        expect(second.runs).toEqual([
+            { doTask: true, isOwner: true },
+            { doTask: false, isOwner: false },
+        ]);
+        const saved = JSON.parse(fs.readFileSync(path.join(dir, "scheduled-tasks.json"), "utf8"));
+        expect(saved).toEqual([expect.objectContaining({ description: "inbox", doTask: true, isOwner: false })]);
     });
 });

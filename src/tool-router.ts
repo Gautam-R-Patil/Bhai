@@ -182,7 +182,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "shell_kill_process",
             "list_directory",
             "delete_file",
-            "get_current_time",
+            // Not get_current_time: core always brings it, and listing it here made the
+            // classifier file "what time is it in London" under coding (32 tools, Sonnet).
             // Phase 4L: codebase comprehension + git
             "codebase_index",
             "codebase_query",
@@ -598,6 +599,7 @@ Rules:
 - Return specific tool names when obvious (e.g. "play music" → spotify)
 - Focus on the user's ACTUAL intent, not surface keywords
 - "play a song" = media, NOT shell (don't confuse "play" with "run/execute")
+- The time, the date or a timezone needs no category: get_current_time is always available
 - "run npm install" = shell, NOT media
 - IMPORTANT: When the user names a desktop app the agent must DRIVE (open, click, type in, switch to) — e.g. "open WhatsApp and send …", "click the Send button in Photoshop", "switch to Figma and …" — include BOTH "app_management" AND "os_control" in addition to any messaging category. Protocol tools like whatsapp_send/imessage_send work for contacts the bot already has on file; UI-driving the actual desktop app needs os_smart_click + app_manager.
 - IMPORTANT: Use the conversation context to resolve ambiguous references. If the user was just discussing a website, "open file manager" likely means a button ON that website (browser), not the OS file manager (app_management). A follow-up like "yes do it" or "try again" continues the task in the conversation, with that task's categories.
@@ -736,7 +738,7 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Settings, permissions and machine state ("give zoom access to my camera", "battery")
     {
         pattern:
-            /\b((dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
+            /\b(disk space|free space|storage|ram|memory usage|cpu|uptime|(dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
         category: "system_controls",
         minScore: 0.7,
     },
@@ -761,7 +763,13 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
         minScore: 0.7,
     },
     // Browser
-    { pattern: /\b(website|webpage|url|browse|navigate.?to|open.?site)\b/i, category: "browser", minScore: 0.65 },
+    {
+        // "open example.com in the browser", "the Wikipedia page for Alan Turing"
+        pattern:
+            /\b(website|webpage|web page|url|browser|browse|navigate.?to|open.?site|wikipedia)\b|\b[a-z0-9-]+\.(com|org|net|io|ai|dev|in|co|app|edu|gov)\b/i,
+        category: "browser",
+        minScore: 0.7,
+    },
     // Shell
     {
         pattern: /\b(terminal|npm|pip|brew|apt|git\b|docker|sudo|bash|chmod|mkdir)\b/i,
@@ -1661,6 +1669,16 @@ export async function selectTools(opts: {
             categories: [...llmResult.categories],
         };
         classifierUsed = "llm";
+        // Safety net: an unmistakable need the classifier missed ("open example.com in the
+        // browser" filed as research) would leave the model without the tool. Add up to two
+        // categories whose high-confidence keyword pattern matches.
+        let added = 0;
+        for (const { pattern, category, minScore } of KEYWORD_BOOSTS) {
+            if (added < 2 && minScore >= 0.7 && !selectedCategories.includes(category) && pattern.test(opts.message)) {
+                selectedCategories.push(category);
+                added++;
+            }
+        }
     } else {
         lastClassification = null;
         // Fallback: hybrid structural + semantic + keyword boosts

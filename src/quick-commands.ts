@@ -169,6 +169,49 @@ function parseClause(raw: string): QuickStep | null {
             ? { tool: "music_control", args: { action: "now_playing" }, done: nowPlayingLine }
             : { tool: "spotify", args: { action: "now_playing" }, done: nowPlayingLine, pickPlayer: !m[1] };
     }
+    // "Which apps can use my camera?": the privacy page that lists them.
+    m = hit(
+        /^(?:show\s+me\s+|tell\s+me\s+)?(?:which|what)\s+apps\s+(?:are\s+allowed\s+to|can|have\s+access\s+to|use)\s+(?:use\s+)?(?:my\s+|the\s+)?(camera|microphone|mic|location|contacts|photos|screen recording|full disk access)$/,
+    );
+    if (m) {
+        const pane = m[1] === "mic" ? "microphone" : m[1];
+        return {
+            tool: "open_settings",
+            args: { pane },
+            done: (r) => `The ${r.page ?? title(pane)} page is open: it lists the apps allowed to use your ${pane}.`,
+        };
+    }
+    // Disk and battery: one system_info call answers them.
+    m = hit(
+        /^(?:how\s+much|what'?s?\s+(?:is\s+)?(?:my|the))\s+(?:free\s+)?(?:disk\s+|storage\s+|hard\s+drive\s+)?(?:space|storage)(?:\s+(?:do\s+i\s+have|is\s+(?:left|free)|left|free))*(?:\s+(?:on|in)\s+(?:my\s+)?(?:mac|computer|laptop|disk))?$/,
+    );
+    if (m) {
+        return {
+            tool: "system_info",
+            args: {},
+            done: (r) => {
+                const d = r.disk as { available?: string; total?: string } | undefined;
+                return d?.available
+                    ? `You have ${d.available}B free of ${d.total}B.`
+                    : "I couldn't read the disk space.";
+            },
+        };
+    }
+    m = hit(
+        /^(?:how\s+much\s+battery(?:\s+do\s+i\s+have|\s+is\s+left)?|(?:what'?s?\s+(?:is\s+)?)?(?:my\s+|the\s+)?battery(?:\s+level|\s+percentage)?)$/,
+    );
+    if (m) {
+        return {
+            tool: "system_info",
+            args: {},
+            done: (r) => {
+                const b = r.battery as { percent?: number; state?: string } | undefined;
+                return typeof b?.percent === "number"
+                    ? `Battery is at ${b.percent}% (${b.state ?? "unknown"}).`
+                    : "I couldn't read the battery.";
+            },
+        };
+    }
     m = hit(/^lock\s+(?:my\s+|the\s+)?(?:screen|mac|computer|laptop)$/);
     if (m) {
         return { tool: "lock_screen", args: {}, done: "Locked." };

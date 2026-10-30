@@ -340,17 +340,14 @@ describe("language — updateSessionLanguage: cooldown + high-confidence gating"
         expect(result).toEqual("Hindi");
     });
 
-    it("respects 30s cooldown — repeated calls within window return cached language", () => {
+    it("inside the 30s cooldown a clear switch back is still mirrored", () => {
         vi.spyOn(console, "log").mockImplementation(() => undefined);
-        updateSessionLanguage("नमस्ते आप कैसे हैं मैं ठीक हूँ धन्यवाद बहुत अच्छा है");
-        expect(getCurrentLanguage()).toEqual("Hindi");
+        updateSessionLanguage("bhai mujhe kal 5 baje yaad dilana");
+        expect(getCurrentLanguage()).toEqual("Hindi (Romanized)");
 
-        // 10s later — inside cooldown — even a French message doesn't switch
+        // 10s later — inside the cooldown — the owner is back in plain English.
         vi.setSystemTime(new Date("2025-01-01T00:00:10Z"));
-        const result = updateSessionLanguage(
-            "Bonjour comment allez-vous merci beaucoup pour votre aide dans cette situation avec très",
-        );
-        expect(result).toEqual("Hindi"); // still cached
+        expect(updateSessionLanguage("what time is it in London")).toEqual("English");
     });
 
     it("allows switch after cooldown elapses (>30s)", () => {
@@ -381,6 +378,19 @@ describe("language — updateSessionLanguage: cooldown + high-confidence gating"
         vi.spyOn(console, "log").mockImplementation(() => undefined);
         updateSessionLanguage("नमस्ते आप कैसे हैं मैं ठीक हूँ धन्यवाद बहुत अच्छा है");
         expect(getCurrentLanguage()).toEqual("Hindi");
+    });
+});
+
+describe("language — quoted text is content, not the owner's language", () => {
+    it("an English question about a quoted Hindi or French phrase stays English", () => {
+        expect(detectLanguage("what does 'kya haal hai' mean?").language).toBe("English");
+        expect(detectLanguage('send "theek hai, aata hoon" to Rahul on WhatsApp').language).toBe("English");
+        expect(detectLanguage("translate ‘bonjour, comment ça va’ to english").language).toBe("English");
+    });
+
+    it("apostrophes aren't quotes, and a message that is all quote keeps its language", () => {
+        expect(detectLanguage("kal aana yaar, don't forget the chai").language).toBe("Hindi (Romanized)");
+        expect(detectLanguage("'kya haal hai bhai'").language).toBe("Hindi (Romanized)");
     });
 });
 

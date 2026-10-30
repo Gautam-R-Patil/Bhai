@@ -192,8 +192,9 @@ export function createLLMClient(config: Config): LLMClient {
         }) {
             // A fresh deadline per fetch (each fallback hop gets its own), sized
             // by thinking effort; joined with the caller's signal if any.
+            const attemptMs = timeoutMs && timeoutMs > 0 ? timeoutMs : attemptTimeoutMs(lean ? "off" : thinkingLevel);
             const deadline = () => {
-                const ms = timeoutMs && timeoutMs > 0 ? timeoutMs : attemptTimeoutMs(lean ? "off" : thinkingLevel);
+                const ms = attemptMs;
                 const t = ms ? AbortSignal.timeout(ms) : undefined;
                 return t && signal ? AbortSignal.any([t, signal]) : t;
             };
@@ -297,6 +298,9 @@ export function createLLMClient(config: Config): LLMClient {
                 requestBody.reasoning = {
                     effort: isThinking ? effort : lean || thinkingLevel === "off" ? "none" : "low",
                 };
+                // How long this attempt waits: the proxy fits an Azure try plus its Claude
+                // fallback inside it, so a slow call isn't answered (and paid) twice.
+                requestBody.attemptTimeoutMs = attemptMs;
 
                 // Exclude already-tried models so each hop surfaces a new provider.
                 // Window-aware mode (opt-in): estimate the request's token size once

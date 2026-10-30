@@ -1538,17 +1538,22 @@ function humanizeForOverlay(msg: string): string {
 
 // ── Send proactive message to overlay ─────────
 
-/** False when Smart DND held it or no owner overlay is connected, so a proactive sender can retry. */
-export async function sendOverlayNotification(message: string): Promise<boolean> {
+/**
+ * False when Smart DND held it or no owner overlay is connected, so a proactive sender can retry.
+ * `requested`: the owner asked for this (a reminder, a scheduled task), so DND doesn't hold it.
+ */
+export async function sendOverlayNotification(message: string, opts: { requested?: boolean } = {}): Promise<boolean> {
     // Gate proactive overlay notifications through Smart DND
-    try {
-        const { shouldSuppressMessage } = await import("../proactive/dnd.js");
-        const suppress = await shouldSuppressMessage(message);
-        if (suppress) {
-            console.log("🔕 Proactive overlay notification suppressed by DND");
-            return false;
-        }
-    } catch { /* DND check failed — deliver anyway */ }
+    if (!opts.requested) {
+        try {
+            const { shouldSuppressMessage } = await import("../proactive/dnd.js");
+            const suppress = await shouldSuppressMessage(message);
+            if (suppress) {
+                console.log("🔕 Proactive overlay notification suppressed by DND");
+                return false;
+            }
+        } catch { /* DND check failed — deliver anyway */ }
+    }
 
     const clients = ownerClients();
     if (clients.length === 0) return false;

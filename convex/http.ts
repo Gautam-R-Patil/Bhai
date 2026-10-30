@@ -7,7 +7,7 @@ import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import Anthropic from "@anthropic-ai/sdk";
 import { toClaudeRequest, toOpenAIResponse } from "./claude";
-import { callAzure, isAzureModel } from "./grok";
+import { callAzure, clientAttemptMs, isAzureModel } from "./grok";
 import { decodeBase64, STT_CREDIT_COST, STT_MAX_AUDIO_BYTES, sttConfigFromEnv, transcribeWithProvider } from "./stt";
 import {
   generateServerKeyPair,
@@ -178,25 +178,7 @@ import { isEmail, MAX_RECIPIENTS_PER_EMAIL, parseRecipients, SEND_RECIPIENTS_PER
 // against accidental floods, not a security boundary (hCaptcha is).
 const WAITLIST_IP_WINDOW_MS = 10 * 60_000;
 const WAITLIST_IP_MAX = 5;
-const waitlistIpHits = new Map<string, { count: number; windowStart: number }>();
 
-function checkWaitlistIpRateLimit(ip: string): boolean {
-  if (!ip || ip === "unknown") return true; // can't rate-limit what we can't identify
-  const now = Date.now();
-  const existing = waitlistIpHits.get(ip);
-  if (waitlistIpHits.size > 1024) {
-    for (const [k, v] of waitlistIpHits) {
-      if (now - v.windowStart > WAITLIST_IP_WINDOW_MS) waitlistIpHits.delete(k);
-    }
-  }
-  if (!existing || now - existing.windowStart > WAITLIST_IP_WINDOW_MS) {
-    waitlistIpHits.set(ip, { count: 1, windowStart: now });
-    return true;
-  }
-  if (existing.count >= WAITLIST_IP_MAX) return false;
-  existing.count++;
-  return true;
-}
 
 const WAITLIST_ALLOWED_ORIGIN = "https://tryatlasagi.com";
 
@@ -680,9 +662,17 @@ http.route({
     // 7. Call Claude (or an Azure model: Grok, GPT-6; falling back to Claude Sonnet)
     try {
       const anthropic = new Anthropic({ apiKey: anthropicKey });
-      let responseData = isAzureModel(model) ? await callAzure(body, messages) : null;
+      const azureTried = isAzureModel(model);
+      const azureStart = Date.now();
+      let responseData = azureTried ? await callAzure(body, messages) : null;
       if (!responseData) try {
-        const message = await anthropic.beta.messages.stream(claudeParams).finalMessage();
+        // After an Azure try, Claude gets only what's left of the client's attempt: an answer
+        // the client has stopped waiting for would be paid for and thrown away (an abort here
+        // is refunded below, like any network failure).
+        const left = clientAttemptMs(body) - (Date.now() - azureStart) - 2_000;
+        const message = await anthropic.beta.messages
+          .stream(claudeParams, azureTried ? { signal: AbortSignal.timeout(Math.max(1_000, left)) } : undefined)
+          .finalMessage();
         responseData = toOpenAIResponse(message);
       } catch (err) {
         // 8. If Claude returned an error, refund the pre-deduction and pass
@@ -2813,7 +2803,13 @@ http.route({
     }
 
     const ip = extractClientIp(request);
-    if (!checkWaitlistIpRateLimit(ip)) {
+    // In the database: an HTTP action's module state doesn't reliably outlive a request.
+    const waitlistLimit = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: `waitlist_submit|${ip}`,
+      windowMs: WAITLIST_IP_WINDOW_MS,
+      maxRequests: WAITLIST_IP_MAX,
+    });
+    if (waitlistLimit.limited) {
       return new Response(
         JSON.stringify({ error: "Too many submissions. Try again later." }),
         { status: 429, headers: { ...jsonHeaders, "Retry-After": "600" } },
@@ -3650,25 +3646,7 @@ http.route({
 
 const CONTACT_IP_WINDOW_MS = 10 * 60_000;
 const CONTACT_IP_MAX = 4;
-const contactIpHits = new Map<string, { count: number; windowStart: number }>();
 
-function checkContactIpRateLimit(ip: string): boolean {
-  if (!ip || ip === "unknown") return true;
-  const now = Date.now();
-  const existing = contactIpHits.get(ip);
-  if (contactIpHits.size > 1024) {
-    for (const [k, v] of contactIpHits) {
-      if (now - v.windowStart > CONTACT_IP_WINDOW_MS) contactIpHits.delete(k);
-    }
-  }
-  if (!existing || now - existing.windowStart > CONTACT_IP_WINDOW_MS) {
-    contactIpHits.set(ip, { count: 1, windowStart: now });
-    return true;
-  }
-  if (existing.count >= CONTACT_IP_MAX) return false;
-  existing.count++;
-  return true;
-}
 
 const CONTACT_ALLOWED_ORIGINS = new Set([
   "https://xagilab.com",
@@ -3733,7 +3711,13 @@ http.route({
     }
 
     const ip = extractClientIp(request);
-    if (!checkContactIpRateLimit(ip)) {
+    // In the database: an HTTP action's module state doesn't reliably outlive a request.
+    const contactLimit = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: `contact_submit|${ip}`,
+      windowMs: CONTACT_IP_WINDOW_MS,
+      maxRequests: CONTACT_IP_MAX,
+    });
+    if (contactLimit.limited) {
       return new Response(
         JSON.stringify({ error: "Too many submissions. Please try again later." }),
         { status: 429, headers: { ...jsonHeaders, "Retry-After": "600" } },

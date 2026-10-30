@@ -58,13 +58,6 @@
                     </svg>
                     <span>Dashboard</span>
                 </button>
-                <button class="nav-item" data-tab="chats" onclick="switchTab('chats')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                    <span>Chats</span>
-                </button>
                 <button class="nav-item" data-tab="channels" onclick="switchTab('channels')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -152,73 +145,41 @@
             <!-- TAB: Dashboard                 -->
             <!-- ═══════════════════════════════ -->
             <div class="tab-content active" id="tab-dashboard">
-                <div class="tab-header">
-                    <h2 class="tab-title">Dashboard</h2>
-                </div>
 
-                <div class="dashboard-content">
-                    <div class="status-card surface-card" id="heroCard" data-phase="stopped">
-                        <div class="hero-mascot" id="heroMascot" aria-hidden="true"></div>
-                        <div class="hero-body">
-                        <span class="status-chip"><span class="status-dot"></span><span id="statusChipText">Offline</span></span>
-                        <div id="statusOnline" style="display: none;">
-                            <div class="status-title" id="statusOnlineTitle">Bhai is awake</div>
-                            <div class="status-subtitle" id="statusOnlineSub">
-                                Ready when you are.
-                            </div>
+                <div class="dashboard-content dash" id="heroCard" data-phase="stopped">
+                    <header class="dash-head">
+                        <div class="dash-hello">
+                            <h1 class="dash-greeting" id="dashGreeting">Hello</h1>
+                            <p class="dash-sub">
+                                <span id="statusOnline" style="display: none;"><span id="statusOnlineSub">Bhai is on.</span></span>
+                                <span id="statusOffline"><span id="statusOfflineSub">Bhai is off right now.</span></span>
+                                <button class="link-like dash-stop" id="stopBtn" onclick="stopBot()" style="display: none;">Turn off</button>
+                            </p>
                         </div>
+                        <div class="hero-mascot dash-avatar" id="heroMascot" aria-hidden="true"></div>
+                    </header>
 
-                        <div id="statusOffline">
-                            <div class="status-title" id="statusOfflineTitle">Bhai is napping</div>
-                            <div class="status-subtitle" id="statusOfflineSub">
-                                Start Bhai to use chat, channels and automations.
-                            </div>
-                        </div>
-
-                        <div class="panel-controls">
-                            <button class="btn btn-primary" id="chatBtn" onclick="atlas.showOverlay()"
-                                style="display: none;">
-                                Open Chat <kbd class="chat-kbd" id="chatShortcut"></kbd>
-                            </button>
-                            <button class="btn btn-success" id="startBtn" onclick="startBot()">
-                                Start Bhai
-                            </button>
-                            <button class="btn btn-secondary" id="stopBtn" onclick="stopBot()" disabled>
-                                Stop
-                            </button>
-                        </div>
-                        </div>
+                    <form class="dash-ask" id="dashAsk" style="display: none;" onsubmit="event.preventDefault(); askFromDashboard();">
+                        <input id="dashAskInput" type="text" placeholder="Ask Bhai to do something…" autocomplete="off" aria-label="Ask Bhai">
+                        <kbd class="chat-kbd" id="chatShortcut" title="Opens chat from anywhere"></kbd>
+                    </form>
+                    <div class="dash-start" id="dashStart">
+                        <button class="btn btn-primary" id="startBtn" onclick="startBot()">Start Bhai</button>
                     </div>
 
-                    <!-- Connection Status -->
-                    <div class="connection-status" id="connectionStatus" style="display: none;" onclick="switchTab('channels')" title="Channels"></div>
+                    <section class="recent-chats" id="needsYou" hidden>
+                        <div class="recent-head"><span>Needs you</span></div>
+                        <div id="needsList"></div>
+                    </section>
 
-                    <!-- Live Stats -->
-                    <div class="stats-grid" id="statsGrid" style="display: none;">
-                        <div class="stat-card surface-card">
-                            <div class="stat-value" id="statMessages">0</div>
-                            <div class="stat-label">Messages today</div>
-                        </div>
-                        <div class="stat-card surface-card stat-link" onclick="switchTab('memory')" title="Open Memory">
-                            <div class="stat-value" id="statMemories">0</div>
-                            <div class="stat-label">Memories</div>
-                        </div>
-                        <div class="stat-card surface-card credit-stat-card stat-link" id="creditStatCard" style="display: none;" onclick="if (!event.target.closest('button')) switchTab('account')" title="Open Account">
-                            <div class="stat-value" id="statCredits">—</div>
-                            <div class="stat-label">AI Credits</div>
-                            <button class="credit-refresh-btn" onclick="refreshCredits()" title="Refresh credits">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="23 4 23 10 17 10"></polyline>
-                                    <polyline points="1 20 1 14 7 14"></polyline>
-                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-
-                    <section class="recent-chats coming-up" id="comingUp" hidden>
+                    <section class="recent-chats" id="comingUp" hidden>
                         <div class="recent-head"><span>Coming up</span></div>
                         <div id="comingList"></div>
+                    </section>
+
+                    <section class="recent-chats" id="didToday" hidden>
+                        <div class="recent-head"><span>Bhai did today</span></div>
+                        <div id="didList"></div>
                     </section>
 
                     <section class="recent-chats" id="recentChats" hidden>
@@ -234,12 +195,35 @@
             <!-- ═══════════════════════════════ -->
             <div class="tab-content" id="tab-chats">
                 <div class="tab-header">
-                    <h2 class="tab-title">Chats</h2>
-                    <button class="btn btn-secondary btn-sm" id="chatsClearBtn" onclick="clearChatHistory()" hidden>Clear history</button>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <button class="btn btn-secondary btn-sm" onclick="switchTab('dashboard')" title="Back to Dashboard">← Dashboard</button>
+                        <h2 class="tab-title">Chats</h2>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-secondary btn-sm" id="chatsClearBtn" onclick="clearChatHistory()" hidden>Clear history</button>
+                        <button class="btn btn-secondary btn-sm" onclick="startNewChat()">New chat</button>
+                    </div>
                 </div>
                 <div class="chats-layout">
-                    <div class="chats-list surface-card" id="chatsList" aria-label="Past chats"></div>
-                    <div class="chats-thread surface-card" id="chatsThread"></div>
+                    <div class="chats-list" id="chatsList" aria-label="Past chats"></div>
+                    <div class="chats-pane surface-card">
+                        <div class="chats-thread" id="chatsThread" aria-live="polite"></div>
+                        <form class="chats-composer" id="chatsComposer" onsubmit="event.preventDefault(); sendFromComposer();">
+                            <div class="chats-attachment" id="chatsAttachment" hidden>
+                                <img id="chatsAttachThumb" alt="" hidden>
+                                <span id="chatsAttachName"></span>
+                                <button type="button" onclick="clearAttachment()" aria-label="Remove attachment" title="Remove">&times;</button>
+                            </div>
+                            <div class="chats-compose-row">
+                                <button type="button" class="chats-add" onclick="document.getElementById('chatsFile').click()" title="Add a file or image" aria-label="Add a file or image">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                                </button>
+                                <input type="file" id="chatsFile" hidden onchange="pickAttachment(this.files[0]); this.value = '';">
+                                <input id="chatsInput" type="text" placeholder="Message Bhai…" autocomplete="off" aria-label="Message Bhai">
+                                <button type="submit" class="btn btn-primary btn-sm" id="chatsSendBtn">Send</button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             </div>
 
@@ -1453,7 +1437,7 @@
         function switchTab(tabId) {
             const tabEl = document.getElementById(`tab-${tabId}`);
             // Pages without a sidebar item light up the item they're opened from.
-            const SUBPAGE_OF = { memory: 'settings' };
+            const SUBPAGE_OF = { memory: 'settings', chats: 'dashboard' };
             const navEl = document.querySelector(`.nav-item[data-tab="${SUBPAGE_OF[tabId] || tabId}"]`);
             if (!tabEl || !navEl) return; // tab removed or unknown — ignore silently
 
@@ -1491,6 +1475,18 @@
             return `${d.toLocaleDateString([], { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' })}, ${time}`;
         }
         // Dashboard: the last three chats, one click to open.
+        // "Just now", "12 min ago", "6:51 AM", "Yesterday", "Oct 28".
+        function spokenTime(ts) {
+            const mins = Math.round((Date.now() - ts) / 60000);
+            const d = new Date(ts);
+            const yesterday = new Date(Date.now() - 86400000).toDateString();
+            if (mins < 1) return 'Just now';
+            if (mins < 60) return `${mins} min ago`;
+            if (d.toDateString() === new Date().toDateString()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            if (d.toDateString() === yesterday) return 'Yesterday';
+            return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        }
+
         async function loadRecentChats() {
             try {
                 const chats = (await atlas.listChats()) || [];
@@ -1506,8 +1502,7 @@
                     title.textContent = c.title || 'Untitled chat';
                     const when = document.createElement('span');
                     when.className = 'recent-when';
-                    const mins = Math.round((Date.now() - c.end) / 60000);
-                    when.textContent = mins < 1 ? 'now' : mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : new Date(c.end).toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    when.textContent = spokenTime(c.end);
                     row.append(title, when);
                     row.addEventListener('click', () => { switchTab('chats'); openChat(c.id); });
                     list.append(row);
@@ -1550,7 +1545,7 @@
                         const mins = Math.round((t.fireAt - Date.now()) / 60000);
                         const d = new Date(t.fireAt);
                         when.textContent = mins < 1 ? (lastBotStatus === 'running' ? 'now' : 'when Bhai starts')
-                            : mins < 60 ? `in ${mins}m`
+                            : mins < 60 ? `in ${mins} min`
                             : d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
                             : d.toLocaleDateString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
                     }
@@ -1560,16 +1555,18 @@
             } catch { /* non-fatal */ }
         }
 
-        async function loadChats() {
+        async function loadChats(keepThread) {
             const list = document.getElementById('chatsList');
             const thread = document.getElementById('chatsThread');
             const chats = await atlas.listChats().catch(() => []);
             document.getElementById('chatsClearBtn').hidden = !chats.length;
             list.replaceChildren();
             if (!chats.length) {
-                chatsOpenId = null;
                 list.innerHTML = '<div class="chats-empty">No chats yet</div>';
-                thread.innerHTML = '<div class="chats-empty">Conversations from the chat bar show up here.<br>Bhai still remembers them after you close the bar.</div>';
+                if (!chatsFresh && !liveChat) {
+                    chatsOpenId = null;
+                    thread.innerHTML = '<div class="chats-empty">Ask Bhai anything below.<br>Chats from the chat bar show up here too.</div>';
+                }
                 return;
             }
             for (const c of chats) {
@@ -1586,32 +1583,168 @@
                 item.onclick = () => openChat(c.id);
                 list.appendChild(item);
             }
-            openChat(chats.some((c) => c.id === chatsOpenId) ? chatsOpenId : chats[0].id);
+            if (keepThread || chatsFresh || (liveChat && liveChat.id === chatsOpenId)) markOpenChat(chatsOpenId);
+            else openChat(chats.some((c) => c.id === chatsOpenId) ? chatsOpenId : chats[0].id);
         }
-        async function openChat(id) {
-            chatsOpenId = id;
+        function markOpenChat(id) {
             document.querySelectorAll('.chats-item').forEach((b) => {
                 const on = b.dataset.id === id;
                 b.classList.toggle('active', on);
                 if (on) b.setAttribute('aria-current', 'true');
                 else b.removeAttribute('aria-current');
             });
+        }
+        async function openChat(id) {
+            chatsOpenId = id;
+            chatsFresh = false;
+            markOpenChat(id);
             const msgs = await atlas.getChat(id).catch(() => []);
             if (chatsOpenId !== id) return; // another chat was picked meanwhile
             const thread = document.getElementById('chatsThread');
-            thread.replaceChildren(...msgs.map((m) => {
-                const row = document.createElement('div');
-                row.className = `chats-msg ${m.role === 'user' ? 'from-user' : 'from-bhai'}`;
-                const bubble = document.createElement('div');
-                bubble.className = 'chats-bubble';
-                bubble.textContent = m.text;
-                const when = document.createElement('div');
-                when.className = 'chats-when';
-                when.textContent = new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                row.append(bubble, when);
-                return row;
-            }));
+            thread.replaceChildren(...msgs.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => chatBubble(m.role, m.text, m.ts)));
+            if (liveChat && liveChat.id === id) thread.append(liveChat.working);
             thread.scrollTop = thread.scrollHeight;
+        }
+
+        // A message row. Bhai's replies get **bold** and `code`; everything else is plain text.
+        function chatBubble(role, text, ts, isError, file) {
+            const row = document.createElement('div');
+            row.className = `chats-msg ${role === 'user' ? 'from-user' : 'from-bhai'}${isError ? ' is-error' : ''}`;
+            if (file) {
+                const att = document.createElement(file.url ? 'img' : 'div');
+                att.className = 'chats-sent-file';
+                if (file.url) { att.src = file.url; att.alt = file.name; } else att.textContent = file.name;
+                row.append(att);
+            }
+            const bubble = document.createElement('div');
+            bubble.className = 'chats-bubble';
+            if (!text) bubble.hidden = true;
+            if (role === 'user') bubble.textContent = text;
+            else {
+                const esc = String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+                bubble.innerHTML = esc.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>').replace(/`([^`\n]+)`/g, '<code>$1</code>');
+            }
+            const when = document.createElement('div');
+            when.className = 'chats-when';
+            when.textContent = new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            row.append(bubble, when);
+            return row;
+        }
+
+        // ── Attachment: one file or image per message (+ button, paste, or drop) ──
+        let chatAttachment = null; // { name, base64, mimeType, url }
+        const MAX_ATTACH_BYTES = 20 * 1024 * 1024;
+        function pickAttachment(file) {
+            if (!file) return;
+            if (file.size > MAX_ATTACH_BYTES) { showToast('That file is over 20 MB. Try a smaller one.', true); return; }
+            const reader = new FileReader();
+            reader.onload = () => {
+                clearAttachment();
+                const isImage = (file.type || '').startsWith('image/');
+                chatAttachment = { name: file.name || (isImage ? 'Pasted image.png' : 'File'), base64: String(reader.result).split(',')[1] || '', mimeType: file.type || 'application/octet-stream', url: isImage ? URL.createObjectURL(file) : '' };
+                const thumb = document.getElementById('chatsAttachThumb');
+                thumb.hidden = !isImage;
+                if (isImage) thumb.src = chatAttachment.url;
+                document.getElementById('chatsAttachName').textContent = chatAttachment.name;
+                document.getElementById('chatsAttachment').hidden = false;
+                document.getElementById('chatsInput').focus();
+            };
+            reader.readAsDataURL(file);
+        }
+        function clearAttachment() {
+            chatAttachment = null;
+            document.getElementById('chatsAttachment').hidden = true;
+        }
+        {
+            const input = document.getElementById('chatsInput');
+            input.addEventListener('paste', (e) => {
+                const f = [...(e.clipboardData?.files || [])][0];
+                if (f) { e.preventDefault(); pickAttachment(f); }
+            });
+            const pane = document.querySelector('.chats-pane');
+            pane.addEventListener('dragover', (e) => { e.preventDefault(); pane.classList.add('dropping'); });
+            pane.addEventListener('dragleave', (e) => { if (!pane.contains(e.relatedTarget)) pane.classList.remove('dropping'); });
+            pane.addEventListener('drop', (e) => {
+                e.preventDefault();
+                pane.classList.remove('dropping');
+                pickAttachment(e.dataTransfer?.files?.[0]);
+            });
+        }
+
+        // ── In-app chat: talk to Bhai right here (main relays the chat bar's socket) ──
+        let liveChat = null;   // { id, working } while a reply is on its way
+        let chatsFresh = false; // a new chat that isn't in the history yet
+        const newChatId = () => `app-${Math.random().toString(36).slice(2, 10)}`;
+
+        function startNewChat() {
+            if (liveChat) return;
+            chatsOpenId = newChatId();
+            chatsFresh = true;
+            markOpenChat(null);
+            document.getElementById('chatsThread').innerHTML = '<div class="chats-empty">Ask Bhai anything below.</div>';
+            document.getElementById('chatsInput').focus();
+        }
+
+        function setComposerBusy(busy) {
+            const btn = document.getElementById('chatsSendBtn');
+            btn.textContent = busy ? 'Stop' : 'Send';
+            btn.type = busy ? 'button' : 'submit';
+            btn.onclick = busy ? () => atlas.chatStop() : null;
+        }
+
+        async function sendChat(text, chatId, file) {
+            text = String(text || '').trim();
+            if ((!text && !file) || liveChat) return false;
+            const id = chatId || newChatId();
+            const thread = document.getElementById('chatsThread');
+            if (chatsOpenId !== id || chatsFresh) {
+                if (chatsOpenId !== id) markOpenChat(null);
+                thread.replaceChildren();
+            }
+            chatsOpenId = id;
+            chatsFresh = false;
+            thread.querySelector('.chats-empty')?.remove();
+            thread.append(chatBubble('user', text, Date.now(), false, file));
+            const working = document.createElement('div');
+            working.className = 'chats-working';
+            working.textContent = 'Thinking…';
+            thread.append(working);
+            thread.scrollTop = thread.scrollHeight;
+            liveChat = { id, working };
+            setComposerBusy(true);
+            const r = await atlas.chatSend(id, text, file ? { name: file.name, base64: file.base64, mimeType: file.mimeType } : undefined).catch((e) => ({ ok: false, error: e.message }));
+            if (!r || !r.ok) finishLiveChat(r?.error ? `Couldn't send: ${r.error}.` : "Couldn't reach Bhai.", true);
+            return true;
+        }
+
+        function finishLiveChat(text, isError) {
+            if (!liveChat) return;
+            const { id, working } = liveChat;
+            liveChat = null;
+            working.remove();
+            setComposerBusy(false);
+            const thread = document.getElementById('chatsThread');
+            if (chatsOpenId === id && text) {
+                thread.append(chatBubble('assistant', text, Date.now(), isError));
+                thread.scrollTop = thread.scrollHeight;
+            }
+            if (document.getElementById('tab-chats').classList.contains('active')) loadChats(true); // list only: the thread is already live
+            loadRecentChats();
+        }
+
+        atlas.onChatEvent(({ chat, msg }) => {
+            if (!liveChat || chat !== liveChat.id || !msg) return;
+            if (msg.type === 'progress' && msg.text) liveChat.working.textContent = String(msg.text).replace(/^[^\p{L}\p{N}]+/u, '');
+            else if (msg.type === 'response') finishLiveChat(msg.text || (msg.stopped ? 'Stopped.' : ''));
+            else if (msg.type === 'error') finishLiveChat(msg.text || 'Something went wrong.', true);
+        });
+
+        function sendFromComposer() {
+            const input = document.getElementById('chatsInput');
+            const file = chatAttachment;
+            sendChat(input.value, chatsOpenId || undefined, file).then((sent) => {
+                if (sent) { input.value = ''; if (file) { chatAttachment = null; document.getElementById('chatsAttachment').hidden = true; } }
+            });
         }
         async function clearChatHistory() {
             if (!confirm('Delete all saved chats? Bhai keeps what it has learned in its memory.')) return;
@@ -1634,7 +1767,7 @@
         }
         moveNavPill();
 
-        // ── Mascot: the dashboard hero mirrors what Bhai is doing ──
+        // ── Mascot: the dashboard avatar mirrors what Bhai is doing ──
         const heroCard = document.getElementById('heroCard');
         const heroMascot = document.getElementById('heroMascot');
         let lastBotStatus = null, botStarting = false, userStopping = false, chatHover = false, moodHold = 0;
@@ -1652,65 +1785,20 @@
             if (heroMascot) heroMascot.dataset.mood = mood || restingMood();
             const phase = botStarting ? 'starting' : lastBotStatus === 'running' ? 'running' : 'stopped';
             heroCard.dataset.phase = phase;
-            document.getElementById('statusChipText').textContent = { starting: 'Starting', running: 'Online', stopped: 'Offline' }[phase];
-            const lines = phase === 'running' ? ALIVE_LINES.online[dayPart()] : phase === 'starting' ? ALIVE_LINES.starting : ALIVE_LINES.offline;
-            document.getElementById(phase === 'running' ? 'statusOnlineTitle' : 'statusOfflineTitle').textContent = pickLine(lines);
+            document.getElementById('dashGreeting').textContent = greeting();
             if (holdMs) moodHold = setTimeout(() => setMood(), holdMs);
         }
 
-        // The status card speaks in Bhai's voice and follows the time of day.
-        // A line holds for the part of the day (no flicker on every refresh).
-        const ALIVE_LINES = {
-            "online": {
-                "morning": [
-                    "Morning! Bhai's up",
-                    "Team chai, reporting in",
-                    "Fresh day, shades on",
-                    "Chalo, new day"
-                ],
-                "afternoon": [
-                    "Afternoon. Bhai's locked in",
-                    "Peak hours. All systems chill",
-                    "Midday, shades still on",
-                    "Afternoon. Tabs under control?"
-                ],
-                "evening": [
-                    "Evening. Bhai's still around",
-                    "Golden hour, shades justified",
-                    "Winding down? Bhai's around",
-                    "Evening. Let's close it out"
-                ],
-                "night": [
-                    "Late one? Bhai's here",
-                    "Night mode. Still sharp",
-                    "Quiet hours. Bhai's around",
-                    "Night owl hours"
-                ],
-                "late": [
-                    "Still up? So is Bhai",
-                    "Wee hours. Bhai's here",
-                    "Quick one, then sleep?",
-                    "Lights low, shades on"
-                ]
-            },
-            "offline": [
-                "Bhai is napping",
-                "Shades folded. Napping",
-                "Bhai's recharging"
-            ],
-            "starting": [
-                "Waking Bhai up…",
-                "Putting the shades on…"
-            ]
-        };
         function dayPart(h = new Date().getHours()) {
             return h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : h >= 17 && h < 22 ? 'evening' : h >= 2 && h < 5 ? 'late' : 'night';
         }
-        function pickLine(lines) {
-            const now = new Date();
-            const seed = now.getFullYear() * 400 + now.getMonth() * 31 + now.getDate() + dayPart().length;
-            return lines[seed % lines.length];
+        let ownerFirstName = '';
+        function greeting() {
+            const part = dayPart();
+            const hello = part === 'morning' ? 'Good morning' : part === 'afternoon' ? 'Good afternoon' : part === 'evening' ? 'Good evening' : 'Hi';
+            return ownerFirstName ? `${hello}, ${ownerFirstName}` : hello;
         }
+        atlas.getAccountInfo().then((i) => { ownerFirstName = String(i?.name || '').trim().split(/\s+/)[0]; setMood(); }).catch(() => {});
         setInterval(() => { if (!moodHold) setMood(); }, 10 * 60 * 1000); // roll over to the next part of the day
 
         function startFailed() {
@@ -1724,28 +1812,10 @@
             if (sideMascot) window.BhaiMascot.mount(sideMascot, 'idle', { bust: true });
         }
         {
-            const chatBtn = document.getElementById('chatBtn');
+            const ask = document.getElementById('dashAskInput');
             const hover = (on) => () => { chatHover = on; if (!moodHold) setMood(); };
-            chatBtn.addEventListener('mouseenter', hover(true));
-            chatBtn.addEventListener('focus', hover(true));
-            chatBtn.addEventListener('mouseleave', hover(false));
-            chatBtn.addEventListener('blur', hover(false));
-        }
-
-        // Stats count up to their new value (instant with reduced motion).
-        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-        function countTo(el, value) {
-            const to = Number(value);
-            const from = Number(el.textContent) || 0;
-            cancelAnimationFrame(el._countRaf);
-            if (!Number.isFinite(to) || to === from || reduceMotion.matches) { el.textContent = value || '0'; return; }
-            const t0 = performance.now();
-            const step = (now) => {
-                const p = Math.min(1, (now - t0) / 700);
-                el.textContent = String(Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3))));
-                if (p < 1) el._countRaf = requestAnimationFrame(step);
-            };
-            el._countRaf = requestAnimationFrame(step);
+            ask.addEventListener('focus', hover(true));
+            ask.addEventListener('blur', hover(false));
         }
 
         // Deep-link via #hash (e.g. panel.html#account from Ready Hub tiles).
@@ -1784,21 +1854,19 @@
             const sub = document.getElementById('statusOfflineSub');
             sub.textContent = status === 'crashed' ? 'Bhai crashed. Restarting automatically…'
                 : status === 'failed' ? 'Bhai kept crashing, so it stopped restarting. Check Logs, then press Start to try again.'
-                : 'Start Bhai to use chat, channels and automations.';
+                : 'Bhai is off right now.';
             sub.style.color = status === 'crashed' || status === 'failed' ? 'var(--accent-danger)' : '';
             if (status === 'failed') showToast('Bhai crashed repeatedly and stopped. Press Start to try again.', true);
             if (!isRunning && status !== 'crashed' && status !== 'failed') showSignInHint();
 
-            document.getElementById('statusOnline').style.display = isRunning ? 'block' : 'none';
-            document.getElementById('statusOffline').style.display = isRunning ? 'none' : 'block';
+            document.getElementById('statusOnline').style.display = isRunning ? '' : 'none';
+            document.getElementById('statusOffline').style.display = isRunning ? 'none' : '';
             document.getElementById('startBtn').disabled = isRunning;
             document.getElementById('stopBtn').disabled = !isRunning;
-            document.getElementById('chatBtn').style.display = isRunning ? '' : 'none';
-            document.getElementById('startBtn').style.display = isRunning ? 'none' : '';
+            document.getElementById('dashAsk').style.display = isRunning ? '' : 'none';
+            document.getElementById('dashStart').style.display = isRunning ? 'none' : '';
             document.getElementById('stopBtn').style.display = isRunning ? '' : 'none';
 
-            // Live stats
-            document.getElementById('statsGrid').style.display = isRunning ? '' : 'none';
             if (isRunning && !statsInterval) {
                 refreshStats();
                 statsInterval = setInterval(refreshStats, 5000);
@@ -1826,20 +1894,52 @@
 
         async function refreshStats() {
             updateConnectionStatus();
+            loadRecentChats();
+            loadUpcoming();
+            loadActivity();
+        }
+
+        async function askFromDashboard() {
+            const input = document.getElementById('dashAskInput');
+            const text = input.value.trim();
+            if (!text) return;
+            input.value = '';
+            switchTab('chats');
+            sendChat(text);
+        }
+
+        async function loadActivity() {
             try {
-                const stats = await atlas.getStats();
-                if (!stats) return;
-                // Uptime
-                const mins = Math.floor(stats.uptimeMs / 60000);
-                const hrs = Math.floor(mins / 60);
-                const rem = mins % 60;
-                const chip = document.getElementById('statusChipText');
-                if (chip.textContent.startsWith('Online')) chip.textContent = `Online · ${hrs > 0 ? `${hrs}h ${rem}m` : `${rem}m`}`;
-                countTo(document.getElementById('statMessages'), stats.messagesHandled);
-                countTo(document.getElementById('statMemories'), stats.memoryCount);
-                loadRecentChats();
-                loadUpcoming();
-            } catch { /* stats not available yet */ }
+                const items = (await atlas.getActivity()) || [];
+                document.getElementById('didToday').hidden = items.length === 0;
+                document.getElementById('didList').replaceChildren(...items.map(it => dashRow(it.text, new Date(it.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))));
+            } catch { /* non-fatal */ }
+        }
+
+        // Needs you: only what the owner has to act on (a channel down, credits low).
+        const needs = { channels: [], credits: null };
+        function renderNeeds() {
+            const rows = [...needs.channels, needs.credits].filter(Boolean);
+            document.getElementById('needsYou').hidden = rows.length === 0;
+            document.getElementById('needsList').replaceChildren(...rows.map(n => {
+                const row = dashRow(n.text, n.action);
+                row.classList.remove('static');
+                row.addEventListener('click', () => switchTab(n.tab));
+                return row;
+            }));
+        }
+
+        function dashRow(text, when) {
+            const row = document.createElement('div');
+            row.className = 'recent-row static';
+            const title = document.createElement('span');
+            title.className = 'recent-title';
+            title.textContent = text;
+            const w = document.createElement('span');
+            w.className = 'recent-when';
+            w.textContent = when;
+            row.append(title, w);
+            return row;
         }
 
         // Bot log handler - only show errors as toast, logs are saved to file by main process
@@ -1906,6 +2006,13 @@
                 updateUI('running');
                 // Update credit display
                 refreshCreditDisplay();
+            } else if (result.status === 'signed_out' || result.status === 'sign_in_required') {
+                // Bhai starts by itself once the sign-in goes through.
+                await atlas.openAuthWindow().catch(() => {});
+                document.getElementById('startBtn').disabled = false;
+                botStarting = false;
+                setMood();
+                showSignInHint();
             } else {
                 document.getElementById('startBtn').disabled = false;
                 startFailed();
@@ -3207,48 +3314,18 @@
             loadAccountInfo();
         }
 
-        let lastKnownCredits = null;
         let creditRefreshInterval = null;
 
         async function refreshCreditDisplay() {
             try {
                 const info = await atlas.getAccountInfo();
-                if (info && info.signedIn) {
-                    const card = document.getElementById('creditStatCard');
-                    card.style.display = '';
-                    const credits = info.ai_credits ?? 0;
-                    const creditEl = document.getElementById('statCredits');
-
-                    // Animate if credits changed
-                    if (lastKnownCredits !== null && credits !== lastKnownCredits) {
-                        creditEl.classList.add('credit-changed');
-                        setTimeout(() => creditEl.classList.remove('credit-changed'), 500);
-                    }
-
-                    // Format with decimal if fractional
-                    creditEl.textContent = Number.isInteger(credits) ? credits : credits.toFixed(1);
-                    lastKnownCredits = credits;
-
-                    // Show warning if low
-                    if (credits < 10 && credits > 0) {
-                        card.classList.add('low-credits');
-                    } else if (credits <= 0) {
-                        card.classList.add('no-credits');
-                    } else {
-                        card.classList.remove('low-credits', 'no-credits');
-                    }
-                }
+                if (!info || !info.signedIn) return;
+                const credits = info.ai_credits;
+                needs.credits = typeof credits !== 'number' || credits >= 10 ? null
+                    : credits <= 0 ? { text: 'Out of AI credits', action: 'Account', tab: 'account' }
+                    : { text: `AI credits are running low: ${Number.isInteger(credits) ? credits : credits.toFixed(1)} left`, action: 'Account', tab: 'account' };
+                renderNeeds();
             } catch { /* */ }
-        }
-
-        async function refreshCredits() {
-            const btn = document.querySelector('.credit-refresh-btn');
-            if (btn) {
-                btn.classList.add('spinning');
-                setTimeout(() => btn.classList.remove('spinning'), 1000);
-            }
-            await refreshCreditDisplay();
-            showToast('Credits refreshed');
         }
 
         function startCreditAutoRefresh() {
@@ -3889,38 +3966,30 @@
         async function updateConnectionStatus() {
             try {
                 const { status } = await atlas.getBotStatus();
-                const container = document.getElementById('connectionStatus');
 
                 if (status !== 'running') {
-                    container.style.display = 'none';
+                    needs.channels = [];
+                    renderNeeds();
                     return;
                 }
 
                 const { label } = await atlas.getOverlayHotkey();
                 document.getElementById('chatShortcut').textContent = label;
 
-                renderDashChannels(await atlas.getChannelStatuses(), label);
+                renderDashChannels(await atlas.getChannelStatuses());
             } catch { /* */ }
         }
 
         // One chip per channel the bot reported on (set up), lit once it's connected.
         const DASH_CHANNELS = { telegram: 'Telegram', whatsapp: 'WhatsApp', discord: 'Discord', slack: 'Slack', matrix: 'Matrix', email: 'Email' };
-        function renderDashChannels(statuses, label) {
-            const box = document.getElementById('connectionStatus');
+        function renderDashChannels(statuses) {
             const shown = Object.keys(DASH_CHANNELS).filter(k => ['connected', 'connecting', 'disconnected'].includes(statuses?.[k]));
-            box.replaceChildren(...shown.map(k => {
-                const chip = document.createElement('div');
-                chip.className = 'connection-item' + (statuses[k] === 'connected' ? ' connected' : '');
-                chip.innerHTML = '<span class="connection-dot"></span><span class="connection-label"></span>';
-                chip.lastChild.textContent = DASH_CHANNELS[k];
-                return chip;
-            }));
-            box.style.display = shown.length ? 'flex' : 'none';
-            label = label || document.getElementById('chatShortcut').textContent;
+            needs.channels = shown.filter(k => statuses[k] === 'disconnected')
+                .map(k => ({ text: `${DASH_CHANNELS[k]} is disconnected`, action: 'Fix', tab: 'channels' }));
+            renderNeeds();
             const live = shown.filter(k => statuses[k] === 'connected').map(k => k === 'email' ? 'email' : DASH_CHANNELS[k]);
             const list = live.length > 1 ? `${live.slice(0, -1).join(', ')} and ${live.at(-1)}` : live[0];
-            document.getElementById('statusOnlineSub').textContent =
-                (label ? `Press ${label} anywhere to chat` : 'Open Chat to talk to Bhai') + (list ? `, or message it on ${list}.` : '.');
+            document.getElementById('statusOnlineSub').textContent = list ? `Bhai is on, and answering on ${list}.` : 'Bhai is on.';
         }
 
         // ── Initial Load ──────────────────────────────
@@ -3933,6 +4002,7 @@
             } catch { /* */ }
             loadRecentChats(); // local history: shown even while Bhai is stopped
             loadUpcoming();
+            loadActivity();
 
             try {
                 const info = await atlas.getAppInfo();
