@@ -1480,9 +1480,9 @@
             clearInterval(researchPoll);
             if (tabId === 'research') { loadResearch(); researchPoll = setInterval(loadResearch, 5000); }
             if (tabId === 'memory') {
-                if (window.MemoryStudio && typeof window.MemoryStudio.mount === 'function') {
-                    window.MemoryStudio.mount();
-                }
+                loadStudio().then(() => {
+                    if (tabEl.classList.contains('active')) window.MemoryStudio?.mount();
+                }).catch(() => { /* retried on the next visit */ });
             } else if (window.MemoryStudio && typeof window.MemoryStudio.pause === 'function') {
                 window.MemoryStudio.pause();
             }
@@ -1491,6 +1491,23 @@
             if (tabId === 'vault') vaultLoad();
             if (tabId === 'channels') { loadChannelConfig(); loadPrimaryChannel(); }
             if (tabId === 'chats') loadChats();
+        }
+
+        // Memory Studio's D3 (~280 KB) and studio.js load on the first visit to the Memory tab.
+        let studioLoad = null;
+        function loadStudio() {
+            const add = (src) => new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = src;
+                s.onload = resolve;
+                s.onerror = reject;
+                document.body.appendChild(s);
+            });
+            if (!studioLoad) {
+                studioLoad = add('vendor/d3.v7.min.js').then(() => add('studio.js'));
+                studioLoad.catch(() => { studioLoad = null; });
+            }
+            return studioLoad;
         }
 
         // ── Chats: the chat bar's history (main reads <data>/chat-history.jsonl) ──
@@ -5065,9 +5082,7 @@
         }
     </script>
 
-    <!-- Memory Studio: vendored D3 v7 + renderer module -->
-    <script src="vendor/d3.v7.min.js"></script>
-    <script src="studio.js"></script>
+    <!-- Memory Studio (vendored D3 v7 + studio.js) loads on the first visit to the Memory tab: loadStudio() -->
 
 </body>
 
