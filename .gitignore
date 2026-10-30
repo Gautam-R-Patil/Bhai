@@ -464,3 +464,4 @@ ip-filings-india/
 
 # Launch-video renders and work files (/brag); kept on disk, not in git
 brag-output/
+!src/session-device-secret.test.ts

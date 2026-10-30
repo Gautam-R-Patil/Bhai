@@ -50,7 +50,7 @@ import { startHeartbeat, stopHeartbeat } from "./proactive/heartbeat.js";
 import { initCredibilityModel } from "./research/credibility-model.js";
 import { initSandbox } from "./security/sandbox.js";
 import { loggableRejection } from "./security/vm-isolate.js";
-import { initSession, revokeCurrentSession } from "./session.js";
+import { initSession, revokeCurrentSession, sessionNeedsSignIn } from "./session.js";
 import { seedProfileIfPresent } from "./setup/wizard-seed.js";
 import { initSkillMetadata } from "./skills/loader.js";
 import { closeSlack, initSlack, sendSlackProactiveMessage } from "./slack.js";
@@ -173,6 +173,11 @@ async function boot() {
     for (let attempt = 1; attempt <= 3; attempt++) {
         sessionOk = await initSession();
         if (sessionOk) break;
+        if (sessionNeedsSignIn()) {
+            // 78: not allowed to run — the app shows "sign in again" and won't auto-restart.
+            console.error("❌ This device needs to sign in again (Account in the Bhai app)");
+            process.exit(78);
+        }
         if (attempt < 3) {
             const delay = attempt * 3000;
             console.warn(`⚠️  Session creation failed (attempt ${attempt}/3) — retrying in ${delay / 1000}s...`);
