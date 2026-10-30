@@ -217,17 +217,24 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
 
     let userId = overrideUserId;
 
+    // Until someone signs in here again the server will only refuse; asking anyway
+    // just spends the sign-in rate limit.
+    if (_signInNeeded) return null;
+    const saved = loadAccountSession();
     if (!userId) {
-        const session = loadAccountSession();
-        if (!session || !session.userId) return null;
-        userId = session.userId;
+        if (!saved || !saved.userId) return null;
+        userId = saved.userId;
+    }
+    if (!saved?.deviceSecret) {
+        _signInNeeded = "sign_in_required";
+        return null;
     }
 
     const https = require("https");
     const bodyStr = JSON.stringify({
         otplessUserId: userId,
         deviceFingerprint: deviceFingerprint(),
-        deviceSecret: loadAccountSession()?.deviceSecret,
+        deviceSecret: saved.deviceSecret,
     });
 
     return new Promise((resolve) => {
@@ -1247,11 +1254,12 @@ async function startBot() {
     if (stopPromise) await stopPromise; // never run two bots at once
     if (isAlive(botProcess)) return { status: "already_running" };
 
-    // ── Account gate: check status before starting ──
+    // ── Account gate: a device without its sign-in secret only gets refused ──
     const session = loadAccountSession();
-    if (session && session.user) {
-        // Account is configured — we'll pass credentials to the bot
-        // but the actual pre-start check is done async (see startBotAsync below)
+    if (session?.userId && !session.deviceSecret) {
+        _signInNeeded = "sign_in_required";
+        console.log("[BOT] Not starting: sign in again (Account) — this device has no sign-in secret yet");
+        return { status: "sign_in_required" };
     }
 
     // Ensure data dir exists
@@ -2441,7 +2449,8 @@ function registerIPC() {
     // Open auth window from renderer. Short-circuits if a valid session already exists.
     ipcMain.handle("window:openAuth", () => {
         const existing = loadAccountSession();
-        if (existing && existing.userId && !isLegacyUserId(existing.userId)) {
+        // Signed in before device secrets (or told to sign in again): open sign-in.
+        if (existing && existing.userId && !isLegacyUserId(existing.userId) && existing.deviceSecret && !_signInNeeded) {
             if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
             return { success: true, alreadySignedIn: true };
         }
