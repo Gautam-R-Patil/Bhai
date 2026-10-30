@@ -204,6 +204,9 @@ JSON.stringify(output);`,
                 case "read": {
                     const noteName = input.note_name as string;
                     if (!noteName) return JSON.stringify({ error: "Provide 'note_name' to read." });
+                    // gpt-4.1-nano read "task.txt" from Notes (twice): it's a file.
+                    if (/\.(txt|md|csv|json|log|pdf|docx?|rtf)$/i.test(noteName.trim()))
+                        return JSON.stringify({ error: `${noteName} is a file, not a note: read it with read (its full path).` });
                     const result = await runJXA(
                         `
 const notes = Application("Notes");

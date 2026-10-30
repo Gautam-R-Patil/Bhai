@@ -20,7 +20,9 @@ const execFileAsync = promisify(execFile);
 
 // ── Helper: run AppleScript ───────────────────
 
-async function runAS(script: string, timeout = 10000): Promise<string> {
+// 25s: a cold Reminders launch took over 10s, and the kill read as "Command failed" with no
+// reason. (Not retried: the first attempt may have gone through, and a retry would duplicate.)
+async function runAS(script: string, timeout = 25000): Promise<string> {
     const tmpFile = join(tmpdir(), `atlas_app_${Date.now()}.scpt`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
@@ -29,6 +31,8 @@ async function runAS(script: string, timeout = 10000): Promise<string> {
         return stdout.trim();
     } catch (err) {
         await fs.unlink(tmpFile).catch(() => {});
+        if ((err as { killed?: boolean }).killed)
+            throw new Error(`The app didn't answer within ${timeout / 1000}s (it may still be starting). Check whether it happened before trying again.`);
         throw err;
     }
 }

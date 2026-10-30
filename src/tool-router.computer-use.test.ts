@@ -110,6 +110,8 @@ const CASES: [string, string][] = [
     ["how many pages does the report pdf have", "pdf_edit"],
     // Long-task eval: nano went digging in System Settings for this.
     ["find out which version of macos i'm running and write it into version.txt", "system_info"],
+    ["Find the capital of Australia on Wikipedia and create an Apple Note titled Capital with the answer", "apple_notes"],
+    ["Read task.txt in the BhaiEval folder on my Desktop and create a reminder for tomorrow at 10am with its text", "read"],
 ];
 
 describe("computer-use routing without the classifier", () => {
