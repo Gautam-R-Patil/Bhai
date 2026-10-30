@@ -58,6 +58,14 @@ export const write: ToolDefinition = {
         const filePath = path.resolve(rawPath);
         auditLog("file_write", { path: filePath });
 
+        // Text written into a binary format is a broken file: gpt-4.1-nano "made a PDF" by
+        // writing a sentence to photo.pdf.
+        const binary = /\.(pdf|png|jpe?g|heic|gif|tiff?|webp|bmp|zip|docx|xlsx|pptx|mp3|mp4|mov)$/i.exec(filePath);
+        if (binary)
+            return JSON.stringify({
+                error: `write makes text files; ${path.basename(filePath)} isn't one. For a PDF use pdf_edit or image_edit (format "pdf"), for images image_edit, for a zip compress_files.`,
+            });
+
         if (!isPathAllowed(filePath)) {
             const reason = getPathBlockedReason(filePath) ?? `Path "${filePath}" is not allowed.`;
             return JSON.stringify({ error: reason });

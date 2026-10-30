@@ -29,6 +29,9 @@ function isOutsideHome(filePath: string): boolean {
     return !resolved.startsWith(HOME_DIR + path.sep) && resolved !== HOME_DIR;
 }
 
+// The folder list_directory read last: a bare file name ("a.pdf") right after it means one there.
+let lastListedDir = "";
+
 // ── List Directory ────────────────────────────
 
 export const listDirectory: ToolDefinition = {
@@ -90,11 +93,17 @@ export const listDirectory: ToolDefinition = {
                     const k = e.isDirectory() ? "folders" : path.extname(e.name).slice(1).toLowerCase() || "no extension";
                     kinds[k] = (kinds[k] ?? 0) + 1;
                 }
+            // The largest, whatever the date: past the newest 100, "the largest file" was out of
+            // sight (nano named a smaller one).
+            let largest: { e: fs.Dirent; st?: fs.Stats } | undefined;
+            for (const x of all) if (x.e.isFile() && (x.st?.size ?? 0) > (largest?.st?.size ?? -1)) largest = x;
+            lastListedDir = dirPath;
             // by_kind first: given count 4 and by_kind {txt: 3}, nano still answered 4.
             return JSON.stringify({
                 success: true,
                 ...(Object.keys(kinds).length > 1 ? { by_kind: kinds } : {}),
                 count: all.length,
+                ...(largest && all.length > 1 ? { largest: { name: largest.e.name, size: largest.st?.size } } : {}),
                 ...(all.length > MAX_LIST ? { shown: MAX_LIST, note: `Newest ${MAX_LIST} shown.` } : {}),
                 items,
             });
@@ -169,10 +178,20 @@ export const fileManage: ToolDefinition = {
         const raw = input.paths ?? (input as { path?: unknown }).path;
         const given = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => String(p).trim());
         if (!given.length) return JSON.stringify({ success: false, error: "Provide 'paths'." });
-        // Relative to what? Bhai's own working directory is never meant.
-        const loose = given.find((p) => !path.isAbsolute(p));
-        if (loose) return JSON.stringify({ success: false, error: `Give the full path for "${loose}" (e.g. ~/Desktop/${loose}).` });
-        const paths = given.map((p) => path.resolve(p));
+        // A bare name ("a.pdf") is one in the folder just listed, or next to an absolute
+        // destination's folder; never Bhai's own working directory.
+        const dest0 = String(input.destination ?? "").trim();
+        const homes = [lastListedDir, path.isAbsolute(dest0) ? path.dirname(dest0) : ""].filter(Boolean);
+        const paths: string[] = [];
+        for (const p of given) {
+            if (path.isAbsolute(p)) {
+                paths.push(path.resolve(p));
+                continue;
+            }
+            const found = homes.map((h) => path.join(h, p)).find((c) => fs.existsSync(c));
+            if (!found) return JSON.stringify({ success: false, error: `Give the full path for "${p}" (e.g. ~/Desktop/${p}).` });
+            paths.push(found);
+        }
         auditLog("file_manage", { action, paths, destination: input.destination });
         // A relative destination is relative to the first item's folder: nano's new_folder
         // { paths: [~/Desktop/BhaiEval], destination: "PDFs" } made a PDFs folder in Bhai's checkout.

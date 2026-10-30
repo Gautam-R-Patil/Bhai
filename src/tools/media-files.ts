@@ -6,6 +6,7 @@
 
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { manageRefusal } from "./files.js";
@@ -22,12 +23,44 @@ function freePath(wanted: string): string {
     return p;
 }
 
-function checkIn(paths: string[]): string | undefined {
+/** The one file named like `p` in the usual folders (two levels down), if exactly one. */
+function sameNameNearby(p: string): string | undefined {
+    const name = path.basename(p);
+    const hits: string[] = [];
+    const walk = (d: string, left: number) => {
+        let ents: fs.Dirent[];
+        try {
+            ents = fs.readdirSync(d, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const e of ents) {
+            if (e.name.startsWith(".")) continue;
+            if (e.name === name && e.isFile()) hits.push(path.join(d, e.name));
+            else if (e.isDirectory() && left > 0) walk(path.join(d, e.name), left - 1);
+        }
+    };
+    for (const dir of ["Desktop", "Documents", "Downloads"]) walk(path.join(os.homedir(), dir), 2);
+    return hits.length === 1 ? hits[0] : undefined;
+}
+
+/** Checks the inputs; a path that isn't there but one file of that name is nearby means that
+ *  one (gpt-4.1-nano asked for ~/Desktop/photo.png; it was in ~/Desktop/BhaiEval). */
+function checkIn(paths: string[]): { paths: string[]; note?: string } | { error: string } {
+    const out: string[] = [];
+    let note: string | undefined;
     for (const p of paths) {
-        if (!fs.existsSync(p)) return `Not found: ${p}`;
-        const refused = manageRefusal(p, true);
-        if (refused) return refused;
+        let q = p;
+        if (!fs.existsSync(p)) {
+            const near = sameNameNearby(p);
+            if (!near) return { error: `Not found: ${p}` };
+            [q, note] = [near, `${p} doesn't exist; used ${near}.`];
+        }
+        const refused = manageRefusal(q, true);
+        if (refused) return { error: refused };
+        out.push(q);
     }
+    return { paths: out, note };
 }
 
 const fail = (error: string) => JSON.stringify({ success: false, error });
@@ -55,9 +88,10 @@ export const imageEdit: ToolDefinition = {
     },
     async handler(input) {
         const action = String(input.action ?? "");
-        const src = path.resolve(String(input.path ?? "").trim());
-        const bad = checkIn([src]);
-        if (bad) return fail(bad);
+        const checked = checkIn([path.resolve(String(input.path ?? "").trim())]);
+        if ("error" in checked) return fail(checked.error);
+        const src = checked.paths[0];
+        const found = checked.note ? { note_path: checked.note } : {};
 
         const info = async (p: string) => {
             if (process.platform === "darwin") {
@@ -71,7 +105,7 @@ export const imageEdit: ToolDefinition = {
         };
 
         try {
-            if (action === "info") return JSON.stringify({ success: true, path: src, ...(await info(src)) });
+            if (action === "info") return JSON.stringify({ success: true, path: src, ...found, ...(await info(src)) });
 
             const fmt = String(input.format ?? "").toLowerCase().replace(/^\./, "");
             if (action === "convert" && !IMAGE_FORMATS[fmt])
@@ -116,6 +150,7 @@ export const imageEdit: ToolDefinition = {
                 success: true,
                 action,
                 saved: out,
+                ...found,
                 ...(await info(out)),
                 ...(out !== wanted ? { note: `${wanted} already existed, so this is a new file.` } : {}),
             });
@@ -159,10 +194,11 @@ export const pdfEdit: ToolDefinition = {
     async handler(input) {
         const action = String(input.action ?? "");
         const raw = input.paths ?? (input as { path?: unknown }).path;
-        const paths = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => path.resolve(String(p).trim()));
-        if (!paths.length) return fail("Provide 'paths'.");
-        const bad = checkIn(paths);
-        if (bad) return fail(bad);
+        const asked = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => path.resolve(String(p).trim()));
+        if (!asked.length) return fail("Provide 'paths'.");
+        const checked = checkIn(asked);
+        if ("error" in checked) return fail(checked.error);
+        const paths = checked.paths;
         try {
             const { PDFDocument } = await import("pdf-lib");
             const load = async (p: string) => PDFDocument.load(fs.readFileSync(p), { ignoreEncryption: true });
