@@ -18,23 +18,24 @@ const execFileAsync = promisify(execFile);
  * macOS: a Focus the owner switched on is an assertion record in
  * ~/Library/DoNotDisturb/DB/Assertions.json (data[0].storeAssertionRecords); when it ends
  * only invalidation records remain. The old checks read a menu-bar key and a pre-Big Sur
- * flag that no longer exist, so Focus was never seen. Unreadable file → not in DND.
+ * flag that no longer exist, so Focus was never seen. null = can't tell: the folder needs
+ * Full Disk Access ("Operation not permitted" without it), or the file is missing.
  */
 export async function macFocusActive(
     file = `${process.env.HOME}/Library/DoNotDisturb/DB/Assertions.json`,
-): Promise<boolean> {
+): Promise<boolean | null> {
     try {
         const { readFile } = await import("node:fs/promises");
         const data = JSON.parse(await readFile(file, "utf8")) as { data?: Array<{ storeAssertionRecords?: unknown[] }> };
         const records = data?.data?.[0]?.storeAssertionRecords;
         return Array.isArray(records) && records.length > 0;
     } catch {
-        return false;
+        return null;
     }
 }
 
 export async function isDNDActive(): Promise<boolean> {
-    if (IS_MAC) return macFocusActive();
+    if (IS_MAC) return (await macFocusActive()) === true;
 
     if (IS_WIN) {
         // Windows Focus Assist detection is not reliably scriptable.

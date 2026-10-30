@@ -19,5 +19,5 @@ it("a switched-on Focus is an assertion record; ended ones leave only invalidati
     expect(await macFocusActive(on)).toBe(true);
     expect(await macFocusActive(off)).toBe(false);
     expect(await macFocusActive(file({ data: [{ storeAssertionRecords: [] }] }))).toBe(false);
-    expect(await macFocusActive("/nonexistent/Assertions.json")).toBe(false);
+    expect(await macFocusActive("/nonexistent/Assertions.json")).toBeNull(); // unreadable: can't tell (Bhai without Full Disk Access)
 });

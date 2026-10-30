@@ -904,33 +904,30 @@ export const setDoNotDisturb: ToolDefinition = {
                 });
             }
 
-            // macOS
-            try {
-                await runAppleScript(
-                    `
-tell application "System Events"
-end tell
-do shell script "defaults -currentHost write ~/Library/Preferences/ByHost/com.apple.notificationcenterui doNotDisturb -boolean ${enabled}"
-do shell script "defaults -currentHost write ~/Library/Preferences/ByHost/com.apple.notificationcenterui doNotDisturbDate -date \\"$(date -u +\\"%Y-%m-%d %H:%M:%S +0000\\")\\"" 
-do shell script "killall NotificationCenter 2>/dev/null || true"`,
-                    10000,
-                );
-                return JSON.stringify({
-                    success: true,
-                    do_not_disturb: enabled,
-                    note: enabled ? "🔕 Do Not Disturb is ON." : "🔔 Do Not Disturb is OFF.",
-                });
-            } catch {
-                try {
-                    const script = enabled
-                        ? `do shell script "shortcuts run 'Do Not Disturb' 2>/dev/null || true"`
-                        : `do shell script "shortcuts run 'Do Not Disturb Off' 2>/dev/null || true"`;
-                    await runAppleScript(script, 10000);
-                    return JSON.stringify({ success: true, do_not_disturb: enabled });
-                } catch (err2) {
-                    return JSON.stringify({ success: false, error: (err2 as Error).message });
-                }
+            // macOS has no supported way for an app to switch Focus. The old code wrote a
+            // pre-Big Sur flag (ignored), killed Notification Center and said "Do Not Disturb
+            // is ON" — nothing had changed. Now: the owner's own Shortcut if they have one,
+            // checked where Focus can be read; otherwise say so and switch it on screen.
+            const name = enabled ? "Do Not Disturb" : "Do Not Disturb Off";
+            const { stdout: list } = await execFileAsync("shortcuts", ["list"], { timeout: 10000 }).catch(() => ({
+                stdout: "",
+            }));
+            if (list.split("\n").some((l) => l.trim() === name)) {
+                await execFileAsync("shortcuts", ["run", name], { timeout: 15000 });
+                await new Promise((r) => setTimeout(r, 1000));
+                const { macFocusActive } = await import("../proactive/dnd.js");
+                const now = await macFocusActive();
+                if (now === null)
+                    return JSON.stringify({ success: true, do_not_disturb: enabled, note: `Ran your "${name}" Shortcut (Focus state can't be read to confirm).` });
+                return now === enabled
+                    ? JSON.stringify({ success: true, do_not_disturb: enabled })
+                    : JSON.stringify({ success: false, error: `Ran your "${name}" Shortcut, but Focus is still ${now ? "on" : "off"}.` });
             }
+            return JSON.stringify({
+                success: false,
+                error: "macOS doesn't let apps switch Focus by script.",
+                next_step: `Do it on screen: open Control Center in the menu bar, click Focus, then ${enabled ? "Do Not Disturb" : "the active Focus to turn it off"} — and check it took. (A Shortcut named "${name}" would let this tool do it directly.)`,
+            });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
         }
