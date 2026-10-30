@@ -14,7 +14,7 @@ All of these came from the owner in the brainstorm (mockups in `.superpowers/bra
 2. **Thinking one tap away.** Clicking the live line slides open a "behind the scenes" panel: a *Thinking* section (what Bhai is thinking now) and a *Steps* section (every step so far, finished ones ticked, the current one pulsing). Clicking again closes it. "Perfect", per the owner.
 3. **The answer types itself in** word by word under the live line, with a blinking caret, instead of landing whole.
 4. **Animation: Bhai's face, alive** (option C). Bhai's character visibly works (bobs, blinks, glances, a soft ripple) so you can tell from the corner of your eye that something is happening. Minimal, but good, "like Gemini".
-5. **All surfaces:** the desktop overlay, the Chrome extension side panel, and the web widget.
+5. **All surfaces:** the desktop overlay, the desktop app's in-app chat (Chats tab, added by the owner during the build), the Chrome extension side panel, and the web widget.
 
 ## 3. Goals, non-goals, anti-goals
 
@@ -134,6 +134,9 @@ Every `answer` and `thought` delta passes through one streaming filter **in the 
 - Streaming updates a *draft* message in place; the final `response` replaces it in the stored chat. Don't write `chrome.storage.local` per delta (today `addChat` writes the whole array each time); write once at the end. `renderChat` is append-only by count, so it needs an in-place update path.
 - **Fix Stop:** it sends `{type:"chat", text:"stop"}` today, which the bot treats as a new message (and, when idle, starts a paid turn whose message is "stop"). Send `{type:"stop"}`.
 - Ignore background research `progress` while idle (today it flips the panel to "busy").
+
+**In-app chat (`desktop/panel.html` Chats tab)**
+- Same as the overlay: live line, toggle panel, typed answer, `Worked for…`, Stop keeps partial text. It already talks over an owner socket held by `desktop/main.js` that names its chat id and sends a real `stop`, so it gets owner notes and same-chat rejoin for free.
 
 **Web widget (`src/widget/widget.ts`)**
 - Live line + steps + typed answer in the agent bubble; no Thinking section (guest turns). The widget can't stop turns today; keep it that way unless trivial.

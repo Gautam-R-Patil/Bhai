@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** While Bhai works, the overlay, Chrome side panel and web widget show a live status line, a tap-to-open panel of steps and short progress notes, an animated Bhai, and the answer typing itself in.
+**Goal:** While Bhai works, the overlay, the desktop app's in-app chat, the Chrome side panel and the web widget show a live status line, a tap-to-open panel of steps and short progress notes, an animated Bhai, and the answer typing itself in.
 
 **Architecture:** The Convex LLM proxy forwards Claude's stream as padded, per-frame-encrypted NDJSON frames (opt-in per request); `llm.chat()` reads them, calls an `onDelta` callback, and still resolves the same `ChatCompletion` from the final `done` frame. `runAgent` turns deltas plus its own step progress into structured turn events, passed through a streaming safety filter, and `overlay-chat.ts` relays them per socket as new `turn_*` WS messages. The final `response` message is unchanged and authoritative, so old clients keep working.
 
@@ -284,6 +284,23 @@ The cache check (§6 item 2) runs at the end of Task 2.
 - [ ] **Step 2:** Run → FAIL. **Step 3:** Implement. **Step 4:** Run → PASS.
 - [ ] **Step 5:** Commit: `Widget: live status and typed answers`.
 
+### Task 13b: In-app chat (desktop app's Chats tab)
+
+Added 2026-10-30 at the owner's request ("there is also a chat option inside the app also now so apply the things to that also").
+
+**Files:**
+- Modify: `desktop/panel.html` (`sendChat` / `finishLiveChat` / `atlas.onChatEvent` ~1660-1712; Chats styles), `desktop/main.js` only if the relay (~2476-2509) needs a change (it already forwards every socket message with the chat id and sends `{type:"stop"}`)
+- Test: `desktop/tests/chat-turn-view.test.js` (desktop vitest, runs on the default Node, not Node 20)
+
+**Interfaces:**
+- Consumes: Task 10 messages via the existing `chat:event` IPC (`{ chat, msg }`), the same `turnView(state, msg)` contract as Tasks 11-12 (a third small copy inside panel.html; same accepted duplication as the side panel, see ledger ruling).
+- Produces: in the open thread, the `.chats-working` row becomes the live line (dot, text, `step N · Ns`, chevron) with the toggle panel (Notes + Steps; open state in `localStorage` key `bhai.turnPanelOpen`), and the assistant bubble streams the answer (re-rendered with the Chats renderer at most once per frame), reset clears it, the final `response` replaces it, then `Worked for {N}s · {K} steps ▾` above the answer. Stop keeps partial text + `Stopped.`. Bhai alive: the panel's mascot if Chats has one, otherwise the same small CSS face as the side panel. Reduce Motion respected.
+
+- [ ] **Step 1: Write the failing tests** for the panel's `turnView` (extract it like Task 11, or export it for the desktop tests): the four Task 11 cases.
+- [ ] **Step 2:** `cd desktop && npx vitest run tests/chat-turn-view.test.js` → FAIL. **Step 3:** Implement. **Step 4:** PASS, plus `$VT src/overlay/inline-scripts.test.ts` (it parses `desktop/*.html` scripts).
+- [ ] **Step 5:** Manual: open the app → Chats, ask the Goa question: live line, panel, typed answer, Stop, `Worked for` line; switch to another chat mid-turn and back.
+- [ ] **Step 6:** Commit: `In-app chat: live turns and typed answers`.
+
 ### Task 14: Measure, document, gate
 
 **Files:**
@@ -297,5 +314,5 @@ The cache check (§6 item 2) runs at the end of Task 2.
 - [ ] **Step 2:** Run → FAIL. **Step 3:** Implement. **Step 4:** Run → PASS.
 - [ ] **Step 5:** Document in `CLAUDE.md`: the streaming path (one paragraph under LLM Client), the `turn_*` protocol (Overlay), `ATLAS_NO_STREAMING` and `LLM_STREAMING_DISABLED` (kill switches).
 - [ ] **Step 6:** Gate: `npx tsc --noEmit -p .`; full suite `$VT`; Biome on changed files (no new diagnostics); `cd native && cargo fmt --check` untouched; `git log --format='%an %ce%n%B' xagi/main..HEAD` shows only Bhavana and no Claude trailer.
-- [ ] **Step 7:** Manual pass on all three surfaces (Task 11/12/13 manual steps) with timings ≤ 300 ms live line and ≤ 1 s first word after the model starts writing; credits per turn unchanged on a harness benchmark run.
+- [ ] **Step 7:** Manual pass on all four surfaces (Task 11/12/13/13b manual steps) with timings ≤ 300 ms live line and ≤ 1 s first word after the model starts writing; credits per turn unchanged on a harness benchmark run.
 - [ ] **Step 8:** Commit: `Streaming: timings, docs`. Merge `xagi/main`, rerun the gate, push as Bhavana, deploy Convex to prod only with the owner's go-ahead.
