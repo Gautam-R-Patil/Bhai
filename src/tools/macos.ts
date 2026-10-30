@@ -546,6 +546,16 @@ export const osType: ToolDefinition = {
             input = { ...input, combo: keyWord, text: undefined };
         }
 
+        // TextEdit opens on its Open panel: gpt-4.1-nano typed the document's text into the
+        // panel's search box and reported it written, past a note saying a dialog was in front.
+        if (input.text && (await frontIsOpenPanel())) {
+            return JSON.stringify({
+                success: false,
+                error: "Not typed: the front window is the app's Open file panel, so the text would go into its search box, not a document.",
+                next: "For a new document press os_type combo='command+n' (or click 'New Document'), then type. To open a file, use open_in_app.",
+            });
+        }
+
         // text plus key/combo in one call ("45*12" then return): type, then press.
         // Taking only the key dropped the text while reporting success.
         let typedFirst = 0;
@@ -1611,6 +1621,14 @@ export const osVisualVerify: ToolDefinition = {
 };
 
 /** Up to 4 short read-only texts the front app's window shows (static text values only). */
+/** The front window is an Open file panel with no sheet (e.g. Go to Folder) over it. */
+async function frontIsOpenPanel(): Promise<boolean> {
+    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+    const dump = await dumpAccessibilityTree({ depth: 2, timeoutMs: 1500, budgetMs: 500 }).catch(() => null);
+    const win = dump && !dump.error ? dump.root.children.find((n) => n.role === "AXWindow") : undefined;
+    return !!win && /^open$/i.test(win.label?.trim() ?? "") && !win.children.some((c) => c.role === "AXSheet");
+}
+
 async function frontWindowText(): Promise<string[]> {
     await new Promise((r) => setTimeout(r, 150)); // the result draws a moment after the key
     const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");

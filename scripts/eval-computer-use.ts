@@ -191,7 +191,7 @@ const TASKS: Task[] = [
       check: async () => /water the plants/i.test(await as('tell application "Reminders" to get name of (every reminder whose name contains "water the plants")')),
       cleanup: async () => void (await as('tell application "Reminders" to delete (every reminder whose name contains "water the plants")')) },
     // ── Web pages (Bhai's own browser) ──
-    { id: "browser_heading", prompt: "Open example.com in the browser and tell me the page's main heading",
+    { id: "browser_heading", prompt: "Open example.com in the browser and tell me the page's title",
       check: async (reply, trace) => readPage(trace) && /example domain/i.test(reply) },
     { id: "browser_fact", prompt: "Open the Wikipedia page for Alan Turing and tell me the year he was born",
       check: async (reply, trace) => readPage(trace) && /\b1912\b/.test(reply),
@@ -236,6 +236,10 @@ async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: {
 
 // Claude, the way Bhai's proxy calls Haiku on simple desktop turns: adaptive thinking, effort low.
 const anthropicClient = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
+if (!anthropicClient && (ROUTER || MODEL.startsWith("claude"))) {
+    console.error("This run can pick a Claude model: set ANTHROPIC_API_KEY (npx convex env get ANTHROPIC_API_KEY).");
+    process.exit(1);
+}
 async function claudeLoop(system: string, prompt: string, tools: any[], used: string[], trace: string[]): Promise<{ reply: string; iters: number }> {
     const atools = tools.map((t) => ({ name: t.function.name, description: t.function.description ?? "", input_schema: t.function.parameters ?? { type: "object" } }));
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
