@@ -200,7 +200,27 @@ const memo = new Map<string, Memo>(); // insertion order = LRU order
 let memoChars = 0;
 const memoSize = (text: string, e: Memo) => text.length + (e.out[0]?.length ?? 0) + (e.out[1]?.length ?? 0);
 
+// Dropped after 10 minutes with no protect() call (no turn running): up to ~8 MB held for
+// nothing between conversations. One timer, armed only while the memo holds something.
+const MEMO_IDLE_MS = 10 * 60_000;
+let memoUsedAt = 0;
+let memoTimer: ReturnType<typeof setTimeout> | null = null;
+function armMemoIdle(delay = MEMO_IDLE_MS) {
+    memoTimer = setTimeout(() => {
+        const idle = Date.now() - memoUsedAt;
+        if (idle < MEMO_IDLE_MS) return armMemoIdle(MEMO_IDLE_MS - idle);
+        memo.clear();
+        memoChars = 0;
+        memoTimer = null;
+    }, delay);
+    memoTimer.unref?.();
+}
+
+/** Texts the protect() memo holds now (tests). */
+export const _protectMemoSizeForTests = () => memo.size;
+
 function remember(text: string, slot: 0 | 1, out: string) {
+    if (!memoTimer) armMemoIdle();
     let e = memo.get(text);
     if (e) {
         memo.delete(text);
@@ -274,6 +294,7 @@ export function protect(text: string, opts: { credentials?: boolean } = {}): str
     const slot = credentials ? 1 : 0;
     const gen = generation;
     if (MEMO) {
+        memoUsedAt = Date.now();
         const hit = memo.get(text);
         const out = hit?.gen === gen ? hit.out[slot] : undefined;
         if (out !== undefined) {
