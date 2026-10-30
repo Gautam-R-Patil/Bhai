@@ -1122,6 +1122,9 @@ async function boot() {
                     t: new Date().toISOString(),
                     rssMb: Math.round(m.rss / 1e6),
                     heapMb: Math.round(m.heapUsed / 1e6),
+                    heapTotalMb: Math.round(m.heapTotal / 1e6),
+                    externalMb: Math.round(m.external / 1e6),
+                    arrayBuffersMb: Math.round(m.arrayBuffers / 1e6),
                 };
                 import("node:fs")
                     .then(({ appendFileSync }) =>
