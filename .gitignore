@@ -476,3 +476,4 @@ brag-output/
 !src/cron/store.test.ts
 !src/overlay/notify-requested.test.ts
 !src/tools/web-search-grace.test.ts
+!src/proactive/sources/_shared/daily-done.test.ts

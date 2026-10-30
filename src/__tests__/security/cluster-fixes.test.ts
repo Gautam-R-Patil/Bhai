@@ -268,7 +268,8 @@ describe("F9 — audit log protected path", () => {
         // files.ts reuses the same allowlist module so the check fires.
         await import("../../security/audit-log.js");
         const { deleteFile } = await import("../../tools/files.js");
-        const auditPath = path.resolve("data", "audit.jsonl");
+        const { getDataDir } = await import("../../config/paths.js");
+        const auditPath = path.join(getDataDir(), "audit.jsonl");
         const raw = await deleteFile.handler({ path: auditPath });
         const out = JSON.parse(raw);
         expect(out.error).toBeDefined();

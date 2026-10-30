@@ -77,6 +77,7 @@ describe("metacognition — outcome log (A3)", () => {
         prevCwd = process.cwd();
         dir = mkdtempSync(join(tmpdir(), "atlas-metacog-"));
         process.chdir(dir);
+        process.env.ATLAS_DATA_DIR = join(dir, "data");
         delete process.env.ATLAS_NO_METACOG_LOG;
     });
     afterEach(() => {
