@@ -36,7 +36,9 @@ export const getCurrentTime: ToolDefinition = {
     },
 
     async handler(input) {
-        const tz = (input.timezone as string) || undefined;
+        // "local" / "system" mean this Mac's own zone (gpt-4.1-nano's "local" threw).
+        const asked = (input.timezone as string) || "";
+        const tz = /^(local|system|here|auto|current)$/i.test(asked.trim()) ? undefined : asked || undefined;
         const now = new Date();
 
         const iso = now.toISOString();
