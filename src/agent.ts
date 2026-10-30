@@ -384,6 +384,11 @@ export function contractProgressLine(content: string | null | undefined, hasTool
     return ack && `[ACK] ${ack}`;
 }
 
+/** A final reply that only announces the work ("on it — …; done = …") with no tool call made yet. */
+export function ackWithoutAction(reply: string, toolCallsSoFar: number): boolean {
+    return toolCallsSoFar === 0 && !!extractDoneContract(reply) && !takeStuckMarker(reply).stuck;
+}
+
 /** Steers the verify step to check the criterion the agent itself promised. */
 export function contractCheckNudge(contract: string): string {
     return `Your own done-criterion was: "${contract}". Check exactly that and say what you saw.`;
@@ -1801,6 +1806,7 @@ async function _runAgentBody(
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
     let lookNudged = false; // asksLeaveToLook fires once per run
+    let ackNudged = false; // the ack-without-action nudge, once per run
     const receiptFor = async (text: string): Promise<Receipt | undefined> => {
         const receipt = pickReceipt(verifyGate, {
             stuck: takeStuckMarker(text).stuck,
@@ -3766,6 +3772,21 @@ PLAN:`,
                     role: "user",
                     content:
                         "You can see my screen yourself: don't ask me to look or ask leave to look. Open what shows it (e.g. the right System Settings pane), read it with os_inspect or a screenshot, finish the task, and give me the actual answer.",
+                });
+                lastToolCalls = undefined;
+                continue;
+            }
+
+            // An ack with no action: the contract line ("on it — …; done = …") and no tool
+            // call, so nothing happened. Small models stop there (gpt-5-nano, model-ladder eval).
+            if (!ackNudged && ackWithoutAction(responseText, totalToolCalls)) {
+                ackNudged = true;
+                console.log("  🔄 Announced the task but called no tool — continuing");
+                messages.push({ role: "assistant", content: responseText });
+                messages.push({
+                    role: "user",
+                    content:
+                        "You said what you'll do but made no tool call, so nothing has happened yet. Do it now with your tools, then tell me the result.",
                 });
                 lastToolCalls = undefined;
                 continue;

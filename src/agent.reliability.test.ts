@@ -4,6 +4,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { describe, expect, it } from "vitest";
 import {
     antiGivingUpFailures,
+    ackWithoutAction,
     asksLeaveToLook,
     finalReplyText,
     isDeferrable,
@@ -120,5 +121,19 @@ describe("asksLeaveToLook", () => {
             ),
         ).toBe(true);
         expect(asksLeaveToLook("Done. If you can see any typo, tell me.", true)).toBe(false);
+    });
+});
+
+// From the model-ladder eval: gpt-5-nano answered "on it — playing Levitating by Dua Lipa
+// on Spotify; done = it shows as now_playing" and made no tool call.
+describe("ackWithoutAction", () => {
+    const ack = "on it — playing Levitating by Dua Lipa on Spotify; done = it shows as now_playing";
+    it("an ack with no tool call yet is not an answer", () => {
+        expect(ackWithoutAction(ack, 0)).toBe(true);
+    });
+    it("is fine once work has started, for plain answers, and for stuck reports", () => {
+        expect(ackWithoutAction(ack, 2)).toBe(false);
+        expect(ackWithoutAction("Playing Levitating by Dua Lipa now.", 0)).toBe(false);
+        expect(ackWithoutAction(`${ack}\nSpotify needs you to sign in.\n[[STUCK]]`, 0)).toBe(false);
     });
 });
