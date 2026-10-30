@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import cron from "node-cron";
 import { getDataDir } from "../config/paths.js";
@@ -45,6 +46,66 @@ type TriggerHandler = (taskId: string, action: string, description: string, opts
 let onTaskTrigger: TriggerHandler | null = null;
 // setTimeout fires at once past ~24.8 days, so long waits go in steps.
 const MAX_TIMER_MS = 2 ** 31 - 1;
+
+// node-cron's own matcher, so the next run is exactly the minute node-cron would fire on.
+const TimeMatcher = createRequire(import.meta.url)("node-cron/src/time-matcher.js") as new (
+    pattern: string,
+) => { expressions: string[]; match(date: Date): boolean };
+
+/** The next minute after `from` a 5-field cron expression fires on (local time); null if not within a year. */
+export function nextCronMinute(expression: string, from: number): number | null {
+    const matcher = new TimeMatcher(expression);
+    // node-cron's converted fields: [second, minute, hour, day, month, weekday], each a list of numbers.
+    const [, , , dom, month, dow] = matcher.expressions.map((f) => new Set(f.split(",")));
+    const base = new Date(from);
+    for (let i = 0; i <= 366; i++) {
+        const noon = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i, 12);
+        if (
+            !dom.has(String(noon.getDate())) ||
+            !month.has(String(noon.getMonth() + 1)) ||
+            !dow.has(String(noon.getDay()))
+        ) {
+            continue;
+        }
+        // A matching day: check its real minutes (DST days have 23 or 25 hours), as node-cron's clock would.
+        const dayEnd = new Date(noon.getFullYear(), noon.getMonth(), noon.getDate() + 1).getTime();
+        let t = new Date(noon.getFullYear(), noon.getMonth(), noon.getDate()).getTime();
+        if (t <= from) t = from - (from % 60_000) + 60_000;
+        for (; t < dayEnd; t += 60_000) if (matcher.match(new Date(t))) return t;
+    }
+    return null;
+}
+
+/**
+ * A recurring 5-field job on one timer instead of node-cron's check every second. Waits go in
+ * steps of at most a minute (a sleeping Mac's timers run late), and a run fires only inside its
+ * own second, as node-cron's does: a run the machine slept through is skipped. Null when the
+ * expression doesn't fire within a year (node-cron keeps those).
+ */
+function armCronTimer(expression: string, run: () => void): { stop: () => void } | null {
+    let next = nextCronMinute(expression, Date.now());
+    if (next === null) return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const wait = () => {
+        if (stopped || next === null) return;
+        const left = next - Date.now();
+        if (left > 0) {
+            timer = setTimeout(wait, Math.min(left, 60_000));
+            return;
+        }
+        if (left > -1000) run();
+        next = nextCronMinute(expression, Date.now());
+        wait();
+    };
+    wait();
+    return {
+        stop: () => {
+            stopped = true;
+            clearTimeout(timer);
+        },
+    };
+}
 
 export function setTaskTriggerHandler(handler: TriggerHandler): void {
     onTaskTrigger = handler;
@@ -94,10 +155,13 @@ function arm(saved: SavedTask): ScheduledTask {
         wait();
         task = { stop: () => clearTimeout(timer) };
     } else {
-        task = cron.schedule(saved.expression, () => {
+        const run = () => {
             console.log(`⏰ Scheduled task triggered: ${saved.id} - ${saved.description}`);
             void trigger(saved);
-        });
+        };
+        // 6-field expressions (with seconds) stay on node-cron.
+        const fiveField = saved.expression.trim().split(/\s+/).length === 5;
+        task = (fiveField && armCronTimer(saved.expression, run)) || cron.schedule(saved.expression, run);
     }
     const entry: ScheduledTask = { ...saved, status: "active", task };
     tasks.set(saved.id, entry);
