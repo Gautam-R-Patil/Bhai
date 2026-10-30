@@ -3,6 +3,9 @@
 // Singleton pattern matches network-health.ts. Fail-open: null if all providers fail.
 
 import { EventEmitter } from "node:events";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { getDataDir } from "../config/paths.js";
 
 // ── Types ────────────────────────────────────
 
@@ -43,6 +46,43 @@ let _providers: LocationProvider[] = [];
 let _emitter: EventEmitter | null = null;
 let _initialized = false;
 
+// ── GPS back-off ─────────────────────────────
+// The GPS helper can time out on every try (no fix, or a permission prompt that never shows):
+// 60-70 times a day here, each holding location back ~12 s. After 3 timeouts in a row a
+// background refresh skips GPS (Wi-Fi/IP answer at once) and tries it again once an hour; a
+// refresh the owner asks for (get_location refresh) always tries it. On disk, because the bot
+// restarts often and every boot refreshes.
+
+const GPS_BACKOFF_AFTER = 3;
+const GPS_RETRY_MS = 60 * 60_000;
+type GpsBackoff = { timeouts: number; retryAt: number };
+const gpsBackoffFile = () => join(getDataDir(), "location-gps-backoff.json");
+
+function readGpsBackoff(): GpsBackoff {
+    try {
+        return JSON.parse(readFileSync(gpsBackoffFile(), "utf8")) as GpsBackoff;
+    } catch {
+        return { timeouts: 0, retryAt: 0 };
+    }
+}
+
+function noteGpsResult(timedOut: boolean): void {
+    const prev = readGpsBackoff();
+    const timeouts = timedOut ? prev.timeouts + 1 : 0;
+    const next = { timeouts, retryAt: timeouts >= GPS_BACKOFF_AFTER ? Date.now() + GPS_RETRY_MS : 0 };
+    if (next.timeouts === prev.timeouts && next.retryAt === prev.retryAt) return;
+    try {
+        writeFileSync(gpsBackoffFile(), JSON.stringify(next));
+    } catch {
+        /* back-off is an optimisation: without the file GPS is just tried every time */
+    }
+}
+
+function gpsBackedOff(): boolean {
+    const b = readGpsBackoff();
+    return b.timeouts >= GPS_BACKOFF_AFTER && Date.now() < b.retryAt;
+}
+
 // ── Haversine Distance ───────────────────────
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -74,15 +114,19 @@ async function runProviderWithTimeout(provider: LocationProvider): Promise<Locat
                 setTimeout(() => reject(new Error(`${provider.name} timed out`)), timeout),
             ),
         ]);
+        if (provider.name === "gps") noteGpsResult(false);
         return location;
     } catch (err) {
-        console.warn(`[LOCATION] Provider ${provider.name} failed:`, (err as Error).message);
+        const message = (err as Error).message;
+        console.warn(`[LOCATION] Provider ${provider.name} failed:`, message);
+        if (provider.name === "gps") noteGpsResult(/timed out|timeout/i.test(message));
         return null;
     }
 }
 
-async function runFallbackChain(): Promise<LocationData | null> {
+async function runFallbackChain(force = false): Promise<LocationData | null> {
     for (const provider of _providers) {
+        if (provider.name === "gps" && !force && gpsBackedOff()) continue;
         const result = await runProviderWithTimeout(provider);
         if (result) {
             console.log(
@@ -153,8 +197,9 @@ export async function initLocationService(): Promise<void> {
         });
 }
 
-export async function refreshLocation(): Promise<LocationData | null> {
-    const newLoc = await runFallbackChain();
+/** `force`: the owner asked for a fresh location, so GPS is tried even while backed off. */
+export async function refreshLocation(opts: { force?: boolean } = {}): Promise<LocationData | null> {
+    const newLoc = await runFallbackChain(opts.force);
     if (!newLoc) {
         if (_location && Date.now() - _location.timestamp > CACHE_TTL_MS) {
             _location = { ..._location, stale: true };
