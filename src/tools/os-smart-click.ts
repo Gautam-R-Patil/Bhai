@@ -27,7 +27,7 @@ import { type LLMClient, MODELS } from "../llm.js";
 import { axPerformAction, dumpAccessibilityTree } from "../screen/ax-dump.js";
 import { recallClickSite, recordClickMiss, recordClickSuccess } from "../screen/click-memory.js";
 import { applyCalibration, recordCalibrationSample } from "../screen/drift-calibration.js";
-import { frontmostMatches, getFrontmostApp, waitForFrontmost } from "../screen/frontmost.js";
+import { frontmostMatches, getFrontmostApp, pidOfApp, waitForFrontmost } from "../screen/frontmost.js";
 import { type ClickOutcome, type classifyOutcome, classifyOutcomeFromImages } from "../screen/outcome-classifier.js";
 import {
     type CascadeMiss,
@@ -102,20 +102,6 @@ export const SLOW_UI_MS = 1200;
  *   poll until it is frontmost (fast on a warm app, patient on a cold launch).
  *   Windows: PowerShell AppActivate by process/window title. Linux: wmctrl if available.
  */
-/** The pid of a running app by name ("Calculator"), cheaply; 0 when it isn't running. */
-async function pidOfApp(appName: string): Promise<number> {
-    if (process.platform !== "darwin") return 0;
-    try {
-        const { stdout: asn } = await execFileAsync("lsappinfo", ["find", `name=${appName}`], { timeout: 1500 });
-        const first = asn.trim().split(/\s+/)[0];
-        if (!first) return 0;
-        const { stdout } = await execFileAsync("lsappinfo", ["info", "-only", "pid", first], { timeout: 1500 });
-        return Number(/pid\s*=\s*(\d+)/.exec(stdout)?.[1] ?? 0);
-    } catch {
-        return 0;
-    }
-}
-
 const TEXT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXSecureTextField"]);
 
 /** AXPress an element of a background app without raising it; null when that can't be done. */

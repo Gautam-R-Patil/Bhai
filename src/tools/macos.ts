@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
 import { cursorClick, cursorMove, withCursorHidden, withCursorTyping } from "../screen/agent-cursor.js";
-import { getFrontmostApp, restoreFrontIfStolen } from "../screen/frontmost.js";
+import { frontmostMatches, getFrontmostApp, pidOfApp, restoreFrontIfStolen, waitForFrontmost } from "../screen/frontmost.js";
 import { gridScreenshot } from "../screen/grid-overlay.js";
 import {
     captureRegionToFile,
@@ -515,6 +515,11 @@ export const osType: ToolDefinition = {
                             "Hotkey combo like 'command+c', 'command+shift+s', 'option+tab'. Use + to separate modifiers and key.",
                     },
                     delay_ms: { type: "number", description: "Delay in ms after action (default: 200)" },
+                    app: {
+                        type: "string",
+                        description:
+                            "Type text into this app (e.g. 'TextEdit') at its cursor without bringing it to the front, so the user keeps their window. Falls back to bringing it forward when its field won't take text that way.",
+                    },
                 },
                 required: [],
             },
@@ -529,8 +534,37 @@ export const osType: ToolDefinition = {
         const delayMs = (input.delay_ms as number) || 200;
         const delaySec = delayMs / 1000;
         let script: string;
-        // Another app took the front since Bhai's last step: put Bhai's app back first.
-        const refocused = await restoreFrontIfStolen();
+
+        // Background typing (trycua/cua): text for a named app that isn't in front goes into
+        // its focused field, read back to confirm; the user's front window keeps the keyboard.
+        let raisedFor: string | undefined;
+        const bgApp = typeof input.app === "string" ? input.app.trim() : "";
+        if (bgApp && typeof input.text === "string" && input.text && !input.key && !input.combo) {
+            const front = await getFrontmostApp();
+            if (!front || !frontmostMatches(bgApp, front)) {
+                const pid = await pidOfApp(bgApp);
+                const { axInsertText } = await import("../screen/ax-dump.js");
+                const r =
+                    pid && process.env.ATLAS_NO_BACKGROUND_TYPE !== "true"
+                        ? await axInsertText(pid, input.text)
+                        : { ok: false, error: pid ? "off" : "not_running" };
+                if (r.ok) {
+                    return JSON.stringify({
+                        success: true,
+                        typed_chars: input.text.length,
+                        method: "background",
+                        into: bgApp,
+                        note: `Typed at ${bgApp}'s cursor without bringing it forward.`,
+                    });
+                }
+                // Web content, a terminal, no field: bring it forward and type as usual.
+                await execFileAsync("open", ["-a", bgApp], { timeout: 5000 }).catch(() => {});
+                if (await waitForFrontmost(bgApp, 5000)) raisedFor = `${bgApp} (background typing: ${r.error})`;
+            }
+        }
+        // Another app took the front since Bhai's last step: put Bhai's app back first
+        // (not when this call just brought its own app forward).
+        const refocused = raisedFor ? undefined : await restoreFrontIfStolen();
 
         // text "return" alone means the key (gpt-4.1-nano typed the word into Calculator).
         const keyWord = typeof input.text === "string" ? input.text.trim().toLowerCase() : "";
@@ -622,6 +656,7 @@ export const osType: ToolDefinition = {
                     typed_chars: text.length, // not echoed: it may be a secret
                     method,
                     into: into?.name,
+                    ...(raisedFor ? { brought_forward: raisedFor } : {}),
                     ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                     next: "Typed only. To submit or evaluate it (search box, form, calculator =), press os_type key='return'.",
                 });

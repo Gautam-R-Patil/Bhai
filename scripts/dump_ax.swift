@@ -12,6 +12,11 @@
 //     no click: on Finder's sidebar it moves the highlight but doesn't open the folder.) Prints "ok|x,y,w,h" (its frame afterwards) or
 //     "error|<reason>"; focus adds "|<pid>", the app whose UI is now at the element's
 //     centre (another pid = something still covers it).
+//   dump_ax_bin --pid <pid> --action insert   (text on stdin)
+//     Inserts the text at the cursor of the app's focused text field without raising the
+//     app (AXSelectedText, as trycua/cua types in the background), then reads the field
+//     back. Prints "ok|<role>" once the field shows the text, or "error|<reason>"
+//     (no_focused_field, secure_field, not_text:<role>, unsupported, not_applied).
 //
 // Output (stdout): JSON tree
 //   {
@@ -402,6 +407,26 @@ if callAllowed() { note(AXUIElementSetAttributeValue(app, "AXManualAccessibility
 func fail(_ reason: String) -> Never {
     FileHandle.standardOutput.write("error|\(reason)\n".data(using: .utf8)!)
     exit(1)
+}
+
+if actionName == "insert" {
+    let text = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    guard !text.isEmpty else { fail("no_text") }
+    guard let ref = axCopy(app, kAXFocusedUIElementAttribute), CFGetTypeID(ref) == AXUIElementGetTypeID()
+    else { fail("no_focused_field") }
+    let field = ref as! AXUIElement
+    let role = cfString(axCopy(field, kAXRoleAttribute)) ?? "?"
+    // A password field is typed for real or not at all, never read back.
+    if role == "AXSecureTextField" || cfString(axCopy(field, kAXSubroleAttribute)) == "AXSecureTextField" { fail("secure_field") }
+    guard ["AXTextField", "AXTextArea", "AXComboBox"].contains(role) else { fail("not_text:\(role)") }
+    let before = cfString(axCopy(field, kAXValueAttribute)) ?? ""
+    guard AXUIElementSetAttributeValue(field, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success
+    else { fail("unsupported") }
+    // Some fields accept the write and drop it (web content): believe the field, not the call.
+    let after = cfString(axCopy(field, kAXValueAttribute)) ?? ""
+    guard after.count >= before.count + text.count || (after != before && after.contains(text)) else { fail("not_applied") }
+    FileHandle.standardOutput.write("ok|\(role)\n".data(using: .utf8)!)
+    exit(0)
 }
 
 if let act = actionName {

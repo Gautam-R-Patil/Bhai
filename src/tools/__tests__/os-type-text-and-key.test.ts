@@ -9,8 +9,23 @@ const events = vi.hoisted(() => {
     return [] as string[];
 });
 const front = vi.hoisted(() => ({ window: "" as string, sheet: false }));
+const bg = vi.hoisted(() => ({ front: "Terminal", insert: { ok: true } as { ok: boolean; error?: string } }));
+vi.mock("../../screen/frontmost.js", async (orig) => ({
+    ...(await orig<typeof import("../../screen/frontmost.js")>()),
+    getFrontmostApp: async () => ({ name: bg.front, bundleName: `${bg.front}.app`, bundleId: "x", pid: 1 }),
+    pidOfApp: async () => 42,
+    waitForFrontmost: async (app: string) => {
+        bg.front = app;
+        return { name: app, pid: 42 };
+    },
+    restoreFrontIfStolen: async () => undefined,
+}));
 vi.mock("../../screen/ax-dump.js", async (orig) => ({
     ...(await orig<typeof import("../../screen/ax-dump.js")>()),
+    axInsertText: async (_pid: number, text: string) => {
+        if (bg.insert.ok) events.push(`insert:${text}`);
+        return bg.insert;
+    },
     dumpAccessibilityTree: async () => ({
         root: {
             role: "AXApplication",
@@ -87,5 +102,28 @@ describe("os_type with text and key together", () => {
         expect(JSON.parse(await osType.handler({ text: "~/Desktop", delay_ms: 1 })).success).toBe(true);
         front.window = "";
         front.sheet = false;
+    });
+
+    // From trycua/cua: type into an app without taking the user's front window.
+    it("types into a named background app without raising it, else brings it forward", async () => {
+        events.length = 0;
+        bg.front = "Terminal";
+        bg.insert = { ok: true };
+        const r = JSON.parse(await osType.handler({ text: "hello", app: "TextEdit", delay_ms: 1 }));
+        expect(r).toMatchObject({ success: true, method: "background", into: "TextEdit" });
+        expect(events).toEqual(["insert:hello"]);
+        expect(bg.front).toBe("Terminal");
+
+        events.length = 0;
+        bg.insert = { ok: false, error: "not_applied" };
+        const f = JSON.parse(await osType.handler({ text: "hello", app: "Google Chrome", delay_ms: 1 }));
+        expect(events).toEqual(["type:hello"]);
+        expect(f.brought_forward).toMatch(/not_applied/);
+
+        // Already in front: typed as usual.
+        events.length = 0;
+        bg.front = "TextEdit";
+        JSON.parse(await osType.handler({ text: "hi", app: "TextEdit", delay_ms: 1 }));
+        expect(events).toEqual(["type:hi"]);
     });
 });
