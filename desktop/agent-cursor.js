@@ -17,6 +17,7 @@
 const IDLE_END_MS = 90_000; // bot went quiet without ending the session (crash, hang)
 const FADE_MS = 600; // matches the glow fade in agent-cursor.html
 const HIDE_SETTLE_MS = 40; // let the window server composite the hidden frame
+const REAP_MS = 10 * 60_000; // unused this long after a session: free the windows (~14 MB each)
 
 function parseCursorLine(line) {
     const m = /^##BHAI_CURSOR##(\{.*\})\s*$/.exec(line);
@@ -69,6 +70,8 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
     let hidden = false; // a bot capture is in progress: keep opacity 0
     let idleTimer = null;
     let hideTimer = null;
+    let reapTimer = null;
+    let wanted = false; // windows exist (made on first use, freed REAP_MS after the last session)
 
     // macOS CGEvent points are already DIP. Windows tools post physical pixels.
     const toDip = (p) => (platform === "win32" && screen.screenToDipPoint ? screen.screenToDipPoint({ x: p.x, y: p.y }) : { x: p.x, y: p.y });
@@ -108,10 +111,11 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
         // skipTransformProcessType: don't flip the macOS process type (that
         // hides the dock and can re-activate the app).
         win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
-        const view = { win, ready: false, queue: [] };
+        const view = { win, ready: false, queue: [], onReady: [] };
         win.webContents.on("did-finish-load", () => {
             view.ready = true;
             for (const m of view.queue.splice(0)) post(view, m);
+            for (const fn of view.onReady.splice(0)) fn();
         });
         win.loadFile(htmlPath);
         return view;
@@ -119,6 +123,7 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
 
     function syncDisplays() {
         displays = screen.getAllDisplays();
+        if (!wanted) return;
         const ids = new Set(displays.map((d) => d.id));
         for (const [id, v] of views) {
             if (ids.has(id) && alive(v)) continue;
@@ -141,10 +146,34 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
         }
     }
 
-    /** Make the windows now (app ready), and keep them in step with the displays. */
+    /** Track the displays; the windows are made on first use (or warm()). */
     function init() {
         syncDisplays();
         for (const ev of ["display-added", "display-removed", "display-metrics-changed"]) screen.on?.(ev, syncDisplays);
+    }
+
+    function ensureViews() {
+        if (wanted) return;
+        wanted = true;
+        syncDisplays();
+        armReap(); // freed again unless a session starts
+    }
+
+    function armReap() {
+        timers.clearTimeout(reapTimer);
+        reapTimer = timers.setTimeout(() => {
+            if (sessionOn) return;
+            wanted = false;
+            shown = false;
+            for (const v of views.values()) if (alive(v)) v.win.destroy();
+            views.clear();
+        }, REAP_MS);
+    }
+
+    /** Bhai is about to drive the screen: load the windows before the first glide. */
+    function warm() {
+        ensureViews();
+        if (!sessionOn) armReap();
     }
 
     /** Move the ghost to global DIP point `p`; returns the glide time. */
@@ -165,6 +194,7 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
         sessionOn = true;
         shown = true;
         timers.clearTimeout(hideTimer);
+        timers.clearTimeout(reapTimer);
         pos = null;
         activeId = null;
         for (const v of views.values()) {
@@ -184,11 +214,14 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
         hideTimer = timers.setTimeout(() => {
             shown = false;
             for (const v of views.values()) if (alive(v)) v.win.hide();
+            armReap();
         }, FADE_MS);
     }
 
     /** Apply one bot event; `ack(id)` answers events that carry an id. */
     function handle(evt, ack) {
+        // Everything but a capture's hide/show and a session end puts the ghost on screen.
+        if (evt.t === "session" ? evt.on : evt.t !== "hide" && evt.t !== "show") ensureViews();
         let wait = 0;
         switch (evt.t) {
             case "session":
@@ -236,8 +269,11 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
         timers.clearTimeout(idleTimer);
         if (sessionOn) idleTimer = timers.setTimeout(endSession, IDLE_END_MS);
         if (evt.id == null) return;
-        if (wait > 0) timers.setTimeout(() => ack(evt.id), wait);
-        else ack(evt.id);
+        const fire = () => (wait > 0 ? timers.setTimeout(() => ack(evt.id), wait) : ack(evt.id));
+        // A glide into a window still loading: ack once it's drawn (the bot waits ≤300 ms).
+        const v = evt.t !== "hide" && activeId !== null ? views.get(activeId) : null;
+        if (alive(v) && !v.ready) v.onReady.push(fire);
+        else fire();
     }
 
     /** The bot exited: let go of the screen. */
@@ -248,7 +284,7 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
         endSession();
     }
 
-    return { init, handle, reset };
+    return { init, handle, reset, warm };
 }
 
-module.exports = { createAgentCursor, parseCursorLine, pickDisplay, toLocal, glideMs, HIDE_SETTLE_MS };
+module.exports = { createAgentCursor, parseCursorLine, pickDisplay, toLocal, glideMs, HIDE_SETTLE_MS, REAP_MS };

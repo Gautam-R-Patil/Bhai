@@ -2044,8 +2044,9 @@ function showBuddy(mood, text, hideAfterMs, force = false) {
 
 // ── Bhai's ghost cursor ──────────────────────────
 // Bot → "##BHAI_CURSOR##{json}" lines from the computer-use tools; acks go back
-// on its stdin. The (hidden) windows are made once at app ready and follow
-// display changes, so nothing is created in the middle of a click.
+// on its stdin. The (hidden) windows are made on first use, warmed on the
+// buddy's "screen" status so the first glide doesn't wait for them, follow
+// display changes, and are freed 10 minutes after the last session.
 const CURSOR_SUPPORTED = process.platform !== "linux";
 let agentCursor = null;
 function initAgentCursor() {
@@ -2115,6 +2116,7 @@ function handleBuddyStatus({ type, text }) {
     switch (type) {
         case "thinking": return showBuddy("thinking", buddyLine("thinking"));
         case "screen":
+            try { agentCursor?.warm(); } catch { /* cosmetic */ }
             // Out of the way for the agent's screenshots and clicks: the native
             // glass can't be hidden from CSS, and the window would block clicks.
             if (overlayShowing()) { overlayWindow.setOpacity(0); overlayWindow.setIgnoreMouseEvents(true); }

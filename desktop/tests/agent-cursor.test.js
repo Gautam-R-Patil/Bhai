@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { JSDOM } from "jsdom";
-import { createAgentCursor, parseCursorLine, pickDisplay, toLocal, glideMs, HIDE_SETTLE_MS } from "../agent-cursor.js";
+import { createAgentCursor, parseCursorLine, pickDisplay, toLocal, glideMs, HIDE_SETTLE_MS, REAP_MS } from "../agent-cursor.js";
 
 // Two side-by-side displays: a Retina laptop (points) and an external on the left, higher up.
 const LAPTOP = { id: 1, bounds: { x: 0, y: 0, width: 1512, height: 982 }, scaleFactor: 2 };
@@ -35,7 +35,7 @@ describe("pure helpers", () => {
     });
 });
 
-function fakeElectron(displays = [LAPTOP, EXTERNAL]) {
+function fakeElectron(displays = [LAPTOP, EXTERNAL], { slowLoad = false } = {}) {
     const wins = [];
     class BrowserWindow {
         constructor(opts) {
@@ -53,7 +53,8 @@ function fakeElectron(displays = [LAPTOP, EXTERNAL]) {
             };
             wins.push(this);
         }
-        loadFile() { this.listeners["did-finish-load"]?.(); }
+        loadFile() { if (!slowLoad) this.listeners["did-finish-load"]?.(); }
+        finishLoad() { this.listeners["did-finish-load"]?.(); }
         isDestroyed() { return this.destroyed; }
         destroy() { this.destroyed = true; }
     }
@@ -76,9 +77,8 @@ describe("overlay controller", () => {
     });
     const send = (evt) => cursor.handle(evt, (id) => acks.push(id));
 
-    it("makes one click-through, focus-less, on-top window per display at init, never mid-action", () => {
-        expect(fx.wins).toHaveLength(2);
-        expect(fx.wins[0].calls.some(([m]) => m === "showInactive")).toBe(false); // hidden until a session
+    it("makes no window at launch, then one click-through, focus-less, on-top window per display", () => {
+        expect(fx.wins).toHaveLength(0);
         send({ t: "session", on: true });
         expect(fx.wins).toHaveLength(2);
         const [w] = fx.wins;
@@ -128,9 +128,58 @@ describe("overlay controller", () => {
         for (const w of fx.wins) expect(w.calls.at(-1)).toEqual(["setOpacity", 1]);
     });
 
-    it("acks a hide at once when nothing is on screen", () => {
+    it("acks a hide at once when nothing is on screen, without making windows", () => {
         send({ t: "hide", id: 3 });
         expect(acks).toEqual([3]);
+        expect(fx.wins).toHaveLength(0);
+        send({ t: "show" });
+        send({ t: "session", on: false });
+        expect(fx.wins).toHaveLength(0);
+    });
+
+    it("warm() loads the windows ahead of the first glide, hidden, and frees them if no session comes", () => {
+        cursor.warm();
+        expect(fx.wins).toHaveLength(2);
+        expect(fx.wins[0].calls.some(([m]) => m === "showInactive")).toBe(false);
+        send({ t: "click", x: 110, y: 10, id: 1 });
+        expect(fx.wins).toHaveLength(2); // reused, nothing made mid-action
+        send({ t: "session", on: false });
+        vi.advanceTimersByTime(600 + REAP_MS - 1);
+        expect(fx.wins.some((w) => w.destroyed)).toBe(false);
+        vi.advanceTimersByTime(1);
+        expect(fx.wins.every((w) => w.destroyed)).toBe(true);
+
+        cursor.warm();
+        expect(fx.wins).toHaveLength(4);
+        vi.advanceTimersByTime(REAP_MS);
+        expect(fx.wins.every((w) => w.destroyed)).toBe(true);
+    });
+
+    it("frees the windows 10 minutes after the session ends, and makes them again on the next one", () => {
+        send({ t: "move", x: 50, y: 50 });
+        send({ t: "session", on: false });
+        vi.advanceTimersByTime(600 + REAP_MS);
+        expect(fx.wins.every((w) => w.destroyed)).toBe(true);
+        send({ t: "click", x: 60, y: 60, id: 5 });
+        expect(fx.wins).toHaveLength(4);
+        expect(fx.wins[2].calls).toContainEqual(["showInactive"]);
+        expect(fx.wins[2].scripts.at(-1)).toMatchObject({ t: "click", x: 60, y: 60 });
+        // A session that's still going is never freed.
+        vi.advanceTimersByTime(REAP_MS);
+        expect(fx.wins[2].destroyed).toBe(false);
+    });
+
+    it("on a cold start, acks the first glide only once its window has loaded", () => {
+        fx = fakeElectron([LAPTOP], { slowLoad: true });
+        cursor = createAgentCursor({ BrowserWindow: fx.BrowserWindow, screen: fx.screen, htmlPath: "x.html", platform: "darwin" });
+        cursor.init();
+        send({ t: "click", x: 110, y: 10, id: 8 });
+        vi.advanceTimersByTime(500);
+        expect(acks).toEqual([]);
+        fx.wins[0].finishLoad();
+        expect(fx.wins[0].scripts.at(-1)).toMatchObject({ t: "click", ms: 135 });
+        vi.advanceTimersByTime(135);
+        expect(acks).toEqual([8]);
     });
 
     it("still hides during the fade-out, and a click mid-capture stays hidden", () => {
