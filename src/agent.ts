@@ -295,13 +295,14 @@ function stripChannelTags(text: string): string {
 }
 
 /**
- * The message points at Bhai itself: its repo, its site, Bhai Bridge, or text
+ * The message points at Bhai itself: its repo, its site, its Chrome extension
+ * (now named "Bhai", formerly "Bhai Bridge"), or text
  * naming Bhai together with XAGI. A friend called "bhai" never counts, nor does
  * a <name>.bhai@xagilab.com mail address.
  */
 export function isAboutBhai(text: string): boolean {
     return (
-        /github\.com\/xagi-lab\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b/i.test(text) ||
+        /github\.com\/xagi-lab\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b|\bbhai (?:chrome )?(?:extension|side ?panel)\b/i.test(text) ||
         // Bhai described as itself, not "bhai, send the XAGI invoice".
         /\bbhai\b[^.\n]{0,60}\b(?:(?:personal )?ai (?:agent|assistant|companion)|built by xagi)/i.test(text)
     );

@@ -78,6 +78,9 @@
     /* ── Thread ─────────────────────────────── */
     .thread { flex: 1; overflow-y: auto; padding: 8px 16px 20px; display: flex; flex-direction: column; gap: 18px; scroll-behavior: smooth; }
     .msg { animation: rise .18s ease-out both; }
+    .bhai.reveal { animation: none; }
+    .bhai.reveal > div:first-child > * { animation: rise .4s cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(var(--d, 0) * 70ms); }
+    .reply-tools .icon-btn[aria-pressed="true"] { color: var(--accent); }
     @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
     .you { align-self: flex-end; max-width: 88%; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
     .you .bubble { background: var(--bubble); padding: 8px 13px; border-radius: 16px 16px 5px 16px; white-space: pre-wrap; word-wrap: break-word; }
@@ -126,6 +129,8 @@
 
     .working { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: 13px; animation: rise .18s ease-out both; }
     .working span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .working > span:last-child { background: linear-gradient(90deg, var(--ink-2) 0%, var(--ink-2) 40%, var(--ink) 50%, var(--ink-2) 60%, var(--ink-2) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 2.2s linear infinite; }
+    @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
     .dots { display: flex; gap: 3px; }
     .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite ease-in-out; }
     .dots i:nth-child(2) { animation-delay: .15s; }
@@ -135,11 +140,13 @@
     /* ── Welcome ────────────────────────────── */
     .welcome { flex: 1; display: flex; flex-direction: column; }
     .hello { margin: auto 0; text-align: center; animation: rise .3s ease-out both; }
-    .hello img { width: 30px; height: 30px; border-radius: 8px; opacity: .9; }
+    .hello img { width: 30px; height: 30px; border-radius: 8px; animation: float 4.5s ease-in-out infinite; }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    .hello h1 { animation: rise .4s cubic-bezier(.16, 1, .3, 1) .05s both; }
     .hello h1 { margin-top: 10px; font: 500 21px/1.25 ui-serif, "New York", Georgia, serif; letter-spacing: -.015em; color: var(--ink); }
     .suggest { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-bottom: 2px; }
     .suggest button { font-size: 13px; padding: 6px 12px; border-radius: var(--r-md); background: var(--sunk); color: var(--ink); transition: background .15s, transform .1s; animation: rise .35s cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(var(--i, 0) * 60ms + 80ms); }
-    .suggest button:hover:not(:disabled) { background: var(--bubble); }
+    .suggest button:hover:not(:disabled) { background: var(--bubble); transform: translateY(-1px); }
     .suggest button:active:not(:disabled) { transform: scale(.98); }
     .suggest button:disabled { opacity: .45; cursor: default; }
 
@@ -150,7 +157,9 @@
     .link-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
 
     /* ── Dock ───────────────────────────────── */
-    .dock { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .dock { position: relative; padding: 0 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .jump { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 5px 11px; border-radius: var(--r-md); background: var(--raised); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--ink-2); animation: rise .2s ease-out both; }
+    .jump:hover { color: var(--ink); }
     .pending { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); padding: 0 4px; animation: rise .15s ease-out both; }
     .pending .quote { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pending .link-btn { font-size: 12.5px; }
@@ -173,10 +182,12 @@
     .send:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 82%, var(--bg)); }
     .send:active:not(:disabled) { transform: scale(.92); }
     .send:disabled { opacity: .35; cursor: default; }
-    .send .stop-icon { display: none; }
+    .send { position: relative; }
+    .send svg { position: absolute; transition: opacity .18s, transform .25s cubic-bezier(.16, 1, .3, 1); }
+    .send .stop-icon { opacity: 0; transform: scale(.4) rotate(-90deg); }
     .send.busy { background: var(--accent); color: #fff; }
-    .send.busy .send-icon { display: none; }
-    .send.busy .stop-icon { display: block; }
+    .send.busy .send-icon { opacity: 0; transform: translateY(-8px); }
+    .send.busy .stop-icon { opacity: 1; transform: none; }
     .hint { font-size: 12px; color: var(--bad); padding: 0 4px; }
     .hint:empty { display: none; }
 
@@ -234,6 +245,10 @@
       <symbol id="i-down-thumb" viewBox="0 0 24 24"><g transform="rotate(180 12 12)"><path d="M7.5 10.5v9h-3v-9h3zM7.5 10.5l3.6-6.3a1.6 1.6 0 0 1 3 .9l-.6 3.9h4.8a2 2 0 0 1 2 2.4l-1.3 6.2a2 2 0 0 1-2 1.6H7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></g></symbol>
       <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
       <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M4 17l5-4.5 3.5 3 3-2.5 4.5 4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></symbol>
+      <symbol id="i-speak" viewBox="0 0 24 24"><path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
+      <symbol id="i-hush" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+      <symbol id="i-again" viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.1-5M19 4.5V9h-4.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v13M6 12.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-tab" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M3.5 9.5h17" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
     </defs>
   </svg>
@@ -254,13 +269,14 @@
     <section class="welcome" id="welcome">
       <div class="hello">
         <img src="icons/icon48.png" alt="">
-        <h1>What should we do here?</h1>
+        <h1 id="greeting">What should we do here?</h1>
       </div>
       <div class="suggest" id="suggest"></div>
     </section>
   </main>
 
   <footer class="dock">
+    <button class="jump" id="btnJump" hidden><svg width="13" height="13"><use href="#i-down"/></svg>Latest</button>
     <div class="pending" id="selChip" hidden>
       <svg width="15" height="15"><use href="#i-quote"/></svg>
       <span class="quote" id="selText"></span>

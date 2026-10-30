@@ -20,6 +20,16 @@ let selectionIgnored = false;
 // Lets the background worker know when the panel closes (it removes any drawing).
 chrome.runtime.connect({ name: 'sidepanel' });
 
+(() => {
+  const h = new Date().getHours();
+  const line = h < 5 ? 'Up late? What do you need?'
+    : h < 12 ? "Morning. What's first?"
+    : h < 17 ? 'What should we do here?'
+    : h < 22 ? 'Evening. What can I take off your plate?'
+    : 'Still going? What do you need?';
+  $('greeting').textContent = line;
+})();
+
 function send(message) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(message, (resp) => {
@@ -102,7 +112,7 @@ const timeOf = (ts) => {
   return d.toLocaleString([], sameDay ? { hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
 
-function messageEl(m) {
+function messageEl(m, arriving = false) {
   const el = document.createElement('div');
   el.className = `msg ${m.role}`;
   if (m.ts > 1e12) el.title = timeOf(m.ts);
@@ -150,6 +160,44 @@ function messageEl(m) {
       setTimeout(() => copy.replaceChildren(icon('copy', 15)), 1200);
     });
     tools.append(copy);
+
+    // Read aloud with the Mac's own voice (nothing leaves the computer).
+    if ('speechSynthesis' in window) {
+      const speak = document.createElement('button');
+      speak.className = 'icon-btn';
+      const setSpeak = (on) => {
+        speak.title = on ? 'Stop reading' : 'Read aloud';
+        speak.setAttribute('aria-label', speak.title);
+        speak.setAttribute('aria-pressed', String(on));
+        speak.replaceChildren(icon(on ? 'hush' : 'speak', 15));
+      };
+      setSpeak(false);
+      speak.addEventListener('click', () => {
+        if (speak.getAttribute('aria-pressed') === 'true') { speechSynthesis.cancel(); return; }
+        speechSynthesis.cancel();
+        document.querySelectorAll('.reply-tools [aria-pressed="true"]').forEach((b) => b.dispatchEvent(new Event('speech-end')));
+        const u = new SpeechSynthesisUtterance(body.innerText);
+        u.onend = u.onerror = () => setSpeak(false);
+        speak.addEventListener('speech-end', () => setSpeak(false), { once: true });
+        setSpeak(true);
+        speechSynthesis.speak(u);
+      });
+      tools.append(speak);
+    }
+
+    // Ask again (latest reply only): sends the question before it once more.
+    const again = document.createElement('button');
+    again.className = 'icon-btn again';
+    again.title = 'Ask again';
+    again.setAttribute('aria-label', 'Ask again');
+    again.append(icon('again', 15));
+    again.addEventListener('click', () => {
+      const i = lastChat.indexOf(m);
+      const q = [...lastChat.slice(0, i)].reverse().find((c) => c.role === 'you');
+      if (q && !busy) sendMessage({ type: 'send_message', text: q.text, mentions: [...extraTabs.keys()] });
+    });
+    tools.append(again);
+
     const actions = m.meta?.actions || [];
     const feedback = actions.filter((a) => a.action.startsWith('feedback:'));
     const forget = actions.filter((a) => a.action.startsWith('mem:forget:'));
@@ -213,6 +261,10 @@ function messageEl(m) {
       el.append(row);
     }
     el.append(tools);
+    if (arriving) {
+      el.classList.add('reveal');
+      [...body.children].forEach((c, i) => c.style.setProperty('--d', String(Math.min(i, 8))));
+    }
   } else {
     // An error: say it, and offer to send the last message again.
     const text = document.createElement('span');
@@ -237,9 +289,10 @@ function renderChat(chat) {
   if (chat.length < rendered) { thread.querySelectorAll('.msg').forEach((el) => el.remove()); rendered = 0; }
   const working = $('workingRow');
   const arriving = rendered > 0 && chat.length - rendered === 1; // one new message, not the first load
+  const wasAtBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
   let newest = null;
   for (const m of chat.slice(rendered)) {
-    newest = messageEl(m);
+    newest = messageEl(m, arriving && m.role === 'bhai');
     thread.insertBefore(newest, working || null);
   }
   rendered = chat.length;
@@ -247,7 +300,12 @@ function renderChat(chat) {
   rows.forEach((r, i) => { r.hidden = i !== rows.length - 1 || chat[chat.length - 1]?.role !== 'bhai'; });
   $('welcome').hidden = chat.length > 0;
   $('btnNew').hidden = chat.length === 0;
-  if (arriving && newest?.classList.contains('bhai') && newest.offsetHeight > thread.clientHeight * 0.6) {
+  // Only the newest reply offers "Ask again".
+  const agains = thread.querySelectorAll('.bhai .again');
+  agains.forEach((b, i) => { b.hidden = i !== agains.length - 1; });
+  if (arriving && !wasAtBottom && newest?.classList.contains('bhai')) {
+    $('btnJump').hidden = false; // reading further up: don't yank them away
+  } else if (arriving && newest?.classList.contains('bhai') && newest.offsetHeight > thread.clientHeight * 0.6) {
     thread.scrollTop = newest.offsetTop - 12;
   } else {
     thread.scrollTop = thread.scrollHeight;
@@ -664,6 +722,13 @@ composer.addEventListener('drop', (e) => {
   if (file) { e.preventDefault(); attachImage(file); }
 });
 $('btnAttachOff').addEventListener('click', clearImage);
+$('btnJump').addEventListener('click', () => {
+  thread.scrollTo({ top: thread.scrollHeight, behavior: 'smooth' });
+  $('btnJump').hidden = true;
+});
+thread.addEventListener('scroll', () => {
+  if (thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40) $('btnJump').hidden = true;
+});
 setInterval(() => {
   const row = $('workingRow');
   if (busy && row && Date.now() - lastProgress > 45000) row.lastElementChild.textContent = 'Still working on it…';
@@ -696,6 +761,7 @@ $('btnSelOff').addEventListener('click', () => {
   renderSelection();
 });
 $('btnNew').addEventListener('click', async () => {
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
   await send({ type: 'clear_chat' });
   renderChat([]);
   setBusy(false);
