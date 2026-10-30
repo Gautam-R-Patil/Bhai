@@ -289,7 +289,7 @@ Default ON unless marked opt-IN. Set `"true"` to disable. `grep -rnE "process\.e
 
 **Proactive:**
 - `ATLAS_PROACTIVE_DISABLE` — kill all sends; `ATLAS_PROACTIVE_DISABLE_SOURCES=csv` / `ATLAS_PROACTIVE_DISABLE_CHANNELS=csv` — silence sources/channels
-- `ATLAS_PROACTIVE_SHADOW` — compose + log, don't deliver; `ATLAS_PROACTIVE_DEBUG=false` — suppress `🔔 [proactive]` logs
+- `ATLAS_PROACTIVE_SHADOW` — compose + log, don't deliver; `ATLAS_PROACTIVE_DEBUG=false` — suppress `🔔 [proactive]` logs (`=verbose` adds the per-app-switch boundary events)
 
 **Native ports (opt-IN unless noted):**
 - `ATLAS_NATIVE_SPREADING` — opt-IN; SAN BFS (`native/spreading.rs`). Enable only for >1000-node fan-out (FFI dominates ≤150 nodes).
