@@ -1188,6 +1188,11 @@ export async function remember(
     scope: string = "global",
 ): Promise<number | null> {
     if (!db) throw new Error("Memory DB not initialized");
+    // Card numbers, Aadhaar, OTPs, cookies and credentials never become long-term memories:
+    // the voice shortcut ("remember my card number is …") stored the raw transcript. Phone
+    // numbers and emails are not touched.
+    const { protect } = await import("../security/pii-vault.js");
+    content = protect(content, { credentials: true });
 
     const validScope = /^(global|user:.+|session:.+|task:.+)$/.test(scope) ? scope : "global";
 

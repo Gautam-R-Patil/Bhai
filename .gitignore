@@ -243,6 +243,7 @@ desktop/hostinger-upload/
 !src/forge/__tests__/approval-and-hash.test.ts
 !src/tools/shell-args.test.ts
 !src/tools/outbound-input.test.ts
+!src/voice/live/tool-bridge-mask.test.ts
 !src/tools/browser/bridge-heartbeat.test.ts
 !src/tools/browser/extension-frame-offset.test.ts
 !src/tools/mac-wifi.test.ts
