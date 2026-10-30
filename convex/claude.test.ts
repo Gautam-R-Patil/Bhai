@@ -136,6 +136,38 @@ describe("toClaudeRequest — thinking off", () => {
   });
 });
 
+describe("toClaudeRequest — progress notes", () => {
+  const chat = [{ role: "user", content: "hi" }];
+  const tools = [{ type: "function", function: { name: "t", parameters: { type: "object", properties: {} } } }];
+  const HEADER = "thinking-display-updates-2026-08-18";
+  it("requests progress-note display for Opus/Sonnet main calls", () => {
+    for (const model of ["anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.6"]) {
+      const req = toClaudeRequest({ model, tools, reasoning: { effort: "low" } }, chat) as any;
+      expect(req.thinking).toEqual({ type: "adaptive", display: "updates" });
+      expect(req.betas).toContain(HEADER);
+      expect(req.betas).toContain("server-side-fallback-2026-07-01");
+    }
+  });
+  it("leaves lean, Haiku and thinking-off calls alone", () => {
+    const cases = [
+      { model: "anthropic/claude-sonnet-4.6", lean: true, reasoning: { effort: "low" } },
+      { model: "openai/gpt-4.1-nano", reasoning: { effort: "low" } },
+      { model: "anthropic/claude-sonnet-4.6", reasoning: { effort: "none" } },
+      { model: "anthropic/claude-opus-4.6", reasoning: { effort: "minimal" } },
+    ];
+    for (const b of cases) {
+      const req = toClaudeRequest({ ...b, tools }, chat) as any;
+      expect(req.thinking?.display).toBeUndefined();
+      expect(req.betas ?? []).not.toContain(HEADER);
+    }
+  });
+  it("same thinking config whether or not stream is set", () => {
+    const b = { model: "anthropic/claude-sonnet-4.6", tools, reasoning: { effort: "low" } };
+    const { stream: _s, ...streamed } = toClaudeRequest({ ...b, stream: true }, chat) as any;
+    expect(streamed).toEqual(toClaudeRequest(b, chat));
+  });
+});
+
 describe("toOpenAIResponse", () => {
   it("returns the OpenAI chat-completion shape", () => {
     const out = toOpenAIResponse({

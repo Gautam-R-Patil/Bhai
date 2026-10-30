@@ -206,6 +206,13 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
     params.fallbacks = "default";
     params.betas = ["server-side-fallback-2026-07-01"];
   }
+  // Opus/Sonnet 5.5 run adaptive thinking by default but return it omitted;
+  // "updates" makes the short progress notes readable. Set on every main-loop
+  // call, streamed or not, so the prompt-cache prefix stays the same.
+  if (model !== HAIKU && body.lean !== true && !thinkingOff) {
+    params.thinking = { type: "adaptive", display: "updates" };
+    params.betas = [...(params.betas ?? []), "thinking-display-updates-2026-08-18"];
+  }
   return params;
 }
 
