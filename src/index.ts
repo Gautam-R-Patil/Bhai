@@ -1014,7 +1014,7 @@ async function boot() {
     };
 
     // ── Scheduled Tasks ───────────────────────
-    setTaskTriggerHandler(async (taskId: string, action: string, description?: string) => {
+    setTaskTriggerHandler(async (taskId, action, description, opts) => {
         // ── Marketing scheduled post detection ──────────────────────────────
         // Actions encoded as JSON by marketing_schedule tool are executed directly.
         // Format: {"__marketing_post":true,"brandId":"...","itemId":N,"platform":"...","caption":"...","mediaPath":"...","hashtags":[...]}
@@ -1049,6 +1049,28 @@ async function boot() {
                 deliverToActiveChannel(confirmMsg, "").catch(() => {});
             } catch (err) {
                 sendPushNotification("Marketing Post Failed", (err as Error).message.substring(0, 180)).catch(() => {});
+            }
+            return;
+        }
+
+        // A task does its work and sends the answer ("summarize my inbox every morning").
+        if (opts.doTask) {
+            const response = await runAgent(
+                llm,
+                action,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                { channel: "cron", userId: "cron", isOwner: opts.isOwner, autonomous: true },
+            );
+            const text = response.text?.trim();
+            if (text && text.toUpperCase() !== "[NO_REPLY]") {
+                await notifyOwnerEverywhere(
+                    taskId.startsWith("reminder_") && description ? `⏰ ${description}\n\n${text}` : text,
+                );
             }
             return;
         }

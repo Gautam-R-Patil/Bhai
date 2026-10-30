@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import cron from "node-cron";
 import { getDataDir } from "../config/paths.js";
+import { isOwnerCaller } from "./cron-tool.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Types ─────────────────────────────────────
@@ -20,6 +21,15 @@ interface SavedTask {
     created_at: string;
     /** One-off reminders: when to fire (epoch ms). */
     fireAt?: number;
+    /** Run `action` through the agent and send its answer, instead of just reminding. */
+    doTask?: boolean;
+    /** Scheduled by the owner, live: the run gets owner tools. */
+    isOwner?: boolean;
+}
+
+export interface TriggerOptions {
+    doTask: boolean;
+    isOwner: boolean;
 }
 
 interface ScheduledTask extends SavedTask {
@@ -31,29 +41,19 @@ interface ScheduledTask extends SavedTask {
 
 const tasks = new Map<string, ScheduledTask>();
 let taskCounter = 0;
-let onTaskTrigger: ((taskId: string, action: string, description?: string) => Promise<void>) | null = null;
+type TriggerHandler = (taskId: string, action: string, description: string, opts: TriggerOptions) => Promise<void>;
+let onTaskTrigger: TriggerHandler | null = null;
 // setTimeout fires at once past ~24.8 days, so long waits go in steps.
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
-export function setTaskTriggerHandler(
-    handler: (taskId: string, action: string, description?: string) => Promise<void>,
-): void {
+export function setTaskTriggerHandler(handler: TriggerHandler): void {
     onTaskTrigger = handler;
 }
 
 const storePath = () => path.join(getDataDir(), "scheduled-tasks.json");
 
 function save(): void {
-    const saved: SavedTask[] = [...tasks.values()].map(
-        ({ id, expression, description, action, created_at, fireAt }) => ({
-            id,
-            expression,
-            description,
-            action,
-            created_at,
-            fireAt,
-        }),
-    );
+    const saved: SavedTask[] = [...tasks.values()].map(({ status: _status, task: _timer, ...t }) => t);
     try {
         fs.mkdirSync(path.dirname(storePath()), { recursive: true });
         const tmp = `${storePath()}.tmp`;
@@ -64,11 +64,13 @@ function save(): void {
     }
 }
 
-async function trigger(id: string, action: string, description: string): Promise<void> {
+async function trigger(t: SavedTask): Promise<void> {
     try {
-        await onTaskTrigger?.(id, action, description);
+        // Tasks saved before doTask existed: schedule_task ones were always meant to run.
+        const doTask = t.doTask ?? t.id.startsWith("task_");
+        await onTaskTrigger?.(t.id, t.action, t.description, { doTask, isOwner: t.isOwner === true });
     } catch (err) {
-        console.error(`[SCHEDULED] ${id} failed:`, (err as Error).message);
+        console.error(`[SCHEDULED] ${t.id} failed:`, (err as Error).message);
     }
 }
 
@@ -87,14 +89,14 @@ function arm(saved: SavedTask): ScheduledTask {
             console.log(`⏰ Reminder triggered: ${saved.id} - ${saved.description}`);
             tasks.delete(saved.id); // one-off: done once it fires
             save();
-            void trigger(saved.id, saved.action, saved.description);
+            void trigger(saved);
         };
         wait();
         task = { stop: () => clearTimeout(timer) };
     } else {
         task = cron.schedule(saved.expression, () => {
             console.log(`⏰ Scheduled task triggered: ${saved.id} - ${saved.description}`);
-            void trigger(saved.id, saved.action, saved.description);
+            void trigger(saved);
         });
     }
     const entry: ScheduledTask = { ...saved, status: "active", task };
@@ -132,7 +134,7 @@ export const scheduleTask: ToolDefinition = {
         function: {
             name: "schedule_task",
             description:
-                "Schedule a recurring task. Use cron expressions (e.g. '0 9 * * *' for 9 AM daily) or common patterns.",
+                "Schedule a recurring task: at each time Bhai runs the action and sends the owner its answer (e.g. 'Summarize my unread email'). Use cron expressions (e.g. '0 9 * * *' for 9 AM daily) or common patterns.",
             parameters: {
                 type: "object",
                 properties: {
@@ -158,7 +160,15 @@ export const scheduleTask: ToolDefinition = {
         }
 
         const id = `task_${++taskCounter}`;
-        arm({ id, expression, description, action, created_at: new Date().toISOString() });
+        arm({
+            id,
+            expression,
+            description,
+            action,
+            created_at: new Date().toISOString(),
+            doTask: true,
+            isOwner: isOwnerCaller(),
+        });
         save();
 
         return JSON.stringify({ success: true, id, expression, description, next_run: "Scheduled" });
@@ -244,6 +254,11 @@ export const setReminder: ToolDefinition = {
                         description:
                             "What to do when triggered (message to send to the agent, e.g., 'Remind the user to drink water').",
                     },
+                    do_task: {
+                        type: "boolean",
+                        description:
+                            "true when Bhai must do something at that time (check, look up, summarize, then report), so the action runs and its answer is sent. Leave out for a plain reminder.",
+                    },
                 },
                 required: ["minutes", "description", "action"],
             },
@@ -267,6 +282,8 @@ export const setReminder: ToolDefinition = {
             action,
             created_at: new Date().toISOString(),
             fireAt,
+            doTask: input.do_task === true,
+            isOwner: isOwnerCaller(),
         });
         save();
 
