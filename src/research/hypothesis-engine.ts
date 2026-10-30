@@ -60,6 +60,7 @@ SEARCH_AGAINST: [query to find contradicting evidence]`,
             messages,
             systemPrompt: "You are a scientific research planner. Generate falsifiable hypotheses with designed search strategies.",
             modelOverride: "openai/gpt-5-mini",
+            lean: true,
         });
 
         const content = response.choices?.[0]?.message?.content || "";

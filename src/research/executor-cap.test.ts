@@ -85,6 +85,7 @@ vi.mock("./scoring.js", async (importOriginal) => ({
         outboundLinks: [],
     }),
     dedupeByText: (items: unknown[]) => items,
+    mentionsTopic: () => true,
     crossReferenceFindings: () => [],
 }));
 
@@ -110,8 +111,6 @@ const profile: ResearchProfile = {
     concurrentQueries: 2,
     citationDepth: 0,
     useAcademicEngines: false,
-    multiPass: false,
-    synthesisModel: "m",
 };
 
 beforeEach(() => {

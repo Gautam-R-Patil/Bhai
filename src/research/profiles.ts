@@ -1,7 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Deep Research v2 — Research profiles and constants
 
-import { MODELS } from "../llm.js";
 import { join } from "node:path";
 import { getDocumentsDir } from "../config/paths.js";
 import type { ResearchProfile } from "./types.js";
@@ -34,8 +33,6 @@ export const PROFILES: Record<string, ResearchProfile> = {
         concurrentQueries: 2,
         citationDepth: 0,
         useAcademicEngines: false,
-        multiPass: false,
-        synthesisModel: MODELS.SONNET,
     },
     standard: {
         depth: 20,
@@ -43,8 +40,6 @@ export const PROFILES: Record<string, ResearchProfile> = {
         concurrentQueries: 4,
         citationDepth: 1,
         useAcademicEngines: false,
-        multiPass: false,
-        synthesisModel: MODELS.SONNET,
     },
     deep: {
         depth: 25,
@@ -52,8 +47,6 @@ export const PROFILES: Record<string, ResearchProfile> = {
         concurrentQueries: 5,
         citationDepth: 2,
         useAcademicEngines: true,
-        multiPass: true,
-        synthesisModel: MODELS.PRO,
     },
     exhaustive: {
         depth: 50,
@@ -61,8 +54,6 @@ export const PROFILES: Record<string, ResearchProfile> = {
         concurrentQueries: 5,
         citationDepth: 3,
         useAcademicEngines: true,
-        multiPass: true,
-        synthesisModel: MODELS.PRO,
     },
 };
 

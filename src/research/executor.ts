@@ -9,14 +9,14 @@ import type {
     ResearchRound, ResearchState, NotifyFn,
 } from "./types.js";
 import { RESEARCH_DIR, AdaptiveRateLimiter } from "./profiles.js";
-import { multiEngineSearch, resetEngineHealth } from "./engines.js";
+import { multiEngineSearch } from "./engines.js";
 import { fetchPages, rankOutboundLinks, scoreDomainQuality, getDomain } from "./fetcher.js";
 import {
     generateSeedQueries, generateMoreQueries, analyzeAndExtract,
     detectContradictions, identifyGaps, synthesizeResearch,
     shouldExtractContacts, extractContactsSection,
 } from "./analysis.js";
-import { crossReferenceFindings, dedupeByText, rankSource, UrlSet } from "./scoring.js";
+import { crossReferenceFindings, dedupeByText, mentionsTopic, rankSource, UrlSet } from "./scoring.js";
 import { saveResearchState, storeResearchInMemory } from "./persistence.js";
 import { generateHypotheses, updateHypothesis, type Hypothesis, type ResearchPlan } from "./hypothesis-engine.js";
 import { getCredibility, recordClaimVerification } from "./credibility-model.js";
@@ -56,8 +56,8 @@ export async function executeDeepResearch(
     const engineBreakdown: Record<string, number> = { ...resume?.research.engineBreakdown };
     research.engineBreakdown = engineBreakdown;
 
-    // Reset engine health at the start of each research session
-    resetEngineHealth();
+    // Engine health isn't reset per research: one engine backing off is the same engine for
+    // every research running at once, and a fresh start would just re-hit the dead ones.
 
     console.log(`[RESEARCH] 🔬 Starting: ${research.id} (${research.profile} profile)`);
     console.log(`[RESEARCH]   Topic: "${research.topic}"`);
@@ -106,7 +106,7 @@ export async function executeDeepResearch(
         // Returns the pages that yielded findings, in page order.
         const analyzeBatch = async (pages: Page[]): Promise<Array<{ page: Page; analysis: Analysis }>> => {
             const usable = pages
-                .filter(p => p.content && p.content.length >= 100)
+                .filter(p => p.content && p.content.length >= 100 && mentionsTopic(p.content, research.topic))
                 .slice(0, Math.max(0, research.maxSources - allSources.length));
             const analyses = await pLimit(usable.map(p => () => signal.aborted
                 ? Promise.resolve<Analysis>({ findings: [], followUpQueries: [], categories: [] })
@@ -421,6 +421,9 @@ export async function executeDeepResearch(
             research.roundsCompleted = globalRound;
             research.findingsCount = allFindings.length;
             research.updatedAt = new Date().toISOString();
+            // Rounds still to go in this phase, at this run's pace, plus about a minute to write it up.
+            const avgPerRound = (Date.now() - roundStartTime) / Math.max(1, globalRound);
+            research.estimatedTimeRemaining = Math.round(((adjustedPhase2Rounds - round - 1) * avgPerRound) / 1000) + 60;
 
             if (round % 5 === 0) {
                 await notify(`📖 Phase 2 round ${round + 1}/${adjustedPhase2Rounds}: ${allSources.length} sources, ${allFindings.length} findings, ${citationQueue.length} citations queued`);
@@ -437,6 +440,7 @@ export async function executeDeepResearch(
         // ══════════════════════════════════════
 
         research.currentPhase = 3;
+        research.estimatedTimeRemaining = 60;
         console.log(`[RESEARCH] ═══ PHASE 3: VERIFICATION & SYNTHESIS ═══`);
         await notify(`🔬 Phase 3: Verifying ${allFindings.length} findings, detecting contradictions, synthesizing report...`);
 

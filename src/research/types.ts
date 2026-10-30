@@ -130,8 +130,6 @@ export interface ResearchProfile {
     concurrentQueries: number;
     citationDepth: number;
     useAcademicEngines: boolean;
-    multiPass: boolean;
-    synthesisModel: string;
 }
 
 // ── Persistence ──────────────────────────────

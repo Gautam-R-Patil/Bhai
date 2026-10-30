@@ -203,15 +203,15 @@ export const deepResearch: ToolDefinition = {
             description: `Start a comprehensive, multi-phase background research investigation. Returns IMMEDIATELY with a research_id — research continues in the background.
 
 Unlike web_search (for quick lookups), this tool performs TRUE deep research:
-- Phase 1 (Discovery): Searches 3-5+ engines IN PARALLEL including Google, Brave, DuckDuckGo, Semantic Scholar, and arXiv
-- Phase 2 (Deep Reading): Reads FULL content of sources (50KB each), follows CITATION CHAINS 2-3 levels deep
-- Phase 3 (Verification): Cross-references findings, detects CONTRADICTIONS, assigns CONFIDENCE levels, writes synthesis
+- Phase 1 (Discovery): searches several engines in parallel (Parallel, Wikipedia; Semantic Scholar, arXiv and OpenAlex on deep/exhaustive), with web scrapers as a fallback
+- Phase 2 (Deep Reading): reads the sources (web pages and PDFs) and follows citation chains
+- Phase 3 (Verification): cross-references findings, detects contradictions, assigns confidence levels, writes a cited report
 
 Research profiles:
 - "quick": ~2 min, 20 sources — fast overview
-- "standard": ~5 min, 100 sources — solid coverage (default)
-- "deep": ~15 min, 200 sources, academic DBs, citation chains, multi-pass
-- "exhaustive": ~30+ min, 500 sources, full depth, Opus synthesis
+- "standard": ~5 min, up to 150 sources — solid coverage (default)
+- "deep": ~15 min, up to 200 sources, academic databases, 2-level citation chains
+- "exhaustive": ~30+ min, up to 500 sources, 3-level citation chains
 
 CRITICAL — what to do AFTER this returns:
 1. Tell the user what research you started and the rough ETA (use the profile durations above).
