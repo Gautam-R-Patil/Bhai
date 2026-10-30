@@ -1292,6 +1292,31 @@ function notifyBrokenPermission(p) {
     permsNotice.show();
 }
 
+// Bhai's face on the owner's Telegram bot: set once per bot, and only while it has
+// no photo, so a picture the owner chose is never replaced.
+async function ensureTelegramAvatar(token) {
+    if (!/^\d+:[\w-]{30,}$/.test(token || "")) return;
+    const botId = token.split(":")[0]; // a bot token starts with the bot's user id
+    const doneFile = path.join(DATA_DIR, "telegram-avatar.json");
+    try { if (JSON.parse(fs.readFileSync(doneFile, "utf8")).botId === botId) return; } catch { /* not yet */ }
+    const api = (method) => `https://api.telegram.org/bot${token}/${method}`;
+    try {
+        const photos = await (await fetch(`${api("getUserProfilePhotos")}?user_id=${botId}&limit=1`)).json();
+        if (!photos.ok) return;
+        if (photos.result.total_count === 0) {
+            const form = new FormData();
+            form.append("photo", JSON.stringify({ type: "static", photo: "attach://avatar" }));
+            const jpg = fs.readFileSync(path.join(__dirname, "assets", "mascot", "telegram-avatar.jpg"));
+            form.append("avatar", new Blob([jpg], { type: "image/jpeg" }), "avatar.jpg");
+            const r = await (await fetch(api("setMyProfilePhoto"), { method: "POST", body: form })).json();
+            if (!r.ok) { console.warn("[Telegram] Couldn't set the bot's photo:", r.description); return; }
+        }
+        fs.writeFileSync(doneFile, JSON.stringify({ botId }));
+    } catch (err) {
+        console.warn("[Telegram] Bot photo check failed:", err.message);
+    }
+}
+
 async function startBot() {
     if (stopPromise) await stopPromise; // never run two bots at once
     if (isAlive(botProcess)) return { status: "already_running" };
@@ -1608,6 +1633,7 @@ async function startBot() {
     }
     updateTrayMenu();
     botStartTime = Date.now();
+    ensureTelegramAvatar(loadEnvKey("TELEGRAM_BOT_TOKEN")); // an existing bot without a photo gets Bhai's
 
     return { status: "started" };
 }
@@ -6051,7 +6077,10 @@ ${body}`;
             await new Promise(r => setTimeout(r, 3000));
             let r;
             try { r = await convexSiteRequest("POST", "/api/telegram/managed/collect", { username }); } catch { continue; }
-            if (r && r.status === "ready") return { success: true, username, token: r.token, userId: r.ownerId, name: r.ownerName || "" };
+            if (r && r.status === "ready") {
+                ensureTelegramAvatar(r.token);
+                return { success: true, username, token: r.token, userId: r.ownerId, name: r.ownerName || "" };
+            }
             if (r && r.status === "expired") return { success: false, message: "That request expired" };
             if (r && r.error && !/rate limit/i.test(r.error)) return { success: false, message: r.error };
         }
