@@ -231,6 +231,8 @@ async function pushTaskDrawer(): Promise<void> {
 
 // The owner's message a restart left unanswered: told once, on the chat bar's next connect.
 let interruptedAsk: string | null = null;
+const restartNotice = (ask: string) =>
+    `I restarted before I could answer “${ask.length > 120 ? `${ask.slice(0, 117)}…` : ask}”. Ask me again if you still need it.`;
 
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
@@ -242,6 +244,9 @@ export function initOverlayChat(llm: LLMClient): void {
         // The owner hears about it once instead (below, on connect).
         if (recent.at(-1)?.role === "user") recent.pop();
         interruptedAsk = unansweredAsk(10 * 60_000);
+        // The chat bar is usually hidden after a restart and its toast fades in 12s: a real
+        // notification reaches the owner. Standalone bot: the toast on connect (below).
+        if (interruptedAsk && notifyDesktop("stuck", "Bhai restarted", restartNotice(interruptedAsk))) interruptedAsk = null;
         if (recent.length) setConversationHistory(recent);
     }
     // Ensure the local bootstrap token exists on disk so the native Swift
@@ -590,14 +595,8 @@ export function initOverlayChat(llm: LLMClient): void {
         // if none is, its reply was lost and it unlocks).
         ws.send(JSON.stringify({ type: "ready", busy: connKind === "native-overlay" && ownerTurnRunning() }));
         if (connKind === "native-overlay" && interruptedAsk) {
-            const ask = interruptedAsk.length > 120 ? `${interruptedAsk.slice(0, 117)}…` : interruptedAsk;
+            ws.send(JSON.stringify({ type: "notification", text: restartNotice(interruptedAsk) }));
             interruptedAsk = null;
-            ws.send(
-                JSON.stringify({
-                    type: "notification",
-                    text: `I restarted before I could answer “${ask}”. Ask me again if you still need it.`,
-                }),
-            );
         }
 
         // Send current inbox state on connect (so a fresh overlay sees pending items).
