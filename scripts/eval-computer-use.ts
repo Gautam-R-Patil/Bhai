@@ -10,6 +10,7 @@
 //
 //   MODEL=gpt-4.1-nano AZ_ENDPOINT=... AZ_KEY=... npx tsx scripts/eval-computer-use.ts [taskId...]
 //   MODEL=claude-haiku-5-5 ANTHROPIC_API_KEY=... npx tsx scripts/eval-computer-use.ts
+//   RECORD=1 ...   also adds each result to the learned router's evidence (data/router-stats.json)
 //
 // It drives this Mac's screen, music apps and settings: run it when nobody is using the
 // machine. Only computer-use tools run (no shell, no AppleScript, no Wi-Fi toggles), and
@@ -26,6 +27,7 @@ import { executeTool } from "../src/tools/index.js";
 import { initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
 import { ackWithoutAction } from "../src/agent.js";
 import { runQuickCommand } from "../src/quick-commands.js";
+import { ARMS, recordOutcome } from "../src/routing/learned-router.js";
 import { getFrontmostApp } from "../src/screen/frontmost.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -267,6 +269,12 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     const cost = pr ? (usage.in * pr[0] + usage.cached * pr[1] + usage.out * pr[2]) / 1e6 : null;
     const row = { model: MODEL, task: task.id, ok, tokens: { ...usage }, cost, iters: iters + 1, toolCalls: used.length, used, ms, offered: tools.map((t) => t.function.name).length, reply: reply.slice(0, 160), trace, offeredNames: tools.map((t) => t.function.name) };
     results.push(row);
+    // RECORD=1: the result is evidence for the learned router (src/routing/learned-router.ts).
+    const arm = ARMS.find((a) => a.model === `azure/${MODEL}` || (MODEL.includes("haiku") && a.id === "haiku"));
+    if (process.env.RECORD === "1" && arm && iters >= 0) {
+        const cls = ["chain_settings", "calc_to_textedit", "newest_pdf", "playlist_and_tell", "switch_players", "textedit_type", "calculator_multistep", "find_open_file", "camera_permissions"].includes(task.id) ? "desktop" : "quick";
+        recordOutcome(cls, arm.id, { success: ok ? 1 : 0, failure: ok ? 0 : 1, calls: iters + 1, seconds: ms / 1000 });
+    }
     appendFileSync(OUT, `${JSON.stringify(row)}\n`);
     if (!ok) for (const t of trace) console.log("     · " + t);
     console.log(`${ok ? "✅" : "❌"} ${task.id.padEnd(22)} iters=${row.iters} calls=${used.length} ${ms}ms $${cost?.toFixed(5) ?? "?"} [${used.join(",")}] ${reply.slice(0, 80).replace(/\n/g, " ")}`);

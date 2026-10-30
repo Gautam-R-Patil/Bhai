@@ -106,6 +106,7 @@ import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
 import {
     buildPlaybook,
     inLaneOrder,
+    isVerifiedWin,
     type PlaybookCall,
     playbookTaskText,
     STUCK_NOTE_OPENER,
@@ -149,6 +150,7 @@ import { getPreferredTools, recordIntentToolUsage } from "./tool-router-analytic
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
 import { runQuickCommand } from "./quick-commands.js";
+import * as learnedRouter from "./routing/learned-router.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
 import { sendFailed, withSendLedger } from "./tools/send-ledger.js";
 import { ownerMemoryTool } from "./tools/tool-intelligence.js";
@@ -1641,6 +1643,8 @@ async function _runAgentBody(
     // What a contact or guest says is never the owner's: it must not become the owner's goal,
     // session context or anticipation pattern. (No channel context = an owner path, e.g. voice.)
     const ownerTurn = channelContext?.isOwner !== false;
+    // The owner is here and reading: not a cron, research continuation or sub-agent run.
+    const ownerAttended = channelContext?.isOwner === true && !channelContext.autonomous && !isForked;
 
     // Tag every runAgent invocation with a unique turn id so offloaded
     // tool outputs cluster per turn on disk.
@@ -1694,6 +1698,7 @@ async function _runAgentBody(
     // Only a message the owner actually sent can answer a consent question.
     if (channelContext?.isOwner && !channelContext.autonomous) {
         noteOwnerMessage(userIntentText);
+        learnedRouter.noteNextMessage(userIntentText); // "no, that's wrong" counts against the last pick
         noteOwnerBusy(userIntentText); // "not now" → proactive holds for 2h
         noteOwnerMood(userIntentText); // grief, health, lost money, crisis → shades off
         // Any channel: the owner talking back is engagement (proactive fatigue gate).
@@ -1859,6 +1864,25 @@ async function _runAgentBody(
     // A Retry/Skip handoff turn is keyed by the report it replies to, or learns nothing.
     const playbookTask = playbookTaskText(rawUserMessage, userIntentText);
     const settleLearnings = (reply: string, stuck = takeStuckMarker(reply).stuck) => {
+        if (turnArm && turnClass) {
+            const verified = isVerifiedWin(turnCalls, reply, stuck);
+            const base = learnedRouter.turnOutcome({
+                verified,
+                stuck,
+                infra: turnArmInfra,
+                calls: iterations,
+                seconds: (Date.now() - turnStartedAt) / 1000,
+            });
+            // Handed to another model mid-turn: it needed help, whatever the ending.
+            const outcome = base && turnArmLeft ? { ...base, success: 0, failure: stuck ? 0.5 : 0.25 } : base;
+            if (outcome) {
+                learnedRouter.recordOutcome(turnClass, turnArm.id, outcome);
+                // The owner's "no, that's wrong" can follow only a turn they saw and that
+                // didn't end on a question (where "no" is the answer).
+                if (ownerAttended && !/\?\s*$/.test(reply.trim()))
+                    learnedRouter.noteTurn(turnClass, turnArm.id, outcome.success);
+            }
+        }
         const did = bhaiDidMemory(didLines.splice(0), {
             isOwner: channelContext?.isOwner === true,
             autonomous: channelContext?.autonomous === true,
@@ -1890,6 +1914,13 @@ async function _runAgentBody(
     // skips the memory nudge while it's short and nothing has gone wrong.
     let guiTurn = false;
     let guiTrouble = false;
+    // Learned router (src/routing/learned-router.ts): the turn's model and how it went.
+    let turnClass: learnedRouter.TaskClass | undefined;
+    let turnArm: learnedRouter.Arm | undefined;
+    let turnCats: string[] = [];
+    let turnArmReleased = false; // the rules above choose again from here
+    let turnArmLeft = false; // another model actually ran part of this turn
+    let turnArmInfra = false; // a provider error or a silent fallback: not the model's doing
     const guiPinned = () =>
         guiTurn &&
         !guiTrouble &&
@@ -3052,6 +3083,32 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             unhingedTurn = getActivePreset() === "unhinged" && !isSerious();
         }
 
+        // ── Learned router: the model for this kind of task, from evidence ──
+        // (src/routing/learned-router.ts). Rules above it: an explicit ask for depth, a forced
+        // pick, unhinged (Grok writes the turn), and complex work keeping at least Sonnet.
+        if (
+            iterations === 1 &&
+            !forcedPick &&
+            !unhingedTurn &&
+            turnTier !== "complex" &&
+            toolSelection.classification &&
+            process.env.ATLAS_NO_LEARNED_ROUTER !== "true" &&
+            !opusWarranted(rawUserMessage, errorCount, modelHint)
+        ) {
+            turnClass = learnedRouter.classifyTurn(toolSelection.classification, hasMediaThisIter);
+            turnCats = toolSelection.classification.categories ?? [];
+            const pick = learnedRouter.chooseArm(turnClass, {
+                // Only the owner's own turns try a model, and only low-risk kinds of task.
+                lowRisk: ownerAttended && learnedRouter.lowRiskTurn(turnClass, turnCats),
+                vision: hasMediaThisIter,
+            });
+            turnArm = pick.arm;
+            model = pick.arm.model;
+            console.log(
+                `  🎯 Learned router: ${turnClass} → ${pick.arm.id}${pick.explored ? " (trying)" : ""} [${pick.reason}]`,
+            );
+        }
+
         // ── Simple desktop tasks stay on Haiku ──
         // From iteration 3 the native router moves os_* loops to Sonnet by
         // iteration count alone, a rule from when the model couldn't see the
@@ -3069,6 +3126,20 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         } else if (guiPinned() && claudeTier(model) !== "haiku") {
             console.log(`  🖱️ Desktop task stays on Haiku (router picked ${claudeTier(model)})`);
             model = MODELS.HAIKU;
+        }
+
+        // The learned pick keeps the turn (one model: one prompt cache) until something goes
+        // wrong, the turn widens into another kind of task (request_tools: browser, code), or a
+        // nudge asked for a stronger model (lastToolCalls cleared); then the rules above decide.
+        if (iterations > 1 && turnArm && !turnArmReleased && turnClass) {
+            const widened =
+                !!requestedCategories?.length &&
+                learnedRouter.classifyTurn(
+                    { ...toolSelection.classification, categories: [...turnCats, ...requestedCategories] },
+                    false,
+                ) !== turnClass;
+            if (forcedPick || errorCount > 0 || widened || lastToolCalls === undefined) turnArmReleased = true;
+            else model = turnArm.model;
         }
 
         // Unhinged keeps the whole turn on Grok (after the desktop Haiku pin above).
@@ -3437,6 +3508,7 @@ PLAN:`,
             console.warn(`[AGENT] plan-mode gating skipped: ${(err as Error).message}`);
         }
 
+        if (turnArm && model !== turnArm.model) turnArmLeft = true; // another model runs this step
         let response: Awaited<ReturnType<LLMClient["chat"]>> | undefined;
         try {
             response = await llm.chat({
@@ -3453,6 +3525,7 @@ PLAN:`,
                 temperature: model === MODELS.GROK ? 1.1 : undefined,
             });
         } catch (llmErr) {
+            if (turnArm && model === turnArm.model) turnArmInfra = true; // provider trouble, not the model's answer
             cbRecordFailure(circuitBreaker);
             console.error(`[AGENT] LLM call threw: ${(llmErr as Error).message} — attempting recovery`);
             lastLlmError = (llmErr as Error).message ?? "";
@@ -3576,6 +3649,16 @@ PLAN:`,
                 continue;
             }
         }
+        // A reply from another model than the pick (Convex's silent Azure→Claude fallback, a
+        // client failover): provider trouble, so this turn says nothing about the picked model.
+        const served = String(response.model ?? "");
+        if (
+            turnArm &&
+            model === turnArm.model &&
+            served &&
+            (turnArm.model.startsWith("azure/") ? /^claude/i.test(served) : claudeTier(served) !== claudeTier(turnArm.model))
+        )
+            turnArmInfra = true;
         const choice = response.choices[0];
 
         // ── Live Thinking Display ──
