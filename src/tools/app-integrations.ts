@@ -536,7 +536,7 @@ export function parseWhen(text: string, now = new Date()): Date | null {
  *  buttons", gpt-4.1-nano pressed Calculator's keys one by one in the wrong order. */
 const APP_TIPS: Record<string, string> = {
     Calculator:
-        "Type the whole expression in one os_type call (text '17*23', key 'return'); the result shows in the display. Don't click its buttons one by one.",
+        "Use the calculator tool (expression '17*23'): it enters it and returns the result. Or type the whole expression in one os_type call (text '17*23', key 'return'). Don't click its buttons one by one.",
 };
 
 /** An AppleScript date built field by field: `date "<string>"` parses by the Mac's locale. */
@@ -1346,6 +1346,74 @@ end tell`);
             }
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+/** "123 times 45" → "123*45"; null when it isn't plain arithmetic Calculator can take. */
+export function calcExpression(text: string): string | null {
+    const expr = text
+        .toLowerCase()
+        .replace(/\bmultiplied by\b|\btimes\b|\bx\b|×/g, "*")
+        .replace(/\bdivided by\b|÷/g, "/")
+        .replace(/\bplus\b/g, "+")
+        .replace(/\bminus\b|[−–]/g, "-")
+        .replace(/(\d),(?=\d{3}\b)/g, "$1") // 1,234 → 1234
+        .replace(/=+\s*$/, "")
+        .trim();
+    return expr && /^[\d\s.+\-*/()%]+$/.test(expr) ? expr : null;
+}
+
+/**
+ * Calculator in one call: open it, clear it, enter the expression, read the result off its
+ * display. Weak models pressed its keys out of order, typed sums into TextEdit, or wandered
+ * into its menus; this way every model gets the right number.
+ */
+export const calculatorTool: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "calculator",
+            description:
+                "Work something out in the Calculator app in one step: opens Calculator, enters the expression and returns the result on its display. Use this whenever the user wants Calculator used (instead of clicking its keys). Operators: + - * / ( ) %.",
+            parameters: {
+                type: "object",
+                properties: {
+                    expression: { type: "string", description: "e.g. '17*23+100' or '123 times 45'" },
+                },
+                required: ["expression"],
+            },
+        },
+    },
+    async handler(input) {
+        if (!IS_MAC) return JSON.stringify({ success: false, error: "calculator drives the macOS Calculator app." });
+        const expr = calcExpression(String(input.expression ?? ""));
+        if (!expr) return JSON.stringify({ success: false, error: `Use digits and + - * / ( ) % only (got "${input.expression}").` });
+        try {
+            const { waitForFrontmost } = await import("../screen/frontmost.js");
+            await execFileAsync("open", ["-a", "Calculator"], { timeout: 5000 });
+            const front = await waitForFrontmost("Calculator", 5000);
+            if (!front) return JSON.stringify({ success: false, error: "Calculator didn't come to the front." });
+            // Clear (it keeps its last entry, even across a relaunch), enter, evaluate.
+            await runAS('tell application "System Events" to repeat 2 times\nkey code 53\ndelay 0.05\nend repeat');
+            const { typeTextMac } = await import("./os-computer-action.js");
+            await typeTextMac(expr);
+            await runAS('tell application "System Events" to key code 36');
+            await new Promise((r) => setTimeout(r, 200));
+            const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+            const dump = await dumpAccessibilityTree({ pid: front.pid, depth: 12 });
+            let result = "";
+            let shown = "";
+            const stack = dump.error ? [] : [dump.root];
+            for (let n = stack.pop(); n; n = stack.pop()) {
+                if (n.role === "AXStaticText" && n.label === "Edit field") result = (n.value ?? "").trim();
+                if (n.role === "AXStaticText" && n.label === "Last Expression") shown = (n.value ?? "").trim();
+                stack.push(...n.children);
+            }
+            if (!result) return JSON.stringify({ success: false, error: "Couldn't read Calculator's display." });
+            return JSON.stringify({ success: true, expression: shown || expr, result });
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message.slice(0, 200) });
         }
     },
 };

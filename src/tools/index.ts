@@ -37,6 +37,7 @@ import {
     osDrag,
     remindersTool,
     windowManage,
+    calculatorTool,
 } from "./app-integrations.js";
 import { appleNotesTool } from "./apple-notes.js";
 import { askOwnerTool } from "./ask-owner.js";
@@ -507,6 +508,7 @@ registry.set(glob.schema.function.name, glob);
 registry.set(listDirectory.schema.function.name, listDirectory);
 registry.set(deleteFile.schema.function.name, deleteFile);
 registry.set(fileManage.schema.function.name, fileManage);
+registry.set(calculatorTool.schema.function.name, calculatorTool);
 registry.set(imageEdit.schema.function.name, imageEdit);
 registry.set(pdfEdit.schema.function.name, pdfEdit);
 

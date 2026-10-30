@@ -381,7 +381,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     app_management: {
         description:
             "Managing applications, opening apps, closing apps, force-quitting apps, listing running apps, window management, moving windows, resizing windows, drag and drop operations, macOS Shortcuts, opening an app straight to a place with a deep link (Maps directions, a FaceTime call, a Zoom meeting, a file in VS Code).",
-        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut", "open_in_app"],
+        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut", "open_in_app", "calculator"],
     },
     research: {
         description:
@@ -712,6 +712,7 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
         tool: "system_info",
         category: "system_controls",
     },
+    { pattern: /\bcalculator\b/i, tool: "calculator", category: "app_management" },
     // "copy its name to my clipboard" is the clipboard's.
     {
         pattern:

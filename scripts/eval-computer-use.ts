@@ -48,7 +48,7 @@ const ALLOWED = new Set([
     "find_files", "open_in_app", "app_manager", "window_manage", "os_smart_click", "os_inspect", "os_click_id",
     "os_type", "os_screenshot", "os_click", "os_visual_verify", "os_keyboard_shortcuts", "os_context",
     "list_directory", "glob", "get_current_time", "bluetooth_control", "wifi_control",
-    "write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
+    "write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit", "calculator", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
     "browser_navigate", "browser_extract", "browser_extract_article", "browser_scan", "browser_click", "browser_type",
     "browser_scroll", "browser_wait", "browser_back", "browser_close",
 ]);
