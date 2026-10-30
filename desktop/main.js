@@ -2084,6 +2084,8 @@ function initAmbientPause() {
     try {
         powerMonitor.on("lock-screen", () => { screenLocked = true; syncAmbient(); });
         powerMonitor.on("unlock-screen", () => { screenLocked = false; syncAmbient(); });
+        // The bot's cron timers pause in sleep; this lets a job due just after wake run on time.
+        powerMonitor.on("resume", () => writeToBot("##BHAI_RESUME##"));
     } catch (err) {
         console.warn("[Ambient] idle pause off:", err.message);
     }

@@ -581,6 +581,9 @@ export function handleDesktopLine(line: string): void {
         } else if (line.startsWith("##BHAI_VAULT_CVV##")) {
             const m = JSON.parse(line.slice(18)) as { id?: number; cvv?: string | null };
             cvvWaiters.get(Number(m.id))?.(typeof m.cvv === "string" ? m.cvv : null);
+        } else if (line === "##BHAI_RESUME##") {
+            // Not the vault's, but this is the bot's one reader of desktop lines: the machine woke.
+            void import("../tools/scheduled.js").then((m) => m.cronTimersOnWake());
         }
     } catch {
         /* malformed line */

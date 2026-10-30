@@ -79,6 +79,13 @@ export function nextCronMinute(expression: string, from: number): number | null 
     return null;
 }
 
+const wakeHooks = new Set<() => void>();
+
+/** The machine woke from sleep (the desktop's "##BHAI_RESUME##" line): re-check every cron job. */
+export function cronTimersOnWake(): void {
+    for (const woke of wakeHooks) woke();
+}
+
 /**
  * A recurring 5-field job on one timer instead of node-cron's check every second. Waits go in
  * steps of at most a minute (a sleeping Mac's timers run late), and a run fires only inside its
@@ -92,16 +99,17 @@ function armCronTimer(expression: string, run: () => void): { stop: () => void }
     let stopped = false;
     let armedAt = Date.now();
     let step = 0;
-    const wait = () => {
-        if (stopped) return;
+    let lastRun = 0;
+    // Run what is due (looking again from `from`, never at a minute that already ran), then wait for the next.
+    const check = (from: number | null, runLate: boolean) => {
         const now = Date.now();
-        // macOS timers pause in sleep, so a step pending at sleep fires up to `step` after wake:
-        // look for the run from the earliest moment the Mac can have woken.
-        const slept = now - armedAt - step > 2000;
-        if (slept) next = nextCronMinute(expression, now - step - 1000);
+        if (from !== null) next = nextCronMinute(expression, Math.max(from, lastRun));
         if (next === null) return;
         if (next <= now) {
-            if (slept || now - next < 1000) run();
+            if (runLate || now - next < 1000) {
+                lastRun = next;
+                run();
+            }
             next = nextCronMinute(expression, now);
             if (next === null) return;
         }
@@ -109,11 +117,28 @@ function armCronTimer(expression: string, run: () => void): { stop: () => void }
         step = Math.min(next - now, 60_000);
         timer = setTimeout(wait, step);
     };
-    wait();
+    const wait = () => {
+        if (stopped) return;
+        const now = Date.now();
+        // macOS timers pause in sleep, so a step pending at sleep fires up to `step` after wake:
+        // look for the run from the earliest moment the Mac can have woken.
+        const slept = now - armedAt - step > 2000;
+        check(slept ? now - step - 1000 : null, slept);
+    };
+    // The desktop says the machine just woke: check now instead of when the paused step ends.
+    // Runs from a few seconds before (the wake itself) are due; earlier ones were slept through.
+    const woke = () => {
+        if (stopped) return;
+        clearTimeout(timer);
+        check(Date.now() - 3000, true);
+    };
+    wakeHooks.add(woke);
+    check(null, false);
     return {
         stop: () => {
             stopped = true;
             clearTimeout(timer);
+            wakeHooks.delete(woke);
         },
     };
 }

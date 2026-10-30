@@ -76,3 +76,40 @@ it("keeps a job whose runs are more than a year apart (Friday the 13th, Feb 29)"
     expect(fired.map((t) => new Date(t).toDateString())).toEqual(["Fri Aug 13 2027"]);
     expect(vi.getTimerCount()).toBeGreaterThan(0); // still armed for Oct 2028
 });
+
+it("runs a job due just after the Mac wakes on time when the desktop says it woke", async () => {
+    const { scheduleTask, fired, cronTimersOnWake } = await load();
+    await scheduleTask.handler({ expression: "0 * * * *", description: "d", action: "a" });
+    await vi.advanceTimersByTimeAsync(58 * 60_000 + 10_000); // 10:58:40, a 60 s step armed at 10:58:30
+    vi.setSystemTime(new Date(2026, 9, 30, 11, 59, 30)); // asleep; wake 30 s before 12:00 (timers paused)
+    cronTimersOnWake();
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(fired.map((t) => new Date(t).toTimeString().slice(0, 8))).toEqual(["12:00:00"]);
+    cronTimersOnWake(); // a second wake signal doesn't run it again
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fired).toHaveLength(1);
+});
+
+it("a wake signal runs what came due at the wake, but not runs slept through", async () => {
+    const { scheduleTask, fired, cronTimersOnWake } = await load();
+    await scheduleTask.handler({ expression: "* * * * *", description: "d", action: "a" });
+    await vi.advanceTimersByTimeAsync(10_000); // 10:00:40, a 20 s step pending
+    vi.setSystemTime(new Date(2026, 9, 30, 10, 30, 1)); // woke at 10:30:00, the signal a second later
+    cronTimersOnWake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fired.map((t) => new Date(t).toTimeString().slice(0, 8))).toEqual(["10:30:01"]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fired).toHaveLength(2);
+});
+
+it("the desktop's ##BHAI_RESUME## line is the wake signal", async () => {
+    const { scheduleTask, fired } = await load();
+    const { handleDesktopLine } = await import("../security/vault.js");
+    await scheduleTask.handler({ expression: "0 * * * *", description: "d", action: "a" });
+    await vi.advanceTimersByTimeAsync(58 * 60_000 + 10_000);
+    vi.setSystemTime(new Date(2026, 9, 30, 11, 59, 30));
+    handleDesktopLine("##BHAI_RESUME##");
+    await vi.dynamicImportSettled();
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(fired.map((t) => new Date(t).toTimeString().slice(0, 8))).toEqual(["12:00:00"]);
+});
