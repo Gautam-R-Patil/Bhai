@@ -2854,6 +2854,15 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
   <script>
     (() => {
       const input = document.getElementById('input');
+      // The server sends the app-aware placeholder only when it changes. A voice step shows its
+      // own text for a while; the server's text comes back within 15 s (as the old 15 s resend did).
+      let serverPlaceholder = 'Tell Bhai what needs sorting…';
+      let placeholderTimer = null;
+      const showPlaceholder = (text) => {
+        input.placeholder = text;
+        clearTimeout(placeholderTimer);
+        placeholderTimer = setTimeout(() => { input.placeholder = serverPlaceholder; }, 15000);
+      };
       const icon = document.getElementById('icon');
       if (window.BhaiMascot) window.BhaiMascot.mount(icon, 'idle');
       const progress = document.getElementById('progress');
@@ -3626,7 +3635,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           replyBox.classList.add('visible');
         }
         else if (msg.type === 'placeholder') {
-          input.placeholder = msg.text || 'Tell Bhai what needs sorting…';
+          serverPlaceholder = msg.text || 'Tell Bhai what needs sorting…';
+          clearTimeout(placeholderTimer);
+          input.placeholder = serverPlaceholder;
         }
         else if (msg.type === 'notification') {
           if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
@@ -3671,11 +3682,12 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           micBtn.classList.remove('listening');
           isListening = false;
           if (msg.text) {
-            input.placeholder = 'Tell Bhai what needs sorting…';
+            clearTimeout(placeholderTimer);
+            input.placeholder = serverPlaceholder;
             input.value = msg.text;
             send();
           } else {
-            input.placeholder = 'Analyzing audio…';
+            showPlaceholder('Analyzing audio…');
             icon.classList.add('thinking');
             keepTurn('🎤 Voice message');
             waiting = true;
@@ -3685,15 +3697,15 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         else if (msg.type === 'voice_status') {
           if (msg.status === 'listening') {
             micBtn.classList.add('listening');
-            input.placeholder = 'Listening…';
+            showPlaceholder('Listening…');
           } else if (msg.status === 'processing') {
             micBtn.classList.remove('listening');
-            input.placeholder = 'Analyzing audio…';
+            showPlaceholder('Analyzing audio…');
           } else if (msg.status === 'error') {
             micBtn.classList.remove('listening');
             isListening = false;
-            input.placeholder = msg.error || 'Voice error';
-            setTimeout(() => { input.placeholder = 'Tell Bhai what needs sorting…'; }, 2000);
+            showPlaceholder(msg.error || 'Voice error');
+            setTimeout(() => { input.placeholder = serverPlaceholder; }, 2000);
           }
         }
         // ── Live Voice Mode status ──
@@ -3949,13 +3961,13 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           ws.send(JSON.stringify({ type: 'voice_stop' }));
           isListening = false;
           micBtn.classList.remove('listening');
-          input.placeholder = 'Processing…';
+          showPlaceholder('Processing…');
         } else {
           ws.send(JSON.stringify({ type: 'voice_start', chat: chatId }));
           isListening = true;
           micBtn.classList.add('listening');
           input.value = '';
-          input.placeholder = 'Listening…';
+          showPlaceholder('Listening…');
         }
       });
 

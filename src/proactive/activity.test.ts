@@ -80,4 +80,23 @@ describe("presence probe", () => {
             { from: "Google Chrome", to: "WhatsApp" },
         ]);
     });
+
+    it("callers share one probe for 25 s, then probe again", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const { getUserPresence } = await load();
+            const [a, b] = await Promise.all([getUserPresence(), getUserPresence()]);
+            await getUserPresence();
+            expect(a).toBe(b);
+            expect(calls.filter((c) => c.cmd === "lsappinfo")).toHaveLength(1);
+            vi.advanceTimersByTime(24_000);
+            await getUserPresence();
+            expect(calls.filter((c) => c.cmd === "lsappinfo")).toHaveLength(1);
+            vi.advanceTimersByTime(2_000);
+            await getUserPresence();
+            expect(calls.filter((c) => c.cmd === "lsappinfo")).toHaveLength(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

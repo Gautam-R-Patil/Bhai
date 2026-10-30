@@ -1791,9 +1791,9 @@ function startPlaceholderBroadcast(): void {
     if (placeholderInterval) clearInterval(placeholderInterval);
 
     // Cache the last presence lookup. The broadcast runs every 15s, but
-    // getUserPresence() spawns 3 child processes (ioreg + 2× osascript on
-    // macOS, powershell w/ inline C# compile on Windows) just to learn the
-    // frontmost app. We only need the frontmost app for placeholder text.
+    // getUserPresence() spawns child processes (ioreg + lsappinfo on macOS,
+    // powershell w/ inline C# compile on Windows; shared for 25 s with the
+    // observer) just to learn the frontmost app, all the placeholder needs.
     // - On app-switch: the boundary bus tells us instantly, no spawn needed.
     // - Otherwise: re-fetch only when the cache is older than 60s.
     let cachedFrontmost: string | null = null;
@@ -1801,9 +1801,13 @@ function startPlaceholderBroadcast(): void {
     const FRONTMOST_TTL_MS = 60_000;
     let unsubAppSwitch: (() => void) | null = null;
 
+    // Each socket gets the text only when it differs from what it last got (a new socket gets it once).
+    const lastSent = new WeakMap<WebSocket, string>();
     const sendPlaceholder = (frontmost: string) => {
         const placeholder = getPlaceholderForApp(frontmost);
         for (const client of ownerClients()) {
+            if (lastSent.get(client) === placeholder) continue;
+            lastSent.set(client, placeholder);
             sendToClient(client, { type: "placeholder", text: placeholder });
         }
     };

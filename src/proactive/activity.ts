@@ -180,7 +180,28 @@ export function getLastAppTransition(): { from: string; to: string } | null {
 
 // ── Main: Get User Presence ───────────────────
 
-export async function getUserPresence(): Promise<UserPresence> {
+// One shared result for the observer, the overlay placeholder and the heartbeat: whoever asks
+// first probes, the rest reuse it (and an in-flight probe) for up to 25 s, under the 30 s poll.
+// The probe that computes a fresh value is the one that emits app_switch / idle_* events.
+const PRESENCE_TTL_MS = 25_000;
+let presenceCache: { at: number; value: Promise<UserPresence> } | null = null;
+
+export function _resetPresenceCacheForTests(): void {
+    presenceCache = null;
+}
+
+export function getUserPresence(): Promise<UserPresence> {
+    if (presenceCache && Date.now() - presenceCache.at < PRESENCE_TTL_MS) return presenceCache.value;
+    const value = probePresence();
+    const entry = { at: Date.now(), value };
+    presenceCache = entry;
+    value.catch(() => {
+        if (presenceCache === entry) presenceCache = null;
+    });
+    return value;
+}
+
+async function probePresence(): Promise<UserPresence> {
     const [idleSeconds, probed] = await Promise.all([
         getUserIdleSeconds(),
         getActiveApps(),
