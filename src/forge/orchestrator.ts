@@ -527,17 +527,21 @@ export async function approveDynamicTool(
 
 /** Make an approved persisted tool callable; it runs in the sandbox supervisor. */
 function registerPersisted(slug: string, manifest: PersistedToolManifest): void {
-    registerDynamicTool(slug, {
-        schema: {
-            type: "function",
-            function: {
-                name: slug,
-                description: `[Dynamic — sandboxed] ${manifest.description}`,
-                parameters: manifest.parametersSchema,
+    registerDynamicTool(
+        slug,
+        {
+            schema: {
+                type: "function",
+                function: {
+                    name: slug,
+                    description: `[Dynamic — sandboxed] ${manifest.description}`,
+                    parameters: manifest.parametersSchema,
+                },
             },
+            handler: async (input) => JSON.stringify(await invokePersistedTool(slug, input)),
         },
-        handler: async (input) => JSON.stringify(await invokePersistedTool(slug, input)),
-    });
+        { persisted: true },
+    );
 }
 
 export async function revokeDynamicTool(slug: string): Promise<void> {

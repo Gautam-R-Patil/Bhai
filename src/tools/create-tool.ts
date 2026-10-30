@@ -34,6 +34,9 @@ export function getRegistryRef(): Map<string, ToolDefinition> | null {
 
 // ── Tracked dynamic tool names for listing ───────────────
 const dynamicToolNames = new Set<string>();
+// Approved Forge tools, which run in the kernel sandbox; the legacy create_tool
+// path (in-process vm only) must never replace one.
+const persistedToolNames = new Set<string>();
 
 /** True when `name` belongs to a built-in tool, which no dynamic tool may replace. */
 export function isBuiltinToolName(name: string): boolean {
@@ -41,16 +44,18 @@ export function isBuiltinToolName(name: string): boolean {
 }
 
 /** Register a runtime-made tool so list_dynamic_tools and the tool router see it. */
-export function registerDynamicTool(name: string, def: ToolDefinition): boolean {
+export function registerDynamicTool(name: string, def: ToolDefinition, opts?: { persisted?: boolean }): boolean {
     if (!registryRef || isBuiltinToolName(name)) return false;
     registryRef.set(name, def);
     dynamicToolNames.add(name);
+    if (opts?.persisted) persistedToolNames.add(name);
     return true;
 }
 
 /** Remove a dynamic tool; built-ins are left alone. */
 export function unregisterDynamicTool(name: string): void {
     if (dynamicToolNames.delete(name)) registryRef?.delete(name);
+    persistedToolNames.delete(name);
 }
 
 /** Schemas of the dynamic tools still registered (revoke removes them). */
@@ -164,6 +169,8 @@ function quarantineCorruptTool(srcPath: string, reason: string): void {
 // handlers through this same runtime, so what passes verification runs here.
 
 const SANDBOX_FS = ["readFile", "readFileSync", "readdir", "readdirSync", "existsSync", "stat", "statSync"];
+// Reads run synchronously on the host thread, where the vm timeout can't fire.
+const SANDBOX_MAX_READ_BYTES = 8 * 1024 * 1024;
 const SANDBOX_PATH = ["join", "resolve", "basename", "dirname", "extname", "relative", "normalize", "isAbsolute"];
 
 /** Host side of the sandbox's fs/path calls. Reads are path-checked. */
@@ -174,7 +181,21 @@ function sandboxBridge(name: string, rawArgs: unknown): unknown {
         const target = path.resolve(String(args[0] ?? ""));
         if (!isPathAllowed(target) || isSensitivePath(target).denied) throw new Error(`Path not allowed: ${target}`);
         const base = fn === "existsSync" ? fn : fn.replace(/Sync$/, "");
-        if (base === "readFile") return fs.readFileSync(target, "utf8");
+        if (base === "readFile") {
+            // Regular files under the size cap only: a FIFO, device or huge file would
+            // block the host. O_NONBLOCK keeps the open itself from waiting on a FIFO.
+            const fd = fs.openSync(target, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+            try {
+                const st = fs.fstatSync(fd);
+                if (!st.isFile()) throw new Error(`Not a regular file: ${target}`);
+                if (st.size > SANDBOX_MAX_READ_BYTES)
+                    throw new Error(`File too large: ${target} (${st.size} bytes, limit ${SANDBOX_MAX_READ_BYTES})`);
+                const buf = Buffer.alloc(st.size);
+                return buf.toString("utf8", 0, fs.readSync(fd, buf, 0, st.size, 0));
+            } finally {
+                fs.closeSync(fd);
+            }
+        }
         if (base === "readdir") {
             const withTypes = (args[1] as { withFileTypes?: boolean } | undefined)?.withFileTypes === true;
             return withTypes
@@ -389,6 +410,14 @@ export const createTool: ToolDefinition = {
             }
         }
 
+        // This path runs handlers in the in-process vm only; it must not replace an
+        // approved Forge tool, which runs in the kernel sandbox.
+        if (persistedToolNames.has(name)) {
+            return JSON.stringify({
+                error: `"${name}" is an approved sandboxed tool; call it directly or choose a different name.`,
+            });
+        }
+
         // Static-only validation: confirm the handler syntactically parses.
         // We do NOT execute the handler here — LLM-supplied code is untrusted and
         // the test-execution path lives inside buildHandler's vm sandbox, which is
@@ -534,7 +563,8 @@ export async function loadDynamicTools(): Promise<void> {
             const { name, description, parameters_schema, handler_code } = data;
 
             if (!name || !handler_code) continue;
-            if (isBuiltinToolName(name)) continue; // Don't override built-in
+            // Don't override a built-in or an approved Forge tool (the boot scan may run first).
+            if (isBuiltinToolName(name) || persistedToolNames.has(name)) continue;
 
             // F8: HMAC verification. Refuse unsigned / tampered files.
             if (

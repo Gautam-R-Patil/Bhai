@@ -2,12 +2,20 @@
 // Dynamic tool handlers must not reach the host process. Every one of these
 // used to work: a host function or object in the sandbox leads to the host
 // Function constructor, then process, then child_process.
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { _buildHandlerForTest as buildHandler } from "./create-tool.js";
+import {
+    _buildHandlerForTest as buildHandler,
+    createTool,
+    registerDynamicTool,
+    setRegistryRef,
+    unregisterDynamicTool,
+} from "./create-tool.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 const ESCAPES = [
     'return typeof parseInt.constructor("return process")()',
@@ -94,4 +102,60 @@ describe("timer callbacks", () => {
         await new Promise((r) => setTimeout(r, 50)); // the host loop must come back
         expect(Date.now() - t0).toBeLessThan(8000); // ≤ the 5 s re-entry timeout, not forever
     }, 15_000);
+});
+
+// Host reads run synchronously, where the vm timeout can't fire: a FIFO or a huge
+// file would block the bot, so only regular files under the cap are read.
+describe("sandbox reads are bounded", () => {
+    it("refuses a file over the size cap and a FIFO, still reads a small file", async () => {
+        const dir = fs.mkdtempSync(path.join(tmpdir(), "sbread-"));
+        try {
+            const big = path.join(dir, "big.bin");
+            fs.writeFileSync(big, "");
+            fs.truncateSync(big, 9 * 1024 * 1024); // sparse, over the 8 MB cap
+            const small = path.join(dir, "small.txt");
+            fs.writeFileSync(small, "hello");
+            const read = buildHandler("return utils.fs.readFileSync(input.file)");
+            expect(await read({ file: big })).toMatch(/too large/);
+            expect(await read({ file: small })).toBe("hello");
+            if (process.platform !== "win32") {
+                const fifo = path.join(dir, "pipe");
+                execFileSync("mkfifo", [fifo]);
+                expect(await read({ file: fifo })).toMatch(/Not a regular file/);
+            }
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    }, 15_000);
+});
+
+describe("legacy create_tool vs approved Forge tools", () => {
+    it("does not replace an approved, kernel-sandboxed tool", async () => {
+        const reg = new Map<string, ToolDefinition>();
+        setRegistryRef(reg);
+        const prev = process.env.ATLAS_NO_FORGE_VERIFIER;
+        process.env.ATLAS_NO_FORGE_VERIFIER = "true";
+        const approved: ToolDefinition = {
+            schema: { type: "function", function: { name: "approved_tool", parameters: { type: "object" } } },
+            handler: async () => "sandboxed",
+        };
+        try {
+            registerDynamicTool("approved_tool", approved, { persisted: true });
+            const out = await createTool.handler({ name: "approved_tool", description: "x", handler_code: "return 1" });
+            expect(out).toMatch(/approved sandboxed tool/);
+            expect(reg.get("approved_tool")).toBe(approved);
+            // A session tool may still be replaced, and so may the name once revoked.
+            unregisterDynamicTool("approved_tool");
+            const again = await createTool.handler({
+                name: "approved_tool",
+                description: "x",
+                handler_code: "return 1",
+            });
+            expect(JSON.parse(again).success).toBe(true);
+        } finally {
+            unregisterDynamicTool("approved_tool");
+            if (prev === undefined) delete process.env.ATLAS_NO_FORGE_VERIFIER;
+            else process.env.ATLAS_NO_FORGE_VERIFIER = prev;
+        }
+    });
 });
