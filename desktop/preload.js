@@ -93,6 +93,10 @@ contextBridge.exposeInMainWorld("atlas", {
     onBotLog: (callback) => {
         ipcRenderer.on("bot-log", (_, msg) => callback(msg));
     },
+    // Screen locked or nobody at the Mac for 2 minutes: freeze the background orbs.
+    onAmbientPaused: (callback) => {
+        ipcRenderer.on("ambient-paused", (_, paused) => callback(paused));
+    },
     onInstallProgress: (callback) => {
         ipcRenderer.on("install-progress", (_, data) => callback(data));
     },

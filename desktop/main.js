@@ -13,7 +13,7 @@ try {
     // bytenode not available - running in dev mode
 }
 
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, globalShortcut, screen, systemPreferences, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, globalShortcut, screen, systemPreferences, nativeTheme, powerMonitor } = require("electron");
 const { spawn, execFile } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -1916,7 +1916,12 @@ async function createPanelWindow() {
     });
 
     hardenBrowserWindow(mainWindow, { externalLinks: true });
-    mainWindow.webContents.on("did-finish-load", () => pushChannelStatuses(true));
+    mainWindow.webContents.on("did-finish-load", () => {
+        pushChannelStatuses(true);
+        ambientPaused = false; // a fresh page runs its orbs
+        syncAmbient();
+    });
+    mainWindow.on("show", syncAmbient);
     // The native close button hides to the menu bar, like the app's own close
     // control; Quit (⌘Q / tray) still quits.
     mainWindow.on("close", (e) => {
@@ -2048,6 +2053,38 @@ function showBuddy(mood, text, hideAfterMs, force = false) {
     // Done/oops pop away on their own; anything else hides if Bhai goes quiet.
     if (hideAfterMs) buddyHideTimer = setTimeout(hideBuddy, hideAfterMs);
     else buddyWatchdog = setTimeout(hideBuddy, 90_000);
+}
+
+// ── Panel background: freeze the drifting orbs when nobody's looking ──
+// Screen locked, or no keyboard/mouse input for 2 minutes. The panel picks
+// this up over "ambient-paused" (panel.html) and the orbs carry on from where
+// they stopped once someone's back.
+const AMBIENT_IDLE_S = 120;
+const AMBIENT_CHECK_MS = 5000;
+let ambientPaused = false;
+let screenLocked = false;
+let ambientTimer = null;
+// Checks idle time every 5 s, only while the panel is on screen.
+function syncAmbient() {
+    const win = mainWindow;
+    if (!win || win.isDestroyed() || !win.isVisible()) {
+        clearInterval(ambientTimer);
+        ambientTimer = null;
+        return;
+    }
+    if (!ambientTimer) ambientTimer = setInterval(syncAmbient, AMBIENT_CHECK_MS);
+    const paused = screenLocked || powerMonitor.getSystemIdleTime() >= AMBIENT_IDLE_S;
+    if (paused === ambientPaused) return;
+    ambientPaused = paused;
+    win.webContents.send("ambient-paused", paused);
+}
+function initAmbientPause() {
+    try {
+        powerMonitor.on("lock-screen", () => { screenLocked = true; syncAmbient(); });
+        powerMonitor.on("unlock-screen", () => { screenLocked = false; syncAmbient(); });
+    } catch (err) {
+        console.warn("[Ambient] idle pause off:", err.message);
+    }
 }
 
 // ── Bhai's ghost cursor ──────────────────────────
@@ -6869,6 +6906,7 @@ app.whenReady().then(async () => {
     await runV2Migration();
     // Ghost-cursor windows exist (hidden) before any bot can drive the screen.
     initAgentCursor();
+    initAmbientPause();
 
     // Configure the auto-updater feed URL once at startup. Some launch paths
     // (native menu shortcuts, scheduled checks) call autoUpdater directly

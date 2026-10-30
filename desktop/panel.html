@@ -5082,6 +5082,47 @@
         }
     </script>
 
+    <script>
+        // The background orbs drift a few px a second along lgOrbDrift (styles.css).
+        // Run their CSS animations from a 20 fps clock instead of every display
+        // frame (same path and easing, each step well under a pixel), so the glass
+        // over them is re-filtered a third as often. Frozen while the screen is
+        // locked or nobody has touched the Mac for 2 minutes (main.js), or while
+        // the panel is hidden; they carry on from where they stopped.
+        (function () {
+            const STEP_MS = 50;
+            const RESCAN_TICKS = 100;   // pick up animations a style change re-created
+            let anims = [];
+            let timer = 0;
+            let last = 0;
+            let ticks = 0;
+            let paused = false;
+            function grab() {
+                anims = document.getAnimations().filter((a) => a.animationName === 'lgOrbDrift');
+                for (const a of anims) if (a.playState !== 'paused') a.pause();
+            }
+            function tick() {
+                const now = performance.now();
+                const dt = now - last;
+                last = now;
+                if (++ticks % RESCAN_TICKS === 0) grab();
+                for (const a of anims) a.currentTime += dt;
+            }
+            function run() {
+                clearInterval(timer);
+                timer = 0;
+                grab();
+                if (paused || document.hidden || !anims.length) return;
+                last = performance.now();
+                timer = setInterval(tick, STEP_MS);
+            }
+            document.addEventListener('visibilitychange', run);
+            window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener?.('change', run);
+            window.atlas?.onAmbientPaused?.((p) => { paused = !!p; run(); });
+            run();
+        })();
+    </script>
+
     <!-- Memory Studio (vendored D3 v7 + studio.js) loads on the first visit to the Memory tab: loadStudio() -->
 
 </body>
