@@ -2338,10 +2338,11 @@ function registerIPC() {
         _desktopSessionToken = session.token;
         _desktopSessionExpiry = session.expiresAt || (Date.now() + 86400000);
         _signInNeeded = null;
-        // A running bot still has the old identity and device secret: restart it.
-        if (isAlive(botProcess)) {
+        // The bot needs the new identity and device secret: restart a running one, and
+        // start one that stopped for want of a sign-in (once setup is done).
+        if (isAlive(botProcess) || fs.existsSync(SETUP_FLAG)) {
             stopBot();
-            startBot();
+            startBot().catch((err) => console.error("[AUTH] Bot start failed:", err.message));
         }
         // Seed the profile name from sign-in (the Profile screen is gone): the bot
         // writes it into the identity memory on boot (src/setup/wizard-seed.ts).
