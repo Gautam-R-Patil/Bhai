@@ -170,15 +170,16 @@ export function createLanguageMiddleware(): LLMMiddleware {
     return async (params, next) => {
         try {
             const { updateSessionLanguage, getLanguageInstruction } = await import("./language.js");
-            const { callerIsOwner } = await import("./tools/cron-tool.js");
+            const { callerIsOwner, ownerTurnMessage } = await import("./tools/cron-tool.js");
             // The session language is the owner's. A guest's/contact's turn neither sets it
             // nor gets it, and a helper call's "user" text (an English prompt) never sets it.
             const owner = callerIsOwner();
             if (owner === false) return next(params);
-            const lastUserMsg = [...params.messages].reverse().find(m => m.role === "user");
-            if (owner === true && !params._lean && lastUserMsg && typeof lastUserMsg.content === "string") {
-                updateSessionLanguage(lastUserMsg.content);
-            }
+            // The owner's own words: the history's user message also carries the channel's
+            // English notes ([SOURCE: …], [BROWSER CONTEXT: …]), which outweighed a short
+            // Hinglish line, so "bhai ek joke sunao" was read as English.
+            const ownText = ownerTurnMessage();
+            if (owner === true && !params._lean && ownText) updateSessionLanguage(ownText);
             const instruction = getLanguageInstruction();
             if (instruction) {
                 // Store it so the caller can inject it into context

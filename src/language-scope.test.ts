@@ -22,14 +22,21 @@ describe("session language scope", () => {
     });
 
     it("the owner's own turn sets it", async () => {
-        await runWithCallerContext({ isOwner: true }, () => call(HINGLISH));
+        await runWithCallerContext({ isOwner: true, message: HINGLISH }, () => call(HINGLISH));
+        expect(getCurrentLanguage()).toBe("Hindi (Romanized)");
+    });
+
+    it("the overlay's English notes on the owner's message don't drown a short Hinglish line", async () => {
+        const own = "bhai ek chhota sa joke sunao";
+        const sent = `${own}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.]\n[BROWSER CONTEXT: Chrome extension is connected. The user's real Chrome browser is active. Do NOT open a new headless Playwright browser or navigate to a login page.]`;
+        await runWithCallerContext({ isOwner: true, message: own }, () => call(sent));
         expect(getCurrentLanguage()).toBe("Hindi (Romanized)");
     });
 
     it("a contact writing Hinglish doesn't switch the owner's replies, nor get the owner's language", async () => {
         await runWithCallerContext({ isOwner: false }, () => call(HINGLISH));
         expect(getCurrentLanguage()).toBe("English");
-        await runWithCallerContext({ isOwner: true }, () => call(HINGLISH));
+        await runWithCallerContext({ isOwner: true, message: HINGLISH }, () => call(HINGLISH));
         seen.length = 0;
         await runWithCallerContext({ isOwner: false }, () => call("hey can you tell me when he is free"));
         expect(seen).toEqual([undefined]); // no "respond in Hinglish" for the contact
@@ -37,15 +44,15 @@ describe("session language scope", () => {
     });
 
     it("a helper call's English prompt inside the owner's turn doesn't flip it back", async () => {
-        await runWithCallerContext({ isOwner: true }, () => call(HINGLISH));
-        await runWithCallerContext({ isOwner: true }, () =>
+        await runWithCallerContext({ isOwner: true, message: HINGLISH }, () => call(HINGLISH));
+        await runWithCallerContext({ isOwner: true, message: HINGLISH }, () =>
             call("Classify the following message into one of the categories and return JSON", { _lean: true }),
         );
         expect(getCurrentLanguage()).toBe("Hindi (Romanized)");
     });
 
     it("background work (no turn) still speaks the owner's language but can't change it", async () => {
-        await runWithCallerContext({ isOwner: true }, () => call(HINGLISH));
+        await runWithCallerContext({ isOwner: true, message: HINGLISH }, () => call(HINGLISH));
         seen.length = 0;
         await call("Write a short reminder for the owner about their 5pm meeting");
         expect(getCurrentLanguage()).toBe("Hindi (Romanized)");
