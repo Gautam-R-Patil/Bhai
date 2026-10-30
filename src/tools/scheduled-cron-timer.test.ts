@@ -55,3 +55,12 @@ it("skips a run the machine slept through, then keeps its schedule", async () =>
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(fired.map((t) => new Date(t).getHours())).toEqual([12]);
 });
+
+it("still runs a job due just after the Mac wakes, though the pending step fires late", async () => {
+    const { scheduleTask, fired } = await load();
+    await scheduleTask.handler({ expression: "0 * * * *", description: "d", action: "a" });
+    await vi.advanceTimersByTimeAsync(58 * 60_000 + 10_000); // 10:58:40, a 60 s step armed at 10:58:30
+    vi.setSystemTime(new Date(2026, 9, 30, 11, 59, 30)); // asleep; wake 30 s before 12:00 (timers paused)
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fired.map((t) => new Date(t).getHours())).toEqual([12]);
+});

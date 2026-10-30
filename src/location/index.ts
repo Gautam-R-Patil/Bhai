@@ -30,6 +30,8 @@ export interface LocationProvider {
     name: string;
     isAvailable(): Promise<boolean>;
     getLocation(): Promise<LocationData>;
+    /** GPS only: the location permission as a short token, null when it can't be read. */
+    permissionStatus?(): Promise<string | null>;
 }
 
 // ── Constants ────────────────────────────────
@@ -49,13 +51,14 @@ let _initialized = false;
 // ── GPS back-off ─────────────────────────────
 // The GPS helper can time out on every try (no fix, or a permission prompt that never shows):
 // 60-70 times a day here, each holding location back ~12 s. After 3 timeouts in a row a
-// background refresh skips GPS (Wi-Fi/IP answer at once) and tries it again once an hour; a
-// refresh the owner asks for (get_location refresh) always tries it. On disk, because the bot
+// background refresh skips GPS (Wi-Fi/IP answer at once) and tries it again once an hour, or
+// as soon as the location permission changes; a refresh the owner asks for (get_location
+// refresh) always tries it. On disk, because the bot
 // restarts often and every boot refreshes.
 
 const GPS_BACKOFF_AFTER = 3;
 const GPS_RETRY_MS = 60 * 60_000;
-type GpsBackoff = { timeouts: number; retryAt: number };
+type GpsBackoff = { timeouts: number; retryAt: number; status?: string | null };
 const gpsBackoffFile = () => join(getDataDir(), "location-gps-backoff.json");
 
 function readGpsBackoff(): GpsBackoff {
@@ -66,11 +69,12 @@ function readGpsBackoff(): GpsBackoff {
     }
 }
 
-function noteGpsResult(timedOut: boolean): void {
+async function noteGpsResult(provider: LocationProvider, timedOut: boolean): Promise<void> {
     const prev = readGpsBackoff();
     const timeouts = timedOut ? prev.timeouts + 1 : 0;
-    const next = { timeouts, retryAt: timeouts >= GPS_BACKOFF_AFTER ? Date.now() + GPS_RETRY_MS : 0 };
-    if (next.timeouts === prev.timeouts && next.retryAt === prev.retryAt) return;
+    const status = timedOut ? ((await provider.permissionStatus?.().catch(() => null)) ?? null) : null;
+    const next = { timeouts, retryAt: timeouts >= GPS_BACKOFF_AFTER ? Date.now() + GPS_RETRY_MS : 0, status };
+    if (next.timeouts === prev.timeouts && next.retryAt === prev.retryAt && status === (prev.status ?? null)) return;
     try {
         writeFileSync(gpsBackoffFile(), JSON.stringify(next));
     } catch {
@@ -78,9 +82,13 @@ function noteGpsResult(timedOut: boolean): void {
     }
 }
 
-function gpsBackedOff(): boolean {
+async function gpsBackedOff(provider: LocationProvider): Promise<boolean> {
     const b = readGpsBackoff();
-    return b.timeouts >= GPS_BACKOFF_AFTER && Date.now() < b.retryAt;
+    if (b.timeouts < GPS_BACKOFF_AFTER || Date.now() >= b.retryAt) return false;
+    if (!b.status || !provider.permissionStatus) return true;
+    // The permission changed since GPS last timed out (e.g. the owner just allowed it): try now.
+    const now = await provider.permissionStatus().catch(() => null);
+    return now === null || now === b.status;
 }
 
 // ── Haversine Distance ───────────────────────
@@ -114,19 +122,19 @@ async function runProviderWithTimeout(provider: LocationProvider): Promise<Locat
                 setTimeout(() => reject(new Error(`${provider.name} timed out`)), timeout),
             ),
         ]);
-        if (provider.name === "gps") noteGpsResult(false);
+        if (provider.name === "gps") await noteGpsResult(provider, false);
         return location;
     } catch (err) {
         const message = (err as Error).message;
         console.warn(`[LOCATION] Provider ${provider.name} failed:`, message);
-        if (provider.name === "gps") noteGpsResult(/timed out|timeout/i.test(message));
+        if (provider.name === "gps") await noteGpsResult(provider, /timed out|timeout/i.test(message));
         return null;
     }
 }
 
 async function runFallbackChain(force = false): Promise<LocationData | null> {
     for (const provider of _providers) {
-        if (provider.name === "gps" && !force && gpsBackedOff()) continue;
+        if (provider.name === "gps" && !force && (await gpsBackedOff(provider))) continue;
         const result = await runProviderWithTimeout(provider);
         if (result) {
             console.log(

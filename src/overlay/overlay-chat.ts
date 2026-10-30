@@ -195,17 +195,21 @@ const offeredUndo = new WeakMap<WebSocket, string>();
 
 let drawerIds = new Set<string>();
 let drawerTimer: ReturnType<typeof setInterval> | null = null;
+let drawerWakes = 0;
 
 /**
  * Poll the task drawer every 4 s while a research / long task runs (one more push sends its
  * end), and not at all otherwise. Woken when a task starts and when an owner chat bar connects.
  */
 function wakeTaskDrawer(): void {
+    drawerWakes++;
     if (drawerTimer) return;
     drawerTimer = setInterval(() => {
+        const wakes = drawerWakes;
         pushTaskDrawer()
             .then((busy) => {
-                if (!busy && drawerTimer) {
+                // A task that started while this tick ran woke us: keep polling for it.
+                if (!busy && wakes === drawerWakes && drawerTimer) {
                     clearInterval(drawerTimer);
                     drawerTimer = null;
                 }

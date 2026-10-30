@@ -567,20 +567,21 @@ export function wipeIndex(root: string): void {
 }
 
 /**
- * Best-effort architecture snippet. Returns an empty string when:
- *  - the sidecar does not exist, OR
- *  - ATLAS_NO_ARCHITECTURE_INJECTION=true, OR
- *  - ATLAS_NO_CODEBASE_INDEX=true, OR
- *  - any SQL / fs error occurs.
- * Never throws.
- */
-/**
  * The packaged app's own folder (Bhai.app/Contents/Resources/bot is the bot's cwd): an
  * obfuscated bundle, nothing the owner codes on. The automatic first-coding-turn index skips it
  * (it took 2-17 s each time); an explicit codebase_index call still can.
  */
 export const isAppBundleDir = (root: string) => fs.existsSync(path.join(root, "bot-bundle.mjs"));
 
+/**
+ * Best-effort architecture snippet. Returns an empty string when:
+ *  - the sidecar does not exist, OR
+ *  - root is the packaged app's own folder, OR
+ *  - ATLAS_NO_ARCHITECTURE_INJECTION=true, OR
+ *  - ATLAS_NO_CODEBASE_INDEX=true, OR
+ *  - any SQL / fs error occurs.
+ * Never throws.
+ */
 export async function getArchitectureSnippet(root: string): Promise<string> {
     try {
         if ((process.env.ATLAS_NO_ARCHITECTURE_INJECTION ?? "").toLowerCase() === "true") return "";

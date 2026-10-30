@@ -79,24 +79,32 @@ export function nextCronMinute(expression: string, from: number): number | null 
 /**
  * A recurring 5-field job on one timer instead of node-cron's check every second. Waits go in
  * steps of at most a minute (a sleeping Mac's timers run late), and a run fires only inside its
- * own second, as node-cron's does: a run the machine slept through is skipped. Null when the
- * expression doesn't fire within a year (node-cron keeps those).
+ * own second, as node-cron's does, or late when it fell after a wake: a run the machine slept
+ * through is skipped. Null when the expression doesn't fire within a year (node-cron keeps those).
  */
 function armCronTimer(expression: string, run: () => void): { stop: () => void } | null {
     let next = nextCronMinute(expression, Date.now());
     if (next === null) return null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
+    let armedAt = Date.now();
+    let step = 0;
     const wait = () => {
-        if (stopped || next === null) return;
-        const left = next - Date.now();
-        if (left > 0) {
-            timer = setTimeout(wait, Math.min(left, 60_000));
-            return;
+        if (stopped) return;
+        const now = Date.now();
+        // macOS timers pause in sleep, so a step pending at sleep fires up to `step` after wake:
+        // look for the run from the earliest moment the Mac can have woken.
+        const slept = now - armedAt - step > 2000;
+        if (slept) next = nextCronMinute(expression, now - step - 1000);
+        if (next === null) return;
+        if (next <= now) {
+            if (slept || now - next < 1000) run();
+            next = nextCronMinute(expression, now);
+            if (next === null) return;
         }
-        if (left > -1000) run();
-        next = nextCronMinute(expression, Date.now());
-        wait();
+        armedAt = now;
+        step = Math.min(next - now, 60_000);
+        timer = setTimeout(wait, step);
     };
     wait();
     return {

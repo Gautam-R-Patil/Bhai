@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// After 3 GPS timeouts in a row, background refreshes skip GPS for an hour; a refresh the
-// owner asks for still tries it.
+// After 3 GPS timeouts in a row, background refreshes skip GPS for an hour or until the
+// location permission changes; a refresh the owner asks for still tries it.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +9,7 @@ import { expect, it, vi } from "vitest";
 process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "gps-backoff-"));
 Object.defineProperty(process, "platform", { value: "darwin" });
 
-const { gps } = vi.hoisted(() => ({ gps: { calls: 0 } }));
+const { gps } = vi.hoisted(() => ({ gps: { calls: 0, status: "0" } }));
 const fix = (source: string) => ({ latitude: 18.5, longitude: 73.8, accuracy: 5000, source, timestamp: Date.now() });
 vi.mock("../location/providers/corelocation.js", () => ({
     CoreLocationProvider: class {
@@ -19,6 +19,7 @@ vi.mock("../location/providers/corelocation.js", () => ({
             gps.calls++;
             throw new Error("CoreLocation: timeout");
         };
+        permissionStatus = async () => gps.status;
     },
 }));
 vi.mock("../location/providers/wifi-geoloc.js", () => ({
@@ -56,4 +57,16 @@ it("backs off GPS after 3 timeouts, retries hourly, and a forced refresh still t
     await loc.refreshLocation();
     expect(gps.calls).toBe(5);
     vi.useRealTimers();
+});
+
+it("tries GPS again at once when the location permission changes while backed off", async () => {
+    const loc = await import("../location/index.js");
+    const before = gps.calls;
+    await loc.refreshLocation();
+    expect(gps.calls).toBe(before); // still backed off, permission unchanged
+    gps.status = "3"; // the owner granted location access
+    await loc.refreshLocation();
+    expect(gps.calls).toBe(before + 1);
+    await loc.refreshLocation(); // timed out again under the new permission: backed off again
+    expect(gps.calls).toBe(before + 1);
 });

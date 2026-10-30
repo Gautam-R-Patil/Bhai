@@ -14,13 +14,21 @@ const { state } = vi.hoisted(() => ({
         running: [] as Array<{ id: string; topic: string; progress: number; phase: string }>,
         listCalls: 0,
         hook: null as null | (() => void),
+        startDuringRead: false,
     },
 }));
 vi.mock("../research/index.js", async (orig) => ({
     ...(await orig<typeof import("../research/index.js")>()),
     listRunningResearch: () => {
         state.listCalls++;
-        return state.running;
+        const seen = state.running;
+        if (state.startDuringRead) {
+            // A research starts just after this tick read the list, before the tick finishes.
+            state.startDuringRead = false;
+            state.running = [{ id: "r2", topic: "heat pumps", progress: 5, phase: "1 source" }];
+            state.hook?.();
+        }
+        return seen;
     },
     setResearchStartHook: (fn: () => void) => {
         state.hook = fn;
@@ -33,7 +41,9 @@ it("polls only while a task runs, and still sends its progress and its end", asy
     const chat = await import("./overlay-chat.js");
     chat.initOverlayChat({} as never);
     await vi.waitFor(() => expect(state.hook).not.toBeNull());
-    const ws = new WebSocket(`ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`);
+    const ws = new WebSocket(
+        `ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`,
+    );
     const got: Array<{ type: string; taskId?: string }> = [];
     ws.on("message", (d) => got.push(JSON.parse(String(d))));
     await new Promise((r) => ws.once("open", r));
@@ -54,6 +64,13 @@ it("polls only while a task runs, and still sends its progress and its end", asy
     const calls = state.listCalls;
     for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(4000);
     expect(state.listCalls).toBe(calls);
+
+    // A research that starts while the last tick is finishing still gets its progress sent.
+    state.startDuringRead = true;
+    state.hook?.();
+    await vi.advanceTimersByTimeAsync(4000);
+    await vi.advanceTimersByTimeAsync(4000);
+    await vi.waitFor(() => expect(got.some((m) => m.type === "task_progress" && m.taskId === "r2")).toBe(true));
 
     ws.close();
     chat.closeOverlayChat();
