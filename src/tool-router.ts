@@ -492,6 +492,16 @@ let currentIteration = 0;
 // ── LLM Client for Intent Classification ─────
 let routerLLM: LLMClient | null = null;
 
+/** The categories as the classifier sees them (name, description, tools): for benchmarks. */
+export function categoryCatalog(): { name: string; description: string; tools: string[]; alwaysInclude: boolean }[] {
+    return Object.entries(CATEGORIES).map(([name, c]) => ({
+        name,
+        description: c.description,
+        tools: [...c.tools],
+        alwaysInclude: !!c.alwaysInclude,
+    }));
+}
+
 export function setToolRouterLLM(llm: LLMClient): void {
     routerLLM = llm;
     console.log("🎯 Tool Router: LLM classifier enabled");
@@ -557,20 +567,129 @@ export function isConversationalBanter(message: string): boolean {
     return BANTER_RE.test(m) && !ASK_RE.test(m) && !ACTION_RE.test(m) && !PATH_RE.test(m);
 }
 
+// ── Microsoft-Decision-1: the classifier as typed decisions ──
+// One request answers yes/no per category, the task tier and multi-step, with probabilities
+// (scripts/bench-decision.ts on the 49 eval tasks: every needed category 48/49 vs 32/49 for the
+// gpt-4.1-nano classifier; ~0.5s vs ~1s; ~$0.0001 a turn; chat prompts 6/6 chat). Called via
+// Convex /api/decide (the Azure key stays server-side); any failure falls back to the LLM.
+// ATLAS_DECISION_ROUTER=true turns it on (see classifyWithDecision).
+export type DecisionTransport = (
+    state: string,
+    questions: Record<string, unknown>,
+    timeoutMs: number,
+) => Promise<Record<string, { noul?: number; choice?: string; confidence?: number }> | null>;
+
+let decisionTransport: DecisionTransport | null = async (state, questions, timeoutMs) => {
+    const [{ getSessionToken }, { encryptedFetch }, { getConvexSiteUrl }] = await Promise.all([
+        import("./session.js"),
+        import("./crypto-transport.js"),
+        import("./config/keys.js"),
+    ]);
+    const token = await getSessionToken();
+    if (!token) return null;
+    const res = await encryptedFetch(`${getConvexSiteUrl()}/api/decide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ state, questions, timeoutMs }),
+        signal: AbortSignal.timeout(timeoutMs + 1500),
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { answers?: Record<string, { noul?: number; choice?: string; confidence?: number }> })
+        .answers ?? null;
+};
+
+/** Swap how Decision-1 is reached (evals call Azure directly); null turns it off. */
+export function setDecisionTransport(t: DecisionTransport | null): void {
+    decisionTransport = t;
+}
+
+const TIER_CRITERIA = {
+    chat: "No tools at all: small talk, opinions, advice, writing, math, explaining, or general knowledge",
+    simple: "One quick action or lookup on the computer or the web",
+    standard: "A normal task with a few tool calls",
+    complex: "Long multi-step work, coding, deep research, or careful reasoning",
+};
+
+async function classifyWithDecision(message: string, context: string, deadline: number): Promise<IntentClassification | null> {
+    // Opt-in: on the full 50 in router mode it matched the LLM classifier (50/50) and was ~10%
+    // faster per task, but its categories sent more turns to Haiku/Sonnet than to nano
+    // ($0.0056 vs $0.0021 a task). On by default once the router's classes are tuned for it.
+    if (!decisionTransport || process.env.ATLAS_DECISION_ROUTER !== "true") return null;
+    const cats = Object.entries(CATEGORIES).filter(([, def]) => !def.alwaysInclude);
+    const questions: Record<string, unknown> = {};
+    for (const [name, def] of cats)
+        questions[name] = { type: "noul", instructions: `Does this request to a computer assistant need tools for: ${def.description}` };
+    // The main category as one choice, others only when near-certain: a yes/no per category
+    // alone said yes too readily (shell, coding, memory on "how many PDFs in Downloads"), which
+    // sent turns to Sonnet and crowded the tool set (full 50 in router mode: 48/50 at 5x cost).
+    questions.primary = {
+        type: "choice",
+        instructions: "Which kind of tools does this request to a computer assistant mainly need?",
+        criteria: Object.fromEntries(cats.map(([name, def]) => [name, def.description.slice(0, 280)])),
+    };
+    questions.tier = { type: "choice", instructions: "How much work is this request for a computer assistant?", criteria: TIER_CRITERIA };
+    questions.multi_step = {
+        type: "noul",
+        instructions: "Does the task need several dependent steps (find something, then do something with it)?",
+    };
+    const state = context ? `${context}\n\nMESSAGE TO ROUTE:\n${message}` : message;
+    try {
+        const left = Math.max(1000, deadline - Date.now());
+        const answers = await beforeDeadline(decisionTransport(state, questions, Math.min(left, 4000)), deadline);
+        if (!answers) return null;
+        const primary = answers.primary?.choice && CATEGORIES[answers.primary.choice] ? answers.primary.choice : undefined;
+        const scored = [
+            ...(primary ? [{ name: primary, p: answers.primary?.confidence ?? 0.9 }] : []),
+            ...cats
+                .map(([name]) => ({ name, p: answers[name]?.noul ?? 0 }))
+                .filter((c) => c.p >= 0.95 && c.name !== primary)
+                .sort((a, b) => b.p - a.p),
+        ].slice(0, 3);
+        const tier = TASK_TIERS.includes(answers.tier?.choice as TaskTier) ? (answers.tier?.choice as TaskTier) : undefined;
+        const categories = tier === "chat" ? [] : scored.map((c) => c.name);
+        const result: IntentClassification = {
+            intent: tier === "chat" ? "chat" : (categories[0] ?? "general"),
+            categories,
+            specific_tools: [],
+            confidence: tier === "chat" ? (answers.tier?.confidence ?? 0.8) : (scored[0]?.p ?? 0.5),
+            tier,
+            multi_step: (answers.multi_step?.noul ?? 0) >= 0.5,
+        };
+        console.log(
+            `🧠 Decision classifier: cats=[${categories}] tier=${tier ?? "?"}${result.multi_step ? " multi-step" : ""} conf=${result.confidence.toFixed(2)}`,
+        );
+        return result;
+    } catch (err) {
+        console.warn(`🧠 Decision classifier: fallback to LLM (${(err as Error).message})`);
+        return null;
+    }
+}
+
 async function classifyWithLLM(
     message: string,
     recentTools?: string[],
     conversationContext?: string,
     deadline = Date.now() + LLM_CLASSIFIER_TIMEOUT_MS,
 ): Promise<IntentClassification | null> {
-    if (!routerLLM) return null;
-
     // Check cache — include conversation context hash for disambiguation
     const cacheKey = simpleHash(`${message}|${(conversationContext || "").substring(0, 200)}`);
     const cached = intentCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < INTENT_CACHE_TTL_MS) {
         return cached.result;
     }
+
+    const decided = await classifyWithDecision(
+        message,
+        `${recentTools?.length ? `Recently used tools: ${recentTools.slice(0, 5).join(", ")}\n` : ""}${
+            conversationContext ? `RECENT CONVERSATION:\n${conversationContext}` : ""
+        }`.trim(),
+        deadline,
+    );
+    if (decided) {
+        intentCache.set(cacheKey, { result: decided, timestamp: Date.now() });
+        return decided;
+    }
+    if (!routerLLM) return null;
 
     // Build compact category + tool listing for the classifier
     const categoryList = Object.entries(CATEGORIES)

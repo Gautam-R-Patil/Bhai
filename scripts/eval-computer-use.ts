@@ -24,7 +24,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { executeTool } from "../src/tools/index.js";
-import { initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
+import { initToolRouter, selectTools, setDecisionTransport, setToolRouterLLM } from "../src/tool-router.js";
 import { ackWithoutAction } from "../src/agent.js";
 import { resolveHomePath } from "../src/tools/file-utils.js";
 import { runQuickCommand } from "../src/quick-commands.js";
@@ -389,6 +389,25 @@ setToolRouterLLM(
         : ({ chat: () => new Promise(() => {}) } as never),
 );
 if (ROUTER) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "10000";
+// DECISION_DEPLOYMENT=<name>: the classifier is Microsoft-Decision-1, called straight on Azure
+// (in the app it goes through Convex /api/decide); otherwise no Decision step here.
+setDecisionTransport(
+    process.env.DECISION_DEPLOYMENT
+        ? async (state, questions, timeoutMs) => {
+              const res = await fetch(`${process.env.AZ_ENDPOINT?.replace(/\/openai\/v1\/?$/, "")}/providers/microsoft/v1/systemone`, {
+                  method: "POST",
+                  headers: { "api-key": process.env.AZ_KEY ?? "", "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: process.env.DECISION_DEPLOYMENT, state, questions }),
+                  signal: AbortSignal.timeout(timeoutMs),
+              });
+              return ((await res.json()) as { answers?: never }).answers ?? null;
+          }
+        : null,
+);
+if (process.env.DECISION_DEPLOYMENT) {
+    process.env.ATLAS_DECISION_ROUTER = "true";
+    process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "6000";
+}
 let planCost = 0; // PLAN=1: the planner's own cost, added to the task's
 const only = process.argv.slice(2);
 const results = [];
