@@ -339,6 +339,8 @@
     }
     .turn-live:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
     .turn-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .turn-live:disabled { cursor: default; background: none; }
+    .turn-live:disabled .turn-chev { display: none; }
     .turn-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--accent); animation: turnPulse 1.2s ease-in-out infinite; }
     .turn-now {
       flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
@@ -3060,6 +3062,12 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         renderLive();
       }
 
+      function flatLine(btn) {
+        btn.disabled = true;
+        btn.removeAttribute('aria-expanded');
+        btn.removeAttribute('title');
+      }
+
       function setPanelOpen(root, open) {
         root.classList.toggle('open', open);
         root.querySelector('.turn-live').setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -3079,6 +3087,13 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       // Anything behind the live line yet: a step, or a note with words in it.
       function turnHasDetail(s) {
         return s.steps.length > 0 || !!s.notes.join('').trim();
+      }
+
+      // The line a finished turn leaves; a toggle only when there's something to open.
+      function workedLine(s, worked, start) {
+        const w = worked || { secs: Math.round((Date.now() - start) / 1000), steps: s.steps.length };
+        const steps = w.steps ? ` · ${w.steps} step${w.steps === 1 ? '' : 's'}` : '';
+        return { text: `Worked for ${w.secs}s${steps}`, toggle: turnHasDetail(s) };
       }
 
       function liveCount() {
@@ -3132,19 +3147,19 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (!live.frame) live.frame = requestAnimationFrame(renderLive);
       }
 
-      // The turn ended: the live line becomes "Worked for {N}s · {K} steps ▾" (or goes, when
-      // there's nothing behind it). Returns the element the final reply goes into.
+      // The turn ended: the live line becomes "Worked for {N}s · {K} steps ▾" (just "Worked for
+      // {N}s", not a toggle, when there's nothing behind it). Returns the element the reply goes into.
       function liveFinish(worked) {
         renderLive();
         clearInterval(live.tick);
         live.done = true;
         const { root, now, count, answer } = live.el;
-        if (!live.state.steps.length && !live.state.notes.join('').trim()) root.remove();
-        const w = worked || { secs: Math.round((Date.now() - live.start) / 1000), steps: live.state.steps.length };
+        const line = workedLine(live.state, worked, live.start);
         root.classList.add('done');
         setPanelOpen(root, false);
-        now.textContent = `Worked for ${w.secs}s · ${w.steps} step${w.steps === 1 ? '' : 's'}`;
+        now.textContent = line.text;
         count.textContent = '';
+        if (!line.toggle) flatLine(root.querySelector('.turn-live'));
         answer.querySelectorAll('.turn-caret').forEach((c) => c.remove());
         return answer;
       }

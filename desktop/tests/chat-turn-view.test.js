@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const html = fs.readFileSync(path.join(__dirname, "..", "panel.html"), "utf8");
 const fn = (name) => html.match(new RegExp(` {8}function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n {8}\\}\\n`))?.[0] ?? "";
 const ctx = vm.createContext({});
-vm.runInContext(`${fn("turnView")}${fn("turnRoute")}${fn("turnHasDetail")}`, ctx);
+vm.runInContext(`${fn("turnView")}${fn("turnRoute")}${fn("turnHasDetail")}${fn("workedLine")}`, ctx);
 
 const view = (msgs, start = null) => JSON.parse(JSON.stringify(msgs.reduce((s, m) => ctx.turnView(s, m), start)));
 
@@ -100,5 +100,30 @@ describe("the Notes/Steps panel", () => {
         expect(ctx.turnHasDetail({ steps: [], notes: [" \n"] })).toBe(false);
         expect(ctx.turnHasDetail({ steps: [], notes: ["Checking"] })).toBe(true);
         expect(ctx.turnHasDetail({ steps: [{ id: 1, text: "Search", state: "running" }], notes: [] })).toBe(true);
+    });
+});
+
+describe("the Worked for line", () => {
+    it("stays after every turn that showed a live line, a toggle only when there's something to open", () => {
+        const s = (steps, notes = []) => ({
+            steps: Array.from({ length: steps }, (_, i) => ({ id: i, text: "x", state: "done" })),
+            notes,
+        });
+        // A plain or stopped answer: the line stays, but there's nothing to open.
+        expect(ctx.workedLine(s(0), { secs: 4, steps: 0 }, 0)).toEqual({ text: "Worked for 4s", toggle: false });
+        expect(ctx.workedLine(s(0, ["Thinking it over"]), { secs: 4, steps: 0 }, 0)).toEqual({
+            text: "Worked for 4s",
+            toggle: true,
+        });
+        expect(ctx.workedLine(s(1), { secs: 3, steps: 1 }, 0)).toEqual({
+            text: "Worked for 3s · 1 step",
+            toggle: true,
+        });
+        expect(ctx.workedLine(s(2), { secs: 9, steps: 2 }, 0)).toEqual({
+            text: "Worked for 9s · 2 steps",
+            toggle: true,
+        });
+        // No count from the bot: timed from the turn's start.
+        expect(ctx.workedLine(s(0), null, Date.now() - 5000).text).toBe("Worked for 5s");
     });
 });

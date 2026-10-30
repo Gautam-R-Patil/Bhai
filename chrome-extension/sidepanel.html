@@ -140,6 +140,8 @@
     /* ── Live turn: one line while Bhai works; Notes and Steps one click away ── */
     .turn-live { display: flex; align-items: center; gap: 10px; width: calc(100% + 12px); margin: 0 -6px; padding: 4px 6px; border-radius: var(--r-md); font-size: 13px; color: var(--ink-2); text-align: left; user-select: none; transition: background .15s; }
     .turn-live:hover { background: var(--sunk); }
+    .turn-live:disabled { cursor: default; background: none; }
+    .turn-live:disabled .chev { display: none; }
     .turn-now { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; background: linear-gradient(90deg, var(--ink-2) 0 40%, var(--accent) 50%, var(--ink-2) 60% 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: turnShimmer 2.2s linear infinite; }
     .turn-meta { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
     .turn-meta .chev { transform: rotate(180deg); transition: transform .25s; }

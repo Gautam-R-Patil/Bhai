@@ -13,7 +13,7 @@ const sidepanel = fs.readFileSync(new URL("../chrome-extension/sidepanel.js", im
 const panelFn = (name: string) =>
     sidepanel.match(new RegExp(`\\nfunction ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}\\n`))?.[0] ?? "";
 const panel = vm.createContext({});
-vm.runInContext(`${panelFn("turnHasDetail")}`, panel);
+vm.runInContext(`${panelFn("turnHasDetail")}${panelFn("workedLine")}`, panel);
 
 type State = {
     turn: string;
@@ -146,5 +146,30 @@ describe("the Notes/Steps panel", () => {
         expect(panel.turnHasDetail({ steps: [], notes: [" \n"] })).toBe(false);
         expect(panel.turnHasDetail({ steps: [], notes: ["Checking"] })).toBe(true);
         expect(panel.turnHasDetail({ steps: [{ id: 1, text: "Search", state: "running" }], notes: [] })).toBe(true);
+    });
+});
+
+describe("the Worked for line", () => {
+    it("stays after every turn that showed a live line, a toggle only when there's something to open", () => {
+        const s = (steps: number, notes: string[] = []) => ({
+            steps: Array.from({ length: steps }, (_, i) => ({ id: i, text: "x", state: "done" })),
+            notes,
+        });
+        // A plain or stopped answer: the line stays, but there's nothing to open.
+        expect(panel.workedLine(s(0), { secs: 4, steps: 0 }, 0)).toEqual({ text: "Worked for 4s", toggle: false });
+        expect(panel.workedLine(s(0, ["Thinking it over"]), { secs: 4, steps: 0 }, 0)).toEqual({
+            text: "Worked for 4s",
+            toggle: true,
+        });
+        expect(panel.workedLine(s(1), { secs: 3, steps: 1 }, 0)).toEqual({
+            text: "Worked for 3s · 1 step",
+            toggle: true,
+        });
+        expect(panel.workedLine(s(2), { secs: 9, steps: 2 }, 0)).toEqual({
+            text: "Worked for 9s · 2 steps",
+            toggle: true,
+        });
+        // No count from the bot: timed from the turn's start.
+        expect(panel.workedLine(s(0), null, Date.now() - 5000).text).toBe("Worked for 5s");
     });
 });

@@ -200,6 +200,23 @@ describe("widget live turns", () => {
         expect(win.querySelector("#atlas-widget-steps-toggle").textContent).toBe("Worked for 3s · 1 step");
     });
 
+    it("a plain or stopped answer keeps its Worked for line, with nothing to open", () => {
+        send({ type: "thinking", turn: "t1" });
+        send({ type: "turn_answer", turn: "t1", seq: 1, attempt: 0, text: "Hi th" });
+        flush();
+        send({ type: "response", turn: "t1", text: "Hi th\n\nStopped.", stopped: true, worked: { secs: 4, steps: 0 } });
+        const toggle = win.querySelector("#atlas-widget-steps-toggle");
+        expect(win.querySelector("#atlas-widget-steps-bar").hidden).toBe(false);
+        expect(toggle.textContent).toBe("Worked for 4s");
+        expect(toggle.disabled).toBe(true);
+        // The next turn with steps can open its list again.
+        send({ type: "thinking", turn: "t2" });
+        send({ type: "turn_step", turn: "t2", seq: 1, id: "a", text: "Open page", state: "done" });
+        send({ type: "response", turn: "t2", text: "Done", worked: { secs: 3, steps: 1 } });
+        expect(toggle.textContent).toBe("Worked for 3s · 1 step");
+        expect(toggle.disabled).toBe(false);
+    });
+
     it("shows the live line with its step count and the steps as text only", () => {
         send({ type: "thinking", turn: "t1" });
         send({ type: "turn_status", turn: "t1", seq: 1, text: "💭 Searching the web", step: 2, elapsed: 7 });

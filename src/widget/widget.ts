@@ -234,6 +234,7 @@ export function getWidgetScript(wsUrl: string): string {
       cursor: pointer;
       text-decoration: underline;
     }
+    #atlas-widget-steps-toggle:disabled { cursor: default; text-decoration: none; }
     #atlas-widget-steps { max-height: 110px; overflow-y: auto; margin-top: 4px; }
     .atlas-step { padding: 1px 0; }
     .atlas-step.running { color: var(--atlas-text); }
@@ -374,6 +375,7 @@ export function getWidgetScript(wsUrl: string): string {
     stepsList.hidden = true;
     stepsToggle.setAttribute("aria-expanded", "false");
     stepsToggle.textContent = "Steps";
+    stepsToggle.disabled = false;
     liveLine();
   }
 
@@ -416,8 +418,11 @@ export function getWidgetScript(wsUrl: string): string {
     clearInterval(live.tick);
     live.done = true;
     var n = live.state.steps.length;
-    if (!n) stepsBar.hidden = true;
-    else if (worked) stepsToggle.textContent = "Worked for " + worked.secs + "s · " + worked.steps + (worked.steps === 1 ? " step" : " steps");
+    if (worked) { // the turn's own reply: "Worked for…" stays, a toggle only when there are steps
+      stepsBar.hidden = false;
+      stepsToggle.textContent = "Worked for " + worked.secs + "s" + (worked.steps ? " · " + worked.steps + (worked.steps === 1 ? " step" : " steps") : "");
+      stepsToggle.disabled = !n;
+    } else if (!n) stepsBar.hidden = true;
     else stepsToggle.textContent = "Steps";
   }
 

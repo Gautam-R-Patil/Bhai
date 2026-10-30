@@ -417,6 +417,13 @@ function turnHasDetail(s) {
   return s.steps.length > 0 || !!s.notes.join('').trim();
 }
 
+// The line a finished turn leaves; a toggle only when there's something to open.
+function workedLine(s, worked, start) {
+  const w = worked || { secs: Math.round((Date.now() - start) / 1000), steps: s.steps.length };
+  const steps = w.steps ? ` · ${w.steps} step${w.steps === 1 ? '' : 's'}` : '';
+  return { text: `Worked for ${w.secs}s${steps}`, toggle: turnHasDetail(s) };
+}
+
 function liveCount() {
   if (!liveRunning()) return;
   const step = live.state.status?.step || 0;
@@ -472,7 +479,7 @@ function onTurnUpdate(m) {
 }
 
 // The turn ended: the live line becomes "Worked for {N}s · {K} steps" (which still opens the
-// panel), or goes when there's nothing behind it. The reply lands under it as a normal message.
+// panel; just "Worked for {N}s", not a toggle, when there's nothing behind it). The reply lands under it.
 function liveFinish(worked) {
   if (!liveRunning()) return;
   renderLive();
@@ -483,12 +490,17 @@ function liveFinish(worked) {
   root.removeAttribute('aria-busy');
   root.querySelector('.turn-answer').remove();
   typedIn = !!state.answer;
-  if (!state.steps.length && !state.notes.join('').trim()) { root.remove(); return; }
-  const w = worked || { secs: Math.round((Date.now() - live.start) / 1000), steps: state.steps.length };
+  const line = workedLine(state, worked, live.start);
   root.classList.add('done');
   setPanelOpen(root, false);
-  el.now.textContent = `Worked for ${w.secs}s · ${w.steps} step${w.steps === 1 ? '' : 's'}`;
+  el.now.textContent = line.text;
   el.count.textContent = '';
+  if (!line.toggle) {
+    const btn = root.querySelector('.turn-live');
+    btn.disabled = true;
+    btn.removeAttribute('aria-expanded');
+    btn.removeAttribute('title');
+  }
 }
 
 thread.addEventListener('click', (e) => {

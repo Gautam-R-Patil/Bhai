@@ -12,7 +12,7 @@ const fn = (name: string) =>
 const esc = html.match(/ {6}function esc\(t\) .*\n/)?.[0] ?? "";
 const ctx = vm.createContext({});
 vm.runInContext(
-    `${esc}${fn("renderMd")}${fn("renderStreamingMd")}${fn("turnView")}${fn("turnRoute")}${fn("turnHasDetail")}`,
+    `${esc}${fn("renderMd")}${fn("renderStreamingMd")}${fn("turnView")}${fn("turnRoute")}${fn("turnHasDetail")}${fn("workedLine")}`,
     ctx,
 );
 
@@ -151,5 +151,30 @@ describe("the Notes/Steps panel", () => {
         expect(ctx.turnHasDetail({ steps: [], notes: [" \n"] })).toBe(false);
         expect(ctx.turnHasDetail({ steps: [], notes: ["Checking"] })).toBe(true);
         expect(ctx.turnHasDetail({ steps: [{ id: 1, text: "Search", state: "running" }], notes: [] })).toBe(true);
+    });
+});
+
+describe("the Worked for line", () => {
+    it("stays after every turn that showed a live line, a toggle only when there's something to open", () => {
+        const s = (steps: number, notes: string[] = []) => ({
+            steps: Array.from({ length: steps }, (_, i) => ({ id: i, text: "x", state: "done" })),
+            notes,
+        });
+        // A plain or stopped answer: the line stays, but there's nothing to open.
+        expect(ctx.workedLine(s(0), { secs: 4, steps: 0 }, 0)).toEqual({ text: "Worked for 4s", toggle: false });
+        expect(ctx.workedLine(s(0, ["Thinking it over"]), { secs: 4, steps: 0 }, 0)).toEqual({
+            text: "Worked for 4s",
+            toggle: true,
+        });
+        expect(ctx.workedLine(s(1), { secs: 3, steps: 1 }, 0)).toEqual({
+            text: "Worked for 3s · 1 step",
+            toggle: true,
+        });
+        expect(ctx.workedLine(s(2), { secs: 9, steps: 2 }, 0)).toEqual({
+            text: "Worked for 9s · 2 steps",
+            toggle: true,
+        });
+        // No count from the bot: timed from the turn's start.
+        expect(ctx.workedLine(s(0), null, Date.now() - 5000).text).toBe("Worked for 5s");
     });
 });
