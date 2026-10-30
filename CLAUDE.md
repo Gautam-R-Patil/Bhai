@@ -163,7 +163,7 @@ Persistent synthesized tools (`req.persistent === true`) live at `~/.atlas/store
 ### Skill Forge (`src/forge/` — Phases 1+2+3 shipped)
 Dynamic-tool reliability layer. P1: foundation (SQLite library, manifest, hot-reload). P2: lookup-first short-circuit so `create_tool` reuses before synthesizing. P3: closed-loop verifier — LLM emits `{handler_code, tests, capabilities_declared, side_effects, synthesis_notes}`; sandbox runs tests; critics check compile + lint + SAST; diagnose prompt retries up to 3× (Track A/sync) or 10× (Track B/dream-replay). Pro-tier via `tool_synthesis` TaskType (Sonnet default; Opus + max with `ATLAS_FORGE_DREAM_OPUS=true`).
 
-Lookup pipeline: FunctionGemma 270M (zero cost) → FTS5 BM25 over description+schema_keys → cosine rerank (0.85). Dedup at write time at 0.85/0.92 (warn vs merge).
+Lookup pipeline: FunctionGemma 270M (zero cost) → FTS5 BM25 over description+schema_keys → cosine rerank (0.85). A hit is reused only while its tool is registered in this process (not awaiting approval, archived, or a session tool from before a restart).
 
 Verifier (`src/forge/verifier.ts`): `parseEnvelope` → `runCompileCheck` (acorn, hard-fail) → `runSastCritic` (11 regex rules) → `runTestInSandbox` per test (vm.createContext, 10s) → `scoreResult` against `expected_kind` (8 variants). Failures build `buildDiagnosePrompt` + retry; cap via `ATLAS_POST_SYNTHESIS_BUDGET_MS` (90s); dumped to `~/.atlas/store/dynamic/_failed/<ts>_<slug>.json`.
 

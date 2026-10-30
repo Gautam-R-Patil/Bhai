@@ -174,8 +174,14 @@ export async function lookupTool(description: string, _schema: Record<string, un
         embedFn: _embedFn,
         functionGemmaFn: fgFn,
     });
-    if (!hit) return null;
+    if (!hit || !isCallable(hit.slug)) return null;
     return getToolBySlug(hit.slug);
+}
+
+// A library row is reusable only while its tool is in this process's registry:
+// that rules out awaiting_approval, archived, and session tools from before a restart.
+function isCallable(slug: string): boolean {
+    return getRegistryRef()?.has(slug) ?? false;
 }
 
 // F5: centralized slug validation. Matches both the persisted-manifest slug
@@ -224,7 +230,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
             embedFn: _embedFn,
             functionGemmaFn: fgFn,
         });
-        if (hit) {
+        if (hit && isCallable(hit.slug)) {
             return {
                 kind: "lookup_hit",
                 slug: hit.slug,

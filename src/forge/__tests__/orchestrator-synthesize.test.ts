@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setRegistryRef } from "../../tools/create-tool.js";
+import type { ToolDefinition } from "../../tools/get-current-time.js";
 import { initForge, shutdownForge, synthesizeTool } from "../orchestrator.js";
 
 function vector(seed: number): Float32Array {
@@ -59,6 +61,8 @@ describe("orchestrator.synthesizeTool real impl", () => {
             persistent: false,
             source: "synchronous",
         });
+        // create_tool registers a synthesized tool; only then is it reusable.
+        setRegistryRef(new Map([["increment", {} as ToolDefinition]]));
         const r = await synthesizeTool({
             name: "increment_v2",
             description: "Add 1 to input.x",

@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initForge, lookupTool, shutdownForge } from "../orchestrator.js";
 import { insertTool } from "../library.js";
+import { setRegistryRef } from "../../tools/create-tool.js";
+import type { ToolDefinition } from "../../tools/get-current-time.js";
 
 function vector(seed: number): Float32Array {
     const v = new Float32Array(384);
@@ -20,9 +22,12 @@ function vector(seed: number): Float32Array {
 describe("orchestrator.lookupTool", () => {
     let tmpDir: string;
     let originalEnv: string | undefined;
+    let registry: Map<string, ToolDefinition>;
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-orch-lk-"));
+        registry = new Map();
+        setRegistryRef(registry);
         originalEnv = process.env.ATLAS_HOME;
         process.env.ATLAS_HOME = join(tmpDir, ".atlas");
         await initForge({ embedFn: async () => vector(0) });
@@ -48,6 +53,10 @@ describe("orchestrator.lookupTool", () => {
             handlerHash: "x", embedding: vector(0),
             source: "synchronous", createdAt: Date.now(),
         });
+        // Not callable in this process (awaiting approval, or a session tool
+        // from before a restart) → not reused.
+        expect(await lookupTool("Extract PDF text", {})).toBeNull();
+        registry.set("extract_pdf", {} as ToolDefinition);
         const tool = await lookupTool("Extract PDF text", { type: "object", properties: { path: { type: "string" } } });
         expect(tool).not.toBeNull();
         expect(tool!.slug).toBe("extract_pdf");

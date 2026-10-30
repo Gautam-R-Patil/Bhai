@@ -388,26 +388,6 @@ export const createTool: ToolDefinition = {
             });
         }
 
-        // ── FORGE Phase 2: lookup short-circuit ──
-        if (process.env.ATLAS_NO_FORGE_LOOKUP !== "true") {
-            try {
-                const { lookupTool: forgeLookup, isForgeReady } = await import("../forge/orchestrator.js");
-                if (isForgeReady()) {
-                    const hit = await forgeLookup(description, paramsSchema ?? {});
-                    if (hit) {
-                        return JSON.stringify({
-                            success: true,
-                            lookup_hit: true,
-                            tool_name: hit.slug,
-                            message: `Reused existing tool "${hit.slug}" — its description matches what you requested. Call it directly with the appropriate parameters.`,
-                        });
-                    }
-                }
-            } catch {
-                // Forge unavailable — fall through to synthesis
-            }
-        }
-
         // ── FORGE Phase 3: route through verifier when ready ──
         if (process.env.ATLAS_NO_FORGE_VERIFIER !== "true") {
             try {
@@ -427,7 +407,7 @@ export const createTool: ToolDefinition = {
                             success: true,
                             lookup_hit: true,
                             tool_name: result.slug,
-                            message: `Reused existing tool "${result.slug}".`,
+                            message: `Reused existing tool "${result.slug}" — its description matches what you requested. Call it directly.`,
                         });
                     }
                     if (result.kind === "synthesized") {

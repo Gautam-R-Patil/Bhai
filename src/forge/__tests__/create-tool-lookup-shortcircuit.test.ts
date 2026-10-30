@@ -28,8 +28,8 @@ describe("create_tool short-circuits on library hit", () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-ct-"));
         originalEnv = process.env.ATLAS_HOME;
         process.env.ATLAS_HOME = join(tmpDir, ".atlas");
-        // Phase 2 test: keep Phase 3 verifier-route off so legacy-path assertions hold
-        process.env.ATLAS_NO_FORGE_VERIFIER = "true";
+        // Lookup runs inside synthesizeTool; the stub LLM stands in for synthesis.
+        process.env.ATLAS_FORGE_STUB_LLM = "true";
         registry = new Map();
         setRegistryRef(registry);
         await initForge({ embedFn: async () => vector(0) });
@@ -38,12 +38,13 @@ describe("create_tool short-circuits on library hit", () => {
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        delete process.env.ATLAS_NO_FORGE_VERIFIER;
+        delete process.env.ATLAS_FORGE_STUB_LLM;
         if (originalEnv === undefined) delete process.env.ATLAS_HOME;
         else process.env.ATLAS_HOME = originalEnv;
     });
 
     it("create_tool returns lookup_hit instead of creating new tool when match exists", async () => {
+        registry.set("extract_pdf", {} as ToolDefinition);
         insertTool({
             slug: "extract_pdf",
             description: "Extract PDF text",
@@ -71,6 +72,28 @@ describe("create_tool short-circuits on library hit", () => {
         expect(result.tool_name).toBe("extract_pdf"); // canonical, not extract_pdf_v2
     });
 
+    it("a matching library row whose tool is not registered is not reused", async () => {
+        insertTool({
+            slug: "extract_pdf",
+            description: "Extract PDF text",
+            schemaJson: "{}",
+            handlerHash: "x",
+            embedding: vector(0),
+            source: "synchronous",
+            createdAt: Date.now(),
+        });
+        const result = JSON.parse(
+            await createTool.handler({
+                name: "extract_pdf_v2",
+                description: "Extract PDF text",
+                handler_code: "return 'ok';",
+                persistent: false,
+            }),
+        );
+        expect(result.lookup_hit).toBeUndefined();
+        expect(result.synthesized).toBe(true);
+    });
+
     it("create_tool proceeds with synthesis when no lookup hit", async () => {
         const resultJson = await createTool.handler({
             name: "send_email",
@@ -81,10 +104,11 @@ describe("create_tool short-circuits on library hit", () => {
         const result = JSON.parse(resultJson);
         expect(result.success).toBe(true);
         expect(result.lookup_hit).toBeUndefined();
-        expect(registry.has("send_email")).toBe(true);
+        expect(result.synthesized).toBe(true);
     });
 
     it("ATLAS_NO_FORGE_LOOKUP=true skips lookup, always creates", async () => {
+        registry.set("extract_pdf", {} as ToolDefinition);
         insertTool({
             slug: "extract_pdf",
             description: "Extract PDF",
@@ -105,7 +129,7 @@ describe("create_tool short-circuits on library hit", () => {
             });
             const result = JSON.parse(resultJson);
             expect(result.lookup_hit).toBeUndefined();
-            expect(registry.has("extract_pdf_v2")).toBe(true);
+            expect(result.synthesized).toBe(true);
         } finally {
             delete process.env.ATLAS_NO_FORGE_LOOKUP;
         }
