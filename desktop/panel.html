@@ -1712,6 +1712,15 @@
         }
 
         atlas.onChatEvent(({ chat, msg }) => {
+            // Something Bhai finished in the background (a research report): into the open chat.
+            if (msg && msg.type === 'notification' && msg.text) {
+                const thread = document.getElementById('chatsThread');
+                if (document.getElementById('tab-chats').classList.contains('active') && chatsOpenId) {
+                    thread.append(chatBubble('assistant', msg.text, Date.now()));
+                    thread.scrollTop = thread.scrollHeight;
+                } else showToast(String(msg.text).slice(0, 140));
+                return;
+            }
             if (!liveChat || chat !== liveChat.id || !msg) return;
             if (msg.type === 'progress' && msg.text) liveChat.working.textContent = String(msg.text).replace(/^[^\p{L}\p{N}]+/u, '');
             else if (msg.type === 'response') finishLiveChat(msg.text || (msg.stopped ? 'Stopped.' : ''));

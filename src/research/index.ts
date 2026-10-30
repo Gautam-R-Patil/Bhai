@@ -7,6 +7,7 @@ import type { LLMClient } from "../llm.js";
 import type { ChannelContext } from "../agent.js";
 import type { ActiveResearch, NotifyFn, ResearchIndexEntry } from "./types.js";
 import { PROFILES } from "./profiles.js";
+import { getChannelSender } from "../tools/channel-send.js";
 import { executeDeepResearch } from "./executor.js";
 import { multiEngineSearch } from "./engines.js";
 import type { SearchResult } from "./types.js";
@@ -146,7 +147,17 @@ export function sanitizePromptForFencing(s: string): string {
 
 // ── Notify Helper ────────────────────────────
 
-function createNotify(): NotifyFn {
+// Research reports where it was asked. Started on the computer (chat bar, the app's chat,
+// the extension), its progress shows there only, never on Telegram or another channel.
+const DESKTOP_CHANNELS = new Set(["overlay", "chrome-extension", "web-widget"]);
+export const startedOnDesktop = (origin?: ChannelContext): boolean => !!origin && DESKTOP_CHANNELS.has(origin.channel);
+
+export function createNotify(origin?: ChannelContext): NotifyFn {
+    if (startedOnDesktop(origin)) {
+        return async (msg: string) => {
+            if (_overlayProgress) await _overlayProgress(msg).catch(() => {});
+        };
+    }
     return async (msg: string) => {
         if (_telegramNotifier) await _telegramNotifier(msg).catch(() => {});
         if (_onProgress) await _onProgress(msg).catch(() => {});
@@ -286,7 +297,18 @@ A research that was interrupted or failed can be continued from its last checkpo
         activeResearches.set(id, research);
         void syncActiveToIndex(research);
 
-        const capturedNotify = createNotify();
+        const capturedNotify = createNotify(capturedChannelContext);
+        // The final answer: on the computer when it was asked there, unless no chat window is
+        // open to take it; then the usual channels, so a finished report is never lost.
+        const deliverResult = async (text: string) => {
+            if (startedOnDesktop(capturedChannelContext)) {
+                const shown = await getChannelSender("overlay")?.(text)?.catch(() => false);
+                if (shown) return;
+                if (_telegramNotifier) await _telegramNotifier(text).catch(() => {});
+                return;
+            }
+            await capturedNotify(text);
+        };
         const capturedLLM = _llm!;
 
         // Fire and forget — runs in background
@@ -330,10 +352,10 @@ Always end by sending a final user-facing message describing what you found and 
                             noOutward: true,
                         },
                     );
-                    if (result?.text) await capturedNotify(result.text);
+                    if (result?.text) await deliverResult(result.text);
                 } catch (err) {
                     console.error(`[RESEARCH] Continuation failed in ${id}:`, err);
-                    await capturedNotify(`⚠️ Research completed but follow-up failed: ${(err as Error).message}`);
+                    await deliverResult(`⚠️ Research completed but follow-up failed: ${(err as Error).message}`);
                 }
             })
             .catch(async (err) => {
