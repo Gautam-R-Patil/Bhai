@@ -3,9 +3,6 @@
 // Singleton pattern matches network-health.ts. Fail-open: null if all providers fail.
 
 import { EventEmitter } from "node:events";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { getDataDir } from "../config/paths.js";
 
 // ── Types ────────────────────────────────────
 
@@ -53,36 +50,20 @@ let _initialized = false;
 // the CLI helper): 60-70 times a day here, each holding location back ~12 s. After a timeout a
 // background refresh skips GPS (Wi-Fi/IP answer at once) and tries it again once an hour, or as
 // soon as the location permission changes; a refresh the owner asks for (get_location refresh)
-// always tries it. On disk, because the bot restarts often and every boot refreshes.
+// always tries it. In memory: each start tries GPS at boot again.
 
 const GPS_BACKOFF_AFTER = 1;
 const GPS_RETRY_MS = 60 * 60_000;
-type GpsBackoff = { timeouts: number; retryAt: number; status?: string | null };
-const gpsBackoffFile = () => join(getDataDir(), "location-gps-backoff.json");
-
-function readGpsBackoff(): GpsBackoff {
-    try {
-        return JSON.parse(readFileSync(gpsBackoffFile(), "utf8")) as GpsBackoff;
-    } catch {
-        return { timeouts: 0, retryAt: 0 };
-    }
-}
+let _gpsBackoff: { timeouts: number; retryAt: number; status: string | null } = { timeouts: 0, retryAt: 0, status: null };
 
 async function noteGpsResult(provider: LocationProvider, timedOut: boolean): Promise<void> {
-    const prev = readGpsBackoff();
-    const timeouts = timedOut ? prev.timeouts + 1 : 0;
+    const timeouts = timedOut ? _gpsBackoff.timeouts + 1 : 0;
     const status = timedOut ? ((await provider.permissionStatus?.().catch(() => null)) ?? null) : null;
-    const next = { timeouts, retryAt: timeouts >= GPS_BACKOFF_AFTER ? Date.now() + GPS_RETRY_MS : 0, status };
-    if (next.timeouts === prev.timeouts && next.retryAt === prev.retryAt && status === (prev.status ?? null)) return;
-    try {
-        writeFileSync(gpsBackoffFile(), JSON.stringify(next));
-    } catch {
-        /* back-off is an optimisation: without the file GPS is just tried every time */
-    }
+    _gpsBackoff = { timeouts, retryAt: timeouts >= GPS_BACKOFF_AFTER ? Date.now() + GPS_RETRY_MS : 0, status };
 }
 
 async function gpsBackedOff(provider: LocationProvider): Promise<boolean> {
-    const b = readGpsBackoff();
+    const b = _gpsBackoff;
     if (b.timeouts < GPS_BACKOFF_AFTER || Date.now() >= b.retryAt) return false;
     if (!b.status || !provider.permissionStatus) return true;
     // The permission changed since GPS last timed out (e.g. the owner just allowed it): try now.

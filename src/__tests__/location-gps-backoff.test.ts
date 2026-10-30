@@ -1,6 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // After a GPS timeout, background refreshes skip GPS for an hour or until the
-// location permission changes; a refresh the owner asks for still tries it.
+// location permission changes; a refresh the owner asks for still tries it, and so
+// does the first refresh after a restart.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -66,4 +67,15 @@ it("tries GPS again at once when the location permission changes while backed of
     expect(gps.calls).toBe(before + 1);
     await loc.refreshLocation(); // timed out again under the new permission: backed off again
     expect(gps.calls).toBe(before + 1);
+});
+
+it("a restart tries GPS at boot again, even within the hour after a timeout", async () => {
+    const loc = await import("../location/index.js");
+    const before = gps.calls;
+    await loc.refreshLocation();
+    expect(gps.calls).toBe(before); // backed off in this run
+    vi.resetModules(); // the bot restarts
+    const fresh = await import("../location/index.js");
+    await fresh.initLocationService();
+    await vi.waitFor(() => expect(gps.calls).toBe(before + 1));
 });
