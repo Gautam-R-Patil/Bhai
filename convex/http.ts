@@ -178,25 +178,7 @@ import { isEmail, MAX_RECIPIENTS_PER_EMAIL, parseRecipients, SEND_RECIPIENTS_PER
 // against accidental floods, not a security boundary (hCaptcha is).
 const WAITLIST_IP_WINDOW_MS = 10 * 60_000;
 const WAITLIST_IP_MAX = 5;
-const waitlistIpHits = new Map<string, { count: number; windowStart: number }>();
 
-function checkWaitlistIpRateLimit(ip: string): boolean {
-  if (!ip || ip === "unknown") return true; // can't rate-limit what we can't identify
-  const now = Date.now();
-  const existing = waitlistIpHits.get(ip);
-  if (waitlistIpHits.size > 1024) {
-    for (const [k, v] of waitlistIpHits) {
-      if (now - v.windowStart > WAITLIST_IP_WINDOW_MS) waitlistIpHits.delete(k);
-    }
-  }
-  if (!existing || now - existing.windowStart > WAITLIST_IP_WINDOW_MS) {
-    waitlistIpHits.set(ip, { count: 1, windowStart: now });
-    return true;
-  }
-  if (existing.count >= WAITLIST_IP_MAX) return false;
-  existing.count++;
-  return true;
-}
 
 const WAITLIST_ALLOWED_ORIGIN = "https://tryatlasagi.com";
 
@@ -2821,7 +2803,13 @@ http.route({
     }
 
     const ip = extractClientIp(request);
-    if (!checkWaitlistIpRateLimit(ip)) {
+    // In the database: an HTTP action's module state doesn't reliably outlive a request.
+    const waitlistLimit = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: `waitlist_submit|${ip}`,
+      windowMs: WAITLIST_IP_WINDOW_MS,
+      maxRequests: WAITLIST_IP_MAX,
+    });
+    if (waitlistLimit.limited) {
       return new Response(
         JSON.stringify({ error: "Too many submissions. Try again later." }),
         { status: 429, headers: { ...jsonHeaders, "Retry-After": "600" } },
@@ -3658,25 +3646,7 @@ http.route({
 
 const CONTACT_IP_WINDOW_MS = 10 * 60_000;
 const CONTACT_IP_MAX = 4;
-const contactIpHits = new Map<string, { count: number; windowStart: number }>();
 
-function checkContactIpRateLimit(ip: string): boolean {
-  if (!ip || ip === "unknown") return true;
-  const now = Date.now();
-  const existing = contactIpHits.get(ip);
-  if (contactIpHits.size > 1024) {
-    for (const [k, v] of contactIpHits) {
-      if (now - v.windowStart > CONTACT_IP_WINDOW_MS) contactIpHits.delete(k);
-    }
-  }
-  if (!existing || now - existing.windowStart > CONTACT_IP_WINDOW_MS) {
-    contactIpHits.set(ip, { count: 1, windowStart: now });
-    return true;
-  }
-  if (existing.count >= CONTACT_IP_MAX) return false;
-  existing.count++;
-  return true;
-}
 
 const CONTACT_ALLOWED_ORIGINS = new Set([
   "https://xagilab.com",
@@ -3741,7 +3711,13 @@ http.route({
     }
 
     const ip = extractClientIp(request);
-    if (!checkContactIpRateLimit(ip)) {
+    // In the database: an HTTP action's module state doesn't reliably outlive a request.
+    const contactLimit = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: `contact_submit|${ip}`,
+      windowMs: CONTACT_IP_WINDOW_MS,
+      maxRequests: CONTACT_IP_MAX,
+    });
+    if (contactLimit.limited) {
       return new Response(
         JSON.stringify({ error: "Too many submissions. Please try again later." }),
         { status: 429, headers: { ...jsonHeaders, "Retry-After": "600" } },
