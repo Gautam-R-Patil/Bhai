@@ -417,7 +417,7 @@ export function getWidgetScript(wsUrl: string): string {
     live.done = true;
     var n = live.state.steps.length;
     if (!n) stepsBar.hidden = true;
-    else if (worked) stepsToggle.textContent = "Worked for " + worked.secs + "s · " + worked.steps + " steps";
+    else if (worked) stepsToggle.textContent = "Worked for " + worked.secs + "s · " + worked.steps + (worked.steps === 1 ? " step" : " steps");
     else stepsToggle.textContent = "Steps";
   }
 

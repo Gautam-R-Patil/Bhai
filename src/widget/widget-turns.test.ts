@@ -193,6 +193,13 @@ describe("widget live turns", () => {
         expect(agents()[0].innerHTML).toBe("Final &lt;b&gt;answer&lt;/b&gt;");
     });
 
+    it("one step reads 1 step", () => {
+        send({ type: "thinking", turn: "t1" });
+        send({ type: "turn_step", turn: "t1", seq: 1, id: "a", text: "Open page", state: "done" });
+        send({ type: "response", turn: "t1", text: "Done", worked: { secs: 3, steps: 1 } });
+        expect(win.querySelector("#atlas-widget-steps-toggle").textContent).toBe("Worked for 3s · 1 step");
+    });
+
     it("shows the live line with its step count and the steps as text only", () => {
         send({ type: "thinking", turn: "t1" });
         send({ type: "turn_status", turn: "t1", seq: 1, text: "💭 Searching the web", step: 2, elapsed: 7 });
