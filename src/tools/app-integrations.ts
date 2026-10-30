@@ -496,6 +496,65 @@ JSON.stringify({ title: "${escaped(title)}", start: "${startTime}", end: "${endT
 // 4. REMINDERS TOOL
 // ═══════════════════════════════════════════════
 
+/**
+ * "tomorrow 10am", "today at 5:30 pm", "friday 9am", "in 2 hours", "2026-10-31 10:00" → a local
+ * Date, or null. gpt-4.1-nano passed "2023-10-09 10:00" for "tomorrow at 10am" (it had no clock).
+ */
+export function parseWhen(text: string, now = new Date()): Date | null {
+    const t = text.trim().toLowerCase();
+    const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ t](\d{1,2}):(\d{2}))?/.exec(t);
+    if (iso) return new Date(+iso[1], +iso[2] - 1, +iso[3], +(iso[4] ?? 9), +(iso[5] ?? 0));
+    const rel = /\bin (\d+) (minute|min|hour|hr|day)s?\b/.exec(t);
+    if (rel) {
+        const unit = rel[2].startsWith("d") ? 864e5 : rel[2].startsWith("h") ? 36e5 : 6e4;
+        return new Date(now.getTime() + Number(rel[1]) * unit);
+    }
+    const d = new Date(now);
+    const weekday = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].findIndex((w) =>
+        t.includes(w),
+    );
+    const clock = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/.exec(t) ?? /\b(\d{1,2}):(\d{2})\b/.exec(t);
+    if (/\btomorrow\b/.test(t)) d.setDate(d.getDate() + 1);
+    else if (weekday >= 0) d.setDate(d.getDate() + ((weekday - d.getDay() + 7) % 7 || 7));
+    else if (!/\b(today|tonight|noon)\b/.test(t) && !clock) return null;
+    let h = /\bnoon\b/.test(t) ? 12 : /\btonight\b/.test(t) ? 20 : 9;
+    let m = 0;
+    if (clock) {
+        h = Number(clock[1]) % (clock[3] ? 12 : 24);
+        if (clock[3] === "pm") h += 12;
+        m = Number(clock[2] ?? 0);
+    }
+    d.setHours(h, m, 0, 0);
+    return d;
+}
+
+/** An AppleScript date built field by field: `date "<string>"` parses by the Mac's locale. */
+function asDate(d: Date): string {
+    return `(my mkDate(${d.getFullYear()}, ${d.getMonth() + 1}, ${d.getDate()}, ${d.getHours()}, ${d.getMinutes()}))`;
+}
+const AS_MKDATE = `
+on mkDate(y, mo, dd, h, mi)
+    set d to current date
+    set day of d to 1
+    set year of d to y
+    set month of d to mo
+    set day of d to dd
+    set hours of d to h
+    set minutes of d to mi
+    set seconds of d to 0
+    return d
+end mkDate`;
+
+/** The due date, or why it can't be one. */
+function dueFrom(text: string): { date?: Date; error?: string } {
+    const now = new Date();
+    const date = parseWhen(text, now);
+    if (!date) return { error: `Couldn't read "${text}" as a time: use e.g. "tomorrow 10am", "friday 9am", "in 2 hours" or "2026-11-02 14:30".` };
+    if (date.getTime() < now.getTime() - 60_000)
+        return { error: `${date.toLocaleString()} is in the past (it's ${now.toLocaleString()} now). Use a future time, e.g. "tomorrow 10am".` };
+    return { date };
+}
+
 export const remindersTool: ToolDefinition = {
     schema: {
         type: "function",
@@ -524,7 +583,8 @@ export const remindersTool: ToolDefinition = {
                     title: { type: "string", description: "Reminder text (for 'create'), or new title (for 'edit')" },
                     due_date: {
                         type: "string",
-                        description: "Due date in 'YYYY-MM-DD HH:MM' format (for 'create' or 'edit')",
+                        description:
+                            "When it's due, in words or as a date: 'tomorrow 10am', 'friday 9am', 'in 2 hours', '2026-11-02 14:30' (for 'create' or 'edit')",
                     },
                     list_name: { type: "string", description: "Reminders list name (default: default list)" },
                     reminder_name: {
@@ -558,11 +618,13 @@ export const remindersTool: ToolDefinition = {
 
                     let script: string;
                     if (dueDate) {
-                        script = `
+                        const due = dueFrom(dueDate);
+                        if (!due.date) return JSON.stringify({ success: false, error: due.error });
+                        script = `${AS_MKDATE}
 tell application "Reminders"
     ${listName ? `set targetList to list "${escaped(listName)}"` : "set targetList to default list"}
     tell targetList
-        set newReminder to make new reminder with properties {name:"${escaped(title)}", due date:date "${asStr(dueDate)}"}
+        set newReminder to make new reminder with properties {name:"${escaped(title)}", due date:${asDate(due.date)}}
     end tell
     return name of newReminder
 end tell`;
@@ -651,13 +713,15 @@ end tell`);
                     if (!newTitle && !newDueDate)
                         return JSON.stringify({ error: "Provide 'title' and/or 'due_date' to update." });
                     const escapedName = asStr(reminderName);
-                    let editScript = `
+                    const due = newDueDate ? dueFrom(newDueDate) : {};
+                    if (newDueDate && !due.date) return JSON.stringify({ success: false, error: due.error });
+                    let editScript = `${AS_MKDATE}
 tell application "Reminders"
     set targetReminders to (reminders whose name is "${escapedName}" and completed is false)
     if (count of targetReminders) > 0 then
         set r to item 1 of targetReminders`;
                     if (newTitle) editScript += `\n        set name of r to "${asStr(newTitle)}"`;
-                    if (newDueDate) editScript += `\n        set due date of r to date "${asStr(newDueDate)}"`;
+                    if (due.date) editScript += `\n        set due date of r to ${asDate(due.date)}`;
                     editScript += `
         return name of r
     else

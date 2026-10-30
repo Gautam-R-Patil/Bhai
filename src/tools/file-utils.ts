@@ -985,6 +985,20 @@ export const openInApp: ToolDefinition = {
             });
         }
 
+        // An app's name as the target ("System Preferences", "Notes"): open the app. It was taken
+        // for a file in Bhai's working directory and failed.
+        if (IS_MAC && raw && !/[/\\]/.test(raw) && !/^[a-z][\w+.-]+:/i.test(raw) && !existsSync(target)) {
+            const name = raw.replace(/\.app$/i, "").replace(/^system preferences$/i, "System Settings");
+            const found = await execFileAsync("open", ["-Ra", name], { timeout: 3000 }).then(
+                () => true,
+                () => false,
+            );
+            if (found) {
+                await execFileAsync("open", ["-a", name], { timeout: 5000 });
+                return JSON.stringify({ success: true, opened_app: name });
+            }
+        }
+
         try {
             await nativeOpen(target, app);
             return JSON.stringify({

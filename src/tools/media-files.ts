@@ -76,6 +76,9 @@ export const imageEdit: ToolDefinition = {
             const fmt = String(input.format ?? "").toLowerCase().replace(/^\./, "");
             if (action === "convert" && !IMAGE_FORMATS[fmt])
                 return fail(`format must be one of: ${Object.keys(IMAGE_FORMATS).join(", ")}`);
+            // gpt-4.1-nano "converted" photo.png to png on the way to a JPG.
+            if (action === "convert" && (await info(src)).format === IMAGE_FORMATS[fmt])
+                return fail(`${path.basename(src)} is already ${fmt}. Convert it to the format you want instead.`);
             const width = Number(input.width) || 0;
             const height = Number(input.height) || 0;
             if (action === "resize" && !width && !height) return fail("resize needs width and/or height.");

@@ -248,7 +248,8 @@ export const systemInfo: ToolDefinition = {
         type: "function",
         function: {
             name: "system_info",
-            description: "Get a quick system dashboard: battery, RAM, CPU, disk, Wi-Fi, and uptime — all in one call.",
+            description:
+                "Get a quick system dashboard: OS version, battery, RAM, CPU, disk, Wi-Fi, and uptime — all in one call.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -462,6 +463,9 @@ export const systemInfo: ToolDefinition = {
         if (diskResult.status === "fulfilled") info.disk = diskResult.value;
         if (wifiResult.status === "fulfilled") info.wifi = wifiResult.value;
         if (uptimeResult.status === "fulfilled") info.uptime = uptimeResult.value;
+        // "Which macOS am I on?": without this a model went looking in System Settings.
+        const ver = await execFileAsync("sw_vers", ["-productVersion"], { timeout: 2000 }).catch(() => null);
+        if (ver) info.os = `macOS ${ver.stdout.trim()}`;
 
         return JSON.stringify(info);
     },

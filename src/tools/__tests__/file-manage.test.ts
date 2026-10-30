@@ -105,6 +105,19 @@ describe("file_manage", () => {
         expect(z.error).toMatch(/already a zip/);
     });
 
+    // From the long-task eval: new_folder { paths: [BhaiEval], destination: "PDFs" } made
+    // PDFs in Bhai's own checkout.
+    it("reads a relative destination against the item's folder, and wants full source paths", async () => {
+        const base = join(dir, "rel");
+        mkdirSync(base);
+        writeFileSync(join(base, "a.pdf"), "a");
+        expect((await run({ action: "new_folder", paths: [base], destination: "PDFs" })).created).toEqual([join(base, "PDFs")]);
+        expect((await run({ action: "move", paths: [join(base, "a.pdf")], destination: "PDFs" })).done[0].to).toBe(
+            join(base, "PDFs", "a.pdf"),
+        );
+        expect((await run({ action: "new_folder", paths: ["Images"] })).error).toMatch(/full path/);
+    });
+
     // From the harder eval: asked to count the .txt files, gpt-4.1-nano counted every file.
     it("list_directory counts each kind", async () => {
         const sub = join(dir, "kinds");

@@ -35,6 +35,8 @@ describe("image_edit and pdf_edit", () => {
         expect([r.width, r.height]).toEqual([100, 50]); // proportions kept
         expect(await run(imageEdit, { action: "info", path: join(dir, "photo.png") })).toMatchObject({ width: 400, height: 200 });
         expect((await run(imageEdit, { action: "convert", path: join(dir, "photo.png"), format: "xyz" })).error).toMatch(/format/);
+        // Long-task eval: png "converted" to png on the way to a JPG.
+        expect((await run(imageEdit, { action: "convert", path: join(dir, "photo.png"), format: "png" })).error).toMatch(/already png/);
     });
 
     it("merges PDFs, pulls pages out, counts pages", async () => {
