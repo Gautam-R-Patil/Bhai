@@ -756,31 +756,21 @@ end tell`);
 
                 case "on":
                 case "off": {
-                    if (hasBlueutil) {
-                        await execFileAsync("blueutil", ["--power", action === "on" ? "1" : "0"], { timeout: 5000 });
-                    } else {
-                        // Fallback: use AppleScript to toggle via System Settings
-                        const script =
-                            action === "on"
-                                ? `do shell script "defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 1" with administrator privileges`
-                                : `do shell script "defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0" with administrator privileges`;
-                        try {
-                            await runAppleScript(script, 10000);
-                        } catch {
-                            // If admin fails, try the GUI approach
-                            await runAppleScript(`
-tell application "System Events"
-    tell process "ControlCenter"
-        -- This may not work on all macOS versions
-    end tell
-end tell`);
-                            return JSON.stringify({
-                                success: false,
-                                error: "Could not toggle Bluetooth. Install 'blueutil' (brew install blueutil) for reliable control.",
-                            });
-                        }
+                    // Without blueutil there's no working script: the old fallback asked for the
+                    // admin password, wrote a plist modern macOS ignores, and said "turned on".
+                    if (!hasBlueutil) {
+                        return JSON.stringify({
+                            success: false,
+                            error: "Bluetooth can't be switched by script without blueutil (brew install blueutil). Nothing was changed.",
+                            next_step: `Do it on screen: Control Center → Bluetooth → turn it ${action}, and check it took.`,
+                        });
                     }
-                    return JSON.stringify({ success: true, action, note: `Bluetooth turned ${action}.` });
+                    await execFileAsync("blueutil", ["--power", action === "on" ? "1" : "0"], { timeout: 5000 });
+                    const { stdout: power } = await execFileAsync("blueutil", ["--power"], { timeout: 3000 });
+                    const isOn = power.trim() === "1";
+                    if (isOn !== (action === "on"))
+                        return JSON.stringify({ success: false, error: `Asked for Bluetooth ${action}, but it's still ${isOn ? "on" : "off"}.` });
+                    return JSON.stringify({ success: true, action, note: `Bluetooth is ${action}.` });
                 }
 
                 case "list": {
