@@ -257,7 +257,7 @@ export const setReminder: ToolDefinition = {
                     do_task: {
                         type: "boolean",
                         description:
-                            "true when Bhai must do something at that time (check, look up, summarize, then report), so the action runs and its answer is sent. Leave out for a plain reminder.",
+                            "true when Bhai must do something at that time (check, look up, summarize, then report), so the action runs and its answer is sent then. Don't also do it now: the owner asked for it later. Leave out for a plain reminder.",
                     },
                 },
                 required: ["minutes", "description", "action"],

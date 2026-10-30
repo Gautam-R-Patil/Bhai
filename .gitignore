@@ -474,3 +474,4 @@ brag-output/
 !src/session-device-secret.test.ts
 !src/tools/scheduled-persist.test.ts
 !src/cron/store.test.ts
+!src/overlay/notify-requested.test.ts

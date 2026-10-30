@@ -990,12 +990,11 @@ async function boot() {
             discord: () => sendDiscordProactiveMessage(message),
             slack: () => sendSlackProactiveMessage(message),
             matrix: () => sendMatrixProactiveMessage(message),
-            overlay: () => {
-                sendOverlayNotification(message);
-                return Promise.resolve();
-            },
+            // The owner asked for it: Smart DND doesn't hold it back.
+            overlay: () => sendOverlayNotification(message, { requested: true }),
         };
         if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
+        console.log(`📬 Scheduled message → ${PRIMARY_CHANNEL} + ${Object.keys(sendPrimary).length - 1} other channel(s)`);
 
         // Send to primary channel
         const primaryFn = sendPrimary[PRIMARY_CHANNEL];
@@ -1206,8 +1205,7 @@ async function boot() {
                 }
                 if (channel === "overlay") {
                     const { sendOverlayNotification } = await import("./overlay/overlay-chat.js");
-                    sendOverlayNotification(response);
-                    return true;
+                    return sendOverlayNotification(response, { requested: true });
                 }
                 console.error(
                     `[CRON] MISROUTED — job ${job.id} had deliverTo="${channel}" which has no handler. Response (${response.length} chars) was dropped.`,
