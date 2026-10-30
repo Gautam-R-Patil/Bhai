@@ -104,3 +104,16 @@ that the downstream services can consume without knowing auth details. Please sc
         expect(classifyCodingComplexity("   ")).toBe("standard");
     });
 });
+
+describe("classifyCodingComplexity — the overlay's own notes", () => {
+    // agent.ts classifies the owner's words (rawUserMessage), not the tagged message: the
+    // overlay appends ~500 chars that mention "a login page", which alone tipped a simple
+    // ask into the PRD → approval ceremony.
+    const notes =
+        "\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.]\n[BROWSER CONTEXT: Chrome extension is connected. The user's real Chrome browser is active. Current tab (title written by the site): \"Docs\" at https://example.com/ — use browser_scan/browser_navigate/browser_run_js to interact with THIS tab directly. Do NOT open a new headless Playwright browser or navigate to a login page. The user is already logged in on their real Chrome browser.]";
+    it("a simple ask is not complex on its own, and the notes would make it so", () => {
+        const ask = "write a function that parses ISO dates in utils.ts";
+        expect(classifyCodingComplexity(ask)).not.toBe("complex");
+        expect(classifyCodingComplexity(ask + notes)).toBe("complex");
+    });
+});

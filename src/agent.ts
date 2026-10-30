@@ -2441,7 +2441,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // approval → walkthrough ceremony.
                 try {
                     const { classifyCodingComplexity } = await import("./model-router.js");
-                    const c = classifyCodingComplexity(userMessage);
+                    const c = classifyCodingComplexity(rawUserMessage); // the overlay notes ("…a login page", 500 chars) made every coding ask "complex"
+                    console.log(`  🧩 Coding complexity: ${c}`);
                     if (c === "complex") {
                         parts.push(
                             '<coding_complexity level="complex">\n' +
@@ -2738,7 +2739,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 /* DB not initialized */
             }
 
-            const browserCtx = getBrowserContext(userMessage);
+            const browserCtx = getBrowserContext(rawUserMessage); // not the channel notes: their "interact with THIS tab" matched strategies on every turn
             if (browserCtx) parts.push(browserCtx);
 
             // ── Chrome Extension Context ──
