@@ -537,6 +537,10 @@ export const osType: ToolDefinition = {
         if (!input.key && !input.combo && /^(return|enter|escape|esc|tab)$/.test(keyWord)) {
             input = { ...input, key: keyWord === "esc" ? "escape" : keyWord, text: undefined };
         }
+        // ...and "cmd+space" / "command+n" as text means the shortcut.
+        if (!input.key && !input.combo && /^((cmd|command|ctrl|control|alt|option|shift)\+)+[a-z0-9]+$/.test(keyWord)) {
+            input = { ...input, combo: keyWord, text: undefined };
+        }
 
         // text plus key/combo in one call ("45*12" then return): type, then press.
         // Taking only the key dropped the text while reporting success.
@@ -605,10 +609,16 @@ export const osType: ToolDefinition = {
             await fs.writeFile(tmpFile, script, "utf-8");
             const { stdout, stderr } = await execFileAsync("osascript", [tmpFile], { timeout: 10000 });
             await fs.unlink(tmpFile).catch(() => {});
+            // After Return/Enter, what the window now shows (a calculator's result, a form's
+            // error): gpt-4.1-nano pressed "=" and then wrote a made-up product instead of
+            // reading the display.
+            const submitted = /^(return|enter)$/i.test(String(input.key ?? ""));
+            const shows = submitted ? await frontWindowText() : [];
             return JSON.stringify({
                 success: true,
                 ...(typedFirst ? { typed_chars: typedFirst } : {}),
                 pressed: input.key || input.combo,
+                ...(shows.length ? { window_shows: shows } : {}),
                 ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                 stdout: (stdout || "").substring(0, 500),
                 stderr: (stderr || "").substring(0, 500),
@@ -1596,6 +1606,22 @@ export const osVisualVerify: ToolDefinition = {
     },
 };
 
+/** Up to 4 short read-only texts the front app's window shows (static text values only). */
+async function frontWindowText(): Promise<string[]> {
+    await new Promise((r) => setTimeout(r, 150)); // the result draws a moment after the key
+    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+    const dump = await dumpAccessibilityTree({ depth: 12, timeoutMs: 2000, budgetMs: 800 }).catch(() => null);
+    const win = dump && !dump.error ? dump.root.children.find((n) => n.role === "AXWindow") : undefined;
+    const out: string[] = [];
+    const stack = win ? [win] : [];
+    for (let n = stack.shift(); n && out.length < 4; n = stack.shift()) {
+        const v = n.role === "AXStaticText" ? (n.value || n.label || "").trim() : "";
+        if (v && v.length <= 60 && !out.includes(v)) out.push(v);
+        stack.push(...n.children);
+    }
+    return out;
+}
+
 /** Whether the frontmost app's accessibility tree shows `text` (labels and values, case and spacing ignored). */
 async function frontAppHasText(text: string): Promise<boolean> {
     const flat = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
@@ -1605,8 +1631,7 @@ async function frontAppHasText(text: string): Promise<boolean> {
     const dump = await dumpAccessibilityTree({ depth: 20, timeoutMs: 3000 }).catch(() => null);
     if (!dump || dump.error) return false;
     const stack = [dump.root];
-    while (stack.length) {
-        const n = stack.pop()!;
+    for (let n = stack.pop(); n; n = stack.pop()) {
         for (const t of [n.label, n.value]) if (t && t !== "[secure]" && flat(t).includes(want)) return true;
         stack.push(...n.children);
     }
