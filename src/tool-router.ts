@@ -232,8 +232,6 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "browser_recall_strategy",
             "browser_parallel_tabs",
             "browser_parallel_actions",
-            "browser_replay_actions",
-            "browser_cache_actions",
             "browser_set_mode",
             "browser_chrome_status",
             "browser_click",

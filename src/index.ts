@@ -59,7 +59,6 @@ import { initToolRouter, setToolRouterLLM } from "./tool-router.js";
 import {
     closeBrowser,
     closeChromeBridge,
-    initActionCache,
     initChromeBridge,
     registerChromeBackend,
     registerPlaywrightBackend,
@@ -459,9 +458,8 @@ async function boot() {
         }
     });
 
-    // Browser strategy memory + action cache + unified task learnings (sync inits, fast)
+    // Browser strategy memory + unified task learnings (sync inits, fast)
     initBrowserMemory();
-    initActionCache();
     initTaskLearnings();
     initStrategyLibrary();
 

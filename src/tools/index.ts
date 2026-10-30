@@ -49,7 +49,6 @@ import { getActivePage } from "./browser/core.js";
 import {
     browserAnalyze,
     browserBack,
-    browserCacheActions,
     browserChromeStatus,
     browserClick,
     browserClickAt,
@@ -64,7 +63,6 @@ import {
     browserParallelActions,
     browserParallelTabs,
     browserRecallStrategy,
-    browserReplayActions,
     browserRightClick,
     browserRunJs,
     browserSaveStrategy,
@@ -551,8 +549,6 @@ registry.set(browserUploadFile.schema.function.name, browserUploadFile);
 registry.set(browserMultiAction.schema.function.name, browserMultiAction);
 registry.set(browserScrollElement.schema.function.name, browserScrollElement);
 registry.set(browserParallelTabs.schema.function.name, browserParallelTabs);
-registry.set(browserReplayActions.schema.function.name, browserReplayActions);
-registry.set(browserCacheActions.schema.function.name, browserCacheActions);
 registry.set(browserParallelActions.schema.function.name, browserParallelActions);
 registry.set(browserSetMode.schema.function.name, browserSetMode);
 registry.set(browserChromeStatus.schema.function.name, browserChromeStatus);
@@ -808,7 +804,6 @@ const NO_PAGE_CHECK = new Set([
     "browser_close",
     "browser_save_strategy",
     "browser_recall_strategy",
-    "browser_cache_actions",
     "browser_batch_fetch",
     "browser_connect_electron",
     "browser_network_requests",

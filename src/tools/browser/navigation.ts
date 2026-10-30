@@ -6,7 +6,6 @@
 // Navigate, scan, back, switch tabs, close
 
 import type { ToolDefinition } from "../get-current-time.js";
-import { getCachedActions, markActionFailed, replayActions, shouldReplayActions } from "./action-cache.js";
 import { withAgentUIHidden } from "./agent-cursor.js";
 import { checkAuthWall } from "./auth-wall.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
@@ -199,23 +198,6 @@ export const browserNavigate: ToolDefinition = {
                 result.canvas_app = false; // ordinary page with a thin/cold scan, not a canvas
                 result.tip =
                     "⚠️ Few interactive elements detected — the page may still be loading or the scan ran early. Re-run browser_scan (optionally visual:true) before deciding it's element-less.";
-            }
-
-            // Check action cache — if we have a high-success cached sequence for this URL,
-            // inform the agent so it can use browser_replay_actions instead of re-analyzing
-            try {
-                const cached = getCachedActions(url);
-                if (cached && shouldReplayActions(cached)) {
-                    result.cached_actions_available = true;
-                    result.cached_action_count = cached.actions.length;
-                    result.cached_success_rate = Math.round(
-                        (cached.successCount / Math.max(1, cached.successCount + cached.failCount)) * 100,
-                    );
-                    result.tip =
-                        "Cached actions available for this page! Use browser_replay_actions to replay them (skips LLM analysis). Falls back automatically if they fail.";
-                }
-            } catch {
-                /* action cache lookup non-fatal */
             }
 
             result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
