@@ -45,6 +45,8 @@ export class InboxManager {
     private store: InboxStore;
     private bus: InboxEventBus;
     private executor?: (calls: SuggestedToolCall[]) => Promise<ExecutionResult>;
+    private deferTimer: ReturnType<typeof setTimeout> | null = null;
+    private watching = false;
 
     constructor(deps: InboxManagerDeps) {
         this.store = deps.store;
@@ -131,6 +133,7 @@ export class InboxManager {
         if (!updated) return null;
         debugProactive("inbox_deferred", { id, until });
         this.bus.emit({ kind: "updated", item: updated });
+        if (this.watching) this.watchDeferred();
         return updated;
     }
 
@@ -188,6 +191,22 @@ export class InboxManager {
             }
         }
         return ready;
+    }
+
+    /**
+     * Keep re-releasing deferred items on time: one timer for the earliest deferredUntil,
+     * re-checked at least once a minute (a sleeping Mac's timers run late), and no timer at all
+     * while nothing is deferred. defer() re-arms it.
+     */
+    watchDeferred(): void {
+        this.watching = true;
+        if (this.deferTimer) clearTimeout(this.deferTimer);
+        this.deferTimer = null;
+        this.readyDeferred();
+        const next = Math.min(...this.store.listAll("deferred").map((i) => i.deferredUntil ?? Number.POSITIVE_INFINITY));
+        if (!Number.isFinite(next)) return;
+        this.deferTimer = setTimeout(() => this.watchDeferred(), Math.min(Math.max(next - Date.now(), 0), 60_000));
+        this.deferTimer.unref?.();
     }
 
     /** Read-through accessors. */

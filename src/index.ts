@@ -766,11 +766,8 @@ async function boot() {
                     }, 60 * 60_000);
                     _expireT.unref?.();
 
-                    // Periodic deferred-ready sweep (every minute)
-                    const _readyT = setInterval(() => {
-                        manager.readyDeferred();
-                    }, 60_000);
-                    _readyT.unref?.();
+                    // Deferred items come back when due (a timer only while something is deferred)
+                    manager.watchDeferred();
                 } else {
                     console.log("[BOOT] InboxManager skipped: no raw DB handle");
                 }
