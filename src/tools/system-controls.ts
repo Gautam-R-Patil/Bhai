@@ -923,9 +923,19 @@ export const setDoNotDisturb: ToolDefinition = {
                     ? JSON.stringify({ success: true, do_not_disturb: enabled })
                     : JSON.stringify({ success: false, error: `Ran your "${name}" Shortcut, but Focus is still ${now ? "on" : "off"}.` });
             }
+            // Say what Focus is now, or that it can't be told: told only "couldn't switch",
+            // the model answered "Do Not Disturb is still on" while it was off.
+            const { macFocusActive } = await import("../proactive/dnd.js");
+            const current = await macFocusActive();
             return JSON.stringify({
                 success: false,
-                error: "macOS doesn't let apps switch Focus by script.",
+                error: "macOS doesn't let apps switch Focus by script, so nothing was changed.",
+                focus_now:
+                    current === null
+                        ? "unknown — Bhai can't read Focus without Full Disk Access; don't say whether it's on or off"
+                        : current
+                          ? "on"
+                          : "off",
                 next_step: `Do it on screen: open Control Center in the menu bar, click Focus, then ${enabled ? "Do Not Disturb" : "the active Focus to turn it off"} — and check it took. (A Shortcut named "${name}" would let this tool do it directly.)`,
             });
         } catch (err) {
