@@ -37,12 +37,12 @@ export const listDirectory: ToolDefinition = {
         function: {
             name: "list_directory",
             description:
-                "List files and directories at a path, newest first, with each one's size and last-modified time. For 'the newest/latest file', the first item is the answer.",
+                "List files and directories at a path, newest first, with each one's size and last-modified time. For the newest file of a kind ('the newest PDF'), pass ext and take the first item.",
             parameters: {
                 type: "object",
                 properties: {
                     path: { type: "string", description: "Directory path" },
-                    recursive: { type: "boolean", description: "List recursively" },
+                    ext: { type: "string", description: "Only files with this extension, e.g. 'pdf'" },
                 },
                 required: ["path"],
             },
@@ -58,8 +58,12 @@ export const listDirectory: ToolDefinition = {
             // Newest first, with dates: "the newest PDF in Downloads" was unanswerable from
             // names alone, and the cap could cut the newest file off a big folder.
             // ponytail: stats at most 5,000 entries (~50ms); past that "newest" is among those.
+            const ext = String(input.ext ?? "")
+                .replace(/^\./, "")
+                .toLowerCase();
             const all = fs
                 .readdirSync(dirPath, { withFileTypes: true })
+                .filter((e) => !ext || (e.isFile() && path.extname(e.name).toLowerCase() === `.${ext}`))
                 .slice(0, 5000)
                 .map((e) => {
                     let st: fs.Stats | undefined;
