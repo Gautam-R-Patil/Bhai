@@ -263,6 +263,10 @@ export const browserNavigate: ToolDefinition = {
 // TOOL: DOM Scanner (TEXT ONLY)
 // ═══════════════════════════════════════════════
 
+// browser_scan: the last scan (page + arguments) and how many times in a row it was asked again.
+let lastScanKey = "";
+let repeatScans = 0;
+
 export const browserScan: ToolDefinition = {
     schema: {
         type: "function",
@@ -391,6 +395,18 @@ export const browserScan: ToolDefinition = {
 
             result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
             addTreeWithinBudget(result, accessibilityTree, 6000);
+            // The same page, unchanged, scanned again and again (gpt-4.1-nano: eight full-page scans of
+            // one Wikipedia list) gets a pointer instead of the same large result. Compared on the
+            // result, so a scan after a click that changed the page always goes through.
+            const scanKey = `${page.url()}|${String(result.interactive_elements_text)}`;
+            repeatScans = scanKey === lastScanKey ? repeatScans + 1 : 0;
+            lastScanKey = scanKey;
+            if (repeatScans >= 2)
+                return JSON.stringify({
+                    success: true,
+                    unchanged: true,
+                    note: "The page is the same as in your last two scans. To find something on it, use browser_extract with a selector like \"tr:contains('Germany')\" or \"p:contains('population')\".",
+                });
             return JSON.stringify(result);
         } catch (err) {
             return JSON.stringify({ error: `DOM Scan failed: ${(err as Error).message}` });
