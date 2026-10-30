@@ -31,6 +31,7 @@ export default defineConfig({
             "src/social/**/*.test.ts",
             "src/diagnostics/**/*.test.ts",
             "src/overlay/**/*.test.ts",
+            "src/widget/**/*.test.ts",
             "src/__tests__/**/*.test.ts",
             "convex/**/*.test.ts",
         ],

@@ -217,6 +217,31 @@ export function getWidgetScript(wsUrl: string): string {
     }
     #atlas-widget-send:hover { background: var(--atlas-primary-hover); }
     #atlas-widget-send:disabled { opacity: 0.5; cursor: default; }
+    #atlas-widget-steps-bar {
+      flex-shrink: 0;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--atlas-border);
+      font-size: 12px;
+      color: var(--atlas-text-secondary);
+    }
+    #atlas-widget-steps-bar[hidden], #atlas-widget-steps[hidden] { display: none; }
+    #atlas-widget-steps-toggle {
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    #atlas-widget-steps { max-height: 110px; overflow-y: auto; margin-top: 4px; }
+    .atlas-step { padding: 1px 0; }
+    .atlas-step.running { color: var(--atlas-text); }
+    .atlas-step.failed { text-decoration: line-through; }
+    @media (prefers-reduced-motion: reduce) {
+      #atlas-widget-bubble, #atlas-widget-send { transition: none; }
+      #atlas-widget-bubble:hover { transform: none; }
+    }
   \`;
   document.head.appendChild(STYLES);
 
@@ -234,6 +259,10 @@ export function getWidgetScript(wsUrl: string): string {
       '<div><span>Bhai</span><br><span class="status" id="atlas-widget-status">Connecting...</span></div>' +
       '<button id="atlas-widget-close" aria-label="Close chat">&times;</button>' +
     '</div>' +
+    '<div id="atlas-widget-steps-bar" hidden>' +
+      '<button type="button" id="atlas-widget-steps-toggle" aria-expanded="false" aria-controls="atlas-widget-steps">Steps</button>' +
+      '<div id="atlas-widget-steps" hidden></div>' +
+    '</div>' +
     '<div id="atlas-widget-messages"></div>' +
     '<div id="atlas-widget-input-area">' +
       '<textarea id="atlas-widget-input" placeholder="Type a message..." rows="1"></textarea>' +
@@ -246,6 +275,9 @@ export function getWidgetScript(wsUrl: string): string {
   var sendBtn = win.querySelector("#atlas-widget-send");
   var statusEl = win.querySelector("#atlas-widget-status");
   var closeBtn = win.querySelector("#atlas-widget-close");
+  var stepsBar = win.querySelector("#atlas-widget-steps-bar");
+  var stepsToggle = win.querySelector("#atlas-widget-steps-toggle");
+  var stepsList = win.querySelector("#atlas-widget-steps");
 
   // -- Markdown (simple) --
   function renderMarkdown(text) {
@@ -273,6 +305,135 @@ export function getWidgetScript(wsUrl: string): string {
     return div;
   }
 
+  // -- Live turn (turn_* from the bot) --
+  // Same contract as the overlay's turnView/turnRoute: a message whose seq isn't newer changes
+  // nothing, another turn's events don't take over a running one, the final response replaces
+  // whatever was streamed. A guest never receives turn_note. Old bots send no turn_*; then none
+  // of this runs.
+  function turnView(state, msg) {
+    if (!msg || typeof msg.type !== "string" || msg.type.indexOf("turn_") !== 0) return state;
+    var same = !!state && state.turn === msg.turn;
+    if (same && typeof msg.seq === "number" && msg.seq <= state.seq) return state;
+    var s = same ? Object.assign({}, state) : { turn: msg.turn, seq: 0, status: null, steps: [], answer: "", attempt: 0 };
+    if (typeof msg.seq === "number") s.seq = msg.seq;
+    switch (msg.type) {
+      case "turn_snapshot":
+        s.status = msg.status || null;
+        s.steps = Array.isArray(msg.steps) ? msg.steps.map(function(x) { return { id: x.id, text: x.text, state: x.state }; }) : [];
+        s.answer = typeof msg.answer === "string" ? msg.answer : "";
+        s.attempt = null;
+        break;
+      case "turn_status":
+        s.status = { text: msg.text || "", step: msg.step || 0, elapsed: msg.elapsed || 0 };
+        break;
+      case "turn_step":
+        var step = { id: msg.id, text: msg.text || "", state: msg.state };
+        var i = s.steps.findIndex(function(x) { return x.id === msg.id; });
+        s.steps = i < 0 ? s.steps.concat([step]) : s.steps.map(function(x, j) { return j === i ? step : x; });
+        break;
+      case "turn_answer":
+        if (s.attempt === null) s.attempt = msg.attempt;
+        if (msg.attempt < s.attempt) return state; // a withdrawn attempt's late text
+        if (msg.attempt > s.attempt) { s.attempt = msg.attempt; s.answer = ""; }
+        s.answer += msg.text || "";
+        break;
+      case "turn_answer_reset":
+        s.answer = "";
+        s.attempt = Math.max(s.attempt || 0, (msg.attempt || 0) + 1);
+        break;
+      default:
+        return state;
+    }
+    return s;
+  }
+
+  // 'apply' | 'start' | 'finish' | 'plain' | 'ignore'; only a snapshot (a rejoin) may replace a running view.
+  function turnRoute(liveTurn, running, msg) {
+    if (msg.type === "response" || msg.type === "error") {
+      if (!running) return "plain";
+      return msg.type === "error" || !msg.turn || msg.turn === liveTurn ? "finish" : "ignore";
+    }
+    if (liveTurn !== null && msg.turn === liveTurn) return "apply";
+    return running && msg.type !== "turn_snapshot" ? "ignore" : "start";
+  }
+
+  var live = null; // { state, bubble, start, statusAt, frame, tick, stepsShown, done }
+  var EMOJI_LEAD = /^[\\p{Extended_Pictographic}\\u200d\\ufe0f\\s]+/u;
+
+  function liveRunning() { return !!live && !live.done; }
+
+  function liveStart(turn) {
+    if (live) { cancelAnimationFrame(live.frame); clearInterval(live.tick); }
+    if (!currentAgentMsg) currentAgentMsg = addMessage("...", "agent");
+    live = {
+      state: { turn: turn, seq: 0, status: null, steps: [], answer: "", attempt: 0 },
+      bubble: currentAgentMsg, start: Date.now(), statusAt: 0, frame: 0, tick: 0, stepsShown: null, shown: "", done: false
+    };
+    live.tick = setInterval(liveLine, 1000);
+    stepsBar.hidden = true;
+    stepsList.hidden = true;
+    stepsToggle.setAttribute("aria-expanded", "false");
+    stepsToggle.textContent = "Steps";
+    liveLine();
+  }
+
+  // The live line in the header: "Searching the web · step 2 · 14s".
+  function liveLine() {
+    if (!liveRunning()) return;
+    var st = live.state.status;
+    var secs = Math.floor(st ? st.elapsed + (Date.now() - live.statusAt) / 1000 : (Date.now() - live.start) / 1000);
+    var text = st && st.text ? String(st.text).replace(EMOJI_LEAD, "").substring(0, 40) : "Thinking...";
+    statusEl.textContent = (text || "Thinking...") + " · " + (st && st.step > 0 ? "step " + st.step + " · " : "") + secs + "s";
+  }
+
+  // At most once per animation frame, however fast the deltas come.
+  function liveRender() {
+    if (!live) return;
+    live.frame = 0;
+    var s = live.state;
+    if (s.answer !== live.shown) {
+      live.shown = s.answer;
+      live.bubble.innerHTML = s.answer ? renderMarkdown(s.answer) : "...";
+    }
+    if (s.steps !== live.stepsShown) {
+      live.stepsShown = s.steps;
+      stepsBar.hidden = !s.steps.length;
+      stepsList.textContent = "";
+      s.steps.forEach(function(x) {
+        var row = document.createElement("div");
+        row.className = "atlas-step" + (x.state === "running" || x.state === "done" || x.state === "failed" ? " " + x.state : "");
+        row.textContent = String(x.text);
+        stepsList.appendChild(row);
+      });
+    }
+    msgContainer.scrollTop = msgContainer.scrollHeight;
+  }
+
+  function liveEnd(worked) {
+    if (!live) return;
+    liveRender();
+    cancelAnimationFrame(live.frame);
+    clearInterval(live.tick);
+    live.done = true;
+    var n = live.state.steps.length;
+    if (!n) stepsBar.hidden = true;
+    else if (worked) stepsToggle.textContent = "Worked for " + worked.secs + "s · " + worked.steps + " steps";
+    else stepsToggle.textContent = "Steps";
+  }
+
+  function onTurnEvent(msg) {
+    var route = turnRoute(live ? live.state.turn : null, liveRunning(), msg);
+    if (route === "ignore") return;
+    if (route === "start") liveStart(msg.turn);
+    if (live.done) return;
+    var prev = live.state;
+    live.state = turnView(prev, msg);
+    if (live.state === prev) return;
+    if (msg.type === "turn_status" || (msg.type === "turn_snapshot" && msg.status)) live.statusAt = Date.now();
+    liveLine();
+    if (!live.frame) live.frame = requestAnimationFrame(liveRender);
+  }
+
   // -- WebSocket --
   var ws = null;
   var reconnectDelay = 1000;
@@ -294,6 +455,13 @@ export function getWidgetScript(wsUrl: string): string {
       connected = false;
       statusEl.textContent = "Reconnecting...";
       sendBtn.disabled = true;
+      if (liveRunning()) { // the reply was lost with the connection: never leave a dead live view
+        var streamed = live.state.answer;
+        liveEnd(null);
+        if (streamed) addMessage("Lost the connection mid-answer. Ask me again.", "system");
+        else if (live.bubble.parentNode) live.bubble.parentNode.removeChild(live.bubble);
+        currentAgentMsg = null;
+      }
       setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
     };
@@ -307,19 +475,22 @@ export function getWidgetScript(wsUrl: string): string {
         var msg = JSON.parse(event.data);
         if (msg.type === "ready") {
           statusEl.textContent = "Online";
-        } else if (msg.type === "thinking" || msg.type === "thinking_content") {
-          statusEl.textContent = "Thinking...";
-          if (!currentAgentMsg) {
-            currentAgentMsg = addMessage("...", "agent");
+        } else if (msg.type === "thinking") {
+          // thinking_content (the model's reasoning) is never shown here.
+          if (msg.turn && turnRoute(live ? live.state.turn : null, liveRunning(), msg) === "start") liveStart(msg.turn);
+          else if (!liveRunning()) {
+            statusEl.textContent = "Thinking...";
+            if (!currentAgentMsg) currentAgentMsg = addMessage("...", "agent");
           }
-          if (msg.type === "thinking_content" && msg.text) {
-            currentAgentMsg.innerHTML = renderMarkdown(msg.text);
-            msgContainer.scrollTop = msgContainer.scrollHeight;
-          }
+        } else if (typeof msg.type === "string" && msg.type.indexOf("turn_") === 0) {
+          onTurnEvent(msg);
         } else if (msg.type === "progress" && msg.text) {
-          statusEl.textContent = msg.text.substring(0, 40);
+          if (!liveRunning()) statusEl.textContent = msg.text.substring(0, 40);
         } else if (msg.type === "response" && msg.text) {
+          var route = turnRoute(live ? live.state.turn : null, liveRunning(), msg);
+          if (route === "ignore") return;
           statusEl.textContent = "Online";
+          if (route === "finish") liveEnd(msg.worked);
           if (currentAgentMsg) {
             currentAgentMsg.innerHTML = renderMarkdown(msg.text);
             msgContainer.scrollTop = msgContainer.scrollHeight;
@@ -327,8 +498,19 @@ export function getWidgetScript(wsUrl: string): string {
           } else {
             addMessage(msg.text, "agent");
           }
+        } else if (msg.type === "response" && liveRunning() && (!msg.turn || msg.turn === live.state.turn)) {
+          // an empty reply: nothing to show, but the turn is over
+          statusEl.textContent = "Online";
+          liveEnd(null);
+          if (!live.state.answer && live.bubble.parentNode) live.bubble.parentNode.removeChild(live.bubble);
+          currentAgentMsg = null;
         } else if (msg.type === "error" && msg.text) {
           statusEl.textContent = "Online";
+          if (liveRunning()) {
+            var shown = live.state.answer;
+            liveEnd(null);
+            if (!shown && live.bubble.parentNode) live.bubble.parentNode.removeChild(live.bubble);
+          }
           addMessage(msg.text, "system");
           currentAgentMsg = null;
         } else if (msg.type === "notification" && msg.text) {
@@ -342,6 +524,7 @@ export function getWidgetScript(wsUrl: string): string {
     var text = input.value.trim();
     if (!text || !connected) return;
     addMessage(text, "user");
+    if (liveRunning()) liveEnd(null);
     currentAgentMsg = null;
     ws.send(JSON.stringify({ type: "chat", text: text, meta: { source: "web-widget" } }));
     input.value = "";
@@ -374,6 +557,12 @@ export function getWidgetScript(wsUrl: string): string {
     sendBtn.disabled = !input.value.trim() || !connected;
     input.style.height = "36px";
     input.style.height = Math.min(input.scrollHeight, 80) + "px";
+  });
+
+  stepsToggle.addEventListener("click", function() {
+    var open = stepsList.hidden;
+    stepsList.hidden = !open;
+    stepsToggle.setAttribute("aria-expanded", open ? "true" : "false");
   });
 
   // Auto-connect if window starts open
