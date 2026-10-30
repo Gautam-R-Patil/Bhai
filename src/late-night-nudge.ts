@@ -5,7 +5,7 @@
 // identity.md says to mention the late hour "once per night", but the model
 // sees a fresh clock every turn and can't remember that it already did. So we
 // remember for it: spot the nudge in an outgoing owner reply, store the night
-// (local date, rolling over at 4 AM) in a tiny file that survives restarts,
+// (local date, rolling over at 6 AM) in a tiny file that survives restarts,
 // and on later owner turns that night add one line telling it to drop the topic.
 
 import fs from "node:fs";
@@ -16,7 +16,8 @@ import { getTimezone } from "./location/index.js";
 export const ALREADY_NUDGED_NOTE =
     "You already mentioned the late hour tonight; don't bring up the time again unless they ask.";
 
-const ROLLOVER_HOUR = 4;
+// 6, not 4: at 4:37 AM the 1 AM remark no longer counted and Bhai added "Also, it's 4 AM".
+const ROLLOVER_HOUR = 6;
 const NIGHT_START_HOUR = 21;
 
 // ponytail: hand-written detector checked against the labelled corpus in
@@ -66,8 +67,8 @@ function isNightClock(hourStr: string | undefined, suffix: string | undefined): 
     const h = Number(hourStr);
     const s = (suffix ?? "").toLowerCase().replace(/[.\s’']/g, "");
     if (s.startsWith("p") || s === "atnight") return h >= 9 && h <= 11;
-    if (s.startsWith("a") || s === "inthemorning") return h === 12 || (h >= 1 && h <= 3);
-    return h >= 9 || h <= 3; // o'clock
+    if (s.startsWith("a") || s === "inthemorning") return h === 12 || (h >= 1 && h <= 5);
+    return h >= 9 || h <= 5; // o'clock
 }
 
 // Unmistakable "go to sleep" remarks count whatever else the sentence mentions

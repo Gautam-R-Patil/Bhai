@@ -53,6 +53,7 @@ const CORPUS: [string, boolean, string?][] = [
     ["It's 2 AM in Tokyo, so don't call them now.", false],
     ["The pharmacy is closed at this hour, but the one on MG Road is open 24 hours.", false],
     ["Set your alarm. It's 12:30 AM now, so 7 hours gets you to 7:30.", false],
+    ["That's the page order, so #3 has more points than #1 and #2. Also, it's 4 AM.", true],
     ["Hmm, sleep on it?", false],
     ["Reminder set for 2:30 AM.", false],
     ["It's 12:40 AM.", false, "what time is it?"],
@@ -138,11 +139,12 @@ describe("late-night nudge tracker", () => {
         expect(lateNightNote(T3, TZ)).toBe(ALREADY_NUDGED_NOTE);
     });
 
-    it("rolls over at 4 AM local, and 11 PM belongs to the same night", () => {
+    it("rolls over at 6 AM local, and 11 PM belongs to the same night", () => {
         noteOwnerReply("still up? it's 11 at night", "", at("2026-10-28T17:30:00Z"), TZ); // 23:00 IST on the 28th
         expect(lateNightNote(T1, TZ)).toBe(ALREADY_NUDGED_NOTE); // 00:24 on the 29th
-        expect(lateNightNote(at("2026-10-28T22:29:00Z"), TZ)).toBe(ALREADY_NUDGED_NOTE); // 03:59
-        expect(lateNightNote(at("2026-10-28T22:31:00Z"), TZ)).toBeNull(); // 04:01
+        expect(lateNightNote(at("2026-10-28T23:07:00Z"), TZ)).toBe(ALREADY_NUDGED_NOTE); // 04:37: still the same night
+        expect(lateNightNote(at("2026-10-29T00:29:00Z"), TZ)).toBe(ALREADY_NUDGED_NOTE); // 05:59
+        expect(lateNightNote(at("2026-10-29T00:31:00Z"), TZ)).toBeNull(); // 06:01
         expect(lateNightNote(at("2026-10-29T18:54:57Z"), TZ)).toBeNull(); // next night, 00:24 on the 30th
     });
 
@@ -157,6 +159,7 @@ describe("late-night nudge tracker", () => {
         expect(lateNightNote(at("2026-11-01T05:30:00Z"), NY)).toBe(ALREADY_NUDGED_NOTE); // 01:30 EDT
         expect(lateNightNote(at("2026-11-01T06:30:00Z"), NY)).toBe(ALREADY_NUDGED_NOTE); // 01:30 EST
         expect(lateNightNote(at("2026-11-01T08:30:00Z"), NY)).toBe(ALREADY_NUDGED_NOTE); // 03:30 EST
-        expect(lateNightNote(at("2026-11-01T09:01:00Z"), NY)).toBeNull(); // 04:01 EST
+        expect(lateNightNote(at("2026-11-01T09:01:00Z"), NY)).toBe(ALREADY_NUDGED_NOTE); // 04:01 EST
+        expect(lateNightNote(at("2026-11-01T11:01:00Z"), NY)).toBeNull(); // 06:01 EST
     });
 });
