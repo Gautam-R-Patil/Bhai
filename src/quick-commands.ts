@@ -22,6 +22,8 @@ export interface QuickStep {
     done: string | ((result: Record<string, unknown>) => string);
     /** No player named ("pause the music"): control whichever one is playing here. */
     pickPlayer?: boolean;
+    /** Arguments from the previous step's result ("find X and open it"); null fails the step. */
+    argsFrom?: (prev: Record<string, unknown>) => Record<string, unknown> | null;
     /** Checked before anything runs: false sends the whole message to the model. */
     check?: () => Promise<boolean>;
 }
@@ -73,13 +75,16 @@ function nowPlayingLine(r: Record<string, unknown>): string {
 const title = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 
 /** One clause → its step, or null when it isn't a quick command. */
-function parseClause(raw: string): QuickStep | null {
-    const c = raw
+const normalize = (raw: string) =>
+    raw
         .toLowerCase()
         .replace(/^(please|pls|can you|could you|bhai|hey bhai|yo)[\s,]+/g, "")
         .replace(/[\s,]+(please|pls|for me|now|instead|too|also|as well)$/g, "")
         .replace(/[.!?]+$/, "")
         .trim();
+
+function parseClause(raw: string): QuickStep | null {
+    const c = normalize(raw);
     // The first of these patterns that matches the clause.
     const hit = (...patterns: RegExp[]) => {
         for (const p of patterns) {
@@ -239,10 +244,39 @@ function parseClause(raw: string): QuickStep | null {
     return null;
 }
 
+/** "Find CLAUDE.md in the Bhai folder and open it in TextEdit": two steps, the second fed by the first. */
+function parseFindAndOpen(c: string): QuickStep[] | null {
+    const m =
+        /^find\s+(?:the\s+|my\s+)?(?:file\s+)?(.+?)(?:\s+(?:in|inside)\s+(?:the\s+|my\s+)?(.+?)(?:\s+folder)?(?:\s+on\s+my\s+desktop)?)?\s+and\s+open\s+it(?:\s+(?:in|with)\s+(.+?))?$/.exec(
+            c,
+        );
+    if (!m) return null;
+    const [, query, folder, app] = m;
+    return [
+        {
+            tool: "find_files",
+            args: { query: query.replace(/\s+file$/, ""), ...(folder ? { folder } : {}), limit: 1 },
+            done: (r) =>
+                `Found ${((r.files as { path?: string }[] | undefined)?.[0]?.path ?? query).replace(/^.*\//, "")}.`,
+        },
+        {
+            tool: "open_in_app",
+            args: {},
+            argsFrom: (prev) => {
+                const path = (prev.files as { path?: string }[] | undefined)?.[0]?.path;
+                return path ? { target: path, ...(app ? { app: title(app) } : {}) } : null;
+            },
+            done: (r) => `Opened it${app ? ` in ${title(app)}` : ""}: ${r.opened}.`,
+        },
+    ];
+}
+
 /** The steps for a message made only of quick commands, else null. Nothing runs here. */
 export function parseQuickCommand(message: string): QuickStep[] | null {
     const text = message.trim();
     if (!text || text.length > 200 || /\n/.test(text)) return null;
+    const findOpen = parseFindAndOpen(normalize(text));
+    if (findOpen) return findOpen;
     // The whole message first: "play rock and roll on spotify" is one clause.
     const whole = parseClause(text);
     if (whole) return [whole];
@@ -273,10 +307,19 @@ export async function runQuickCommand(
     for (const s of steps) if (s.check && !(await s.check().catch(() => false))) return null;
 
     const said: string[] = [];
+    let lastResult: Record<string, unknown> = {};
     for (let s of steps) {
         if (s.pickPlayer && (await appleMusicPlaying())) {
             const action = s.args.action === "resume" ? "play" : s.args.action;
             s = { ...s, tool: "music_control", args: { action } };
+        }
+        if (s.argsFrom) {
+            const args = s.argsFrom(lastResult);
+            if (!args)
+                return {
+                    partial: `[Already done for this message: ${said.join(" ") || "nothing"} The next step (${s.tool}) had nothing to work on. Finish the rest of the request.]`,
+                };
+            s = { ...s, args };
         }
         const out = await exec(s.tool, s.args);
         let result: Record<string, unknown> = {};
@@ -295,6 +338,7 @@ export async function runQuickCommand(
             };
         }
         said.push(typeof s.done === "function" ? s.done(result) : s.done);
+        lastResult = result;
     }
     return { reply: said.join(" ") };
 }

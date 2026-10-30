@@ -816,15 +816,17 @@ const STOPPABLE_TOOLS = new Set(["site_task"]);
 
 /** Tools that move the front app on purpose (os_* tools are matched by prefix). */
 const FOCUS_TOOLS = new Set(["app_manager", "open_in_app", "open_settings", "window_manage", "apple_script", "run_shortcut"]);
-const PATH_ARGS = ["path", "file_path", "filePath", "target", "folder", "directory", "dir", "cwd"];
+/** Arguments that hold paths: path, file_path, paths, archive_path, output_dir, folder, target… */
+const PATH_ARG = /^(paths?|file_?paths?|target|folder|dir|directory|cwd|archive_path|output(_dir|_path)?|source|dest(ination)?)$/i;
+const HOMEISH = /^(~|\/Users\/|\/home\/|[A-Za-z]:[\\/]Users)/;
 /** Path arguments with the home folder resolved (see resolveHomePath); everything else as is. */
 export function withHomePaths(input: Record<string, unknown>): Record<string, unknown> {
     let out = input;
-    for (const k of PATH_ARGS) {
-        const v = input[k];
-        if (typeof v !== "string" || !/^(~|\/Users\/|\/home\/|[A-Za-z]:[\\/]Users)/.test(v)) continue;
-        const fixed = resolveHomePath(v);
-        if (fixed !== v) out = { ...out, [k]: fixed };
+    for (const [k, v] of Object.entries(input)) {
+        if (!PATH_ARG.test(k)) continue;
+        const fix = (x: unknown) => (typeof x === "string" && HOMEISH.test(x) ? resolveHomePath(x) : x);
+        const fixed = Array.isArray(v) ? v.map(fix) : fix(v);
+        if (JSON.stringify(fixed) !== JSON.stringify(v)) out = { ...out, [k]: fixed };
     }
     return out;
 }

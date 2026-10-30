@@ -26,6 +26,7 @@ import { promisify } from "node:util";
 import { executeTool } from "../src/tools/index.js";
 import { initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
 import { ackWithoutAction } from "../src/agent.js";
+import { resolveHomePath } from "../src/tools/file-utils.js";
 import { runQuickCommand } from "../src/quick-commands.js";
 import { ARMS, chooseArm, classifyTurn, recordOutcome } from "../src/routing/learned-router.js";
 import { getFrontmostApp } from "../src/screen/frontmost.js";
@@ -61,7 +62,8 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
     // Writes stay in the sandbox folder; nothing is deleted.
     if (["write", "append_file", "compress_files"].includes(name)) {
         const paths = JSON.stringify(args).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
-        if (!paths.length || paths.some((p) => !p.replace(/^~/, homedir()).startsWith(EVAL_DIR)))
+        // Resolved as Bhai resolves them (a placeholder home is the real one).
+        if (!paths.length || paths.some((p) => !resolveHomePath(p).startsWith(EVAL_DIR)))
             return JSON.stringify({ error: `In this test, files may only be written inside ${EVAL_DIR}` });
     }
     if ((name === "apple_notes" || name === "reminders_tool") && /delete|remove|move/.test(String(args.action)))

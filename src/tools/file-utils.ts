@@ -789,7 +789,10 @@ export function resolveHomePath(p: string): string {
     const m = /^(?:\/Users|\/home|[A-Za-z]:[\\/]Users)[\\/]([^\\/]+)(.*)$/.exec(p);
     if (!m || existsSync(p)) return p;
     const mine = join(homedir(), m[2]);
-    return existsSync(mine) ? mine : p;
+    // A home that doesn't exist at all (/Users/YourUsername) is a placeholder: it means the
+    // real one even for a file not written yet (a new zip's path).
+    const theirHome = p.slice(0, p.length - m[2].length);
+    return existsSync(mine) || !existsSync(theirHome) ? mine : p;
 }
 
 // What find_files returned last: open_in_app uses it when a model retypes the path wrong.

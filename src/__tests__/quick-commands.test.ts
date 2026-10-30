@@ -64,6 +64,29 @@ describe("runQuickCommand", () => {
         expect(r?.reply).toBe("Now playing: Levitating – Dua Lipa.");
     });
 
+    it("finds a file and opens it, the second step fed by the first", async () => {
+        const ran: [string, unknown][] = [];
+        const r = await runQuickCommand(
+            "Find the file CLAUDE.md in the Bhai folder and open it in TextEdit",
+            async (tool, args) => {
+                ran.push([tool, args]);
+                return JSON.stringify(
+                    tool === "find_files"
+                        ? { success: true, files: [{ path: "/Users/me/Desktop/Bhai/CLAUDE.md" }] }
+                        : { success: true, opened: (args as { target: string }).target },
+                );
+            },
+        );
+        expect(ran).toEqual([
+            ["find_files", { query: "claude.md", folder: "bhai", limit: 1 }],
+            ["open_in_app", { target: "/Users/me/Desktop/Bhai/CLAUDE.md", app: "Textedit" }],
+        ]);
+        expect(r?.reply).toContain("Opened it in Textedit");
+        // Nothing found: the model takes it from there.
+        const none = await runQuickCommand("find xyzzy.pdf and open it", async () => JSON.stringify({ success: true, files: [] }));
+        expect(none?.partial).toContain("nothing to work on");
+    });
+
     it("hands a failure to the model with what already ran", async () => {
         const r = await runQuickCommand("set volume to 20 and play xyzzy on apple music", async (tool) =>
             JSON.stringify(tool === "set_volume" ? { success: true } : { success: false, error: "not found" }),
