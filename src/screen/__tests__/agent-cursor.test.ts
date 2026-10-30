@@ -54,6 +54,18 @@ describe("agent cursor events", () => {
         expect(log).toEqual([]);
     });
 
+    it("warms the app's windows when a model call is offered screen-driving tools", () => {
+        const tool = (name: string) => ({ type: "function" as const, function: { name, parameters: {} } });
+        cursor.warmCursorForTools([tool("web_search"), tool("read_file")]);
+        cursor.warmCursorForTools(undefined);
+        expect(lines()).toEqual([]);
+        cursor.warmCursorForTools([tool("web_search"), tool("os_smart_click")]);
+        expect(lines()).toEqual([{ t: "warm" }]);
+        delete process.env.ATLAS_AGENT_CURSOR_IPC;
+        cursor.warmCursorForTools([tool("os_click")]);
+        expect(lines()).toHaveLength(1);
+    });
+
     it("starts a session, then glides; resolves on ack", async () => {
         const p = cursor.cursorClick(100.4, 200.6, "right", 2);
         ackLast();

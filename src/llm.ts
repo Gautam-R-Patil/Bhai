@@ -127,6 +127,7 @@ export const MODEL_DISPLAY: Record<string, string> = {
 import { sanitizeContextEchoes } from "./context-scrubber.js";
 import { type ChatParams, createDefaultPipeline } from "./llm-middleware.js";
 import { tryParseOssToolCalls } from "./llm-parser-fallback.js";
+import { warmCursorForTools } from "./screen/agent-cursor.js";
 import { protect, protectMessages } from "./security/pii-vault.js";
 import { IS_MAC, IS_WIN } from "./tools/platform.js";
 import { sanitizeToolSchemas, type ToolSchemaShape } from "./tools/schema-sanitizer.js";
@@ -213,6 +214,8 @@ export function createLLMClient(config: Config): LLMClient {
                 return t && signal ? AbortSignal.any([t, signal]) : t;
             };
             signal?.throwIfAborted();
+            // Screen-driving tools on offer: the desktop loads the ghost cursor's windows now.
+            warmCursorForTools(tools);
             // ── Network health guard: fail fast if internet is down ──
             try {
                 const { isOffline, reportNetworkError } = await import("./network-health.js");

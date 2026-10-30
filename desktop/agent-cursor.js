@@ -12,6 +12,8 @@
  * Events with an `id` are acked on the bot's stdin: moves once the glide is
  * done, "hide" once the windows are invisible (the bot is about to take its own
  * screenshot). The bot bounds every wait, so a slow ack never stalls it.
+ * "warm" (sent when a model call is offered screen-driving tools) loads the
+ * windows ahead of the first glide.
  */
 
 const IDLE_END_MS = 90_000; // bot went quiet without ending the session (crash, hang)
@@ -111,10 +113,15 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
         // skipTransformProcessType: don't flip the macOS process type (that
         // hides the dock and can re-activate the app).
         win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
-        const view = { win, ready: false, queue: [], onReady: [] };
+        const view = { win, ready: false, failed: false, queue: [], onReady: [] };
         win.webContents.on("did-finish-load", () => {
             view.ready = true;
             for (const m of view.queue.splice(0)) post(view, m);
+            for (const fn of view.onReady.splice(0)) fn();
+        });
+        // Never drawn: stop holding acks for it.
+        win.webContents.on("did-fail-load", () => {
+            view.failed = true;
             for (const fn of view.onReady.splice(0)) fn();
         });
         win.loadFile(htmlPath);
@@ -220,6 +227,8 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
 
     /** Apply one bot event; `ack(id)` answers events that carry an id. */
     function handle(evt, ack) {
+        // The bot offered the model screen-driving tools: a click may be next.
+        if (evt.t === "warm") return void warm();
         // Everything but a capture's hide/show and a session end puts the ghost on screen.
         if (evt.t === "session" ? evt.on : evt.t !== "hide" && evt.t !== "show") ensureViews();
         let wait = 0;
@@ -272,7 +281,7 @@ function createAgentCursor({ BrowserWindow, screen, htmlPath, harden = () => {},
         const fire = () => (wait > 0 ? timers.setTimeout(() => ack(evt.id), wait) : ack(evt.id));
         // A glide into a window still loading: ack once it's drawn (the bot waits ≤300 ms).
         const v = evt.t !== "hide" && activeId !== null ? views.get(activeId) : null;
-        if (alive(v) && !v.ready) v.onReady.push(fire);
+        if (alive(v) && !v.ready && !v.failed) v.onReady.push(fire);
         else fire();
     }
 

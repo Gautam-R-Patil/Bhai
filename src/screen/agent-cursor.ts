@@ -26,7 +26,8 @@ type CursorEvent =
     | { t: "type"; on: boolean }
     | { t: "session"; on: boolean }
     | { t: "hide" }
-    | { t: "show" };
+    | { t: "show" }
+    | { t: "warm" };
 
 const GLIDE_WAIT_MS = 300;
 const HIDE_WAIT_MS = 150;
@@ -109,6 +110,18 @@ function touch(): void {
 }
 
 const r = (n: number) => Math.round(n);
+
+/**
+ * A model call is about to be offered these tools: if any can drive the screen
+ * (os_*), have the app load its cursor windows now, a model call ahead of the
+ * first click, so the ghost leads it even on a cold start.
+ */
+export function warmCursorForTools(
+    tools: ReadonlyArray<{ type?: string; function?: { name?: string } }> | undefined,
+): void {
+    if (sessionOn || !tools?.length || !agentCursorEnabled()) return;
+    if (tools.some((t) => t.function?.name?.startsWith("os_"))) send({ t: "warm" });
+}
 
 /** Glide the ghost cursor to (x, y) before a real move. */
 export async function cursorMove(x: number, y: number): Promise<void> {

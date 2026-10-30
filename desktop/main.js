@@ -2090,9 +2090,10 @@ function initAmbientPause() {
 
 // ── Bhai's ghost cursor ──────────────────────────
 // Bot → "##BHAI_CURSOR##{json}" lines from the computer-use tools; acks go back
-// on its stdin. The (hidden) windows are made on first use, warmed on the
-// buddy's "screen" status so the first glide doesn't wait for them, follow
-// display changes, and are freed 10 minutes after the last session.
+// on its stdin. The (hidden) windows are made ahead of the first glide: on the
+// bot's "warm" line (a model call was offered os_* tools) or the buddy's
+// "screen" status. They follow display changes and are freed 10 minutes after
+// the last session or warm.
 const CURSOR_SUPPORTED = process.platform !== "linux";
 let agentCursor = null;
 function initAgentCursor() {
@@ -2265,6 +2266,12 @@ function createOverlayWindow() {
 
     hookOverlayToken(overlayWindow.webContents.session);
     overlayWindow.loadURL(OVERLAY_URL);
+    // The boot splash reports no height: shrink to the bar if it replaced a tall page.
+    overlayWindow.webContents.on("did-finish-load", () => {
+        if (overlayFollowsContent && overlayWindow?.webContents.getURL().startsWith("data:")) {
+            overlayWindow.setContentSize(OVERLAY_WIDTH, OVERLAY_MIN_HEIGHT);
+        }
+    });
 
     // Retry loading if the bot server isn't ready yet (race condition on first show)
     overlayWindow.webContents.on("did-fail-load", (_e, errCode, errDesc, url) => {
@@ -6905,7 +6912,7 @@ app.whenReady().then(async () => {
     });
     // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
     await runV2Migration();
-    // Ghost-cursor windows exist (hidden) before any bot can drive the screen.
+    // Ghost cursor: track displays now; its windows load when the bot warms them.
     initAgentCursor();
     initAmbientPause();
     // The packaged bot runs on Electron's Node: other versions' compile caches

@@ -55,6 +55,7 @@ function fakeElectron(displays = [LAPTOP, EXTERNAL], { slowLoad = false } = {}) 
         }
         loadFile() { if (!slowLoad) this.listeners["did-finish-load"]?.(); }
         finishLoad() { this.listeners["did-finish-load"]?.(); }
+        failLoad() { this.listeners["did-fail-load"]?.({}, -6, "ERR_FILE_NOT_FOUND"); }
         isDestroyed() { return this.destroyed; }
         destroy() { this.destroyed = true; }
     }
@@ -180,6 +181,41 @@ describe("overlay controller", () => {
         expect(fx.wins[0].scripts.at(-1)).toMatchObject({ t: "click", ms: 135 });
         vi.advanceTimersByTime(135);
         expect(acks).toEqual([8]);
+    });
+
+    it("a warm line from the bot loads the windows before the first click, so its ack waits only for the glide", () => {
+        fx = fakeElectron([LAPTOP], { slowLoad: true });
+        cursor = createAgentCursor({ BrowserWindow: fx.BrowserWindow, screen: fx.screen, htmlPath: "x.html", platform: "darwin" });
+        cursor.init();
+        send({ t: "warm" });
+        expect(fx.wins).toHaveLength(1);
+        expect(fx.wins[0].calls.some(([m]) => m === "showInactive")).toBe(false);
+        fx.wins[0].finishLoad(); // loads while the model picks its first action
+        send({ t: "click", x: 110, y: 10, id: 9 });
+        vi.advanceTimersByTime(135);
+        expect(acks).toEqual([9]);
+        // Each warm keeps them another REAP_MS.
+        send({ t: "session", on: false });
+        vi.advanceTimersByTime(600 + REAP_MS - 1000);
+        send({ t: "warm" });
+        vi.advanceTimersByTime(REAP_MS - 1);
+        expect(fx.wins[0].destroyed).toBe(false);
+        vi.advanceTimersByTime(1);
+        expect(fx.wins[0].destroyed).toBe(true);
+    });
+
+    it("a window whose page fails to load never holds an ack", () => {
+        fx = fakeElectron([LAPTOP], { slowLoad: true });
+        cursor = createAgentCursor({ BrowserWindow: fx.BrowserWindow, screen: fx.screen, htmlPath: "x.html", platform: "darwin" });
+        cursor.init();
+        send({ t: "click", x: 110, y: 10, id: 4 });
+        expect(acks).toEqual([]);
+        fx.wins[0].failLoad();
+        vi.advanceTimersByTime(135); // just the glide
+        expect(acks).toEqual([4]);
+        send({ t: "move", x: 300, y: 10, id: 5 });
+        vi.advanceTimersByTime(149);
+        expect(acks).toEqual([4, 5]);
     });
 
     it("still hides during the fade-out, and a click mid-capture stays hidden", () => {
