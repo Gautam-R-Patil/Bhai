@@ -2,19 +2,29 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import fs from "node:fs";
+import path from "node:path";
 import cron from "node-cron";
+import { getDataDir } from "../config/paths.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Types ─────────────────────────────────────
 
-interface ScheduledTask {
+/** What survives a restart: tasks are saved to disk and re-armed at boot. */
+interface SavedTask {
     id: string;
+    /** A cron expression, or "In N minutes" for a one-off reminder. */
     expression: string;
     description: string;
     action: string;
-    status: "active" | "paused";
     created_at: string;
-    task: cron.ScheduledTask;
+    /** One-off reminders: when to fire (epoch ms). */
+    fireAt?: number;
+}
+
+interface ScheduledTask extends SavedTask {
+    status: "active" | "paused";
+    task: { stop: () => void };
 }
 
 // ── Task Store ────────────────────────────────
@@ -22,9 +32,92 @@ interface ScheduledTask {
 const tasks = new Map<string, ScheduledTask>();
 let taskCounter = 0;
 let onTaskTrigger: ((taskId: string, action: string) => Promise<void>) | null = null;
+// setTimeout fires at once past ~24.8 days, so long waits go in steps.
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 export function setTaskTriggerHandler(handler: (taskId: string, action: string) => Promise<void>): void {
     onTaskTrigger = handler;
+}
+
+const storePath = () => path.join(getDataDir(), "scheduled-tasks.json");
+
+function save(): void {
+    const saved: SavedTask[] = [...tasks.values()].map(({ id, expression, description, action, created_at, fireAt }) => ({
+        id,
+        expression,
+        description,
+        action,
+        created_at,
+        fireAt,
+    }));
+    try {
+        fs.mkdirSync(path.dirname(storePath()), { recursive: true });
+        const tmp = `${storePath()}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(saved, null, 2), { mode: 0o600 });
+        fs.renameSync(tmp, storePath());
+    } catch (err) {
+        console.warn("[SCHEDULED] Could not save tasks:", (err as Error).message);
+    }
+}
+
+async function trigger(id: string, action: string): Promise<void> {
+    try {
+        await onTaskTrigger?.(id, action);
+    } catch (err) {
+        console.error(`[SCHEDULED] ${id} failed:`, (err as Error).message);
+    }
+}
+
+/** Start (or restart) a saved task's timer and keep it in the store. */
+function arm(saved: SavedTask): ScheduledTask {
+    let task: ScheduledTask["task"];
+    if (saved.fireAt !== undefined) {
+        const fireAt = saved.fireAt;
+        let timer: ReturnType<typeof setTimeout>;
+        const wait = () => {
+            const left = fireAt - Date.now();
+            if (left > 0) {
+                timer = setTimeout(wait, Math.min(left, MAX_TIMER_MS));
+                return;
+            }
+            console.log(`⏰ Reminder triggered: ${saved.id} - ${saved.description}`);
+            tasks.delete(saved.id); // one-off: done once it fires
+            save();
+            void trigger(saved.id, saved.action);
+        };
+        wait();
+        task = { stop: () => clearTimeout(timer) };
+    } else {
+        task = cron.schedule(saved.expression, () => {
+            console.log(`⏰ Scheduled task triggered: ${saved.id} - ${saved.description}`);
+            void trigger(saved.id, saved.action);
+        });
+    }
+    const entry: ScheduledTask = { ...saved, status: "active", task };
+    tasks.set(saved.id, entry);
+    return entry;
+}
+
+/** Re-arm the tasks saved before a restart. A reminder due while Bhai was off fires now. */
+export function restoreScheduledTasks(): number {
+    let saved: SavedTask[] = [];
+    try {
+        if (fs.existsSync(storePath())) saved = JSON.parse(fs.readFileSync(storePath(), "utf8"));
+    } catch (err) {
+        console.warn("[SCHEDULED] Could not read saved tasks:", (err as Error).message);
+        return 0;
+    }
+    let n = 0;
+    for (const t of Array.isArray(saved) ? saved : []) {
+        if (!t?.id || tasks.has(t.id) || typeof t.action !== "string") continue;
+        if (t.fireAt === undefined && !cron.validate(t.expression)) continue;
+        taskCounter = Math.max(taskCounter, Number(t.id.split("_").pop()) || 0);
+        // Due while Bhai was off: give the channels a moment to connect first.
+        const soonest = Date.now() + 30_000;
+        arm(t.fireAt !== undefined && t.fireAt < soonest ? { ...t, fireAt: soonest } : t);
+        n++;
+    }
+    return n;
 }
 
 // ── Schedule Task Tool ────────────────────────
@@ -61,22 +154,8 @@ export const scheduleTask: ToolDefinition = {
         }
 
         const id = `task_${++taskCounter}`;
-        const task = cron.schedule(expression, async () => {
-            console.log(`⏰ Scheduled task triggered: ${id} - ${description}`);
-            if (onTaskTrigger) {
-                await onTaskTrigger(id, action);
-            }
-        });
-
-        tasks.set(id, {
-            id,
-            expression,
-            description,
-            action,
-            status: "active",
-            created_at: new Date().toISOString(),
-            task,
-        });
+        arm({ id, expression, description, action, created_at: new Date().toISOString() });
+        save();
 
         return JSON.stringify({ success: true, id, expression, description, next_run: "Scheduled" });
     },
@@ -130,6 +209,7 @@ export const cancelTask: ToolDefinition = {
         }
         task.task.stop();
         tasks.delete(id);
+        save();
         return JSON.stringify({ success: true, cancelled: id });
     },
 };
@@ -162,42 +242,20 @@ export const setReminder: ToolDefinition = {
         },
     },
     async handler(input) {
-        const minutes = input.minutes as number;
+        const minutes = Number(input.minutes);
         const description = input.description as string;
         const action = input.action as string;
 
-        if (minutes <= 0) {
-            return JSON.stringify({ error: "Minutes must be greater than 0" });
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+            return JSON.stringify({ error: "Minutes must be a number greater than 0" });
         }
 
         const id = `reminder_${++taskCounter}`;
-        const timeoutMs = minutes * 60 * 1000;
+        const fireAt = Date.now() + minutes * 60 * 1000;
+        arm({ id, expression: `In ${minutes} minutes`, description, action, created_at: new Date().toISOString(), fireAt });
+        save();
 
-        // Emulate cron.ScheduledTask for compatibility with our task mapper
-        const fakeTask = {
-            stop: () => clearTimeout(timer),
-            start: () => {},
-        } as unknown as cron.ScheduledTask;
-
-        const timer = setTimeout(async () => {
-            console.log(`⏰ Reminder triggered: ${id} - ${description}`);
-            tasks.delete(id); // Auto-cleanup one-off tasks
-            if (onTaskTrigger) {
-                await onTaskTrigger(id, action);
-            }
-        }, timeoutMs);
-
-        tasks.set(id, {
-            id,
-            expression: `In ${minutes} minutes`,
-            description,
-            action,
-            status: "active",
-            created_at: new Date().toISOString(),
-            task: fakeTask,
-        });
-
-        const triggerTime = new Date(Date.now() + timeoutMs).toLocaleTimeString();
+        const triggerTime = new Date(fireAt).toLocaleString();
         return JSON.stringify({ success: true, id, description, triggers_at: triggerTime });
     },
 };

@@ -369,7 +369,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
         tools: [
             "schedule_task",
             "set_reminder",
-            "list_tasks",
+            "list_scheduled_tasks",
             "cancel_task",
             "calendar_tool",
             "reminders_tool",

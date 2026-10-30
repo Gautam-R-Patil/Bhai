@@ -91,7 +91,7 @@ import {
     setSmartClickLLM,
     setSwarmLLM,
 } from "./tools/index.js";
-import { setTaskTriggerHandler } from "./tools/scheduled.js";
+import { restoreScheduledTasks, setTaskTriggerHandler } from "./tools/scheduled.js";
 import { initSpotify } from "./tools/spotify.js";
 import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
 import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
@@ -1056,6 +1056,8 @@ async function boot() {
         // Always send push notification for task triggers
         sendPushNotification("Task Triggered", action.substring(0, 180)).catch(() => {});
     });
+    const restored = restoreScheduledTasks();
+    if (restored) console.log(`   Tasks   : ${restored} scheduled task(s) restored`);
 
     // ── Decay (every 6h) + Dream Replay (nightly) ───
     const scheduleDecayAndReplay = () => {
