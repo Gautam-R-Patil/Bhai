@@ -1,5 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { runTestInSandbox, scoreResult } from "../sandbox-runner.js";
 
@@ -32,6 +34,15 @@ describe("sandbox test runner", () => {
         });
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.error).toMatch(/timeout/i);
+    });
+
+    it("gives handlers the same utils as session tools", async () => {
+        const r = await runTestInSandbox({
+            handlerCode: `return { exists: utils.fs.existsSync(input.dir), joined: require("path").join("a", "b"), viaUtils: typeof utils.console.log };`,
+            input: { dir: tmpdir() },
+            timeoutMs: 5000,
+        });
+        expect(r).toMatchObject({ ok: true, result: { exists: true, joined: join("a", "b"), viaUtils: "function" } });
     });
 
     it("captures console.log output to stdout", async () => {
@@ -95,11 +106,11 @@ describe("score result", () => {
         expect(r.explanation).toMatch(/invalid regex/i);
     });
 
-    it("side-effect stubs pass when handler succeeded", () => {
+    it("side-effect kinds never pass (nothing checks the side effect)", () => {
         const r = scoreResult(
             { ok: true, result: null, stdout: "", stderr: "" },
             { expected_kind: "side_effect_file_exists", expected_value: "/tmp/x", input: {}, description: "" },
         );
-        expect(r.pass).toBe(true);
+        expect(r.pass).toBe(false);
     });
 });

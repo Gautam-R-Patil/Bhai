@@ -72,7 +72,7 @@ describe("dynamic tool realm is sealed", () => {
         try {
             const out = buildHandler("await new Promise(() => {}); return 'never'")({});
             await vi.advanceTimersByTimeAsync(60_000);
-            expect(await out).toBe('{"error":"Dynamic tool error: timed out after 60s"}');
+            expect(await out).toBe('{"error":"Dynamic tool error: timeout after 60000ms"}');
         } finally {
             vi.useRealTimers();
         }

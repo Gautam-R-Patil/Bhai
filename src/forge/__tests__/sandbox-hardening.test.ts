@@ -483,6 +483,25 @@ describe("F7: test-self-bait detection", () => {
         if (!r.ok) expect(r.failureReason).toBe("sast_unrecoverable");
     });
 
+    it("rejects envelope whose tests are all bare throws (any error passes)", async () => {
+        const big = `let x = 0; for (let i = 0; i < 10; i++) { x += i; }`.padEnd(600, " ");
+        const llmFn = async () =>
+            JSON.stringify({
+                handler_code: big + " return notDefined;",
+                tests: [
+                    { input: {}, expected_kind: "throws", expected_value: null, description: "t1" },
+                    { input: { a: 1 }, expected_kind: "throws", expected_value: null, description: "t2" },
+                    { input: { a: 2 }, expected_kind: "throws", expected_value: null, description: "t3" },
+                ],
+                capabilities_declared: [],
+                side_effects: "none",
+                synthesis_notes: "self-baiting",
+            });
+        const r = await runVerifier({ slug: "f7throws", initialPrompt: "x", llmFn, maxAttempts: 1, failedReportDir: tmpDir });
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.failureReason).toBe("sast_unrecoverable");
+    });
+
     it("does NOT reject envelope with discriminating returns_equals tests", async () => {
         const big = `let x = 0; for (let i = 0; i < 10; i++) { x += i; }`.padEnd(600, " ");
         const llmFn = async () =>

@@ -16,6 +16,7 @@ const ESCAPES = [
     'return typeof require("path").join.constructor("return process")()',
     'return typeof setTimeout(() => {}, 1).constructor.constructor("return process")()',
     'return typeof globalThis.__bridge',
+    "return typeof call + typeof callSync",
     'return typeof (async () => {}).constructor("return process")',
 ];
 

@@ -50,7 +50,11 @@ type FunctionGemmaFn = (
 ) => Promise<FunctionGemmaResult | null>;
 
 const FORGE_SYSTEM_PROMPT =
-    "You are Bhai's tool-synthesis engine. Produce a JSON object with handler_code, tests, capabilities_declared, side_effects, synthesis_notes. Return ONLY the JSON.";
+    "You are Bhai's tool-synthesis engine. Produce a JSON object with handler_code, tests, capabilities_declared, side_effects, synthesis_notes. Return ONLY the JSON.\n" +
+    "handler_code is the body of `async function (input, utils, console)` and returns the result. " +
+    "utils = { fs (read-only: readFile, readFileSync, readdir, readdirSync, stat, statSync, existsSync), path, homedir, JSON, console, setTimeout, " +
+    "require (only 'path', 'fs', 'os'; also available as plain `require`) }. utils.exec, utils.execFile and utils.fetch are denied, and there is no Buffer, URL or crypto. " +
+    "Tests run the handler in that same sandbox and check its return value or error; side_effect_* test kinds always fail, and a bare `throws` passes on any error, so prefer throws_contains.";
 
 let _ready = false;
 let _embedFn: ((text: string) => Promise<Float32Array>) | null = null;

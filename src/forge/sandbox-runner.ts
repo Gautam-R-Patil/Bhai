@@ -1,6 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import { runIsolated } from "../security/vm-isolate.js";
+import { dynamicToolSandbox } from "../tools/create-tool.js";
 import type { SynthesisTest } from "./synthesis.js";
 
 export type SandboxResult =
@@ -18,22 +19,11 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 export async function runTestInSandbox(opts: SandboxRunOpts): Promise<SandboxResult> {
     let stdout = "";
     let stderr = "";
-    // runIsolated hands the handler no host-realm object (a host parseInt,
-    // JSON, console fn or input object all reach the host Function via
-    // .constructor). fetch/exec refuse outright — the kernel sandbox enforces
-    // capabilities for persisted tools; this verifier sandbox has no shell/net.
+    // Exactly the session-tool runtime (create-tool.ts): runIsolated hands the
+    // handler no host-realm object, utils.fs is read-only and path-checked, and
+    // fetch/exec refuse — the kernel sandbox enforces capabilities for persisted tools.
     const r = await runIsolated({
-        fn: `async function __test(input, utils, console) {
-        const isArray = (x) => Array.isArray(x);
-        ${opts.handlerCode}
-    }`,
-        api: `{
-            JSON,
-            fetch: async () => { throw new Error("fetch denied in test sandbox (Phase 4 kernel-sandbox required for net capability)"); },
-            exec: async () => { throw new Error("exec denied in test sandbox (Phase 4 kernel-sandbox required for exec capability)"); },
-            execFile: async () => { throw new Error("execFile denied in test sandbox (Phase 4 kernel-sandbox required)"); },
-            fs: {},
-        }`,
+        ...dynamicToolSandbox(opts.handlerCode),
         input: opts.input,
         onLog: (level, line) => {
             if (level === "log") stdout += `${line}\n`;
@@ -127,9 +117,10 @@ export function scoreResult(result: SandboxResult, test: SynthesisTest): TestSco
         }
         case "side_effect_file_exists":
         case "side_effect_url_called": {
+            // Nothing checks the side effect, so this would pass on any return.
             return {
-                pass: result.ok,
-                explanation: "side-effect test stub (Phase 3 — implementation pending)",
+                pass: false,
+                explanation: `${test.expected_kind} tests are not supported; test the return value instead`,
                 actual: result.ok ? result.result : result.error,
             };
         }

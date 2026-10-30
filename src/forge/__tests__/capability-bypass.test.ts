@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { isNativeAvailable, invokePersistedTool } from "../sandbox-supervisor.js";
-import { installPersistedTool, uninstallPersistedTool } from "../sandbox-supervisor.js";
+import { installPersistedTool, uninstallPersistedTool, wrapPersistedHandler } from "../sandbox-supervisor.js";
 import type { PersistedToolManifest } from "../types.js";
 
 const NATIVE = isNativeAvailable();
@@ -45,7 +45,7 @@ async function installAttackTool(slug: string, handlerBody: string): Promise<voi
     // to disk. Otherwise invokePersistedTool's tamper-detection (Phase 4
     // security pass 2) returns spawn_failed BEFORE the sandbox even runs,
     // making every test trivially "pass" without exercising the fence.
-    const wrapped = `module.exports = async function(input) {\n${handlerBody}\n};\n`;
+    const wrapped = wrapPersistedHandler(handlerBody);
     const handlerHash = createHash("sha256")
         .update(wrapped)
         .digest("hex")

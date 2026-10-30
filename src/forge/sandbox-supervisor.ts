@@ -187,6 +187,18 @@ export async function invokePersistedTool(
     return parseNativeResponse(raw);
 }
 
+export function wrapPersistedHandler(handlerCode: string): string {
+    return `const __deny = (w) => async () => { throw new Error(w + " is denied in dynamic tools"); };
+const __utils = Object.freeze({ fs: require("fs"), path: require("path"), homedir: require("os").homedir(), JSON, console, setTimeout,
+    require: (m) => { if (/^(node:)?(fs|path|os)$/.test(m)) return require(m); throw new Error('require("' + m + '") is not available. Allowed: path, fs, os.'); },
+    exec: __deny("utils.exec"), execFile: __deny("utils.execFile"), fetch: __deny("utils.fetch") });
+module.exports = async function(input) {
+const utils = __utils;
+${handlerCode}
+};
+`;
+}
+
 export async function installPersistedTool(
     slug: string,
     handlerCode: string,
@@ -206,8 +218,11 @@ export async function installPersistedTool(
     } else {
         mkdirSync(dir, { recursive: true });
     }
-    // Write handler.js. Wrapped in the synthesizer's canonical form.
-    const wrappedHandler = `module.exports = async function(input) {\n${handlerCode}\n};\n`;
+    // Write handler.js: the handler body gets the same (input, utils, console)
+    // contract as session tools; the kernel sandbox enforces the capabilities.
+    const wrappedHandler = wrapPersistedHandler(handlerCode);
+    // The manifest pins the bytes actually written (invoke and boot re-hash them).
+    manifest = { ...manifest, handlerHash: createHash("sha256").update(wrappedHandler).digest("hex").substring(0, 16) };
     const handlerPath = path.join(dir, "handler.js");
     let handlerWritten = false;
     try {
