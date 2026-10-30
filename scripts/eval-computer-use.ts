@@ -17,7 +17,8 @@
 // (default data/eval-computer-use.jsonl). Spotify and Apple Music tasks need those apps signed in.
 import Anthropic from "@anthropic-ai/sdk";
 import { execFile } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -83,7 +84,7 @@ const TASKS: Task[] = [
       cleanup: async () => void (await as('tell application "System Settings" to quit')) },
     { id: "find_open_file", prompt: `Find the file CLAUDE.md in the ${REPO} folder and open it in TextEdit`,
       check: async () => /CLAUDE\.md/i.test(await as('tell application "TextEdit" to get name of every document')),
-      cleanup: async () => void (await as('tell application "TextEdit" to quit saving no')) },
+      cleanup: async () => void (await as('tell application "TextEdit" to close every document saving no')) },
     { id: "downloads_folder", prompt: "Open my Downloads folder in Finder",
       check: async () => /downloads/i.test(await as('tell application "Finder" to get name of front window')),
       cleanup: async () => void (await as('tell application "Finder" to close front window')) },
@@ -95,9 +96,42 @@ const TASKS: Task[] = [
       check: async () => { await as('tell application "Calculator" to activate'); await sleep(300); await as('tell application "System Events" to keystroke "c" using command down'); await sleep(300); const v = (await ex("pbpaste", [])).stdout.trim(); return /^540$/.test(v); },
       cleanup: async () => void (await as('tell application "Calculator" to quit')) },
     { id: "textedit_type", prompt: "Open TextEdit, make a new document and type: hello from bhai",
-      setup: async () => { await as('tell application "TextEdit" to close every document saving no'); await as('tell application "TextEdit" to quit'); await sleep(800); },
+      setup: async () => { await as('tell application "TextEdit" to close every document saving no'); await sleep(800); },
       check: async () => /hello from bhai/i.test(await as('tell application "TextEdit" to get text of front document')),
-      cleanup: async () => void (await as('tell application "TextEdit" to close every document saving no\ntell application "TextEdit" to quit')) },
+      cleanup: async () => void (await as('tell application "TextEdit" to close every document saving no')) },
+    // ── Multi-step and multi-app ──
+    { id: "chain_settings", prompt: "Set the volume to 30 percent, switch my Mac to light mode, and open the Bluetooth settings",
+      setup: async () => { vol0 = Number(await as("output volume of (get volume settings)")) || 43; },
+      check: async () => {
+          await sleep(800);
+          const vol = Math.abs(Number(await as("output volume of (get volume settings)")) - 30) <= 2;
+          const light = !(await ex("defaults", ["read", "-g", "AppleInterfaceStyle"]).then((r) => r.stdout.includes("Dark"), () => false));
+          const bt = /bluetooth/i.test(await as('tell application "System Events" to tell process "System Settings" to get name of window 1'));
+          return vol && light && bt;
+      },
+      cleanup: async () => { await as(`set volume output volume ${vol0}`); await as('tell application "System Events" to tell appearance preferences to set dark mode to true'); await as('tell application "System Settings" to quit'); } },
+    { id: "calc_to_textedit", prompt: "Use the Calculator app to work out 123 times 45, then open a new TextEdit document and write the result in it",
+      setup: async () => { await as('tell application "TextEdit" to close every document saving no'); await as('tell application "Calculator" to quit'); await sleep(800); },
+      check: async () => /5,?535/.test(await as('tell application "TextEdit" to get text of front document')),
+      cleanup: async () => { await as('tell application "TextEdit" to close every document saving no'); await as('tell application "Calculator" to quit'); } },
+    { id: "newest_pdf", prompt: "What is the newest PDF file in my Downloads folder? Tell me its file name.",
+      check: async (reply) => {
+          const dir = join(homedir(), "Downloads");
+          const pdfs = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".pdf")).map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+          const flat = (t: string) => t.toLowerCase().replace(/\.pdf$/, "").replace(/[^a-z0-9]/g, "");
+          return !!pdfs[0] && flat(reply).includes(flat(pdfs[0].f));
+      } },
+    { id: "playlist_and_tell", prompt: "Play my Favourite Songs playlist in Apple Music and tell me which song is playing",
+      check: async (reply) => {
+          const pl = await as('tell application "Music" to if player state is playing then name of current playlist');
+          const track = await as('tell application "Music" to if player state is playing then name of current track');
+          return /favourite songs/i.test(pl) && !!track && reply.toLowerCase().includes(track.toLowerCase().replace(/\s*\(.*$/, ""));
+      },
+      cleanup: async () => void (await as('tell application "Music" to pause')) },
+    { id: "switch_players", prompt: "Pause Spotify and play Blinding Lights by The Weeknd on Apple Music instead",
+      setup: async () => { await as('tell application "Spotify" to play track "spotify:track:39LLxExYz6ewLAcYrzQQyP"'); await sleep(1500); },
+      check: async () => (await as('tell application "Spotify" to player state as string')) !== "playing" && /blinding lights/i.test(await as('tell application "Music" to if player state is playing then name of current track')),
+      cleanup: async () => { await as('tell application "Music" to pause'); await as('tell application "Spotify" to pause'); } },
 ];
 
 const SYSTEM = [

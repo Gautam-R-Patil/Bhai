@@ -128,7 +128,16 @@ import {
 } from "./deep-research.js";
 import { documentTools, initDocumentTools } from "./document.js";
 import { emailSend } from "./email-tool.js";
-import { compressFiles, fileMetadata, findFiles, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
+import {
+    compressFiles,
+    fileMetadata,
+    findFiles,
+    openInApp,
+    resolveHomePath,
+    runShortcut,
+    screenRecord,
+    trashManager,
+} from "./file-utils.js";
 import { deleteFile, listDirectory } from "./files.js";
 import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { generateImage } from "./generate-image.js";
@@ -814,6 +823,19 @@ const NO_PAGE_CHECK = new Set([
 // Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
 const STOPPABLE_TOOLS = new Set(["site_task"]);
 
+const PATH_ARGS = ["path", "file_path", "filePath", "target", "folder", "directory", "dir", "cwd"];
+/** Path arguments with the home folder resolved (see resolveHomePath); everything else as is. */
+export function withHomePaths(input: Record<string, unknown>): Record<string, unknown> {
+    let out = input;
+    for (const k of PATH_ARGS) {
+        const v = input[k];
+        if (typeof v !== "string" || !/^(~|\/Users\/|\/home\/|[A-Za-z]:[\\/]Users)/.test(v)) continue;
+        const fixed = resolveHomePath(v);
+        if (fixed !== v) out = { ...out, [k]: fixed };
+    }
+    return out;
+}
+
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
@@ -960,6 +982,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         });
     }
     if (confirmCheck.needsConfirmation) input = actionArgs;
+
+    // "~/Downloads" or "/Users/your_username/…" from a model: each tool path.resolve()s
+    // its path, so "~" became "<cwd>/~/Downloads". Resolve the home once, for all of them.
+    input = withHomePaths(input);
 
     // Zod schema validation — validate input before execution
     const validation = validateToolInput(name, input);

@@ -75,12 +75,20 @@ async function getStorefront(): Promise<string> {
  */
 export async function playCatalogTrack(query: string): Promise<{ track: string; artist: string } | { error: string }> {
     const country = await getStorefront();
+    // limit=1 often comes back empty for a query limit=5 answers ("blinding lights the
+    // weeknd": 0 vs 3), so take five and keep the one whose title and artist the query names.
     const res = await fetch(
-        `https://itunes.apple.com/search?entity=song&limit=1&country=${country}&term=${encodeURIComponent(query)}`,
+        `https://itunes.apple.com/search?entity=song&limit=5&country=${country}&term=${encodeURIComponent(query)}`,
         { signal: AbortSignal.timeout(5000) },
     );
-    const hit = ((await res.json()) as { results?: { trackName: string; artistName: string; trackViewUrl: string }[] })
-        .results?.[0];
+    const results =
+        ((await res.json()) as { results?: { trackName: string; artistName: string; trackViewUrl: string }[] }).results ??
+        [];
+    const words = new Set(query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+    const named = (t: string) => (t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => words.has(w)).length;
+    const hit = results
+        .map((r, i) => ({ r, score: named(r.trackName) * 2 + named(r.artistName) - i * 0.1 }))
+        .sort((a, b) => b.score - a.score)[0]?.r;
     if (!hit) return { error: "not found in the Apple Music catalog" };
     if (!hit.trackViewUrl.startsWith("https://music.apple.com/")) return { error: "unexpected catalog link" };
     await execFileAsync("open", [hit.trackViewUrl.replace(/^https:/, "music:")], { timeout: 5000 });
