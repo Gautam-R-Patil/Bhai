@@ -655,6 +655,9 @@ export const webRead: ToolDefinition = {
         const max = Math.min(Math.max(Number(input.max_chars) || 12_000, 500), 50_000);
         // fetchPageContent refuses private/loopback/metadata hosts and caps the download.
         const text = await fetchPageContent(url);
+        // An image or archive comes back as "[Non-text content: image/png]", not page text.
+        const nonText = /^\[Non-text content: ([^\]]*)\]$/.exec(text)?.[1];
+        if (nonText) return JSON.stringify({ success: false, url, error: `That URL is ${nonText}, not a page web_read can read.` });
         if (!text) {
             return JSON.stringify({
                 success: false,

@@ -45,7 +45,7 @@ export function preflight(toolName: string, args: Record<string, unknown>): Pref
         if (REQUIRES_ABSOLUTE_PATH.has(toolName) || READS_EXISTING_FILE.has(toolName) || WRITES_FILE.has(toolName)) {
             for (const key of ["file_path", "path", "filepath"]) {
                 const v = args[key];
-                if (typeof v === "string" && /^~(?=\/|$)/.test(v)) args[key] = join(homedir(), v.slice(1));
+                if (typeof v === "string" && v.startsWith("~/")) args[key] = join(homedir(), v.slice(2)); // not a bare "~": the whole home
             }
         }
         const filePath = pickStringArg(args, ["file_path", "path", "filepath"]);

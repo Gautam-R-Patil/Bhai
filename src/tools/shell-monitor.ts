@@ -11,6 +11,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { basename, join } from "node:path";
 import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
+import { shellNamesBhaiState } from "../security/sensitive-paths.js";
 import { auditLog } from "../security/audit-log.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
@@ -159,6 +160,13 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
         // shell-bypass for destructive inline command, and protected-path
         // codebase targeting via destructive utilities.
         const fullCommand = args.length > 0 ? `${command} ${args.join(" ")}` : command;
+        // Same rule as shell_exec: Bhai's own state never goes through a shell (its output is read back).
+        const ownState = shellNamesBhaiState(fullCommand, cwd);
+        if (ownState) {
+            return JSON.stringify({
+                error: `Blocked: the command reaches into Bhai's own data (${ownState}). Its memory, chats and sessions never go through the shell; the owner can run it in Terminal.`,
+            });
+        }
         if (isSystemDestructive(fullCommand)) {
             return JSON.stringify({
                 error: `Blocked: command would cause irreversible damage to the operating system.`,

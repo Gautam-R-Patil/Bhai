@@ -78,6 +78,9 @@ describe("shellNamesBhaiState", () => {
             expect(shellNamesBhaiState(`wc -l "${data}/tool-outputs/turn-1/web_read-x.txt"`)).toBeNull();
             expect(shellNamesBhaiState(`ls "${data}2/notes"`)).toBeNull(); // a sibling folder
             expect(shellNamesBhaiState("ls ~/Documents")).toBeNull();
+            expect(shellNamesBhaiState("cat memory.db", data)).not.toBeNull(); // run from inside it
+            expect(shellNamesBhaiState("tail -5 x.log", join(data, "process-logs"))).toBeNull();
+            expect(isSensitivePath(join(data, "process-logs", "bg-1.log")).denied).toBe(false); // shell_exec_background's log_file
         } finally {
             if (before === undefined) delete process.env.ATLAS_DATA_DIR;
             else process.env.ATLAS_DATA_DIR = before;

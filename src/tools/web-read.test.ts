@@ -28,4 +28,11 @@ describe("web_read", () => {
         expect(r.success).toBe(false);
         expect(r.error).toMatch(/browser_navigate/);
     });
+
+    it("an image or archive is a failure, not page text", async () => {
+        fetchPageContent.mockResolvedValueOnce("[Non-text content: image/png]");
+        const r = await run({ url: "https://example.com/logo.png" });
+        expect(r).toMatchObject({ success: false });
+        expect(r.error).toMatch(/image\/png/);
+    });
 });

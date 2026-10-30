@@ -53,9 +53,10 @@ function exactDeniedPaths(): string[] {
 }
 
 // Inside the data dir, only these are the model's to read: saved tool outputs (masked),
-// research reports, video projects and coders' worktrees (ATLAS_AGENT_WORKTREE). Everything
-// else there is Bhai's state.
-const READABLE_DATA_SUBDIRS = ["tool-outputs", "research", "video-projects", "agent-worktrees"];
+// research reports, video projects, coders' worktrees (ATLAS_AGENT_WORKTREE) and background
+// commands' logs (shell_exec_background hands out their log_file). Everything else there is
+// Bhai's state.
+const READABLE_DATA_SUBDIRS = ["tool-outputs", "research", "video-projects", "agent-worktrees", "process-logs"];
 
 // Prefix deny list — anything under these dirs is denied.
 function deniedDirPrefixes(): string[] {
@@ -135,11 +136,13 @@ export function outboundFileRefusal(filePath: string): string | null {
 /**
  * A shell command that names Bhai's own state (its data or app folder, outside the
  * readable subfolders): `cat …/data/memory.db` would print what read refuses.
- * ponytail: a text match, so a wildcard or a variable in the path gets past it;
+ * ponytail: a text match, so a wildcard, a variable or a relative path from some other
+ * folder ("cd ~/Library/Application\\ Support && cat bhai-desktop/data/…") gets past it;
  * it stops the plain path a page talked the model into. A real fix is a sandboxed shell.
  */
-export function shellNamesBhaiState(command: string): string | null {
-    const text = command.replace(/\\ /g, " ").replace(/\$\{?HOME\}?/g, HOME).replace(/(^|[\s"'=:])~(?=\/)/g, `$1${HOME}`);
+export function shellNamesBhaiState(command: string, cwd?: string): string | null {
+    // A command run from inside the folder ("cat memory.db" with cwd = data) names it through cwd.
+    const text = `${cwd ? `"${path.resolve(cwd)}" ` : ""}${command}`.replace(/\\ /g, " ").replace(/\$\{?HOME\}?/g, HOME).replace(/(^|[\s"'=:])~(?=\/)/g, `$1${HOME}`);
     const hay = IS_CASE_INSENSITIVE_FS ? text.toLowerCase() : text;
     const roots = [getDataDir(), process.env.ATLAS_USER_DATA_DIR].filter((r): r is string => !!r).map((r) => path.resolve(r));
     for (const root of roots) {
