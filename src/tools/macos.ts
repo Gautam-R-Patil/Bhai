@@ -599,6 +599,23 @@ export const osType: ToolDefinition = {
             });
         }
 
+        // A sum entered with Return in another app while Calculator is open: gpt-4.1-nano typed
+        // "17*23" + return into TextEdit, then wrote down whatever TextEdit showed.
+        if (
+            !bgApp &&
+            typeof input.text === "string" &&
+            /^\s*[\d.]+\s*[-+*/×÷x]\s*[\d.][\d\s.+\-*/×÷x()]*$/.test(input.text) &&
+            /^(return|enter)$/i.test(String(input.key ?? "")) &&
+            (await pidOfApp("Calculator"))
+        ) {
+            const front = await getFrontmostApp();
+            if (front && !/^calculator$/i.test(front.name))
+                return JSON.stringify({
+                    success: false,
+                    error: `Not typed: ${front.name} is in front, not Calculator. To work it out, call os_type again with app "Calculator". To type it into ${front.name} anyway, pass app "${front.name}".`,
+                });
+        }
+
         // Calculator, only for text that looks like arithmetic (no extra lookup otherwise).
         if (
             typeof input.text === "string" &&

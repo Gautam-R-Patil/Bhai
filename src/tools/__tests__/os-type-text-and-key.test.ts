@@ -57,9 +57,11 @@ const { osType } = await import("../macos.js");
 describe("os_type with text and key together", () => {
     it("types the text, then presses the key", async () => {
         events.length = 0;
+        bg.front = "Calculator";
         const r = JSON.parse(await osType.handler({ text: "45*12", key: "return", delay_ms: 1 }));
         expect(events).toEqual(["type:45*12", "osascript:key"]);
         expect(r).toMatchObject({ success: true, typed_chars: 5, pressed: "return" });
+        bg.front = "Terminal";
     });
 
     it("a key alone still just presses it", async () => {
@@ -147,6 +149,19 @@ describe("os_type with text and key together", () => {
         expect(bg.front).toBe("Calculator");
         expect(r.brought_forward).toBe("Calculator");
         expect(events).toEqual(["osascript:key"]);
+        bg.front = "Terminal";
+    });
+
+    // PLAN run: "17*23" + return typed into TextEdit while Calculator was open.
+    it("won't enter a sum in another app while Calculator is open, unless told to", async () => {
+        bg.front = "TextEdit";
+        events.length = 0;
+        const r = JSON.parse(await osType.handler({ text: "17*23", key: "return", delay_ms: 1 }));
+        expect(r.error).toMatch(/app "Calculator"/);
+        expect(events).toEqual([]);
+        await osType.handler({ text: "17*23", key: "return", app: "Calculator", delay_ms: 1 });
+        expect(bg.front).toBe("Calculator");
+        expect(events).toEqual(["type:17*23", "osascript:key"]);
         bg.front = "Terminal";
     });
 });

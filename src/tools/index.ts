@@ -835,6 +835,7 @@ const ARG_ALIASES: Record<string, string[]> = {
     path: ["file_path", "folder", "dir", "directory", "target"],
     content: ["text", "body", "contents", "data"],
     query: ["q", "search", "text", "term"],
+    pattern: ["query", "glob", "q", "search"],
     url: ["link", "href", "website"],
     text: ["content", "message", "value"],
 };
