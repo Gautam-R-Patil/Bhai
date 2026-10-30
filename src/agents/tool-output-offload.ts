@@ -98,9 +98,17 @@ export interface OffloadResult {
  * any filesystem error falls through to returning the original output
  * untouched.
  */
-export function offloadIfLarge(toolName: string, toolCallId: string, turnId: string, result: string): OffloadResult {
+export function offloadIfLarge(
+    toolName: string,
+    toolCallId: string,
+    turnId: string,
+    result: string,
+    ownLimit = 0,
+): OffloadResult {
     const size = Buffer.byteLength(result, "utf-8");
-    if (size <= OFFLOAD_THRESHOLD_BYTES) {
+    // A tool whose own cap is above this line (a finished research report) stays
+    // inline and the caller cuts it to that cap: a 2KB preview would hide most of it.
+    if (size <= OFFLOAD_THRESHOLD_BYTES || ownLimit > OFFLOAD_THRESHOLD_BYTES) {
         return { content: result, offloaded: false };
     }
 

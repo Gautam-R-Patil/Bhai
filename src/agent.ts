@@ -1244,7 +1244,7 @@ async function executeAndProcessToolCall(
     // The `read` tool can fetch the full file later if the model needs it.
     let workingResult = rawResult;
     try {
-        const offloaded = offloadIfLarge(fnName, toolCall.id, currentTurnId(), rawResult);
+        const offloaded = offloadIfLarge(fnName, toolCall.id, currentTurnId(), rawResult, TOOL_RESULT_LIMITS[fnName]);
         workingResult = offloaded.content;
     } catch {
         /* offload failure leaves workingResult = rawResult */
@@ -3426,7 +3426,7 @@ ${planToolsBlock(tools.filter((t) => toolAllowlist === undefined || isToolAllowe
 HINTS (apply a hint only if the tools it names are listed above):
 - Desktop: app_manager action='activate' app="WhatsApp"; os_smart_click instruction="the Send button" clicks by description (prefer it over os_nav+os_click_element or raw apple_script); os_type text=/key=/combo= after focusing the field; os_visual_verify expect_text=/expect_gone= after any step that changes UI state. Raw AppleScript keystrokes are the LAST resort.
 - Music: spotify action='play' query="exact song name" (or "<name> playlist", "liked songs"); action='now_playing' to verify. music_control is the same for Apple Music.
-- Messaging: whatsapp_send for paired contacts; messages_tool is iMessage only. If whatsapp_send fails, drive the WhatsApp app: app_manager activate → os_smart_click "new chat button" → os_type the name → os_smart_click the contact → os_type the message → os_smart_click "send button" → os_visual_verify expect_text=the_message.
+- Messaging: whatsapp_send for paired contacts; messages_tool is iMessage only. If whatsapp_send fails, drive the WhatsApp app: app_manager activate → os_smart_click "new chat button" → os_type the name → os_smart_click the contact → os_type the message → os_smart_click "send button" → os_visual_verify expect_text="Type a message" (the compose box is empty only after a real send; never verify with the text you typed, it is on screen before Send too).
 
 CRITICAL RULES:
 1. **Verify before declaring done.** Every UI-driving plan ENDS with os_visual_verify (or for music, spotify action='now_playing'). Never say "done" off a fire-and-forget AppleScript.
