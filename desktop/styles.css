@@ -6252,3 +6252,33 @@ body.hig .vault-modal-bg { background: rgba(20, 10, 4, 0.42); }
 .vault-field .clean-input { width: 100%; box-sizing: border-box; }
 .vault-modal .input-hint:empty { display: none; }
 .vault-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── Dashboard: greeting, ask box, lists (no hero card, no stat tiles) ── */
+body.hig .dash { max-width: 720px; display: flex; flex-direction: column; gap: 0; }
+body.hig .dash-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0 18px; }
+body.hig .dash-greeting {
+    font-family: ui-serif, "New York", Georgia, serif;
+    font-size: 30px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15;
+    color: var(--text-primary); margin: 0;
+}
+body.hig .dash-sub { margin: 6px 0 0; font-size: 13px; color: var(--text-secondary); }
+body.hig .dash-stop { margin-left: 8px; font-size: 12px; }
+body.hig .hero-mascot.dash-avatar { width: 64px; height: 64px; flex: none; }
+body.hig .hero-mascot.dash-avatar::before { display: none; }
+body.hig .dash-ask {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 12px 0 16px; height: 48px; margin-bottom: 26px;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface-1);
+    transition: border-color .15s, box-shadow .15s;
+}
+body.hig .dash-ask:focus-within { border-color: var(--accent-text, var(--text-secondary)); box-shadow: 0 0 0 3px var(--accent-tint, rgba(0,0,0,.05)); }
+body.hig .dash-ask input { flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: none; color: var(--text-primary); font: inherit; font-size: 14px; }
+body.hig .dash-ask input::placeholder { color: var(--text-muted, var(--text-secondary)); }
+body.hig .dash-ask .chat-kbd:empty { display: none; }
+body.hig .dash-start { margin-bottom: 26px; }
+body.hig .dash .recent-chats { margin: 0 0 22px; }
+body.hig #needsList .recent-row { cursor: pointer; }
+body.hig #needsList .recent-when { color: var(--accent-text, var(--text-primary)); }
+@media (prefers-reduced-motion: reduce) { body.hig .dash-ask { transition: none; } }
+body.hig .dash-ask .chat-kbd { margin: 0; background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }

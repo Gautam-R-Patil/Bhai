@@ -152,72 +152,41 @@
             <!-- TAB: Dashboard                 -->
             <!-- ═══════════════════════════════ -->
             <div class="tab-content active" id="tab-dashboard">
-                <div class="tab-header">
-                    <h2 class="tab-title">Dashboard</h2>
-                </div>
 
-                <div class="dashboard-content">
-                    <div class="status-card surface-card" id="heroCard" data-phase="stopped">
-                        <div class="hero-mascot" id="heroMascot" aria-hidden="true"></div>
-                        <div class="hero-body">
-                        <div id="statusOnline" style="display: none;">
-                            <div class="status-title" id="statusOnlineTitle">Bhai is awake</div>
-                            <div class="status-subtitle" id="statusOnlineSub">
-                                Ready when you are.
-                            </div>
+                <div class="dashboard-content dash" id="heroCard" data-phase="stopped">
+                    <header class="dash-head">
+                        <div class="dash-hello">
+                            <h1 class="dash-greeting" id="dashGreeting">Hello</h1>
+                            <p class="dash-sub">
+                                <span id="statusOnline" style="display: none;"><span id="statusOnlineSub">Bhai is on.</span></span>
+                                <span id="statusOffline"><span id="statusOfflineSub">Bhai is off right now.</span></span>
+                                <button class="link-like dash-stop" id="stopBtn" onclick="stopBot()" style="display: none;">Turn off</button>
+                            </p>
                         </div>
+                        <div class="hero-mascot dash-avatar" id="heroMascot" aria-hidden="true"></div>
+                    </header>
 
-                        <div id="statusOffline">
-                            <div class="status-title" id="statusOfflineTitle">Bhai is napping</div>
-                            <div class="status-subtitle" id="statusOfflineSub">
-                                Start Bhai to use chat, channels and automations.
-                            </div>
-                        </div>
-
-                        <div class="panel-controls">
-                            <button class="btn btn-primary" id="chatBtn" onclick="atlas.showOverlay()"
-                                style="display: none;">
-                                Open Chat <kbd class="chat-kbd" id="chatShortcut"></kbd>
-                            </button>
-                            <button class="btn btn-success" id="startBtn" onclick="startBot()">
-                                Start Bhai
-                            </button>
-                            <button class="btn btn-secondary" id="stopBtn" onclick="stopBot()" disabled>
-                                Stop
-                            </button>
-                        </div>
-                        </div>
+                    <form class="dash-ask" id="dashAsk" style="display: none;" onsubmit="event.preventDefault(); askFromDashboard();">
+                        <input id="dashAskInput" type="text" placeholder="Ask Bhai to do something…" autocomplete="off" aria-label="Ask Bhai">
+                        <kbd class="chat-kbd" id="chatShortcut" title="Opens chat from anywhere"></kbd>
+                    </form>
+                    <div class="dash-start" id="dashStart">
+                        <button class="btn btn-primary" id="startBtn" onclick="startBot()">Start Bhai</button>
                     </div>
 
-                    <!-- Connection Status -->
-                    <div class="connection-status" id="connectionStatus" style="display: none;" onclick="switchTab('channels')" title="Channels"></div>
+                    <section class="recent-chats" id="needsYou" hidden>
+                        <div class="recent-head"><span>Needs you</span></div>
+                        <div id="needsList"></div>
+                    </section>
 
-                    <!-- Live Stats -->
-                    <div class="stats-grid" id="statsGrid" style="display: none;">
-                        <div class="stat-card surface-card">
-                            <div class="stat-value" id="statMessages">0</div>
-                            <div class="stat-label">Messages today</div>
-                        </div>
-                        <div class="stat-card surface-card stat-link" onclick="switchTab('memory')" title="Open Memory">
-                            <div class="stat-value" id="statMemories">0</div>
-                            <div class="stat-label">Memories</div>
-                        </div>
-                        <div class="stat-card surface-card credit-stat-card stat-link" id="creditStatCard" style="display: none;" onclick="if (!event.target.closest('button')) switchTab('account')" title="Open Account">
-                            <div class="stat-value" id="statCredits">—</div>
-                            <div class="stat-label">AI Credits</div>
-                            <button class="credit-refresh-btn" onclick="refreshCredits()" title="Refresh credits">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="23 4 23 10 17 10"></polyline>
-                                    <polyline points="1 20 1 14 7 14"></polyline>
-                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-
-                    <section class="recent-chats coming-up" id="comingUp" hidden>
+                    <section class="recent-chats" id="comingUp" hidden>
                         <div class="recent-head"><span>Coming up</span></div>
                         <div id="comingList"></div>
+                    </section>
+
+                    <section class="recent-chats" id="didToday" hidden>
+                        <div class="recent-head"><span>Bhai did today</span></div>
+                        <div id="didList"></div>
                     </section>
 
                     <section class="recent-chats" id="recentChats" hidden>
@@ -1644,7 +1613,7 @@
         }
         moveNavPill();
 
-        // ── Mascot: the dashboard hero mirrors what Bhai is doing ──
+        // ── Mascot: the dashboard avatar mirrors what Bhai is doing ──
         const heroCard = document.getElementById('heroCard');
         const heroMascot = document.getElementById('heroMascot');
         let lastBotStatus = null, botStarting = false, userStopping = false, chatHover = false, moodHold = 0;
@@ -1662,64 +1631,20 @@
             if (heroMascot) heroMascot.dataset.mood = mood || restingMood();
             const phase = botStarting ? 'starting' : lastBotStatus === 'running' ? 'running' : 'stopped';
             heroCard.dataset.phase = phase;
-            const lines = phase === 'running' ? ALIVE_LINES.online[dayPart()] : phase === 'starting' ? ALIVE_LINES.starting : ALIVE_LINES.offline;
-            document.getElementById(phase === 'running' ? 'statusOnlineTitle' : 'statusOfflineTitle').textContent = pickLine(lines);
+            document.getElementById('dashGreeting').textContent = greeting();
             if (holdMs) moodHold = setTimeout(() => setMood(), holdMs);
         }
 
-        // The status card speaks in Bhai's voice and follows the time of day.
-        // A line holds for the part of the day (no flicker on every refresh).
-        const ALIVE_LINES = {
-            "online": {
-                "morning": [
-                    "Morning! Bhai's up",
-                    "Team chai, reporting in",
-                    "Fresh day, shades on",
-                    "Chalo, new day"
-                ],
-                "afternoon": [
-                    "Afternoon. Bhai's locked in",
-                    "Peak hours. All systems chill",
-                    "Midday, shades still on",
-                    "Afternoon. Tabs under control?"
-                ],
-                "evening": [
-                    "Evening. Bhai's still around",
-                    "Golden hour, shades justified",
-                    "Winding down? Bhai's around",
-                    "Evening. Let's close it out"
-                ],
-                "night": [
-                    "Late one? Bhai's here",
-                    "Night mode. Still sharp",
-                    "Quiet hours. Bhai's around",
-                    "Night owl hours"
-                ],
-                "late": [
-                    "Still up? So is Bhai",
-                    "Wee hours. Bhai's here",
-                    "Quick one, then sleep?",
-                    "Lights low, shades on"
-                ]
-            },
-            "offline": [
-                "Bhai is napping",
-                "Shades folded. Napping",
-                "Bhai's recharging"
-            ],
-            "starting": [
-                "Waking Bhai up…",
-                "Putting the shades on…"
-            ]
-        };
         function dayPart(h = new Date().getHours()) {
             return h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : h >= 17 && h < 22 ? 'evening' : h >= 2 && h < 5 ? 'late' : 'night';
         }
-        function pickLine(lines) {
-            const now = new Date();
-            const seed = now.getFullYear() * 400 + now.getMonth() * 31 + now.getDate() + dayPart().length;
-            return lines[seed % lines.length];
+        let ownerFirstName = '';
+        function greeting() {
+            const part = dayPart();
+            const hello = part === 'morning' ? 'Good morning' : part === 'afternoon' ? 'Good afternoon' : part === 'evening' ? 'Good evening' : 'Hi';
+            return ownerFirstName ? `${hello}, ${ownerFirstName}` : hello;
         }
+        atlas.getAccountInfo().then((i) => { ownerFirstName = String(i?.name || '').trim().split(/\s+/)[0]; setMood(); }).catch(() => {});
         setInterval(() => { if (!moodHold) setMood(); }, 10 * 60 * 1000); // roll over to the next part of the day
 
         function startFailed() {
@@ -1733,28 +1658,10 @@
             if (sideMascot) window.BhaiMascot.mount(sideMascot, 'idle', { bust: true });
         }
         {
-            const chatBtn = document.getElementById('chatBtn');
+            const ask = document.getElementById('dashAskInput');
             const hover = (on) => () => { chatHover = on; if (!moodHold) setMood(); };
-            chatBtn.addEventListener('mouseenter', hover(true));
-            chatBtn.addEventListener('focus', hover(true));
-            chatBtn.addEventListener('mouseleave', hover(false));
-            chatBtn.addEventListener('blur', hover(false));
-        }
-
-        // Stats count up to their new value (instant with reduced motion).
-        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-        function countTo(el, value) {
-            const to = Number(value);
-            const from = Number(el.textContent) || 0;
-            cancelAnimationFrame(el._countRaf);
-            if (!Number.isFinite(to) || to === from || reduceMotion.matches) { el.textContent = value || '0'; return; }
-            const t0 = performance.now();
-            const step = (now) => {
-                const p = Math.min(1, (now - t0) / 700);
-                el.textContent = String(Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3))));
-                if (p < 1) el._countRaf = requestAnimationFrame(step);
-            };
-            el._countRaf = requestAnimationFrame(step);
+            ask.addEventListener('focus', hover(true));
+            ask.addEventListener('blur', hover(false));
         }
 
         // Deep-link via #hash (e.g. panel.html#account from Ready Hub tiles).
@@ -1793,21 +1700,19 @@
             const sub = document.getElementById('statusOfflineSub');
             sub.textContent = status === 'crashed' ? 'Bhai crashed. Restarting automatically…'
                 : status === 'failed' ? 'Bhai kept crashing, so it stopped restarting. Check Logs, then press Start to try again.'
-                : 'Start Bhai to use chat, channels and automations.';
+                : 'Bhai is off right now.';
             sub.style.color = status === 'crashed' || status === 'failed' ? 'var(--accent-danger)' : '';
             if (status === 'failed') showToast('Bhai crashed repeatedly and stopped. Press Start to try again.', true);
             if (!isRunning && status !== 'crashed' && status !== 'failed') showSignInHint();
 
-            document.getElementById('statusOnline').style.display = isRunning ? 'block' : 'none';
-            document.getElementById('statusOffline').style.display = isRunning ? 'none' : 'block';
+            document.getElementById('statusOnline').style.display = isRunning ? '' : 'none';
+            document.getElementById('statusOffline').style.display = isRunning ? 'none' : '';
             document.getElementById('startBtn').disabled = isRunning;
             document.getElementById('stopBtn').disabled = !isRunning;
-            document.getElementById('chatBtn').style.display = isRunning ? '' : 'none';
-            document.getElementById('startBtn').style.display = isRunning ? 'none' : '';
+            document.getElementById('dashAsk').style.display = isRunning ? '' : 'none';
+            document.getElementById('dashStart').style.display = isRunning ? 'none' : '';
             document.getElementById('stopBtn').style.display = isRunning ? '' : 'none';
 
-            // Live stats
-            document.getElementById('statsGrid').style.display = isRunning ? '' : 'none';
             if (isRunning && !statsInterval) {
                 refreshStats();
                 statsInterval = setInterval(refreshStats, 5000);
@@ -1835,14 +1740,51 @@
 
         async function refreshStats() {
             updateConnectionStatus();
+            loadRecentChats();
+            loadUpcoming();
+            loadActivity();
+        }
+
+        async function askFromDashboard() {
+            const input = document.getElementById('dashAskInput');
+            const text = input.value.trim();
+            if (!text) return;
+            atlas.askBhai(text);
+            input.value = '';
+        }
+
+        async function loadActivity() {
             try {
-                const stats = await atlas.getStats();
-                if (!stats) return;
-                countTo(document.getElementById('statMessages'), stats.messagesHandled);
-                countTo(document.getElementById('statMemories'), stats.memoryCount);
-                loadRecentChats();
-                loadUpcoming();
-            } catch { /* stats not available yet */ }
+                const items = (await atlas.getActivity()) || [];
+                document.getElementById('didToday').hidden = items.length === 0;
+                document.getElementById('didList').replaceChildren(...items.map(it => dashRow(it.text, new Date(it.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))));
+            } catch { /* non-fatal */ }
+        }
+
+        // Needs you: only what the owner has to act on (a channel down, credits low).
+        const needs = { channels: [], credits: null };
+        function renderNeeds() {
+            const rows = [...needs.channels, needs.credits].filter(Boolean);
+            document.getElementById('needsYou').hidden = rows.length === 0;
+            document.getElementById('needsList').replaceChildren(...rows.map(n => {
+                const row = dashRow(n.text, n.action);
+                row.classList.remove('static');
+                row.addEventListener('click', () => switchTab(n.tab));
+                return row;
+            }));
+        }
+
+        function dashRow(text, when) {
+            const row = document.createElement('div');
+            row.className = 'recent-row static';
+            const title = document.createElement('span');
+            title.className = 'recent-title';
+            title.textContent = text;
+            const w = document.createElement('span');
+            w.className = 'recent-when';
+            w.textContent = when;
+            row.append(title, w);
+            return row;
         }
 
         // Bot log handler - only show errors as toast, logs are saved to file by main process
@@ -3210,48 +3152,18 @@
             loadAccountInfo();
         }
 
-        let lastKnownCredits = null;
         let creditRefreshInterval = null;
 
         async function refreshCreditDisplay() {
             try {
                 const info = await atlas.getAccountInfo();
-                if (info && info.signedIn) {
-                    const card = document.getElementById('creditStatCard');
-                    card.style.display = '';
-                    const credits = info.ai_credits ?? 0;
-                    const creditEl = document.getElementById('statCredits');
-
-                    // Animate if credits changed
-                    if (lastKnownCredits !== null && credits !== lastKnownCredits) {
-                        creditEl.classList.add('credit-changed');
-                        setTimeout(() => creditEl.classList.remove('credit-changed'), 500);
-                    }
-
-                    // Format with decimal if fractional
-                    creditEl.textContent = Number.isInteger(credits) ? credits : credits.toFixed(1);
-                    lastKnownCredits = credits;
-
-                    // Show warning if low
-                    if (credits < 10 && credits > 0) {
-                        card.classList.add('low-credits');
-                    } else if (credits <= 0) {
-                        card.classList.add('no-credits');
-                    } else {
-                        card.classList.remove('low-credits', 'no-credits');
-                    }
-                }
+                if (!info || !info.signedIn) return;
+                const credits = info.ai_credits;
+                needs.credits = typeof credits !== 'number' || credits >= 10 ? null
+                    : credits <= 0 ? { text: 'Out of AI credits', action: 'Account', tab: 'account' }
+                    : { text: `AI credits are running low: ${Number.isInteger(credits) ? credits : credits.toFixed(1)} left`, action: 'Account', tab: 'account' };
+                renderNeeds();
             } catch { /* */ }
-        }
-
-        async function refreshCredits() {
-            const btn = document.querySelector('.credit-refresh-btn');
-            if (btn) {
-                btn.classList.add('spinning');
-                setTimeout(() => btn.classList.remove('spinning'), 1000);
-            }
-            await refreshCreditDisplay();
-            showToast('Credits refreshed');
         }
 
         function startCreditAutoRefresh() {
@@ -3892,39 +3804,30 @@
         async function updateConnectionStatus() {
             try {
                 const { status } = await atlas.getBotStatus();
-                const container = document.getElementById('connectionStatus');
 
                 if (status !== 'running') {
-                    container.style.display = 'none';
+                    needs.channels = [];
+                    renderNeeds();
                     return;
                 }
 
                 const { label } = await atlas.getOverlayHotkey();
                 document.getElementById('chatShortcut').textContent = label;
 
-                renderDashChannels(await atlas.getChannelStatuses(), label);
+                renderDashChannels(await atlas.getChannelStatuses());
             } catch { /* */ }
         }
 
         // One chip per channel the bot reported on (set up), lit once it's connected.
         const DASH_CHANNELS = { telegram: 'Telegram', whatsapp: 'WhatsApp', discord: 'Discord', slack: 'Slack', matrix: 'Matrix', email: 'Email' };
-        function renderDashChannels(statuses, label) {
-            const box = document.getElementById('connectionStatus');
+        function renderDashChannels(statuses) {
             const shown = Object.keys(DASH_CHANNELS).filter(k => ['connected', 'connecting', 'disconnected'].includes(statuses?.[k]));
-            const trouble = shown.filter(k => statuses[k] !== 'connected');
-            box.replaceChildren(...trouble.map(k => {
-                const chip = document.createElement('div');
-                chip.className = 'connection-item';
-                chip.innerHTML = '<span class="connection-dot"></span><span class="connection-label"></span>';
-                chip.lastChild.textContent = `${DASH_CHANNELS[k]} ${statuses[k] === 'connecting' ? 'is connecting…' : 'is disconnected'}`;
-                return chip;
-            }));
-            box.style.display = trouble.length ? 'flex' : 'none';
-            label = label || document.getElementById('chatShortcut').textContent;
+            needs.channels = shown.filter(k => statuses[k] === 'disconnected')
+                .map(k => ({ text: `${DASH_CHANNELS[k]} is disconnected`, action: 'Fix', tab: 'channels' }));
+            renderNeeds();
             const live = shown.filter(k => statuses[k] === 'connected').map(k => k === 'email' ? 'email' : DASH_CHANNELS[k]);
             const list = live.length > 1 ? `${live.slice(0, -1).join(', ')} and ${live.at(-1)}` : live[0];
-            document.getElementById('statusOnlineSub').textContent =
-                (label ? `Press ${label} anywhere to chat` : 'Open Chat to talk to Bhai') + (list ? `, or message it on ${list}.` : '.');
+            document.getElementById('statusOnlineSub').textContent = list ? `Bhai is on, and answering on ${list}.` : 'Bhai is on.';
         }
 
         // ── Initial Load ──────────────────────────────
@@ -3937,6 +3840,7 @@
             } catch { /* */ }
             loadRecentChats(); // local history: shown even while Bhai is stopped
             loadUpcoming();
+            loadActivity();
 
             try {
                 const info = await atlas.getAppInfo();

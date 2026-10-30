@@ -2468,6 +2468,26 @@ function registerIPC() {
     }
 
     // Overlay IPC — auto-show overlay from preload (e.g. research completion)
+    // The dashboard's ask box: open chat and send what was typed there.
+    ipcMain.on("overlay:ask", (_, text) => {
+        const t = String(text || "").trim().slice(0, 4000);
+        if (!t) return;
+        showOverlay();
+        if (!overlayWindow || overlayWindow.isDestroyed()) return;
+        const wc = overlayWindow.webContents;
+        let tries = 0;
+        // The chat page may still be loading (or waiting on the bot): retry ~20s.
+        const fill = () => wc.executeJavaScript(`(function (t) {
+            var i = document.getElementById('input');
+            if (!i || i.disabled) return false;
+            i.value = t;
+            i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            return true;
+        })(${JSON.stringify(t)})`).catch(() => false)
+            .then((ok) => { if (!ok && ++tries < 60 && !wc.isDestroyed()) setTimeout(fill, 350); });
+        setTimeout(fill, 200);
+    });
+    ipcMain.handle("dash:activity", () => require("./activity").doneToday(path.join(DATA_DIR, "audit.jsonl")));
     ipcMain.on("overlay:show", () => {
         showOverlay();
     });

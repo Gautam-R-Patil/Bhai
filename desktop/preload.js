@@ -109,6 +109,8 @@ contextBridge.exposeInMainWorld("atlas", {
     // ── Chats (chat bar history) ──────────────
     listChats: () => ipcRenderer.invoke("chats:list"),
     getUpcoming: () => ipcRenderer.invoke("schedule:upcoming"),
+    getActivity: () => ipcRenderer.invoke("dash:activity"),
+    askBhai: (text) => ipcRenderer.send("overlay:ask", text),
     getChat: (id) => ipcRenderer.invoke("chats:get", id),
     clearChats: () => ipcRenderer.invoke("chats:clear"),
     onGoogleOAuthSuccess: (callback) => {
