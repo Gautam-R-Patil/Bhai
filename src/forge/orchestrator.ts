@@ -13,7 +13,7 @@ import {
     getPlanModeState,
 } from "../agents/plan-mode.js";
 import { ownerApproved } from "../security/consent.js";
-import { getRegistryRef } from "../tools/create-tool.js";
+import { getRegistryRef, registerDynamicTool } from "../tools/create-tool.js";
 import { parseCapabilities, type Capabilities } from "./capabilities.js";
 import {
     closeLibrary,
@@ -493,24 +493,7 @@ export async function approveDynamicTool(
         return { ok: false, error: `install failed: ${(err as Error).message}` };
     }
 
-    const registry = getRegistryRef();
-    if (registry) {
-        const handler = async (input: Record<string, unknown>) => {
-            const res = await invokePersistedTool(slug, input);
-            return JSON.stringify(res);
-        };
-        registry.set(slug, {
-            schema: {
-                type: "function",
-                function: {
-                    name: slug,
-                    description: `[Dynamic — sandboxed] ${manifest.description}`,
-                    parameters: manifest.parametersSchema,
-                },
-            },
-            handler,
-        });
-    }
+    registerPersisted(slug, manifest);
     emitForgeEvent({ event: "tool_approved", ts: Date.now(), slug } as never);
     // Return to act mode so the agent can use the newly-approved tool.
     if (getPlanModeState().mode === "awaiting_dynamic_tool_approval") {
@@ -519,6 +502,21 @@ export async function approveDynamicTool(
         pm.exitPlanMode();
     }
     return { ok: true, toolName: slug };
+}
+
+/** Make an approved persisted tool callable; it runs in the sandbox supervisor. */
+function registerPersisted(slug: string, manifest: PersistedToolManifest): void {
+    registerDynamicTool(slug, {
+        schema: {
+            type: "function",
+            function: {
+                name: slug,
+                description: `[Dynamic — sandboxed] ${manifest.description}`,
+                parameters: manifest.parametersSchema,
+            },
+        },
+        handler: async (input) => JSON.stringify(await invokePersistedTool(slug, input)),
+    });
 }
 
 export async function revokeDynamicTool(slug: string): Promise<void> {
@@ -564,7 +562,6 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
     }
     let registered = 0;
     let archived = 0;
-    const registry = getRegistryRef();
     for (const slug of entries) {
         if (slug === "_failed") continue;
         // Skip non-slug-shaped names (.DS_Store, .tmp, foo-bar, etc.).
@@ -626,23 +623,7 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
             }
             continue;
         }
-        if (registry) {
-            const handler = async (input: Record<string, unknown>) => {
-                const res = await invokePersistedTool(slug, input);
-                return JSON.stringify(res);
-            };
-            registry.set(slug, {
-                schema: {
-                    type: "function",
-                    function: {
-                        name: slug,
-                        description: `[Dynamic — sandboxed] ${manifest.description}`,
-                        parameters: manifest.parametersSchema,
-                    },
-                },
-                handler,
-            });
-        }
+        registerPersisted(slug, manifest);
         try {
             await reinstallPersistedTool(slug);
         } catch (err) {

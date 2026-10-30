@@ -34,6 +34,18 @@ export function getRegistryRef(): Map<string, ToolDefinition> | null {
 // ── Tracked dynamic tool names for listing ───────────────
 const dynamicToolNames = new Set<string>();
 
+/** Register a runtime-made tool so list_dynamic_tools and the tool router see it. */
+export function registerDynamicTool(name: string, def: ToolDefinition): void {
+    if (!registryRef) return;
+    registryRef.set(name, def);
+    dynamicToolNames.add(name);
+}
+
+/** Schemas of the dynamic tools still registered (revoke removes them). */
+export function getDynamicToolSchemas(): ChatCompletionTool[] {
+    return [...dynamicToolNames].flatMap((n) => registryRef?.get(n)?.schema ?? []);
+}
+
 // ── Persisted-handler integrity key (F8) ──────────────────
 //
 // Threat: a malicious actor (or another tool) that can write to
@@ -417,7 +429,7 @@ export const createTool: ToolDefinition = {
                         // sandboxed registration on approve_dynamic_tool).
                         if (result.handlerCode && registryRef && !registryRef.has(result.slug)) {
                             const sessionHandler = buildHandler(result.handlerCode);
-                            registryRef.set(result.slug, {
+                            registerDynamicTool(result.slug, {
                                 schema: {
                                     type: "function",
                                     function: {
@@ -429,7 +441,6 @@ export const createTool: ToolDefinition = {
                                 },
                                 handler: sessionHandler,
                             });
-                            dynamicToolNames.add(result.slug);
                         }
                         return JSON.stringify({
                             success: true,
@@ -504,9 +515,7 @@ export const createTool: ToolDefinition = {
         };
 
         // Register
-        const toolDef: ToolDefinition = { schema, handler };
-        registryRef.set(name, toolDef);
-        dynamicToolNames.add(name);
+        registerDynamicTool(name, { schema, handler });
 
         console.log(`🔧 Dynamic tool created: ${name}${persistent ? " (persistent)" : " (session)"}`);
 
@@ -649,8 +658,7 @@ export async function loadDynamicTools(): Promise<void> {
                 },
             };
 
-            registryRef.set(name, { schema, handler });
-            dynamicToolNames.add(name);
+            registerDynamicTool(name, { schema, handler });
             loaded++;
         } catch (err) {
             console.error(`⚠️ Failed to load dynamic tool "${file}":`, (err as Error).message);

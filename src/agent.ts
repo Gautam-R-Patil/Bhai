@@ -4087,6 +4087,9 @@ PLAN:`,
         // osStateMutated; that's the right semantics because a *failed* click
         // can still leave the UI in a half-changed state we need to verify.
         recordBatch(batchResults);
+        // A tool made or turned on this batch must be offered next iteration.
+        if (batchResults.some((r) => !r.isError && (r.fnName === "create_tool" || r.fnName === "approve_dynamic_tool")))
+            turnToolSelection = undefined;
 
         // Circuit breaker: tool calls completed = progress
         const batchHasSuccess = batchResults.some((r) => !r.isError);

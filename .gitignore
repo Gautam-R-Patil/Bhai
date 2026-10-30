@@ -143,6 +143,7 @@ desktop/hostinger-upload/
 !src/tools/coding/walkthrough.test.ts
 !src/tools/coding/demo-project.test.ts
 !src/tools/forge-approval.test.ts
+!src/forge/__tests__/dynamic-registry.test.ts
 # Session 2026-10-28: security, consent, Site Skills, computer use, proactive, memory
 !src/security/loopback.test.ts
 !src/security/tool-access.test.ts

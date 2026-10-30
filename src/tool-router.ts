@@ -38,6 +38,7 @@ import {
     getPreferredTools,
     initAnalytics,
 } from "./tool-router-analytics.js";
+import { getDynamicToolSchemas } from "./tools/create-tool.js";
 import { getToolSchemas } from "./tools/index.js";
 import { extractJSON } from "./utils/json-extract.js";
 
@@ -1125,7 +1126,8 @@ export async function initToolRouter(): Promise<void> {
                 const mcpEmbeddingResults = await embedBatch(mcpDescriptions);
 
                 for (let i = 0; i < mcpSchemas.length; i++) {
-                    mcpToolEmbeddings.set(mcpSchemas[i].function.name, mcpEmbeddingResults[i]);
+                    const { name, description } = mcpSchemas[i].function;
+                    mcpToolEmbeddings.set(`${name}\n${description ?? ""}`, mcpEmbeddingResults[i]);
                 }
             }
 
@@ -1803,8 +1805,10 @@ export async function selectTools(opts: {
         }
     }
 
-    // ── Include relevant MCP tools ──
-    const mcpSchemas = getMCPToolSchemas();
+    // ── Include relevant MCP and runtime-made (Forge) tools ──
+    const mcpSchemas = [...getMCPToolSchemas(), ...getDynamicToolSchemas()].filter(
+        (t) => !selectedToolNames.has(t.function.name),
+    );
     if (mcpSchemas.length > 0) {
         if (embeddingsReady && selectedSchemas.length < getMaxToolsTotal()) {
             try {
@@ -1814,11 +1818,13 @@ export async function selectTools(opts: {
 
                 for (const mcpTool of mcpSchemas) {
                     const toolName = mcpTool.function.name;
-                    let mcpEmb = mcpToolEmbeddings.get(toolName);
+                    // Keyed by description too, so a re-created tool re-embeds.
+                    const embKey = `${toolName}\n${mcpTool.function.description ?? ""}`;
+                    let mcpEmb = mcpToolEmbeddings.get(embKey);
                     if (!mcpEmb) {
                         const { embedText } = await import("./memory/embeddings.js");
                         mcpEmb = await embedText(mcpTool.function.description || toolName);
-                        mcpToolEmbeddings.set(toolName, mcpEmb);
+                        mcpToolEmbeddings.set(embKey, mcpEmb);
                     }
                     mcpScored.push({ schema: mcpTool, score: cosineSimilarity(messageEmb, mcpEmb) });
                 }
