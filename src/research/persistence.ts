@@ -174,6 +174,30 @@ export async function deleteResearchState(researchId: string): Promise<void> {
 }
 
 // ── Memory Integration ───────────────────────
+
+const words = (t: string) => new Set(t.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
+
+/** Strong then moderate findings, skipping any that mostly repeat one already picked. */
+export function pickMemorableFindings(findings: StructuredFinding[], max: number): StructuredFinding[] {
+    const picked: StructuredFinding[] = [];
+    const seen: Set<string>[] = [];
+    for (const level of ["strong", "moderate"]) {
+        for (const f of findings) {
+            if (picked.length >= max) return picked;
+            if (f.confidence !== level) continue;
+            const w = words(f.text);
+            const repeats = seen.some((s) => {
+                let shared = 0;
+                for (const x of w) if (s.has(x)) shared++;
+                return shared / Math.max(1, Math.min(w.size, s.size)) >= 0.6;
+            });
+            if (repeats) continue;
+            picked.push(f);
+            seen.push(w);
+        }
+    }
+    return picked;
+}
 // Store research findings in the memory system so the agent can answer
 // follow-up questions about the research in future conversations.
 
@@ -196,31 +220,15 @@ export async function storeResearchInMemory(
             );
         }
 
-        // Store strong findings (up to 15)
-        const strongFindings = findings
-            .filter(f => f.confidence === "strong")
-            .slice(0, 15);
-
-        for (const f of strongFindings) {
+        // The best findings, strongest first, without near-repeats: one run stored up to
+        // 25, half of them the same fact from different articles.
+        const picked = pickMemorableFindings(findings, 8);
+        for (const f of picked) {
             remember(
-                `[Research: ${topic}] ${f.text} (Source: ${f.sourceTitle})`,
+                `[Research: ${topic}] ${f.text}${f.confidence === "strong" ? ` (Source: ${f.sourceTitle})` : ""}`,
                 "research",
                 `research,${topic.substring(0, 30)},${f.category}`,
-                7,
-            );
-        }
-
-        // Store moderate findings (up to 10)
-        const moderateFindings = findings
-            .filter(f => f.confidence === "moderate")
-            .slice(0, 10);
-
-        for (const f of moderateFindings) {
-            remember(
-                `[Research: ${topic}] ${f.text}`,
-                "research",
-                `research,${topic.substring(0, 30)},${f.category}`,
-                5,
+                f.confidence === "strong" ? 7 : 5,
             );
         }
 
@@ -232,7 +240,7 @@ export async function storeResearchInMemory(
             8,
         );
 
-        console.log(`[RESEARCH] Stored ${strongFindings.length + moderateFindings.length + 2} research memories for follow-up queries`);
+        console.log(`[RESEARCH] Stored ${picked.length + 2} research memories for follow-up queries`);
     } catch (err) {
         console.warn(`[RESEARCH] Failed to store in memory:`, (err as Error).message);
     }

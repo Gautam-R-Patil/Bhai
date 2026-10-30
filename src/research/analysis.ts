@@ -483,7 +483,7 @@ Write the report with this EXACT structure:
 # Research Report: ${topic}
 
 ## Executive Summary
-(2-3 sentences. If the user's original request asked for specific actions or entities, lead with whether the report enables them.)
+(2-3 sentences that answer the question. If the original request asked for specific actions or entities, say whether the report enables them. Never describe the request itself or how the research was run.)
 
 ## Key Findings
 (Bullets organized by theme. Each bullet cites its source with the [n] numbers listed and ends with a confidence tag in parentheses: "(Verified, N sources)", "(Corroborated, 2 sources)", or "(Single-source)".)

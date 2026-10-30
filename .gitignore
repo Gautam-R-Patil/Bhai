@@ -479,3 +479,4 @@ brag-output/
 !src/proactive/sources/_shared/daily-done.test.ts
 !src/tools/web-search-claude-backup.test.ts
 !src/research/finding-filter.test.ts
+!src/research/memorable-findings.test.ts
