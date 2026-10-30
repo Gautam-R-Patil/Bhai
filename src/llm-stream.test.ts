@@ -383,3 +383,69 @@ describe("encryptedFetchStream", () => {
         expect(h.get("Authorization")).toBe("Bearer t");
     });
 });
+
+describe("readFrames hardening", () => {
+    it("a final done frame without a completion is a 502", async () => {
+        for (const done of [{ kind: "done" }, { kind: "done", completion: "x" }] as Frame[]) {
+            const lines = await encode([done]);
+            await expect(
+                readFrames(framed(streamOf(lines)), RID, { ...OPTS, onDelta: () => {} }),
+            ).rejects.toMatchObject({ status: 502 });
+        }
+    });
+
+    it("a line that grows past 16 MB is a 502, and the body is cancelled", async () => {
+        const mb = new TextEncoder().encode("x".repeat(1 << 20));
+        let pulled = 0;
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>({
+            pull(c) {
+                // 40 MB with no newline; the reader must give up near 16 MB.
+                if (++pulled > 40) c.close();
+                else c.enqueue(mb);
+            },
+            cancel() {
+                cancelled = true;
+            },
+        });
+        await expect(readFrames(framed(body), RID, { ...OPTS, onDelta: () => {} })).rejects.toMatchObject({
+            status: 502,
+        });
+        expect(cancelled).toBe(true);
+        expect(pulled).toBeLessThan(20);
+    });
+
+    it("a Stop fired inside onDelta is honoured before the next delta", async () => {
+        const lines = await encode([
+            { kind: "text", text: "a" },
+            { kind: "text", text: "b" },
+            { kind: "done", completion: COMPLETION },
+        ]);
+        const ac = new AbortController();
+        const deltas: LLMDelta[] = [];
+        const p = readFrames(framed(streamOf([lines.join("")])), RID, {
+            ...OPTS,
+            signal: ac.signal,
+            onDelta: (d) => {
+                deltas.push(d);
+                ac.abort(new Error("stopped by owner"));
+            },
+        });
+        await expect(p).rejects.toThrow("stopped by owner");
+        expect(deltas).toEqual([{ kind: "text", text: "a" }]);
+    });
+
+    it("a Stop fired inside onDelta is honoured before the next read", async () => {
+        const lines = await encode([
+            { kind: "text", text: "a" },
+            { kind: "done", completion: COMPLETION },
+        ]);
+        const ac = new AbortController();
+        const p = readFrames(framed(streamOf(lines)), RID, {
+            ...OPTS,
+            signal: ac.signal,
+            onDelta: () => ac.abort(new Error("stopped by owner")),
+        });
+        await expect(p).rejects.toThrow("stopped by owner");
+    });
+});

@@ -26,6 +26,8 @@ export type LLMDelta =
 type ReadOpts = { firstFrameMs: number; gapMs: number; signal?: AbortSignal; onDelta: (d: LLMDelta) => void };
 
 const CHAT_PATH = "/api/llm/chat";
+/** Longest unterminated line (or non-framed body) we hold before calling the stream broken. */
+const MAX_LINE = 16 * 1024 * 1024;
 
 /** The `{status, message}` error llm.ts already handles, secrets scrubbed. */
 async function httpError(status: number, raw: string): Promise<Error> {
@@ -120,9 +122,15 @@ export async function readFrames(response: Response, reqRid: string, opts: ReadO
         deadline = Date.now() + opts.gapMs;
         if (ping) return; // heartbeat: it only moved the deadline
         seenReal = true;
-        if (!final) return opts.onDelta(toDelta(frame));
-        if (frame.kind === "done") result = { completion: frame.completion as ChatCompletion };
-        else if (frame.kind === "error") {
+        if (!final) {
+            opts.signal?.throwIfAborted(); // a Stop fired inside the previous onDelta
+            return opts.onDelta(toDelta(frame));
+        }
+        if (frame.kind === "done") {
+            if (!frame.completion || typeof frame.completion !== "object")
+                throw new Error("final frame without a completion");
+            result = { completion: frame.completion as ChatCompletion };
+        } else if (frame.kind === "error") {
             throw Object.assign(new Error(String(frame.error ?? "stream error")), {
                 status: frame.status ?? 502,
                 streamError: true,
@@ -130,20 +138,35 @@ export async function readFrames(response: Response, reqRid: string, opts: ReadO
         } else throw new Error(`unexpected final frame "${String(frame.kind)}"`);
     };
 
+    const read = async () => {
+        opts.signal?.throwIfAborted();
+        const r = await next();
+        const chunk = decoder.decode(r.value, { stream: !r.done });
+        return { done: r.done, chunk };
+    };
+    const capped = () => {
+        if (buf.length > MAX_LINE) throw new Error("line too long");
+    };
+
     try {
         if (!framed) {
             for (;;) {
-                const { done, value } = await next();
-                buf += decoder.decode(value, { stream: !done });
+                const { done, chunk } = await read();
+                buf += chunk;
+                capped();
                 if (done) return await readWhole(response, buf);
             }
         }
         for (;;) {
-            const { done, value } = await next();
-            buf += decoder.decode(value, { stream: !done });
-            const lines = buf.split("\n");
-            buf = lines.pop() ?? "";
-            for (const line of lines) onLine(line);
+            const { done, chunk } = await read();
+            // Only the new chunk can hold a newline: no re-scan of a long partial line.
+            if (!chunk.includes("\n")) buf += chunk;
+            else {
+                const lines = (buf + chunk).split("\n");
+                buf = lines.pop() ?? "";
+                for (const line of lines) onLine(line);
+            }
+            capped();
             // Return at the final frame: the server still does bookkeeping before
             // it closes, and waiting for EOF could turn a paid answer into a timeout.
             if (done || result) break;
