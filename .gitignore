@@ -123,6 +123,9 @@ desktop/hostinger-upload/
 !desktop/tests/mascot-loop.test.js
 !desktop/tests/file-memo.test.js
 !desktop/tests/compile-cache.test.js
+# Session 2026-10-29: packaging track
+!desktop/tests/prune-bot-modules.test.js
+!desktop/tests/protect-source.test.js
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
 !src/tools/google-api-clients.test.ts
 !src/video-studio/util/ffmpeg-bin.test.ts

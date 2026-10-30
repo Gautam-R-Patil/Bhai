@@ -16,7 +16,8 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { execSync } = require("child_process");
+const { execSync } = require("node:child_process");
+const { pruneBotModules } = require("./prune-bot-modules.js");
 
 // Import protection modules
 let JavaScriptObfuscator;
@@ -474,6 +475,12 @@ function cleanResidues(botDir, platform) {
     return removed.length;
 }
 
+/** electron-builder's Arch enum (ia32=0, x64=1, armv7l=2, arm64=3, universal=4) as a name. */
+function archName(arch) {
+    if (typeof arch === "string") return arch;
+    return ["ia32", "x64", "armv7l", "arm64", "universal"][arch] || process.arch;
+}
+
 /**
  * Generate integrity hash for ASAR
  */
@@ -497,6 +504,8 @@ exports.default = async function afterPack(context) {
 
     const asarPath = path.join(resourcesDir, "app.asar");
     const botDir = path.join(resourcesDir, "bot");
+    const targetPlatform = context.electronPlatformName;
+    const targetArch = archName(context.arch);
 
     console.log("\n[PROTECT] ═══════════════════════════════════════");
     console.log("[PROTECT] Starting multi-layer source protection...");
@@ -526,8 +535,25 @@ exports.default = async function afterPack(context) {
     // compiled binaries). Runs after bundling so file-name listings already
     // hide the dist/ surface; this strips the rest.
     console.log("\n[PROTECT] Layer 0.5: Residue cleanup...");
-    const residueDeletions = cleanResidues(botDir, context.electronPlatformName);
+    const residueDeletions = cleanResidues(botDir, targetPlatform);
     console.log(`[PROTECT] → Removed ${residueDeletions} residue files`);
+
+    // 0.6 Production-only node_modules for the target OS/arch: what
+    // `npm ci --omit=dev` installs from the repo's package-lock.json, minus
+    // files Node never loads there (C/C++ sources, other platforms' prebuilds,
+    // browser builds, type declarations). A production package missing from
+    // the copied tree fails the build instead of shipping a broken feature.
+    console.log(`\n[PROTECT] Layer 0.6: Pruning bot/node_modules for ${targetPlatform}-${targetArch}...`);
+    const lock = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "package-lock.json"), "utf8"));
+    const prune = pruneBotModules(botDir, lock, { platform: targetPlatform, arch: targetArch });
+    if (prune.missing.length) {
+        throw new Error(
+            `bot/node_modules lacks production packages (run npm ci in the repo root): ${prune.missing.join(", ")}`,
+        );
+    }
+    console.log(
+        `[PROTECT] → Removed ${prune.removedPackages} packages and ${prune.removedFiles} files (${(prune.bytes / 1048576).toFixed(1)} MB)`,
+    );
 
     // 1. Protect bot source code (obfuscation + bytecode)
     // After bundling, only bot-bundle.mjs needs protection. If bundling failed,
@@ -700,3 +726,5 @@ exports.default = async function afterPack(context) {
     console.log("[PROTECT] Source protection complete!");
     console.log("[PROTECT] ═══════════════════════════════════════\n");
 };
+
+exports.archName = archName;

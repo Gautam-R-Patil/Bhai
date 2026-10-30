@@ -77,10 +77,6 @@
                 "to": "bot/package.json"
             },
             {
-                "from": "../package-lock.json",
-                "to": "bot/package-lock.json"
-            },
-            {
                 "from": "../scripts",
                 "to": "bot/scripts",
                 "filter": [
