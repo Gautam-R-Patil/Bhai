@@ -209,11 +209,11 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 - **LSP never sends `didChange`**, so post-edit diagnostics are stale. The codebase index never refreshes after the agent's own edits. `lsp.ts:412,733`. S, high.
 - **Walkthrough summarizes the last 10 unrelated commits** while the agent is told never to commit. `walkthrough.ts:89`. S.
 - **`demo_project` misses Flask/Django/requirements.txt** and reports the wrong port when Vite bumps. `demo-project.ts:73-148`. M.
-- **Forge verifier sandbox differs from production**, and always-pass expectations are allowed. `sandbox-runner.ts`, `verifier.ts:439`. M, high.
-- **Forge lookup reuses wrong, unapproved or unregistered tools.** Dedup is never called. `orchestrator.ts:181-345`, `lookup.ts:99`. S, high.
-- **Synthesized and approved tools are never offered to the model.** They are in no router category. `tool-router.ts:1660-1860`. M, high.
+- **Forge verifier sandbox differs from production**, and always-pass expectations are allowed. `sandbox-runner.ts`, `verifier.ts:439`. M, high. *Fixed: verifier, session and persisted tools share one `(input, utils, console)` contract on one runtime; side-effect tests always fail and all-bare-`throws` suites count as self-bait. Persisted installs now pin the hash of the written handler.js.*
+- **Forge lookup reuses wrong, unapproved or unregistered tools.** Dedup is never called. `orchestrator.ts:181-345`, `lookup.ts:99`. S, high. *Fixed: a hit is reused only while its tool is registered in this process; `dedup.ts` deleted.*
+- **Synthesized and approved tools are never offered to the model.** They are in no router category. `tool-router.ts:1660-1860`. M, high. *Fixed: dynamic tools are scored like MCP tools, and a successful create/approve reselects the next iteration.*
 - **Verifier and `code_action` pass host functions into LLM code before approval** (`parseInt.constructor` is the host Function). `sandbox-runner.ts:28`, `code-action-agent.ts:35`. S, high (security).
-- **Approval message asks the user to type a function call.** `approval-gate.ts:54-91`. S.
+- **Approval message asks the user to type a function call.** `approval-gate.ts:54-91`. S. *Fixed: create_tool says to ask in plain words; approval takes the owner's own yes (`ownerApproved`); `approval-gate.ts` deleted.*
 
 ## Reliability: voice, research, security
 
