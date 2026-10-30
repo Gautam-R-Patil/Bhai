@@ -14,7 +14,8 @@ import type { LLMClient } from "./llm.js";
 import { sendOverlayNotification } from "./overlay/overlay-chat.js";
 import { getSessionToken, handleAuthError } from "./session.js";
 
-const POLL_MS = 15_000;
+// The server fetches the shared mailbox once a minute (convex/crons.ts), so polling faster finds nothing new.
+const POLL_MS = 60_000;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running = false;
 
