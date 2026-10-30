@@ -6,6 +6,7 @@
 // came from (plus a desktop notification), then polls until the check is gone
 // so the task carries on. Uses the detector from captcha.ts only — no solver.
 
+import { notifyDesktop } from "../../desktop-notify.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
 import { CAPTCHA_SOLVED_JS, type CaptchaInfo, type CaptchaType, captchaSolved, detectCaptcha } from "./captcha.js";
@@ -127,9 +128,12 @@ async function tellOwner(ask: string): Promise<string | null> {
     } catch {
         channel = null;
     }
-    import("../platform-bridge.js")
-        .then(({ showNotification }) => showNotification("Bhai needs a quick tap", ask))
-        .catch(() => {});
+    // Through the desktop app when it runs Bhai (osascript's shows up as Script Editor).
+    if (!notifyDesktop("handoff", "Bhai needs a quick tap", ask)) {
+        import("../platform-bridge.js")
+            .then(({ showNotification }) => showNotification("Bhai needs a quick tap", ask))
+            .catch(() => {});
+    }
     return channel;
 }
 

@@ -300,6 +300,11 @@
                                     <span class="pref-toggle-switch"></span>
                                 </label>
                                 <label class="pref-toggle">
+                                    <span class="pref-toggle-label">When Bhai reaches out</span>
+                                    <input type="checkbox" id="prefNotifyMessage" onchange="setPref('notifyOnMessage', this.checked)">
+                                    <span class="pref-toggle-switch"></span>
+                                </label>
+                                <label class="pref-toggle">
                                     <span class="pref-toggle-label">When an update is ready</span>
                                     <input type="checkbox" id="prefNotifyUpdate" onchange="setPref('notifyOnUpdate', this.checked)">
                                     <span class="pref-toggle-switch"></span>
@@ -3463,6 +3468,7 @@
                 document.getElementById('prefLaunchAtLogin').checked = prefs.launchAtLogin || false;
                 document.getElementById('prefNotifications').checked = prefs.notificationsEnabled !== false;
                 document.getElementById('prefNotifyTask').checked = prefs.notifyOnTask !== false;
+                document.getElementById('prefNotifyMessage').checked = prefs.notifyOnMessage !== false;
                 document.getElementById('prefNotifyUpdate').checked = prefs.notifyOnUpdate !== false;
 
                 // Advanced: sideloading

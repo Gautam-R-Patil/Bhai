@@ -28,6 +28,7 @@ import {
 import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
 import { formatStepStatus, parseStepLine } from "../step-status.js";
+import { notifyDesktop, notifyTurnEnd } from "../desktop-notify.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
 import { classifyQuery } from "../memory/classifier.js";
 import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
@@ -800,6 +801,7 @@ export function initOverlayChat(llm: LLMClient): void {
                 sendToClient(client, { type: "research_complete", text: msg });
             }
         }
+        if (isComplete && ownerClients().length > 0) notifyDesktop("done", "Research complete", msg);
     });
 
     // ── Context-Aware Placeholder ──────────────
@@ -1162,11 +1164,13 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
         });
+        if (wsIsOwner(ws)) notifyTurnEnd(interactive.text, startTime, result.stuck);
     } catch (err) {
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
         console.error("[OVERLAY] Agent error:", err);
         const errorType = categorizeError(err as Error);
         sendToClient(ws, { type: "error", text: getErrorMessage(errorType) });
+        if (wsIsOwner(ws)) notifyTurnEnd(getErrorMessage(errorType), startTime);
     }
 }
 
@@ -1239,6 +1243,7 @@ async function handleFileAttachment(
         ? `${userText}${fileContext}\n\n[SOURCE: Desktop overlay chat — file attached: ${fileName}]`
         : `[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. The user dropped a file: "${fileName}". ${isImage ? "Analyze the image and describe what you see." : `Here is its content:${fileContext}`}]`;
 
+    const startTime = Date.now();
     try {
         const onProgress = async (msg: string) => {
             sendToClient(ws, overlayProgressMessage(msg));
@@ -1279,6 +1284,7 @@ async function handleFileAttachment(
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
         });
+        if (wsIsOwner(ws)) notifyTurnEnd(interactive.text, startTime, result.stuck);
     } catch (err) {
         console.error("[OVERLAY] File attachment error:", err);
         sendToClient(ws, { type: "error", text: "Could not process the file." });
@@ -1573,6 +1579,7 @@ export async function sendOverlayNotification(message: string, opts: { requested
             sendToClient(client, { type: "research_complete", text: message });
         }
     }
+    notifyDesktop(isResearchComplete ? "done" : "proactive", isResearchComplete ? "Research complete" : "Bhai", message);
 
     // Record notification for engagement tracking
     try {

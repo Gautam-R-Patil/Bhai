@@ -1292,6 +1292,28 @@ function notifyBrokenPermission(p) {
     permsNotice.show();
 }
 
+// Bot → "##BHAI_NOTIFY##{kind,title,body}" (src/desktop-notify.ts): a finished long
+// task, a proactive message, Bhai stuck or needing a tap. A click opens the chat the
+// owner last used, where the reply is.
+const shouldNotify = require("./notify-gate").createNotifyGate((k) => store.get(k));
+let lastChatSurface = "overlay"; // "panel" once the owner chats in the app window
+function showBotNotification(note) {
+    const { Notification, BrowserWindow } = require("electron");
+    if (!Notification.isSupported() || !shouldNotify(note, !!BrowserWindow.getFocusedWindow())) return;
+    const n = new Notification({
+        title: String(note.title || "Bhai").slice(0, 80),
+        body: String(note.body).slice(0, 240),
+        icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
+    });
+    n.on("click", () => {
+        if (lastChatSurface === "panel" && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+        } else showOverlay();
+    });
+    n.show();
+}
+
 // Bhai's face on the owner's Telegram bot: set once per bot, and only while it has
 // no photo, so a picture the owner chose is never replaced.
 async function ensureTelegramAvatar(token) {
@@ -1403,6 +1425,8 @@ async function startBot() {
         ATLAS_DATA_DIR: DATA_DIR,
         // Where Settings writes .user-personality.json (personality-sync.ts).
         ATLAS_USER_DATA_DIR: app.getPath("userData"),
+        // The bot sends native notifications through us (showBotNotification).
+        ATLAS_DESKTOP_NOTIFY: "1",
         NODE_ENV: "production",
         // V8 code cache for the 23MB bundle: a warm start skips re-compiling it.
         NODE_COMPILE_CACHE: path.join(app.getPath("userData"), "v8-cache"),
@@ -1469,6 +1493,8 @@ async function startBot() {
             }
             const cvv = line.match(/^##BHAI_VAULT_CVV##(\{.*\})\s*$/);
             if (cvv) { try { askCvv(JSON.parse(cvv[1])); } catch { /* malformed line */ } continue; }
+            const note = line.match(/^##BHAI_NOTIFY##(\{.*\})\s*$/);
+            if (note) { try { showBotNotification(JSON.parse(note[1])); } catch { /* malformed line */ } continue; }
             const perms = line.match(/^##ATLAS_PERMS##(\{.*\})\s*$/);
             if (perms) { try { notifyBrokenPermission(JSON.parse(perms[1])); } catch { /* malformed line */ } continue; }
             const m = line.match(/^##BHAI_BUDDY##(\{.*\})\s*$/);
@@ -2227,6 +2253,7 @@ function showOverlay() {
     }
 
     hideBuddy(); // the overlay has its own mascot
+    lastChatSurface = "overlay";
 
     // Create lazily
     if (!overlayWindow || overlayWindow.isDestroyed()) {
@@ -2534,6 +2561,7 @@ function registerIPC() {
         };
     });
     ipcMain.handle("chat:send", async (_, { chat, text, file } = {}) => {
+        lastChatSurface = "panel";
         const t = String(text || "").trim().slice(0, 8000);
         const hasFile = file && typeof file.name === "string" && typeof file.base64 === "string" && file.base64.length < 28_000_000;
         if ((!t && !hasFile) || typeof chat !== "string") return { ok: false, error: "Nothing to send" };
@@ -2567,24 +2595,6 @@ function registerIPC() {
         }
         return { ok: false, error: "live-voice not available" };
     });
-    ipcMain.on("overlay:notify", (_, msg) => {
-        // Sent by the bot-served overlay page: plain short strings only.
-        const title = typeof msg?.title === "string" ? msg.title.slice(0, 80) : "";
-        const body = typeof msg?.body === "string" ? msg.body.slice(0, 240) : "";
-        const { Notification } = require("electron");
-        // The only sender today is "research complete" — a task notice.
-        if (store.get("notificationsEnabled") === false || store.get("notifyOnTask") === false) return;
-        if (Notification.isSupported()) {
-            // Windows silently drops notifications with an empty body — always provide one
-            const safeBody = body || "Bhai notification";
-            new Notification({
-                title: title || "Bhai",
-                body: safeBody,
-                icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
-            }).show();
-        }
-    });
-
     // Open auth window from renderer. Short-circuits if a valid session already exists.
     ipcMain.handle("window:openAuth", () => {
         const existing = loadAccountSession();

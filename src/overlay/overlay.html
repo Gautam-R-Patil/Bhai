@@ -3334,14 +3334,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           activeTasks.delete(rid);
           updateTaskDrawer();
           announceToSR('Deep research completed');
-          // Auto-show overlay window when research completes
-          if (window.atlasOverlay && window.atlasOverlay.showWindow) {
-            window.atlasOverlay.showWindow();
-          }
-          // Also send a native notification
-          if (window.atlasOverlay && window.atlasOverlay.notify) {
-            window.atlasOverlay.notify('Research Complete', msg.text || 'Your deep research has finished.');
-          }
+          // The bot's native notification says it's done; clicking it opens this window.
           // Show the result in the overlay as a persistent notification (no auto-dismiss)
           if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
           notifText.innerHTML = renderMd(msg.text);
