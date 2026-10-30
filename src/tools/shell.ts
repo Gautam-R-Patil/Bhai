@@ -185,7 +185,13 @@ async function execCommand(
             maxBuffer: 1024 * 1024,
         });
     }
-    return execFileAsync(command, args, {
+    // With shell: true Node joins command and args with bare spaces, so an argument with
+    // spaces fell apart: bash -c "set -e; zip …" ran as \`bash -c set -e; zip …\` — a bare
+    // \`set\`, which printed Bhai's whole environment into the tool result. Each arg is one
+    // literal argument (as the schema says); shell syntax belongs in \`command\`.
+    const q = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
+    const line = args.length ? `${command} ${args.map(q).join(" ")}` : command;
+    return execFileAsync(line, [], {
         cwd: options.cwd,
         timeout: options.timeout,
         maxBuffer: 1024 * 1024,
@@ -209,7 +215,8 @@ export const shellExec: ToolDefinition = {
                     args: {
                         type: "array",
                         items: { type: "string" },
-                        description: "Command arguments",
+                        description:
+                            "Arguments, each passed as one literal argument (quoted). Put pipes, globs, redirects or && in command instead.",
                     },
                     cwd: { type: "string", description: "Working directory (optional)" },
                     timeout: { type: "number", description: "Timeout in ms (default 30000)" },
