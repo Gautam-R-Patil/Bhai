@@ -107,6 +107,7 @@ desktop/hostinger-upload/
 !src/voice/live/prompt-builder.test.ts
 !src/owner-dm-private.test.ts
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
+!src/tools/google-api-clients.test.ts
 !src/tools/__tests__/shell-kill-pid.test.ts
 !src/memory/playbooks.test.ts
 !src/screen/grid-overlay.test.ts

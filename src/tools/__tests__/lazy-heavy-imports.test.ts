@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-// Boot-speed guard: googleapis (~0.6-1s), Baileys (~0.3s) and @slack/bolt (~0.2s)
+// Boot-speed guard: the Google API clients, Baileys (~0.3s) and @slack/bolt (~0.2s)
 // must not load just because their channel/tool modules are imported at boot.
 // Each mock factory runs only if something actually imports the package.
 
@@ -10,6 +10,11 @@ import { describe, expect, it, vi } from "vitest";
 
 const loaded = vi.hoisted(() => [] as string[]);
 vi.mock("googleapis", () => { loaded.push("googleapis"); return {}; });
+vi.mock("@googleapis/gmail", () => { loaded.push("@googleapis/gmail"); return {}; });
+vi.mock("@googleapis/calendar", () => { loaded.push("@googleapis/calendar"); return {}; });
+vi.mock("@googleapis/tasks", () => { loaded.push("@googleapis/tasks"); return {}; });
+vi.mock("@googleapis/oauth2", () => { loaded.push("@googleapis/oauth2"); return {}; });
+vi.mock("@googleapis/youtube", () => { loaded.push("@googleapis/youtube"); return {}; });
 vi.mock("@whiskeysockets/baileys", () => { loaded.push("baileys"); return {}; });
 vi.mock("@slack/bolt", () => { loaded.push("slack-bolt"); return {}; });
 vi.mock("imapflow", () => { loaded.push("imapflow"); return {}; });

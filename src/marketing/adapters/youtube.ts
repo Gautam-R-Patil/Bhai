@@ -29,8 +29,8 @@ export async function postYouTube(
   const { client_id, client_secret } = creds.installed ?? creds.web ?? {};
   if (!client_id || !client_secret) throw new Error("Invalid Google credentials file");
 
-  const { google } = await import("googleapis"); // lazy: ~0.6-1s import, only needed to post
-  const oauth2 = new google.auth.OAuth2(client_id, client_secret);
+  const { auth, youtube: youtubeApi } = await import("@googleapis/youtube"); // lazy: only needed to post
+  const oauth2 = new auth.OAuth2(client_id, client_secret);
   const tokenFiles = existsSync(TOKEN_DIR)
     ? readdirSync(TOKEN_DIR).filter((f) => f.endsWith(".json"))
     : [];
@@ -38,7 +38,7 @@ export async function postYouTube(
   const tokens = JSON.parse(readFileSync(join(TOKEN_DIR, tokenFiles[0]), "utf-8"));
   oauth2.setCredentials(tokens);
 
-  const youtube = google.youtube({ version: "v3", auth: oauth2 });
+  const youtube = youtubeApi({ version: "v3", auth: oauth2 });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const res = await (youtube.videos.insert as (opts: unknown) => Promise<{ data: { id?: string } }>)({
