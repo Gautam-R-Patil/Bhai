@@ -113,3 +113,16 @@ it("the desktop's ##BHAI_RESUME## line is the wake signal", async () => {
     await vi.advanceTimersByTimeAsync(31_000);
     expect(fired.map((t) => new Date(t).toTimeString().slice(0, 8))).toEqual(["12:00:00"]);
 });
+
+it("a wake signal that comes a few seconds late still runs a job due after the wake", async () => {
+    const { scheduleTask, fired, cronTimersOnWake } = await load();
+    await scheduleTask.handler({ expression: "0 * * * *", description: "d", action: "a" });
+    await vi.advanceTimersByTimeAsync(58 * 60_000 + 10_000); // 10:58:40, a 60 s step armed at 10:58:30
+    vi.setSystemTime(new Date(2026, 9, 30, 11, 59, 58)); // woke 2 s before 12:00
+    await vi.advanceTimersByTimeAsync(6_000); // the signal comes 6 s after the wake, at 12:00:04
+    cronTimersOnWake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fired.map((t) => new Date(t).toTimeString().slice(0, 8))).toEqual(["12:00:04"]);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fired).toHaveLength(1);
+});

@@ -98,6 +98,7 @@ function armCronTimer(expression: string, run: () => void): { stop: () => void }
     let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
     let armedAt = Date.now();
+    let armedMono = performance.now(); // monotonic: stands still while the machine sleeps
     let step = 0;
     let lastRun = 0;
     // Run what is due (looking again from `from`, never at a minute that already ran), then wait for the next.
@@ -114,6 +115,7 @@ function armCronTimer(expression: string, run: () => void): { stop: () => void }
             if (next === null) return;
         }
         armedAt = now;
+        armedMono = performance.now();
         step = Math.min(next - now, 60_000);
         timer = setTimeout(wait, step);
     };
@@ -126,11 +128,13 @@ function armCronTimer(expression: string, run: () => void): { stop: () => void }
         check(slept ? now - step - 1000 : null, slept);
     };
     // The desktop says the machine just woke: check now instead of when the paused step ends.
-    // Runs from a few seconds before (the wake itself) are due; earlier ones were slept through.
+    // Runs since the wake are due (the signal can come a few seconds after it: the awake time
+    // since arming, at most the step, bounds that); earlier ones were slept through.
     const woke = () => {
         if (stopped) return;
         clearTimeout(timer);
-        check(Date.now() - 3000, true);
+        const awake = Math.min(performance.now() - armedMono, step);
+        check(Date.now() - Math.max(3000, awake + 1000), true);
     };
     wakeHooks.add(woke);
     check(null, false);
