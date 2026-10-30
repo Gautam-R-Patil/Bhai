@@ -1170,7 +1170,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         console.error("[OVERLAY] Agent error:", err);
         const errorType = categorizeError(err as Error);
         sendToClient(ws, { type: "error", text: getErrorMessage(errorType) });
-        if (wsIsOwner(ws)) notifyTurnEnd(getErrorMessage(errorType), startTime);
+        if (wsIsOwner(ws)) notifyTurnEnd(getErrorMessage(errorType), startTime, false, true);
     }
 }
 
@@ -1568,7 +1568,11 @@ export async function sendOverlayNotification(message: string, opts: { requested
     }
 
     const clients = ownerClients();
-    if (clients.length === 0) return false;
+    // Something the owner asked for (a reminder, a scheduled task) shows even with no chat window open.
+    if (clients.length === 0) {
+        if (opts.requested) notifyDesktop("reminder", "Bhai", message);
+        return false;
+    }
     const isResearchComplete =
         message.includes("Deep research complete") ||
         message.includes("research complete") ||
@@ -1579,7 +1583,8 @@ export async function sendOverlayNotification(message: string, opts: { requested
             sendToClient(client, { type: "research_complete", text: message });
         }
     }
-    notifyDesktop(isResearchComplete ? "done" : "proactive", isResearchComplete ? "Research complete" : "Bhai", message);
+    if (isResearchComplete) notifyDesktop("done", "Research complete", message);
+    else notifyDesktop(opts.requested ? "reminder" : "proactive", "Bhai", message);
 
     // Record notification for engagement tracking
     try {

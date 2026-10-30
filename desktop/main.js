@@ -1294,10 +1294,10 @@ function notifyBrokenPermission(p) {
 
 // Bot → "##BHAI_NOTIFY##{kind,title,body}" (src/desktop-notify.ts): a finished long
 // task, a proactive message, Bhai stuck or needing a tap. A click opens the chat the
-// owner last used, where the reply is.
+// owner last used, where the reply is (or `onClick`).
 const shouldNotify = require("./notify-gate").createNotifyGate((k) => store.get(k));
 let lastChatSurface = "overlay"; // "panel" once the owner chats in the app window
-function showBotNotification(note) {
+function showBotNotification(note, onClick) {
     const { Notification, BrowserWindow } = require("electron");
     if (!Notification.isSupported() || !shouldNotify(note, !!BrowserWindow.getFocusedWindow())) return;
     const n = new Notification({
@@ -1306,7 +1306,8 @@ function showBotNotification(note) {
         icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
     });
     n.on("click", () => {
-        if (lastChatSurface === "panel" && mainWindow && !mainWindow.isDestroyed()) {
+        if (onClick) onClick();
+        else if (lastChatSurface === "panel" && mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.show();
             mainWindow.focus();
         } else showOverlay();
@@ -1642,6 +1643,12 @@ async function startBot() {
             }
         }
         if (code === 78) botDownMessage = SIGN_IN_AGAIN_MSG;
+        // Down for good (gave up restarting, or signed out): say so even with no Bhai window open.
+        if (exitStatus === "failed" || code === 78) {
+            showBotNotification({ kind: "stuck", title: "Bhai stopped", body: botDownMessage }, () => {
+                if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+            });
+        }
         hideBuddy();
         for (const k of Object.keys(channelStatuses)) delete channelStatuses[k];
         // Clean up temp env

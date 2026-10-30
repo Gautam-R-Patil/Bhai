@@ -12,8 +12,9 @@ describe("bot notification gate", () => {
         expect(g({ kind: "done", body: "a" }, false)).toBe(true);
     });
 
-    it("always shows stuck and handoff, unless notifications are off", () => {
+    it("always shows reminders, stuck and handoff, unless notifications are off", () => {
         expect(gate()({ kind: "stuck", body: "a" }, true)).toBe(true);
+        expect(gate({ notifyOnMessage: false })({ kind: "reminder", body: "a" }, true)).toBe(true);
         expect(gate({ notifyOnTask: false })({ kind: "handoff", body: "a" }, true)).toBe(true);
         expect(gate({ notificationsEnabled: false })({ kind: "stuck", body: "a" }, false)).toBe(false);
     });

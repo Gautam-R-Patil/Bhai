@@ -26,6 +26,8 @@ describe("desktop notifications", () => {
         notifyTurnEnd("long", Date.now() - LONG_TURN_MS);
         notifyTurnEnd("help", Date.now(), true);
         expect(sent().map((n) => n.kind)).toEqual(["done", "stuck"]);
+        notifyTurnEnd("timed out", Date.now() - LONG_TURN_MS, false, true);
+        expect(sent()[2].title).toBe("Bhai hit a snag");
     });
 
     it("says false without the desktop app, so callers fall back", () => {

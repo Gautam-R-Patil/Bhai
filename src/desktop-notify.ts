@@ -4,7 +4,7 @@
 // "##BHAI_NOTIFY##{kind,title,body}" stdout line and the app shows it
 // (desktop/notify-gate.js decides whether, by kind, Settings and focus).
 
-export type NotifyKind = "done" | "proactive" | "stuck" | "handoff";
+export type NotifyKind = "done" | "proactive" | "reminder" | "stuck" | "handoff";
 
 /** A turn shorter than this needs no "done" notification: the owner is still looking. */
 export const LONG_TURN_MS = 15_000;
@@ -31,7 +31,7 @@ export function notifyDesktop(kind: NotifyKind, title: string, body: string): bo
 }
 
 /** The end of an owner's turn: "done" only when it ran long, "stuck" whenever Bhai needs the owner. */
-export function notifyTurnEnd(text: string, startedAt: number, stuck = false): void {
+export function notifyTurnEnd(text: string, startedAt: number, stuck = false, failed = false): void {
     if (stuck) notifyDesktop("stuck", "Bhai needs you", text);
-    else if (Date.now() - startedAt >= LONG_TURN_MS) notifyDesktop("done", "Bhai finished", text);
+    else if (Date.now() - startedAt >= LONG_TURN_MS) notifyDesktop("done", failed ? "Bhai hit a snag" : "Bhai finished", text);
 }
