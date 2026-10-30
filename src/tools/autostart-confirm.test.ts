@@ -37,3 +37,10 @@ it("shell commands that plant autostarts need it too; reading the crontab doesn'
     for (const c of ["crontab -l", "ls ~/Desktop", "cat ~/.zshrc", "echo hi > ~/notes/profile.txt"])
         expect(needs("shell_exec", { command: c }), c).toBe(false);
 });
+
+it("a signed-in fetch that writes needs the owner's OK; reads don't", () => {
+    for (const method of ["POST", "delete", "PUT", "PATCH"])
+        expect(needs("browser_batch_fetch", { urls: ["https://github.com/x"], method }), method).toBe(true);
+    for (const method of [undefined, "GET", "head"])
+        expect(needs("browser_batch_fetch", { urls: ["https://github.com/x"], method }), String(method)).toBe(false);
+});
