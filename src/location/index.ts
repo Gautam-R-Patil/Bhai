@@ -35,6 +35,10 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 const GPS_TIMEOUT_MS = 12000;
 const PROVIDER_TIMEOUT_MS = 5000;
 const SIGNIFICANT_DISTANCE_KM = 1;
+// A GPS helper that timed out (e.g. macOS never showed it the permission prompt) times out
+// again: skip it for a while instead of making every refresh wait 10s for the IP fallback.
+const GPS_BACKOFF_MS = 6 * 60 * 60 * 1000;
+let _gpsSkipUntil = 0;
 
 // ── State ────────────────────────────────────
 
@@ -58,6 +62,7 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 // ── Provider Chain Execution ─────────────────
 
 async function runProviderWithTimeout(provider: LocationProvider): Promise<LocationData | null> {
+    if (provider.name === "gps" && Date.now() < _gpsSkipUntil) return null;
     try {
         // GPS providers get a longer timeout (Swift helper needs up to 10s for permission dialog)
         const timeout = provider.name === "gps" ? GPS_TIMEOUT_MS : PROVIDER_TIMEOUT_MS;
@@ -76,6 +81,7 @@ async function runProviderWithTimeout(provider: LocationProvider): Promise<Locat
         ]);
         return location;
     } catch (err) {
+        if (provider.name === "gps" && /time/i.test((err as Error).message)) _gpsSkipUntil = Date.now() + GPS_BACKOFF_MS;
         console.warn(`[LOCATION] Provider ${provider.name} failed:`, (err as Error).message);
         return null;
     }
@@ -219,4 +225,5 @@ export function destroyLocationService(): void {
     _location = null;
     _providers = [];
     _initialized = false;
+    _gpsSkipUntil = 0;
 }
