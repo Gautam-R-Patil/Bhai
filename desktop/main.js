@@ -2583,8 +2583,15 @@ function registerIPC() {
     // the owner token never reaches the page. One socket; each send names its chat.
     let appChatWs = null;
     let appChatId = null;
-    const appChatSocket = () => new Promise((resolve, reject) => {
-        if (appChatWs && appChatWs.readyState === 1) return resolve(appChatWs);
+    let appChatConnecting = null;
+    // Callers that arrive while it connects share that connect: a second socket would
+    // forward every broadcast to the panel twice.
+    const appChatSocket = () => {
+        if (appChatWs && appChatWs.readyState === 1) return Promise.resolve(appChatWs);
+        appChatConnecting ??= connectAppChat().finally(() => { appChatConnecting = null; });
+        return appChatConnecting;
+    };
+    const connectAppChat = () => new Promise((resolve, reject) => {
         let tok = "";
         try { tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim(); } catch { /* bot not up yet */ }
         if (!tok) return reject(new Error("Bhai isn't running"));
@@ -2678,6 +2685,8 @@ function registerIPC() {
                 updatedAt: e.updatedAt, completedAt: e.completedAt, durationSec: e.durationSec,
                 sourcesProcessed: e.sourcesProcessed, findingsCount: e.findingsCount, error: e.error,
                 hasReport: !!e.reportFile,
+                // Continue / Dig deeper need its checkpoint; only the newest finished ones keep it.
+                resumable: fs.existsSync(path.join(DATA_DIR, "research", `${e.id}.state.json`)),
             })));
     ipcMain.handle("research:report", (_, id) => {
         const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);

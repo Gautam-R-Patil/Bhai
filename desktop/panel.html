@@ -1959,7 +1959,13 @@
         atlas.onChatEvent(({ msg }) => {
             if (msg && msg.type === 'research_action_result') {
                 if (msg.error) showToast(msg.error, true);
-                else if (msg.action === 'start' && msg.id) researchOpenId = msg.id;
+                else if (msg.action === 'start') {
+                    // Only now did Bhai take it: a refused start keeps the topic and basis to retry.
+                    if (msg.id) researchOpenId = msg.id;
+                    document.getElementById('researchTopic').value = '';
+                    setResearchBasis(null);
+                    showToast('Research started');
+                }
                 loadResearch();
             } else if (msg && msg.type === 'research_complete') loadResearch();
         });
@@ -3435,7 +3441,9 @@
                 toast.classList.add('error');
             }
             toast.classList.add('visible');
-            setTimeout(() => {
+            // An earlier toast's timer would otherwise hide this one early.
+            clearTimeout(showToast.timer);
+            showToast.timer = setTimeout(() => {
                 toast.classList.remove('visible');
                 toast.classList.remove('error');
             }, isError ? 5000 : 3500); // Errors show longer
@@ -4943,8 +4951,9 @@
                 actions.appendChild(b);
             };
             if (r.status === 'running') button('Stop', () => researchAction({ action: 'cancel', id: r.id }));
-            if (r.status === 'interrupted' || r.status === 'failed') button('Continue', () => researchAction({ action: 'resume', id: r.id }), true);
-            if (r.status === 'completed') button('Dig deeper', () => setResearchBasis(r), true);
+            // Both need the saved sources, which only the newest finished researches keep.
+            if (r.resumable && (r.status === 'interrupted' || r.status === 'failed')) button('Continue', () => researchAction({ action: 'resume', id: r.id }), true);
+            if (r.resumable && r.status === 'completed') button('Dig deeper', () => setResearchBasis(r), true);
             if (r.hasReport) button('Open in app', () => atlas.research.open(r.id));
             head.append(h, meta, actions);
             const body = document.createElement('div');
@@ -4956,7 +4965,7 @@
                 if (researchOpenId !== r.id) return; // another one was opened meanwhile
                 // Links stay text until clicked: a click opens a source only if it's in this report.
                 body.innerHTML = text
-                    ? renderMarkdown(text).replace(/https?:\/\/[^\s<>"']+/g, (u) => `<a href="#" class="research-link">${u}</a>`)
+                    ? linkifyReport(renderMarkdown(text))
                     : '<p class="chats-empty">The report file is gone.</p>';
                 body.onclick = (e) => {
                     const a = e.target.closest('a.research-link');
@@ -4966,6 +4975,22 @@
                 };
             }
             pane.replaceChildren(head, body);
+        }
+
+        // Report links, without the sentence around them: "(see https://x.com/a)." links
+        // https://x.com/a. A link stops at an escaped quote or bracket, and keeps a ')' only
+        // when it opened one (Wikipedia-style URLs).
+        function linkifyReport(html) {
+            return html.replace(/https?:\/\/(?:(?!&(?:gt|lt|quot|#39);)[^\s<>"'])+/g, (u) => {
+                let url = u;
+                for (;;) {
+                    const c = url.slice(-1);
+                    const unmatched = c === ')' && url.split('(').length < url.split(')').length;
+                    if (!'.,;:!?_*]'.includes(c) && !unmatched) break;
+                    url = url.slice(0, -1);
+                }
+                return `<a href="#" class="research-link">${url}</a>${u.slice(url.length)}`;
+            });
         }
 
         async function researchAction(a) {
@@ -4988,10 +5013,7 @@
             const topic = input.value.trim();
             if (!topic) return input.focus();
             const res = await atlas.research.action({ action: 'start', topic, profile: document.getElementById('researchProfile').value, buildsOn: researchBasis || undefined }).catch((err) => ({ ok: false, error: err.message }));
-            if (!res.ok) return showToast(res.error || "Couldn't reach Bhai", true);
-            input.value = '';
-            setResearchBasis(null);
-            showToast('Research started');
+            if (!res.ok) showToast(res.error || "Couldn't reach Bhai", true);
         }
 
         // Simple markdown to HTML converter

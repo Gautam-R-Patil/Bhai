@@ -2989,6 +2989,13 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       }
       let activeTasks = new Map(); // taskId -> { name, type, progress, phase }
       let inboxItems = new Map();  // intentId -> wire item (status "pending" only)
+      const turnRunning = () => waiting || icon.classList.contains('thinking');
+      // With no turn running, the progress card can only be holding a research's status.
+      function clearResearchStatus() {
+        if (turnRunning()) return;
+        progress.classList.remove('visible');
+        progress.innerHTML = '';
+      }
 
       // ── Screen Reader Announcement ──
       function announceToSR(text) {
@@ -3403,6 +3410,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const tid = msg.taskId || msg.id;
           if (tid) {
             const taskName = (activeTasks.get(tid) || {}).name || 'Task';
+            // A stopped or failed research gets no research_complete: its last status goes here.
+            if ((activeTasks.get(tid) || {}).type === 'research') clearResearchStatus();
             activeTasks.delete(tid);
             updateTaskDrawer();
             announceToSR(msg.type === 'task_complete' ? `${taskName} completed` : `${taskName} cancelled`);
@@ -3489,6 +3498,13 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         else if (msg.type === 'contract') {
           // Kept for the whole turn (cleared when the next one starts), unlike the progress card.
           contract.textContent = msg.text || '';
+        }
+        else if (msg.type === 'research_status') {
+          // A background research's round: shown only while no turn is using the card.
+          if (msg.text && !turnRunning()) {
+            progress.innerHTML = `<div class="progress-card"><span class="progress-label">${esc(msg.text)}</span><div class="progress-dots"><span></span><span></span><span></span></div></div>`;
+            progress.classList.add('visible');
+          }
         }
         else if (msg.type === 'progress') {
           // During a live turn its line says what's happening; a progress line only fills in
@@ -3622,6 +3638,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const rid = msg.taskId || msg.id || 'research';
           activeTasks.delete(rid);
           updateTaskDrawer();
+          clearResearchStatus();
           announceToSR('Deep research completed');
           // The bot's native notification says it's done; clicking it opens this window.
           // Show the result in the overlay as a persistent notification (no auto-dismiss)
