@@ -26,6 +26,7 @@ import { promisify } from "node:util";
 import { executeTool } from "../src/tools/index.js";
 import { initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
 import { ackWithoutAction } from "../src/agent.js";
+import { resolveHomePath } from "../src/tools/file-utils.js";
 import { runQuickCommand } from "../src/quick-commands.js";
 import { ARMS, chooseArm, classifyTurn, recordOutcome } from "../src/routing/learned-router.js";
 import { getFrontmostApp } from "../src/screen/frontmost.js";
@@ -47,7 +48,7 @@ const ALLOWED = new Set([
     "find_files", "open_in_app", "app_manager", "window_manage", "os_smart_click", "os_inspect", "os_click_id",
     "os_type", "os_screenshot", "os_click", "os_visual_verify", "os_keyboard_shortcuts", "os_context",
     "list_directory", "glob", "get_current_time", "bluetooth_control", "wifi_control",
-    "write", "append_file", "compress_files", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
+    "write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
     "browser_navigate", "browser_extract", "browser_extract_article", "browser_scan", "browser_click", "browser_type",
     "browser_scroll", "browser_wait", "browser_back", "browser_close",
 ]);
@@ -59,9 +60,10 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
     if ((name === "wifi_control" || name === "bluetooth_control") && args.action !== "status")
         return JSON.stringify({ error: "only status is allowed in this test" });
     // Writes stay in the sandbox folder; nothing is deleted.
-    if (["write", "append_file", "compress_files"].includes(name)) {
+    if (["write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit"].includes(name)) {
         const paths = JSON.stringify(args).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
-        if (!paths.length || paths.some((p) => !p.replace(/^~/, homedir()).startsWith(EVAL_DIR)))
+        // Resolved as Bhai resolves them (a placeholder home is the real one).
+        if (!paths.length || paths.some((p) => !resolveHomePath(p).startsWith(EVAL_DIR)))
             return JSON.stringify({ error: `In this test, files may only be written inside ${EVAL_DIR}` });
     }
     if ((name === "apple_notes" || name === "reminders_tool") && /delete|remove|move/.test(String(args.action)))
@@ -189,11 +191,63 @@ const TASKS: Task[] = [
       check: async () => /water the plants/i.test(await as('tell application "Reminders" to get name of (every reminder whose name contains "water the plants")')),
       cleanup: async () => void (await as('tell application "Reminders" to delete (every reminder whose name contains "water the plants")')) },
     // ── Web pages (Bhai's own browser) ──
-    { id: "browser_heading", prompt: "Open example.com in the browser and tell me the page's main heading",
+    { id: "browser_heading", prompt: "Open example.com in the browser and tell me the page's title",
       check: async (reply, trace) => readPage(trace) && /example domain/i.test(reply) },
     { id: "browser_fact", prompt: "Open the Wikipedia page for Alan Turing and tell me the year he was born",
       check: async (reply, trace) => readPage(trace) && /\b1912\b/.test(reply),
       cleanup: async () => void (await guardedExec("browser_close", {})) },
+    // ── Harder: several steps, computed results ──
+    { id: "organize_pdfs", prompt: "In the BhaiEval folder on my Desktop, make a folder called PDFs and move all the PDF files into it",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); for (const f of ["a.pdf", "b.pdf", "notes.txt"]) writeFileSync(join(EVAL_DIR, f), f); },
+      check: async () => { try { return readdirSync(join(EVAL_DIR, "PDFs")).sort().join() === "a.pdf,b.pdf" && !readdirSync(EVAL_DIR).some((f) => f.endsWith(".pdf")); } catch { return false; } } },
+    { id: "rename_file", prompt: "Rename notes.txt in the BhaiEval folder on my Desktop to notes-old.txt",
+      setup: async () => { mkdirSync(EVAL_DIR, { recursive: true }); writeFileSync(join(EVAL_DIR, "notes.txt"), "eval"); rmSync(join(EVAL_DIR, "notes-old.txt"), { force: true }); },
+      check: async () => readdirSync(EVAL_DIR).includes("notes-old.txt") && !readdirSync(EVAL_DIR).includes("notes.txt") },
+    { id: "count_to_file", prompt: "Count the .txt files in the BhaiEval folder on my Desktop and write the number into a file called count.txt in that folder",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); for (const f of ["a.txt", "b.txt", "c.txt", "d.md"]) writeFileSync(join(EVAL_DIR, f), f); },
+      check: async () => { try { return /\b3\b/.test(readFileSync(join(EVAL_DIR, "count.txt"), "utf8")); } catch { return false; } } },
+    { id: "date_to_file", prompt: "Write today's date into a file called today.txt in the BhaiEval folder on my Desktop",
+      setup: async () => { mkdirSync(EVAL_DIR, { recursive: true }); rmSync(join(EVAL_DIR, "today.txt"), { force: true }); },
+      check: async () => {
+          let t = ""; try { t = readFileSync(join(EVAL_DIR, "today.txt"), "utf8"); } catch { return false; }
+          const d = new Date(); const mon = d.toLocaleString("en", { month: "long" }); const day = d.getDate(); const y = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, "0"), dd = String(day).padStart(2, "0");
+          return [`${y}-${mm}-${dd}`, `${mon} ${day}`, `${day} ${mon}`, `${mm}/${dd}/${y}`, `${dd}/${mm}/${y}`].some((f) => t.includes(f));
+      } },
+    { id: "largest_download", prompt: "Which file in my Downloads folder is the largest? Tell me its name.",
+      check: async (reply) => {
+          const dir = join(homedir(), "Downloads");
+          const files = readdirSync(dir).map((f) => { try { const st = statSync(join(dir, f)); return st.isFile() ? { f, s: st.size } : null; } catch { return null; } }).filter(Boolean).sort((a, b) => b!.s - a!.s);
+          const flat = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+          return !!files[0] && flat(reply).includes(flat(files[0]!.f.replace(/\.[^.]+$/, "")));
+      } },
+    { id: "note_list", prompt: "Create a note in Apple Notes titled Groceries that lists milk, eggs and bread",
+      setup: async () => void (await as('tell application "Notes" to delete (every note whose name is "Groceries")')),
+      check: async () => { const b = (await as('tell application "Notes" to get body of first note whose name is "Groceries"')).toLowerCase(); return ["milk", "eggs", "bread"].every((w) => b.includes(w)); },
+      cleanup: async () => void (await as('tell application "Notes" to delete (every note whose name is "Groceries")')) },
+    { id: "wiki_two_facts", prompt: "Open the Wikipedia page for Ada Lovelace and tell me the year she was born and the year she died",
+      check: async (reply, trace) => readPage(trace) && /\b1815\b/.test(reply) && /\b1852\b/.test(reply),
+      cleanup: async () => void (await guardedExec("browser_close", {})) },
+    // ── Images, PDFs, archives ──
+    { id: "image_convert", prompt: "Convert photo.png in the BhaiEval folder on my Desktop to a JPG",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); await (await import("sharp")).default({ create: { width: 400, height: 200, channels: 3, background: "#3366ff" } }).png().toFile(join(EVAL_DIR, "photo.png")); },
+      check: async () => readdirSync(EVAL_DIR).some((f) => /\.jpe?g$/i.test(f) && readFileSync(join(EVAL_DIR, f)).subarray(0, 2).equals(Buffer.from([0xff, 0xd8]))) },
+    { id: "image_resize", prompt: "Make photo.png in the BhaiEval folder on my Desktop 100 pixels wide",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); await (await import("sharp")).default({ create: { width: 400, height: 200, channels: 3, background: "#3366ff" } }).png().toFile(join(EVAL_DIR, "photo.png")); },
+      check: async () => { const sharp = (await import("sharp")).default; for (const f of readdirSync(EVAL_DIR)) if (/\.(png|jpe?g)$/i.test(f) && (await sharp(join(EVAL_DIR, f)).metadata()).width === 100) return true; return false; } },
+    { id: "pdf_merge", prompt: "Combine a.pdf and b.pdf in the BhaiEval folder on my Desktop into one PDF called both.pdf",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); const { PDFDocument } = await import("pdf-lib"); for (const [n, k] of [["a.pdf", 2], ["b.pdf", 3]] as const) { const d = await PDFDocument.create(); for (let i = 0; i < k; i++) d.addPage(); writeFileSync(join(EVAL_DIR, n), await d.save()); } },
+      check: async () => { try { const { PDFDocument } = await import("pdf-lib"); return (await PDFDocument.load(readFileSync(join(EVAL_DIR, "both.pdf")))).getPageCount() === 5; } catch { return false; } } },
+    { id: "pdf_pages", prompt: "How many pages does b.pdf in the BhaiEval folder on my Desktop have?",
+      setup: async () => { mkdirSync(EVAL_DIR, { recursive: true }); const { PDFDocument } = await import("pdf-lib"); const d = await PDFDocument.create(); for (let i = 0; i < 3; i++) d.addPage(); writeFileSync(join(EVAL_DIR, "b.pdf"), await d.save()); },
+      check: async (reply) => /\b(3|three)\b/i.test(reply) },
+    { id: "unzip", prompt: "Unzip pack.zip in the BhaiEval folder on my Desktop",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(join(EVAL_DIR, "pack"), { recursive: true }); writeFileSync(join(EVAL_DIR, "pack", "hello.txt"), "hi"); await ex("ditto", ["-c", "-k", "--keepParent", join(EVAL_DIR, "pack"), join(EVAL_DIR, "pack.zip")]); rmSync(join(EVAL_DIR, "pack"), { recursive: true }); },
+      check: async () => { const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : [e.name]); return walk(EVAL_DIR).includes("hello.txt"); } },
+    { id: "calc_to_clipboard", prompt: "Use the Calculator app to work out 42 times 3, then copy the result to my clipboard",
+      setup: async () => { await as('tell application "Calculator" to quit'); await as('set the clipboard to ""'); await sleep(600); },
+      check: async () => /\b126\b/.test((await ex("pbpaste", [])).stdout),
+      cleanup: async () => void (await as('tell application "Calculator" to quit')) },
 ];
 
 const SYSTEM = [
@@ -234,6 +288,10 @@ async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: {
 
 // Claude, the way Bhai's proxy calls Haiku on simple desktop turns: adaptive thinking, effort low.
 const anthropicClient = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
+if (!anthropicClient && (ROUTER || MODEL.startsWith("claude"))) {
+    console.error("This run can pick a Claude model: set ANTHROPIC_API_KEY (npx convex env get ANTHROPIC_API_KEY).");
+    process.exit(1);
+}
 async function claudeLoop(system: string, prompt: string, tools: any[], used: string[], trace: string[]): Promise<{ reply: string; iters: number }> {
     const atools = tools.map((t) => ({ name: t.function.name, description: t.function.description ?? "", input_schema: t.function.parameters ?? { type: "object" } }));
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];

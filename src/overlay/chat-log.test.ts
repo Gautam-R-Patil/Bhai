@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chatLogPath, logChatMessage, markChatReset, readChatLog, recentChatContext } from "./chat-log.js";
+import { chatLogPath, logChatMessage, markChatReset, readChatLog, recentChatContext, unansweredAsk } from "./chat-log.js";
 
 describe("chat-log", () => {
     let dir: string;
@@ -15,6 +15,19 @@ describe("chat-log", () => {
     afterEach(() => {
         process.env.ATLAS_DATA_DIR = prev;
         fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("finds the owner's message a restart left unanswered, if recent and not reset", () => {
+        const now = Date.now();
+        const line = (ts: number, role: string, text: string) => `${JSON.stringify({ chat: "c", ts, role, text, source: "overlay" })}\n`;
+        fs.writeFileSync(chatLogPath(), line(now - 90e3, "user", "q1") + line(now - 80e3, "assistant", "a1") + line(now - 60e3, "user", "how much battery do i have"));
+        expect(unansweredAsk(10 * 60e3, now)).toBe("how much battery do i have");
+        expect(unansweredAsk(30e3, now)).toBeNull(); // too old to bring up
+        markChatReset();
+        expect(unansweredAsk(10 * 60e3, now)).toBeNull(); // the owner started over
+        logChatMessage("c", "user", "next");
+        logChatMessage("c", "assistant", "answered");
+        expect(unansweredAsk(10 * 60e3)).toBeNull();
     });
 
     it("appends messages, skips blanks and torn lines", () => {

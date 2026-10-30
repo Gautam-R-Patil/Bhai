@@ -1,65 +1,19 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Deep Research v2 — Search engines (Google, Brave, DDG, Bing, SearXNG, Mojeek, Semantic Scholar, arXiv)
+// Deep Research v2 — Search engines (Parallel, Tavily, Exa, Wikipedia, academic APIs; Bing, Brave, DDG, SearXNG, Mojeek as fallback)
 
 import { decodeBingUrl } from "../tools/web-search.js";
 import { baseUrlHostMatches } from "../utils/atomic-io.js";
 import type { SearchResult } from "./types.js";
 import { UrlSet } from "./scoring.js";
-import { randomUA, sleep, ENGINE_COOLDOWN_MS, ENGINE_MAX_CONSECUTIVE_FAILURES, SEARCH_BROWSER_IDLE_MS } from "./profiles.js";
+import { randomUA, sleep, ENGINE_COOLDOWN_MS, ENGINE_MAX_CONSECUTIVE_FAILURES } from "./profiles.js";
 import { getSessionToken } from "../session.js";
 import { getConvexSiteUrl } from "../config/keys.js";
 import { encryptedFetch } from "../crypto-transport.js";
 
-// ── Headless Browser (for Google JS-rendered search) ──
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _searchBrowser: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _searchContext: any = null;
-let _searchBrowserIdleTimer: ReturnType<typeof setTimeout> | null = null;
-
-async function getSearchBrowser(): Promise<{ context: any; newPage: () => Promise<any> }> {
-    if (_searchBrowserIdleTimer) clearTimeout(_searchBrowserIdleTimer);
-    _searchBrowserIdleTimer = setTimeout(async () => {
-        try {
-            if (_searchContext) await _searchContext.close().catch(() => {});
-            if (_searchBrowser) await _searchBrowser.close().catch(() => {});
-        } catch {}
-        _searchBrowser = null;
-        _searchContext = null;
-    }, SEARCH_BROWSER_IDLE_MS);
-
-    if (_searchContext) return { context: _searchContext, newPage: () => _searchContext.newPage() };
-
-    const pw = await import("playwright");
-    _searchBrowser = await pw.chromium.launch({
-        headless: true,
-        args: ["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
-    });
-    _searchContext = await _searchBrowser.newContext({
-        userAgent: randomUA(),
-        viewport: { width: 1280, height: 800 },
-        locale: "en-US",
-    });
-
-    return { context: _searchContext, newPage: () => _searchContext.newPage() };
-}
-
-/** Closes the research search browser; called from the bot's shutdown (index.ts). */
-export const closeSearchBrowser = async () => {
-    if (_searchBrowserIdleTimer) clearTimeout(_searchBrowserIdleTimer);
-    try { if (_searchContext) await _searchContext.close().catch(() => {}); } catch {}
-    try { if (_searchBrowser) await _searchBrowser.close().catch(() => {}); } catch {}
-    _searchBrowser = null;
-    _searchContext = null;
-};
-// No SIGTERM/SIGINT handlers here: exiting from an import-time handler cut off
-// the bot's own graceful shutdown (MCP, WhatsApp, session) on every quit.
-process.on("beforeExit", closeSearchBrowser);
 
 // ── Engine Health Tracking ──────────────────
 
-type EngineName = "google" | "brave" | "duckduckgo" | "bing" | "searxng" | "mojeek" | "tavily" | "exa" | "parallel" | "wikipedia" | "openalex" | "semantic_scholar" | "arxiv";
+type EngineName = "brave" | "duckduckgo" | "bing" | "searxng" | "mojeek" | "tavily" | "exa" | "parallel" | "wikipedia" | "openalex" | "semantic_scholar" | "arxiv";
 
 interface EngineHealth {
     consecutiveFailures: number;
@@ -94,7 +48,16 @@ function markSuccess(engine: EngineName): void {
     engineHealth.set(engine, { consecutiveFailures: 0, lastFailure: 0, disabled: false, backoffLogged: false });
 }
 
+// Engines whose key isn't set on the server: asking again can't help until the app restarts.
+const notConfigured = new Set<EngineName>();
+
+/** A proxied engine answered 500 "<Engine> not configured": stop asking it this run of the app. */
+async function noteNotConfigured(engine: EngineName, response: Response): Promise<void> {
+    if (response.status === 500 && /not configured/i.test(await response.text().catch(() => ""))) notConfigured.add(engine);
+}
+
 function isAvailable(engine: EngineName): boolean {
+    if (notConfigured.has(engine)) return false;
     const h = engineHealth.get(engine);
     if (!h) return true;
     if (h.consecutiveFailures === 0) return true;
@@ -114,124 +77,6 @@ export function resetEngineHealth(): void {
 /** Test-only: observe whether an engine is currently available (not backing off). */
 export function __isEngineAvailable(engine: EngineName): boolean {
     return isAvailable(engine);
-}
-
-// ── Google Search (Playwright) ───────────────
-
-async function searchGoogle(query: string): Promise<SearchResult[]> {
-    if (!isAvailable("google")) return [];
-    let page: any = null;
-    try {
-        const { newPage, context } = await getSearchBrowser();
-
-        // Bypass consent dialog
-        await context.addCookies([
-            { name: "CONSENT", value: "YES+cb.20240101-00-p0.en+FX+999", domain: ".google.com", path: "/" },
-        ]);
-
-        page = await newPage();
-
-        // Anti-detection stealth
-        await page.evaluate(
-            /* javascript-obfuscator:disable */ () => {
-                Object.defineProperty(navigator, "webdriver", { get: () => false });
-            },
-            /* javascript-obfuscator:enable */ undefined,
-        );
-
-        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=15&hl=en`;
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
-
-        // Wait for results to load
-        await page
-            .waitForFunction(
-                /* javascript-obfuscator:disable */ () => document.querySelectorAll("h3").length > 0,
-                /* javascript-obfuscator:enable */ { timeout: 10000 },
-            )
-            .catch(() => {});
-        await sleep(800);
-
-        const results: SearchResult[] = await page.evaluate(
-            /* javascript-obfuscator:disable */ () => {
-                const items: Array<{ url: string; title: string; snippet: string }> = [];
-                const seen = new Set<string>();
-
-                // Primary: structured result blocks
-                document.querySelectorAll("div.g, div[data-hveid]").forEach((block: Element) => {
-                    const linkEl = block.querySelector("a[href^='http']") as HTMLAnchorElement | null;
-                    const h3El = block.querySelector("h3");
-                    const snippetEl = block.querySelector(
-                        "div[data-sncf], div.VwiC3b, span.aCOpRe, div[style*='line-clamp']",
-                    );
-                    if (linkEl && h3El && linkEl.href && !/(^|\.)google\.com$/.test(linkEl.hostname)) {
-                        if (seen.has(linkEl.href)) return;
-                        seen.add(linkEl.href);
-                        items.push({
-                            url: linkEl.href,
-                            title: h3El.textContent?.trim() || "",
-                            snippet: snippetEl?.textContent?.trim() || "",
-                        });
-                    }
-                });
-
-                // Fallback: any a > h3
-                if (items.length === 0) {
-                    document.querySelectorAll("a").forEach((a: HTMLAnchorElement) => {
-                        const h3 = a.querySelector("h3");
-                        if (
-                            h3 &&
-                            a.href &&
-                            a.href.startsWith("http") &&
-                            !/(^|\.)google\.com$/.test(a.hostname) &&
-                            !seen.has(a.href)
-                        ) {
-                            seen.add(a.href);
-                            items.push({ url: a.href, title: h3.textContent?.trim() || "", snippet: "" });
-                        }
-                    });
-                }
-                return items.slice(0, 15);
-            },
-            /* javascript-obfuscator:enable */ undefined,
-        );
-
-        // Fallback: parse raw HTML if evaluate found nothing (e.g. Google changed DOM)
-        if (results.length === 0) {
-            const html = await page.content();
-            const fallbackResults = parseGoogleHTML(html);
-            if (fallbackResults.length > 0) {
-                markSuccess("google");
-                return fallbackResults;
-            }
-        }
-
-        if (results.length > 0) markSuccess("google");
-        else markFailure("google");
-        return results.map(r => ({ ...r, source: "google" }));
-    } catch {
-        markFailure("google");
-        return [];
-    } finally {
-        if (page) await page.close().catch(() => {});
-    }
-}
-
-/** Fallback: regex-parse raw Google HTML when page.evaluate finds nothing */
-function parseGoogleHTML(html: string): SearchResult[] {
-    const results: SearchResult[] = [];
-    const seen = new Set<string>();
-    // Match /url?q=... links with h3 content
-    const pattern = /<a[^>]*href="\/url\?q=(https?:\/\/[^&"]+)[^"]*"[^>]*>[\s\S]*?<h3[^>]*>([\s\S]*?)<\/h3>/gi;
-    let match;
-    while ((match = pattern.exec(html)) !== null && results.length < 15) {
-        const url = decodeURIComponent(match[1]);
-        const title = match[2].replace(/<[^>]+>/g, "").trim();
-        if (!seen.has(url) && !baseUrlHostMatches(url, "google.com") && title.length > 3) {
-            seen.add(url);
-            results.push({ url, title, snippet: "", source: "google" });
-        }
-    }
-    return results;
 }
 
 // ── Brave Search ─────────────────────────────
@@ -567,7 +412,7 @@ async function searchTavily(query: string): Promise<SearchResult[]> {
             signal: AbortSignal.timeout(15000),
         });
         if (!response.ok) {
-            // 429 and 5xx (e.g. "Tavily not configured" on the server) back off alike.
+            await noteNotConfigured("tavily", response);
             if (response.status === 429 || response.status >= 500) markFailure("tavily");
             return [];
         }
@@ -635,6 +480,7 @@ async function searchExa(query: string): Promise<SearchResult[]> {
             signal: AbortSignal.timeout(12000),
         });
         if (!response.ok) {
+            await noteNotConfigured("exa", response);
             if (response.status === 429 || response.status >= 500) markFailure("exa");
             return [];
         }
@@ -760,42 +606,60 @@ export async function searchArxiv(query: string): Promise<SearchResult[]> {
 
 // ── Unified Multi-Engine Search ──────────────
 
+// Search APIs (no scraping from the owner's IP) answer first. The scrapers (Bing, Brave,
+// DuckDuckGo, Mojeek, SearXNG) hit the owner's IP — the CAPTCHA and blocking risk that took
+// Google out — so they run only when the APIs come back thin. Each tier waits for its slowest
+// engine at most TIER_WAIT_MS: a round no longer stalls on a 15s timeout.
+const ENOUGH_RESULTS = 8;
+const TIER_WAIT_MS = 7000;
+
+/** Settle every search, but stop waiting after ms: a straggler counts as no results. */
+function settleWithin(searches: Promise<SearchResult[]>[], ms: number): Promise<SearchResult[][]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cutoff = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); });
+    return Promise.all(searches.map((p) => Promise.race([p.catch(() => []), cutoff]).then((r) => r ?? [])))
+        .finally(() => clearTimeout(timer));
+}
+
 export async function multiEngineSearch(
     query: string,
     useAcademic = false,
 ): Promise<{ results: SearchResult[]; engines: string[] }> {
     console.log(`[RESEARCH] 🔎 Searching: "${query.substring(0, 60)}..."`);
 
-    const searches: Promise<SearchResult[]>[] = [
+    const apis: Promise<SearchResult[]>[] = [
         searchParallel(query),   // AI-optimized, dated pages with excerpts
-        searchTavily(query),     // AI-optimized, most reliable
-        searchExa(query),        // AI-optimized deep search with content
-        searchBing(query),       // Large index, fetch-only
-        searchSearXNG(query),    // Meta-search JSON API
-        searchBrave(query),      // Independent index
-        searchDDG(query),        // Privacy-friendly
+        searchTavily(query),     // AI-optimized (when the server has a key)
+        searchExa(query),        // AI-optimized deep search (when the server has a key)
         searchWikipedia(query),  // Free, reliable, structured
-        searchGoogle(query),     // Playwright-based (slower, may get blocked)
-        searchMojeek(query),     // Independent crawler
     ];
-
     if (useAcademic) {
-        searches.push(searchSemanticScholar(query));
-        searches.push(searchArxiv(query));
-        searches.push(searchOpenAlex(query));  // Free academic API, no key needed
+        apis.push(searchSemanticScholar(query));
+        apis.push(searchArxiv(query));
+        apis.push(searchOpenAlex(query));  // Free academic API, no key needed
     }
-
-    const settled = await Promise.allSettled(searches);
+    const settled = await settleWithin(apis, TIER_WAIT_MS);
+    // Wikipedia always has some hits, mostly loosely related: they don't count as enough.
+    const found = new UrlSet(settled.flat().filter((r) => r.source !== "wikipedia").map((r) => r.url));
+    if (found.size < ENOUGH_RESULTS) {
+        settled.push(...await settleWithin([
+            searchBing(query),       // Large index, fetch-only
+            searchSearXNG(query),    // Meta-search JSON API
+            searchBrave(query),      // Independent index
+            searchDDG(query),        // Privacy-friendly
+            searchMojeek(query),     // Independent crawler
+        ], TIER_WAIT_MS));
+    }
 
     const seenUrls = new UrlSet(); // one page from two engines under two spellings is one result
     const merged: SearchResult[] = [];
     const enginesUsed: string[] = [];
 
-    for (const outcome of settled) {
-        if (outcome.status === "fulfilled" && outcome.value.length > 0) {
-            const source = outcome.value[0]?.source || "unknown";
+    for (const results of settled) {
+        if (results.length > 0) {
+            const source = results[0]?.source || "unknown";
             if (!enginesUsed.includes(source)) enginesUsed.push(source);
-            for (const r of outcome.value) {
+            for (const r of results) {
                 if (!seenUrls.has(r.url)) {
                     seenUrls.add(r.url);
                     merged.push(r);

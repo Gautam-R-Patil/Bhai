@@ -11,9 +11,13 @@ export {
     getResearchStatusSnippet,
     initDeepResearch,
     multiEngineSearch,
+    registerResearchStatusCard,
+    researchStatusLine,
+    resumeInterruptedResearch,
     type SearchResult,
     setDeepResearchLLM,
     setDeepResearchNotifier,
     setDeepResearchProgress,
     setOverlayResearchProgress,
+    setOverlayResearchResult,
 } from "../research/index.js";

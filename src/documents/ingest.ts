@@ -67,7 +67,8 @@ function readPdf(filePath: string): Buffer {
     }
 }
 
-function extractText(data: Buffer): Promise<string> {
+/** PDF bytes to text in a separate, memory-capped process with a deadline (untrusted PDFs too). */
+export function extractText(data: Buffer): Promise<string> {
     // unpdf ships a current pdf.js; the old pdf-parse fallback (pdf.js 2018) never
     // rescued a PDF the modern parser rejected, so it was dropped.
     const script = resolveScript("pdf-text.cjs");

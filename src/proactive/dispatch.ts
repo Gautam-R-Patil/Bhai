@@ -2,10 +2,11 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import type { Channel, ProactiveMode } from "./intent.js";
+import { notifyDesktop } from "../desktop-notify.js";
 import { getToneReminder } from "../setup/personality-sync.js";
 import { getChannelSender, type ProactiveButton } from "../tools/channel-send.js";
-import { isProactiveDisabled, isChannelDisabled, isShadowMode, debugProactive, isQuietNow } from "./kill-switches.js";
+import type { Channel, ProactiveMode } from "./intent.js";
+import { debugProactive, isChannelDisabled, isProactiveDisabled, isQuietNow, isShadowMode } from "./kill-switches.js";
 
 // Fatigue-check hook: true after two unanswered sends (notification-tracker's
 // isFatigued). Default = null (no check), registered at boot.
@@ -51,6 +52,8 @@ export async function dispatchProactiveMessage(
     ownerOnly = false,
     /** A deadline or a reminder the owner asked for: never held back for "too many unanswered nudges". */
     bypassFatigue = false,
+    /** False for the copy mirrorWhileActive sends, so it isn't mirrored again. */
+    mirror = true,
 ): Promise<boolean> {
     if (isProactiveDisabled()) {
         debugProactive("suppressed_global", { channel, mode });
@@ -102,5 +105,43 @@ export async function dispatchProactiveMessage(
             )
             .catch(() => {});
     }
+    if (mirror) await mirrorWhileActive(channel, text, mode, buttons, ownerOnly, bypassFatigue);
     return true;
+}
+
+const CHAT_CHANNELS: Channel[] = ["telegram", "whatsapp", "discord", "slack", "matrix"];
+
+/** The owner's own chat channel for a copy of a desktop message: their Primary channel first. */
+export function mirrorChatChannel(): Channel | undefined {
+    const primary = process.env.PRIMARY_CHANNEL as Channel | undefined;
+    return [primary, ...CHAT_CHANNELS].find(
+        (c): c is Channel => !!c && CHAT_CHANNELS.includes(c) && !!getChannelSender(c),
+    );
+}
+
+/**
+ * While the owner is at the computer, a proactive message reaches them both ways: one sent
+ * to a chat app also shows as a desktop notification, one sent to the desktop also goes to
+ * their chat channel. Away from it, the one channel it was sent on is enough.
+ */
+async function mirrorWhileActive(
+    channel: Channel,
+    text: string,
+    mode: ProactiveMode,
+    buttons: ProactiveButton[] | undefined,
+    ownerOnly: boolean,
+    bypassFatigue: boolean,
+): Promise<void> {
+    try {
+        const { isUserActive } = await import("./activity.js");
+        if (!(await isUserActive())) return;
+        if (channel !== "overlay") {
+            if (!isChannelDisabled("overlay")) notifyDesktop(bypassFatigue ? "reminder" : "proactive", "Bhai", text);
+            return;
+        }
+        const chat = mirrorChatChannel();
+        if (chat) await dispatchProactiveMessage(chat, text, mode, buttons, ownerOnly, bypassFatigue, false);
+    } catch {
+        // A copy failing never takes back the send that already went out.
+    }
 }

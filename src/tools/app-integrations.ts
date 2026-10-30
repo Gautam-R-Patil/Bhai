@@ -133,8 +133,8 @@ end tell`);
  * Waits up to ~2s for a just-launched app's first window.
  */
 const WINDOW_BUTTONS = /^(close|minimize|full screen|zoom)$/i;
-async function describeWindows(pid: number): Promise<Record<string, unknown>> {
-    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+async function describeWindows(pid: number, pressedNew = false): Promise<Record<string, unknown>> {
+    const { dumpAccessibilityTree, flattenInteractive, axPerformAction } = await import("../screen/ax-dump.js");
     type Node = import("../screen/ax-dump.js").AxNode;
     for (let i = 0; i < 5; i++) {
         const dump = await dumpAccessibilityTree({ pid, depth: 6, timeoutMs: 3000, budgetMs: 1500 }).catch(() => null);
@@ -155,6 +155,22 @@ async function describeWindows(pid: number): Promise<Record<string, unknown>> {
             windows.find((w) => w.subrole === "AXDialog" || w.subrole === "AXSystemDialog") ??
             windows[0].children.find((c) => c.role === "AXSheet") ??
             (/^(open|save|save as|export|print)$/i.test(windows[0].label ?? "") ? windows[0] : undefined);
+        // An app that launches on its Open panel (TextEdit, Preview) is wanted for a new
+        // document: given a note to handle the panel, small models typed into its search
+        // box or escaped it and typed into no window. Opening a file later replaces the
+        // untouched blank document.
+        if (!pressedNew && dialog === windows[0] && /^open$/i.test(dialog.label ?? "")) {
+            const button = flattenInteractive(dump).find(
+                (e) => e.role === "AXButton" && /^new document$/i.test(e.label.trim()),
+            );
+            if (button && (await axPerformAction(pid, button, "press").catch(() => ({ ok: false }))).ok) {
+                await new Promise((r) => setTimeout(r, 300));
+                return {
+                    ...(await describeWindows(pid, true)),
+                    opened: "a new blank document (the app had opened on its Open panel)",
+                };
+            }
+        }
         return {
             window: windows[0].label || "(untitled)",
             ...(dialog

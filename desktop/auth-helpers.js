@@ -18,6 +18,13 @@ function parseOtplessVerifyResponse(raw) {
     };
 }
 
+// DNS-rebinding guard (as src/security/loopback.ts): a website can point its own name at
+// 127.0.0.1 and read a local server as same-origin. Real requests name the loopback host.
+function isLoopbackHost(host, port) {
+    const h = String(host || "").toLowerCase();
+    return h === `127.0.0.1:${port}` || h === `localhost:${port}` || h === `[::1]:${port}`;
+}
+
 function isLegacyUserId(userId) {
     if (!userId || typeof userId !== "string") return false;
     return /^(phone_|google_)/.test(userId);
@@ -56,6 +63,7 @@ function safeStringEqual(a, b) {
 module.exports = {
     parseOtplessVerifyResponse,
     isLegacyUserId,
+    isLoopbackHost,
     isPathContained,
     generateOAuthState,
     safeStringEqual,

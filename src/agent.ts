@@ -640,6 +640,7 @@ const TOOL_RESULT_LIMITS: Record<string, number> = {
     grep: 4000,
     glob: 2000,
     deep_research: 6000,
+    check_deep_research: 16000, // the finished report: the follow-up answers from all of it, not its first 4K
     os_inspect: 8000, // a whole 60-element list, still under the 8KB offload line
     // failures[] + raw_tail; bigger results are offloaded with a head+tail preview. A result
     // that stayed inline is at most this many bytes, so at most this many chars: kept whole.
@@ -1867,6 +1868,7 @@ async function _runAgentBody(
     const didLines: string[] = [];
     const recordBatch = (batch: ToolCallResult[]) => {
         recordBatchForVerifyGate(verifyGate, batch);
+        if (batch.some((r) => r.imageUrl)) turnSawImage = true;
         // Lane order, like the gate: a screen check batched with a browser action may have run before it.
         for (const r of inLaneOrder(batch)) {
             turnCalls.push({ fnName: r.fnName, fnArgs: r.fnArgs, failed: toolFailed(r) });
@@ -1936,6 +1938,7 @@ async function _runAgentBody(
     let turnArmReleased = false; // the rules above choose again from here
     let turnArmLeft = false; // another model actually ran part of this turn
     let turnArmInfra = false; // a provider error or a silent fallback: not the model's doing
+    let turnSawImage = false; // a tool result carried a screenshot this turn
     const guiPinned = () =>
         guiTurn &&
         !guiTrouble &&
@@ -3173,7 +3176,11 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     { ...toolSelection.classification, categories: [...turnCats, ...requestedCategories] },
                     false,
                 ) !== turnClass;
-            if (forcedPick || errorCount > 0 || widened || lastToolCalls === undefined) turnArmReleased = true;
+            // A model that can't find things in a screenshot (scripts/eval-grounding.ts: gpt-4.1-nano
+            // and gpt-4o-mini 3%, Haiku 94%) hands the turn back once one arrives.
+            const blind = turnSawImage && !turnArm.vision;
+            if (blind) console.log(`  🎯 Learned router: ${turnArm.id} can't read screenshots, back to the rules`);
+            if (forcedPick || errorCount > 0 || widened || blind || lastToolCalls === undefined) turnArmReleased = true;
             else model = turnArm.model;
         }
 

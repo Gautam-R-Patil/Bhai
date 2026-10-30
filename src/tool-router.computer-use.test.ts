@@ -56,6 +56,13 @@ vi.mock("./tools/index.js", () => ({
             "app_manager",
             "window_manage",
             "web_search",
+            "list_directory",
+            "compress_files",
+            "trash_manager",
+            "file_manage",
+            "apple_notes",
+            "image_edit",
+            "pdf_edit",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -89,6 +96,18 @@ const CASES: [string, string][] = [
     ["open example.com in the browser and tell me the page's main heading", "browser_navigate"],
     ["open the wikipedia page for alan turing and tell me the year he was born", "browser_navigate"],
     ["find the newest pdf in my downloads folder and copy its file name to my clipboard", "clipboard"],
+    // From the all-nano run: zipping was filed under os_control and compress_files wasn't offered.
+    ["zip the bhaieval folder on my desktop and save the zip inside that folder", "compress_files"],
+    ["empty my trash", "trash_manager"],
+    // No tool moved or renamed files at all.
+    ["move invoice.pdf into the Invoices folder", "file_manage"],
+    ["rename the report file to final report", "file_manage"],
+    ["make a new folder called Reports on my desktop", "file_manage"],
+    ["Create a note in Apple Notes titled 'Bhai eval note' with the text 'it works'", "apple_notes"],
+    ["convert this heic photo to a jpg", "image_edit"],
+    ["make photo.png 100 pixels wide and resize the image", "image_edit"],
+    ["combine these two pdfs into one", "pdf_edit"],
+    ["how many pages does the report pdf have", "pdf_edit"],
 ];
 
 describe("computer-use routing without the classifier", () => {

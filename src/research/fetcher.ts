@@ -103,6 +103,7 @@ const linksByUrl = new Map<string, string[]>();
 // decompression ratio) and bounds the HTML-strip input. Generous enough to
 // still yield the MAX_CONTENT_PER_PAGE of final text.
 const MAX_FETCH_BYTES = MAX_CONTENT_PER_PAGE * 40; // ~2MB
+const MAX_PDF_BYTES = 15 * 1024 * 1024;
 
 // Decode respecting the page's declared charset (response.text() always assumes
 // UTF-8, mojibaking Shift_JIS/GB2312/EUC-KR/ISO-8859-1 pages). Falls back to a
@@ -245,7 +246,7 @@ async function fetchPageContentOnce(url: string): Promise<string | null> {
             {
                 headers: {
                     "User-Agent": randomUA(),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf;q=0.8,*/*;q=0.7",
                     "Accept-Language": "en-US,en;q=0.5",
                 },
                 signal: controller.signal,
@@ -264,6 +265,16 @@ async function fetchPageContentOnce(url: string): Promise<string | null> {
         }
 
         const contentType = (response.headers.get("content-type") || "").toLowerCase();
+        // Papers and reports are often PDFs: read them (in the document reader's sandboxed
+        // process) instead of dropping them. A PDF cut off at the cap doesn't parse; it's skipped.
+        if (contentType.includes("application/pdf")) {
+            const buf = await readBodyCapped(response, MAX_PDF_BYTES);
+            clearTimeout(timeout);
+            if (buf.length >= MAX_PDF_BYTES) return "";
+            const { extractText } = await import("../documents/ingest.js");
+            const text = await extractText(Buffer.from(buf)).catch(() => "");
+            return text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().substring(0, MAX_CONTENT_PER_PAGE);
+        }
         const plain = contentType.includes("text/plain");
         if (!plain && !contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
             clearTimeout(timeout);

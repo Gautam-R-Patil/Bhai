@@ -527,6 +527,7 @@ export async function gatherWithGrace<T>(
 }
 
 const SLOW_ENGINE_GRACE_MS = 2500;
+const CLAUDE_DELAY_MS = 1500;
 
 async function lightweightSearch(query: string): Promise<{ results: SearchResult[]; engine: string; empty: string[] }> {
     // No Google scraper: google.com/search now serves a JavaScript-only page, so it never
@@ -534,24 +535,39 @@ async function lightweightSearch(query: string): Promise<{ results: SearchResult
     const names = ["parallel", "claude", "tavily", "exa", "brave", "duckduckgo", "bing"];
     // A good on-topic list from one engine means the slow ones (Claude's route can take 12s)
     // get a short grace, not the whole wait.
+    const isGood = (list: SearchResult[]) => list.length >= 3 && bestCoverage(query, list) >= 0.5;
+    let answered = false;
+    const noting = (p: Promise<SearchResult[]>) =>
+        p.then((r) => {
+            if (isGood(r)) answered = true;
+            return r;
+        });
+    // Claude's search is paid (a Haiku call per search) and slow: it starts only when no
+    // engine has a good answer by then (Parallel usually has one in ~1s).
+    let claudeSkipped = false;
+    const claudeLater = new Promise<void>((r) => setTimeout(r, CLAUDE_DELAY_MS)).then(() => {
+        if (!answered) return searchClaudeLite(query);
+        claudeSkipped = true;
+        return [] as SearchResult[];
+    });
     const { lists, finished } = await gatherWithGrace(
         [
-            searchParallelLite(query),
-            searchClaudeLite(query),
-            searchTavilyLite(query),
-            searchExaLite(query),
-            searchBraveLite(query),
-            searchDDGLite(query),
-            searchBingLite(query),
+            noting(searchParallelLite(query)),
+            claudeLater,
+            noting(searchTavilyLite(query)),
+            noting(searchExaLite(query)),
+            noting(searchBraveLite(query)),
+            noting(searchDDGLite(query)),
+            noting(searchBingLite(query)),
         ],
-        (list) => list.length >= 3 && bestCoverage(query, list) >= 0.5,
+        isGood,
         SLOW_ENGINE_GRACE_MS,
     );
     const used = names.filter((_, i) => lists[i].length > 0);
     return {
         results: mergeAndRank(query, lists),
         engine: used.join(",") || "none",
-        empty: names.filter((_, i) => finished[i] && lists[i].length === 0),
+        empty: names.filter((n, i) => finished[i] && lists[i].length === 0 && !(n === "claude" && claudeSkipped)),
     };
 }
 

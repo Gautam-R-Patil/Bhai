@@ -6,7 +6,7 @@
 // Screen recording, file tags, compression, trash, shortcuts, and open-in-app.
 
 import { execFile } from "node:child_process";
-import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
+import { existsSync, promises as fs, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -451,7 +451,7 @@ export const compressFiles: ToolDefinition = {
                     },
                     output_dir: {
                         type: "string",
-                        description: "Output directory for extraction (for 'unzip', default: same dir as archive)",
+                        description: "unzip: where to extract (default: next to the archive). zip: the folder to save the zip in.",
                     },
                 },
                 required: ["action"],
@@ -466,6 +466,11 @@ export const compressFiles: ToolDefinition = {
             if (action === "zip") {
                 const paths = input.paths as string[];
                 if (!paths || paths.length === 0) return JSON.stringify({ error: "Provide 'paths' to compress." });
+                // "Unzip pack.zip": gpt-4.1-nano zipped it first (pack.zip.zip).
+                if (paths.length === 1 && /\.zip$/i.test(paths[0]))
+                    return JSON.stringify({
+                        error: `${basename(paths[0])} is already a zip. To extract it: action "unzip", archive_path "${paths[0]}".`,
+                    });
 
                 // Verify all paths exist, and none is (or holds) a secret: the archive is
                 // an ordinary file that send_file would happily send.
@@ -475,8 +480,15 @@ export const compressFiles: ToolDefinition = {
                     if (refused) return JSON.stringify({ error: refused });
                 }
 
-                const archivePath =
-                    (input.archive_path as string) || join(getExportsDir(), `archive_${Date.now()}.zip`);
+                // Named after what it holds, in output_dir when that's given (gpt-4.1-nano passed
+                // output_dir for "save the zip inside that folder"; it went to Exports).
+                const named = paths.length === 1 ? `${basename(paths[0])}.zip` : `archive_${Date.now()}.zip`;
+                const dir = (input.output_dir as string) || getExportsDir();
+                const wanted = (input.archive_path as string) || join(dir, named);
+                // Never over an existing file: ditto replaced ~/Desktop/BhaiEval.zip without a word.
+                let archivePath = wanted;
+                for (let n = 2; existsSync(archivePath); n++)
+                    archivePath = wanted.replace(/(\.zip)?$/i, ` ${n}$1`);
 
                 if (IS_MAC) {
                     await execFileAsync("ditto", ["-c", "-k", "--sequesterRsrc", ...paths, archivePath], {
@@ -502,6 +514,7 @@ export const compressFiles: ToolDefinition = {
                     archive: archivePath,
                     size_mb: Math.round((stats.size / 1048576) * 100) / 100,
                     files: paths.map((p: string) => basename(p)),
+                    ...(archivePath !== wanted ? { note: `${wanted} already existed, so this is a new file.` } : {}),
                 });
             }
 
@@ -789,7 +802,13 @@ export function resolveHomePath(p: string): string {
     const m = /^(?:\/Users|\/home|[A-Za-z]:[\\/]Users)[\\/]([^\\/]+)(.*)$/.exec(p);
     if (!m || existsSync(p)) return p;
     const mine = join(homedir(), m[2]);
-    return existsSync(mine) ? mine : p;
+    // A home that doesn't exist at all (/Users/YourUsername) is a placeholder: it means the
+    // real one even for a file not written yet (a new zip's path).
+    const theirHome = p.slice(0, p.length - m[2].length);
+    // ...and so is one whose folder is only in the real home (gpt-4.1-nano wrote
+    // "/Users/Shared/Desktop/BhaiEval/count.txt" for ~/Desktop/BhaiEval).
+    const newInMine = existsSync(dirname(mine)) && !existsSync(dirname(p));
+    return existsSync(mine) || newInMine || !existsSync(theirHome) ? mine : p;
 }
 
 // What find_files returned last: open_in_app uses it when a model retypes the path wrong.
@@ -797,6 +816,27 @@ let lastFound: string[] = [];
 
 // Folders that are almost never what someone means by "find my file".
 const FIND_NOISE = /\/(Library|node_modules|\.git|\.Trash|\.cache|\.npm|DerivedData)\//;
+
+/** Names under `dir` (two levels down) containing `q`: Spotlight indexes a new file a few seconds late. */
+function scanFolder(dir: string, q: string, depth = 2): string[] {
+    const out: string[] = [];
+    const walk = (d: string, left: number) => {
+        let names: import("node:fs").Dirent[];
+        try {
+            names = readdirSync(d, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const e of names) {
+            if (out.length >= 200 || e.name.startsWith(".")) continue;
+            const p = join(d, e.name);
+            if (e.name.toLowerCase().includes(q)) out.push(p);
+            if (e.isDirectory() && left > 0 && !FIND_NOISE.test(`${p}/`)) walk(p, left - 1);
+        }
+    };
+    walk(dir, depth);
+    return out;
+}
 
 export const findFiles: ToolDefinition = {
     schema: {
@@ -829,23 +869,45 @@ export const findFiles: ToolDefinition = {
                 error: "find_files uses Spotlight (macOS). Use glob with a pattern like '**/*resume*' instead.",
             });
         }
-        const query = String(input.query ?? "").trim();
-        if (!query) return JSON.stringify({ success: false, error: "Provide 'query'." });
         const limit = Math.min(Math.max(Number(input.limit) || 20, 1), 100);
-        const ext = String(input.ext ?? "")
+        let ext = String(input.ext ?? "")
             .replace(/^\./, "")
             .toLowerCase();
-        const args = input.content ? [query] : ["-name", query];
+        let q = String(input.query ?? "").trim();
+        let folderIn = input.folder ? String(input.folder) : "";
+        // A path in the query ("BhaiEval/*.txt", folder ~/Desktop): its folder part is the folder.
+        const slash = input.content ? -1 : q.lastIndexOf("/");
+        if (slash > 0) {
+            const sub = q.slice(0, slash);
+            const dir = resolve(resolveHomePath(/^[~/]/.test(sub) ? sub : join(folderIn || homedir(), sub)));
+            if (statSync(dir, { throwIfNoEntry: false })?.isDirectory()) [folderIn, q] = [dir, q.slice(slash + 1)];
+        }
+        // Globs and phrases models send, which Spotlight matches literally: "*.pdf", ".txt files".
+        const glob = /^\*?\.([a-z0-9]{1,6})(\s+files?)?$/i.exec(q);
+        if (glob) [ext, q] = [ext || glob[1].toLowerCase(), ""];
+        q = q.replace(/\*/g, "").trim();
         // A folder that isn't there ("~/Bhai" for ~/Desktop/Bhai) searches everywhere and
         // ranks paths through a folder of that name first, instead of finding nothing.
-        const folder = input.folder ? resolve(resolveHomePath(String(input.folder))) : "";
+        let folder = folderIn ? resolve(resolveHomePath(folderIn)) : "";
         const folderName = folder && !existsSync(folder) ? basename(folder).toLowerCase() : "";
+        // query "BhaiEval", folder ~/Desktop, ext txt: the .txt files in ~/Desktop/BhaiEval.
+        if (folder && !folderName && ext && q && statSync(join(folder, q), { throwIfNoEntry: false })?.isDirectory())
+            [folder, q] = [join(folder, q), ""];
+        // "every PDF in this folder" comes as an empty query with ext.
+        const query = q || (ext ? `.${ext}` : "");
+        if (!query) return JSON.stringify({ success: false, error: "Provide 'query'." });
+        const args = input.content ? [query] : ["-name", query];
         if (folder && !folderName) args.unshift("-onlyin", folder);
         try {
             const { stdout } = await execFileAsync("mdfind", args, { timeout: 10_000, maxBuffer: 20 * 1024 * 1024 });
             const home = homedir();
-            const hits = stdout
-                .split("\n")
+            // Inside a given folder, also read the folder itself: Spotlight indexes new files
+            // seconds late ("the PDFs in BhaiEval" found none right after they were made).
+            const paths =
+                folder && !folderName && !input.content
+                    ? [...new Set([...stdout.split("\n"), ...scanFolder(folder, query.toLowerCase())])]
+                    : stdout.split("\n");
+            const hits = paths
                 .filter((p) => p && (!ext || extname(p).toLowerCase() === `.${ext}`))
                 .slice(0, 2000)
                 .map((p) => {

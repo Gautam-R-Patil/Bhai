@@ -241,6 +241,37 @@ export async function axPerformAction(
     }
 }
 
+/**
+ * Insert `text` at the cursor of app `pid`'s focused text field without raising the app
+ * (macOS; AXSelectedText, from trycua/cua's background typing). Confirmed by reading the
+ * field back. Refuses password fields; web content and terminals answer not_applied /
+ * not_text, so callers fall back to typing in front. The text goes over stdin, not argv.
+ */
+export async function axInsertText(pid: number, text: string): Promise<{ ok: boolean; role?: string; error?: string }> {
+    if (process.platform !== "darwin") return { ok: false, error: "unsupported_platform" };
+    const h = swiftHelper();
+    const { spawn } = await import("node:child_process");
+    return new Promise((resolve) => {
+        const child = spawn(h.exec, [...h.args, "--pid", String(pid), "--action", "insert"], {
+            stdio: ["pipe", "pipe", "ignore"],
+        });
+        let out = "";
+        child.stdout.on("data", (d) => {
+            out += d;
+        });
+        const t = setTimeout(() => child.kill("SIGKILL"), 8000);
+        const done = () => {
+            clearTimeout(t);
+            const line = out.trim();
+            resolve(line.startsWith("ok|") ? { ok: true, role: line.slice(3) } : { ok: false, error: line.replace(/^error\|/, "") || "no_output" });
+        };
+        child.on("close", done);
+        child.on("error", () => resolve({ ok: false, error: "helper_failed" }));
+        child.stdin.on("error", () => {});
+        child.stdin.end(text, "utf-8");
+    });
+}
+
 /** The Dock's AX tree (macOS): it isn't the frontmost app, so a normal dump never sees it. */
 export async function dumpDock(): Promise<AxDump | null> {
     if (process.platform !== "darwin") return null;

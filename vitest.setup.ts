@@ -22,3 +22,7 @@ if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-test-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// Bhai's data dir too: unset, it falls back to ./data in the repo, so a test that saves
+// state (proactive-daily.json, cron jobs…) wrote into the working tree and leaked into
+// the next run. A test file that sets its own ATLAS_DATA_DIR still wins.
+if (!process.env.ATLAS_DATA_DIR) process.env.ATLAS_DATA_DIR = path.join(home, "data");

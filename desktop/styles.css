@@ -6357,3 +6357,20 @@ body.hig .pref-more:hover { text-decoration: underline; }
 .pref-subs[hidden] { display: none; }
 body.hig .pp-notes-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 body.hig .pp-save-status { flex: 1; font-size: 12px; color: var(--text-secondary); }
+
+/* ── Research: past and running researches with their reports ─────── */
+body.hig .research-new { width: auto; margin: 0 28px 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+body.hig .research-new-row { display: flex; gap: 8px; align-items: center; }
+body.hig .research-new-row input { flex: 1; min-width: 0; }
+body.hig .research-depth { flex: none; width: auto; }
+body.hig .research-basis { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: var(--text-secondary); }
+body.hig .research-basis[hidden] { display: none; }
+body.hig .research-pane { overflow-y: auto; padding: 18px 22px; }
+body.hig .research-head { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+body.hig .research-head h3 { margin: 0; font-size: 16px; }
+body.hig .research-actions { display: flex; gap: 8px; margin-top: 8px; }
+body.hig .research-report { padding-top: 12px; font-size: 13px; line-height: 1.55; user-select: text; overflow-wrap: anywhere; }
+body.hig .research-report h2 { font-size: 17px; margin: 14px 0 6px; }
+body.hig .research-report h3 { font-size: 14.5px; margin: 14px 0 6px; }
+body.hig .research-report h4 { font-size: 13px; margin: 12px 0 4px; }
+body.hig .research-link { color: var(--accent-text, var(--accent-primary)); }

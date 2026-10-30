@@ -383,6 +383,23 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     const startTime = Date.now();
     const telegramOwners = parseTelegramOwners(config);
 
+    // A research asked here gets one status message, edited as it moves, with Status/Cancel.
+    const researchKeyboard = (id: string) =>
+        new InlineKeyboard().text("Status", `research:status:${id}`).text("Cancel", `research:cancel:${id}`);
+    void import("./research/index.js").then(({ registerResearchStatusCard }) =>
+        registerResearchStatusCard("telegram", async (origin, id, text) => {
+            const chatId = Number(origin.userId);
+            if (!telegramOwners.has(chatId)) return null; // the owner's private chat only
+            const sent = await bot.api.sendMessage(chatId, text, { reply_markup: researchKeyboard(id) });
+            let last = text;
+            return async (next, done) => {
+                if (next === last && !done) return; // Telegram refuses an edit that changes nothing
+                last = next;
+                await bot.api.editMessageText(chatId, sent.message_id, next, done ? undefined : { reply_markup: researchKeyboard(id) });
+            };
+        }),
+    );
+
     // Initialize slash commands
     initCommands({
         config,
@@ -1605,6 +1622,19 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 }
             } else {
                 await ctx.answerCallbackQuery({ text: "Task not found or already finished." });
+            }
+            return;
+        }
+
+        // ── Research status message: research:status:<id> / research:cancel:<id> ──
+        if (data.startsWith("research:status:") || data.startsWith("research:cancel:")) {
+            const id = data.slice(data.indexOf(":", 9) + 1);
+            const { cancelResearchById, researchStatusLine } = await import("./research/index.js");
+            if (data.startsWith("research:status:")) {
+                await ctx.answerCallbackQuery({ text: (await researchStatusLine(id)).slice(0, 190), show_alert: true });
+            } else {
+                const stopped = await cancelResearchById(id);
+                await ctx.answerCallbackQuery({ text: stopped ? "Stopping the research…" : "It already finished." });
             }
             return;
         }

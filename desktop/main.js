@@ -182,7 +182,7 @@ const _CONVEX_DEPLOY_NAME = _ATLAS_IS_PROD ? "avid-finch-726" : "avid-finch-726"
 const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.site`;
 const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.cloud`;
 
-const { parseOtplessVerifyResponse, isLegacyUserId } = require("./auth-helpers");
+const { parseOtplessVerifyResponse, isLegacyUserId, isLoopbackHost } = require("./auth-helpers");
 const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
 const { readVault, registerVaultIpc } = require("./vault-store");
 
@@ -1292,6 +1292,84 @@ function notifyBrokenPermission(p) {
     permsNotice.show();
 }
 
+// Bot → "##BHAI_NOTIFY##{kind,title,body,tag?,actions?}" (src/desktop-notify.ts): a
+// finished long task, a proactive message, an inbox suggestion, Bhai stuck or waiting
+// for a yes. A click opens the chat the owner last used, where the reply is (or
+// `onClick`); the reply box and buttons answer Bhai without opening anything. A tag
+// replaces the earlier notification with that tag; {close: tag} takes it away.
+const { createNotifyGate, actionToSend } = require("./notify-gate");
+const shouldNotify = createNotifyGate((k) => store.get(k));
+const liveNotes = new Map(); // tag → its notification, still on screen
+let lastChatSurface = "overlay"; // "panel" once the owner chats in the app window
+let sendFromNotification = null; // ({text, chat} | {raw}) → the bot, over the in-app chat socket (registerIPC)
+function closeNotes(match) {
+    for (const [tag, n] of liveNotes) if (match(tag)) { liveNotes.delete(tag); n.close(); }
+}
+// Back in a Bhai window: its turn notifications are read.
+app.on("browser-window-focus", () => closeNotes((t) => t.startsWith("turn:")));
+function showBotNotification(note, onClick) {
+    const { Notification, BrowserWindow } = require("electron");
+    if (typeof note.close === "string") return closeNotes((t) => t === note.close);
+    if (!Notification.isSupported() || !shouldNotify(note, !!BrowserWindow.getFocusedWindow())) return;
+    const tag = typeof note.tag === "string" ? note.tag : null;
+    const chat = tag && tag.startsWith("turn:") ? tag.slice(5) : undefined;
+    const actions = (Array.isArray(note.actions) ? note.actions : []).slice(0, 3);
+    const n = new Notification({
+        title: String(note.title || "Bhai").slice(0, 80),
+        body: String(note.body).slice(0, 240),
+        icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
+        hasReply: note.kind !== "handoff" && !onClick,
+        replyPlaceholder: "Reply to Bhai",
+        actions: actions.map((a) => ({ type: "button", text: String(a.label || "").slice(0, 40) })),
+    });
+    n.on("reply", (details, legacyReply) => {
+        const text = String(details?.reply ?? legacyReply ?? "").trim();
+        if (text) sendFromNotification?.({ text, chat });
+    });
+    n.on("action", (details, legacyIndex) => {
+        const send = actionToSend(actions[details?.actionIndex ?? legacyIndex]);
+        if (send) sendFromNotification?.({ ...send, chat });
+    });
+    if (tag) {
+        closeNotes((t) => t === tag);
+        liveNotes.set(tag, n);
+        n.on("close", () => { if (liveNotes.get(tag) === n) liveNotes.delete(tag); });
+    }
+    n.on("click", () => {
+        if (onClick) onClick();
+        else if (lastChatSurface === "panel" && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+        } else showOverlay();
+    });
+    n.show();
+}
+
+// Bhai's face on the owner's Telegram bot: set once per bot, and only while it has
+// no photo, so a picture the owner chose is never replaced.
+async function ensureTelegramAvatar(token) {
+    if (!/^\d+:[\w-]{30,}$/.test(token || "")) return;
+    const botId = token.split(":")[0]; // a bot token starts with the bot's user id
+    const doneFile = path.join(DATA_DIR, "telegram-avatar.json");
+    try { if (JSON.parse(fs.readFileSync(doneFile, "utf8")).botId === botId) return; } catch { /* not yet */ }
+    const api = (method) => `https://api.telegram.org/bot${token}/${method}`;
+    try {
+        const photos = await (await fetch(`${api("getUserProfilePhotos")}?user_id=${botId}&limit=1`)).json();
+        if (!photos.ok) return;
+        if (photos.result.total_count === 0) {
+            const form = new FormData();
+            form.append("photo", JSON.stringify({ type: "static", photo: "attach://avatar" }));
+            const jpg = fs.readFileSync(path.join(__dirname, "assets", "mascot", "telegram-avatar.jpg"));
+            form.append("avatar", new Blob([jpg], { type: "image/jpeg" }), "avatar.jpg");
+            const r = await (await fetch(api("setMyProfilePhoto"), { method: "POST", body: form })).json();
+            if (!r.ok) { console.warn("[Telegram] Couldn't set the bot's photo:", r.description); return; }
+        }
+        fs.writeFileSync(doneFile, JSON.stringify({ botId }));
+    } catch (err) {
+        console.warn("[Telegram] Bot photo check failed:", err.message);
+    }
+}
+
 async function startBot() {
     if (stopPromise) await stopPromise; // never run two bots at once
     if (isAlive(botProcess)) return { status: "already_running" };
@@ -1378,6 +1456,8 @@ async function startBot() {
         ATLAS_DATA_DIR: DATA_DIR,
         // Where Settings writes .user-personality.json (personality-sync.ts).
         ATLAS_USER_DATA_DIR: app.getPath("userData"),
+        // The bot sends native notifications through us (showBotNotification).
+        ATLAS_DESKTOP_NOTIFY: "1",
         NODE_ENV: "production",
         // V8 code cache for the 23MB bundle: a warm start skips re-compiling it.
         NODE_COMPILE_CACHE: path.join(app.getPath("userData"), "v8-cache"),
@@ -1444,6 +1524,8 @@ async function startBot() {
             }
             const cvv = line.match(/^##BHAI_VAULT_CVV##(\{.*\})\s*$/);
             if (cvv) { try { askCvv(JSON.parse(cvv[1])); } catch { /* malformed line */ } continue; }
+            const note = line.match(/^##BHAI_NOTIFY##(\{.*\})\s*$/);
+            if (note) { try { showBotNotification(JSON.parse(note[1])); } catch { /* malformed line */ } continue; }
             const perms = line.match(/^##ATLAS_PERMS##(\{.*\})\s*$/);
             if (perms) { try { notifyBrokenPermission(JSON.parse(perms[1])); } catch { /* malformed line */ } continue; }
             const m = line.match(/^##BHAI_BUDDY##(\{.*\})\s*$/);
@@ -1591,6 +1673,12 @@ async function startBot() {
             }
         }
         if (code === 78) botDownMessage = SIGN_IN_AGAIN_MSG;
+        // Down for good (gave up restarting, or signed out): say so even with no Bhai window open.
+        if (exitStatus === "failed" || code === 78) {
+            showBotNotification({ kind: "stuck", title: "Bhai stopped", body: botDownMessage, tag: "bot-down" }, () => {
+                if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+            });
+        }
         hideBuddy();
         for (const k of Object.keys(channelStatuses)) delete channelStatuses[k];
         // Clean up temp env
@@ -1602,12 +1690,14 @@ async function startBot() {
         updateTrayMenu();
     });
 
+    closeNotes((t) => t === "bot-down"); // it's back
     // Notify renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("bot-status", "running");
     }
     updateTrayMenu();
     botStartTime = Date.now();
+    ensureTelegramAvatar(loadEnvKey("TELEGRAM_BOT_TOKEN")); // an existing bot without a photo gets Bhai's
 
     return { status: "started" };
 }
@@ -1655,6 +1745,12 @@ function startLocalServer() {
         const desktopDir = __dirname;
         const desktopDirResolved = path.resolve(desktopDir);
         const server = http.createServer((req, res) => {
+            // A rebound website (its name pointed at 127.0.0.1) would read the app's files here.
+            if (!isLoopbackHost(req.headers.host, server.address()?.port)) {
+                res.writeHead(421);
+                res.end("Misdirected");
+                return;
+            }
             let filePath = path.join(desktopDir, req.url === "/" ? "/panel.html" : req.url);
             // Strip query strings
             filePath = filePath.split("?")[0];
@@ -1712,10 +1808,20 @@ function startLocalServer() {
 // remote loads (e.g. the OTPless-hosted auth page on tryatlasagi.com).
 const TRUSTED_LOCAL_ORIGINS = new Set([new URL(OVERLAY_URL).origin]);
 
+// target=_blank links in the panel/wizard: allowed sites open in the default browser.
+function openPanelLink(url) {
+    const target = require("./panel-links").panelLinkTarget(url);
+    if (target) shell.openExternal(target).catch(() => {});
+    else console.warn(`[Window] Blocked link to ${url}`);
+}
+
 function hardenBrowserWindow(win, opts = {}) {
     const allowed = Array.isArray(opts.allowedNavigateOrigins) ? opts.allowedNavigateOrigins : [];
     const allowLocal = opts.allowLocal !== false; // file:// + http://127.0.0.1 by default
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        if (opts.externalLinks) openPanelLink(url);
+        return { action: "deny" };
+    });
     // Local means our own files and our own servers (the bot's page, the panel's server),
     // not any service on a localhost port: a window keeps its preload wherever it navigates.
     const guard = (e, url) => {
@@ -1755,7 +1861,7 @@ function createWizardWindow() {
         title: "Bhai Setup — © XAGI Labs",
     });
 
-    hardenBrowserWindow(mainWindow);
+    hardenBrowserWindow(mainWindow, { externalLinks: true });
     mainWindow.loadFile(path.join(__dirname, "wizard.html"));
     if (IS_DEV) mainWindow.webContents.openDevTools({ mode: "detach" });
 }
@@ -1798,7 +1904,7 @@ async function createPanelWindow() {
         title: "Bhai — © XAGI Labs",
     });
 
-    hardenBrowserWindow(mainWindow);
+    hardenBrowserWindow(mainWindow, { externalLinks: true });
     // The native close button hides to the menu bar, like the app's own close
     // control; Quit (⌘Q / tray) still quits.
     mainWindow.on("close", (e) => {
@@ -2185,6 +2291,7 @@ function showOverlay() {
     }
 
     hideBuddy(); // the overlay has its own mascot
+    lastChatSurface = "overlay";
 
     // Create lazily
     if (!overlayWindow || overlayWindow.isDestroyed()) {
@@ -2496,7 +2603,17 @@ function registerIPC() {
             if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("chat:event", { chat: appChatId, msg });
         };
     });
+    sendFromNotification = async ({ text, chat, raw }) => {
+        try {
+            const ws = await appChatSocket();
+            if (raw) return ws.send(JSON.stringify(raw));
+            appChatId = (chat || appChatId || `notify-${Date.now().toString(36)}`).slice(0, 64);
+            // source "notification": Bhai answers with a notification too, however quick the turn.
+            ws.send(JSON.stringify({ type: "chat", chat: appChatId, text: String(text).slice(0, 8000), meta: { source: "notification" } }));
+        } catch { /* Bhai isn't running: nothing to hand it to */ }
+    };
     ipcMain.handle("chat:send", async (_, { chat, text, file } = {}) => {
+        lastChatSurface = "panel";
         const t = String(text || "").trim().slice(0, 8000);
         const hasFile = file && typeof file.name === "string" && typeof file.base64 === "string" && file.base64.length < 28_000_000;
         if ((!t && !hasFile) || typeof chat !== "string") return { ok: false, error: "Nothing to send" };
@@ -2530,21 +2647,69 @@ function registerIPC() {
         }
         return { ok: false, error: "live-voice not available" };
     });
-    ipcMain.on("overlay:notify", (_, msg) => {
-        // Sent by the bot-served overlay page: plain short strings only.
-        const title = typeof msg?.title === "string" ? msg.title.slice(0, 80) : "";
-        const body = typeof msg?.body === "string" ? msg.body.slice(0, 240) : "";
-        const { Notification } = require("electron");
-        // The only sender today is "research complete" — a task notice.
-        if (store.get("notificationsEnabled") === false || store.get("notifyOnTask") === false) return;
-        if (Notification.isSupported()) {
-            // Windows silently drops notifications with an empty body — always provide one
-            const safeBody = body || "Bhai notification";
-            new Notification({
-                title: title || "Bhai",
-                body: safeBody,
-                icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
-            }).show();
+    // A finished research report. The page names the file, so only a .md that sits in a
+    // folder named Research opens: a planted path can't launch anything else.
+    const safeReportPath = (filePath) => {
+        if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return null;
+        let file;
+        try { file = fs.realpathSync(filePath); } catch { return null; } // a link named .md can't point at an app
+        if (path.extname(file).toLowerCase() !== ".md" || path.basename(path.dirname(file)) !== "Research") return null;
+        return file;
+    };
+    ipcMain.on("overlay:open-report", (_, filePath) => {
+        const file = safeReportPath(filePath);
+        if (file) shell.openPath(file);
+    });
+
+    // The Research page: past and running researches from the bot's index, their reports,
+    // and start / stop / continue / dig deeper, which go to the bot over the chat socket.
+    const researchEntries = () => {
+        try {
+            const index = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "research-index.json"), "utf8"));
+            return Array.isArray(index.researches) ? index.researches : [];
+        } catch { return []; }
+    };
+    ipcMain.handle("research:list", () =>
+        researchEntries()
+            .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
+            .slice(0, 100)
+            .map((e) => ({
+                id: e.id, topic: e.topic, profile: e.profile, status: e.status, startedAt: e.startedAt,
+                updatedAt: e.updatedAt, completedAt: e.completedAt, durationSec: e.durationSec,
+                sourcesProcessed: e.sourcesProcessed, findingsCount: e.findingsCount, error: e.error,
+                hasReport: !!e.reportFile,
+            })));
+    ipcMain.handle("research:report", (_, id) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        try { return file ? fs.readFileSync(file, "utf8").slice(0, 1_000_000) : null; } catch { return null; }
+    });
+    ipcMain.on("research:open", (_, id) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        if (file) shell.openPath(file);
+    });
+    // A source cited in a report: only a web link that is in that report opens.
+    ipcMain.on("research:open-source", (_, id, url) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        let parsed;
+        try { parsed = new URL(url); } catch { return; }
+        if (!file || !["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return;
+        try { if (fs.readFileSync(file, "utf8").includes(url)) shell.openExternal(parsed.href); } catch { /* report gone */ }
+    });
+    ipcMain.handle("research:action", async (_, a = {}) => {
+        const action = ["start", "cancel", "resume"].includes(a.action) ? a.action : null;
+        const id = typeof a.id === "string" ? a.id.slice(0, 80) : undefined;
+        const topic = typeof a.topic === "string" ? a.topic.trim().slice(0, 2000) : "";
+        if (!action || (action === "start" ? !topic : !id)) return { ok: false, error: "Nothing to do" };
+        try {
+            const ws = await appChatSocket();
+            ws.send(JSON.stringify({
+                type: "research_action", action, id, topic,
+                profile: ["quick", "standard", "deep", "exhaustive"].includes(a.profile) ? a.profile : "standard",
+                buildsOn: typeof a.buildsOn === "string" ? a.buildsOn.slice(0, 80) : undefined,
+            }));
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
         }
     });
 
@@ -6046,7 +6211,10 @@ ${body}`;
             await new Promise(r => setTimeout(r, 3000));
             let r;
             try { r = await convexSiteRequest("POST", "/api/telegram/managed/collect", { username }); } catch { continue; }
-            if (r && r.status === "ready") return { success: true, username, token: r.token, userId: r.ownerId, name: r.ownerName || "" };
+            if (r && r.status === "ready") {
+                ensureTelegramAvatar(r.token);
+                return { success: true, username, token: r.token, userId: r.ownerId, name: r.ownerName || "" };
+            }
             if (r && r.status === "expired") return { success: false, message: "That request expired" };
             if (r && r.error && !/rate limit/i.test(r.error)) return { success: false, message: r.error };
         }

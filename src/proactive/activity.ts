@@ -89,6 +89,11 @@ public class IdleTime {
     return 0;
 }
 
+/** The owner touched the keyboard or mouse in the last 5 minutes (getUserPresence's isActive). */
+export async function isUserActive(): Promise<boolean> {
+    return (await getUserIdleSeconds()) < 5 * 60;
+}
+
 // ── Active Apps ───────────────────────────────
 
 async function getActiveApps(): Promise<{ apps: string[]; frontmost: string }> {

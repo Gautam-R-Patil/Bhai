@@ -27,6 +27,19 @@ describe("assembleToolNames", () => {
         expect(got.has("os_smart_click")).toBe(true);
     });
 
+    it("fills round-robin: a first category's tail can't take a tied one's next tool", () => {
+        // "Use Calculator to work out 42×3, copy the result to my clipboard": system_controls'
+        // tail took the slots and os_control lost os_type.
+        const SYS = ["set_volume", "clipboard", "system_info", "wifi_control", "dark_mode", "lock_screen", "sleep_display"];
+        const all = new Set([...ALL, ...SYS]);
+        // As in the real list: app_manager second, so os_type is os_control's fifth.
+        const os = ["os_smart_click", "app_manager", "os_inspect", "os_click_id", "os_type", "os_screenshot"];
+        // 2 always-on + a floor of 4 each + 2 more: one more per category.
+        const got = assembleToolNames(["system_controls", "os_control"], [...SYS, ...os], all, 12);
+        expect(got.size).toBe(12);
+        expect(got.has("os_type")).toBe(true);
+    });
+
     it("never exceeds the total cap", () => {
         const got = assembleToolNames(["os_control", "communication"], [...OS, ...COMM], ALL, 8);
         expect(got.size).toBe(8);

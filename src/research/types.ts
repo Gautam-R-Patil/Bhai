@@ -95,6 +95,10 @@ export interface ActiveResearch {
     engineBreakdown?: Record<string, number>;
     estimatedTimeRemaining?: number;
     originalPrompt?: string;
+    /** Where it was asked (channel, user), so a resume after a restart reports there too. */
+    origin?: { channel: string; userId: string; userName?: string; isOwner: boolean; isPrivate?: boolean };
+    /** Times it was resumed after a restart; capped so a run that crashes the app isn't restarted forever. */
+    autoResumes?: number;
 }
 
 export interface ResearchIndexEntry {
@@ -111,6 +115,8 @@ export interface ResearchIndexEntry {
     originalPrompt?: string;
     durationSec?: number;
     error?: string;
+    /** The process running it; a "running" entry whose process is gone was cut off by a restart. */
+    pid?: number;
 }
 
 export interface ResearchIndex {
@@ -124,8 +130,6 @@ export interface ResearchProfile {
     concurrentQueries: number;
     citationDepth: number;
     useAcademicEngines: boolean;
-    multiPass: boolean;
-    synthesisModel: string;
 }
 
 // ── Persistence ──────────────────────────────
@@ -143,5 +147,6 @@ export interface ResearchState {
 
 // ── Callbacks ────────────────────────────────
 
-export type NotifyFn = (msg: string) => Promise<void>;
+/** important: also worth a chat message (resumed, failed); the rest is progress, shown on the computer only. */
+export type NotifyFn = (msg: string, important?: boolean) => Promise<void>;
 export type ProgressFn = (msg: string) => Promise<void>;

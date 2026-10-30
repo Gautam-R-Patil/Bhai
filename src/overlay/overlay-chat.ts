@@ -16,7 +16,7 @@ import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { getDownloadsDir, getWorkspaceDir } from "../config/paths.js";
-import { isStuckReplyPhrase, withStuckReplyLine } from "../channel-text.js";
+import { isStuckReplyPhrase, stuckActionButtons, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
 import {
     runAgent,
@@ -29,7 +29,10 @@ import {
 import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
 import { formatStepStatus, parseStepLine } from "../step-status.js";
-import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
+import { closeDesktopNotification, notifyDesktop, notifyTurnEnd } from "../desktop-notify.js";
+import { getPlanModeState } from "../agents/plan-mode.js";
+import { consentAskedSince } from "../security/consent.js";
+import { logChatMessage, markChatReset, recentChatContext, unansweredAsk } from "./chat-log.js";
 import { createTurnRelay } from "./turn-relay.js";
 import { classifyQuery } from "../memory/classifier.js";
 import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
@@ -43,7 +46,8 @@ import {
     getVoiceStagePhrase,
     getWaitPhrase,
 } from "../alive-ux.js";
-import { setOverlayResearchProgress } from "../tools/index.js";
+import { setOverlayResearchProgress, setOverlayResearchResult } from "../tools/index.js";
+import { parseQuickCommand } from "../quick-commands.js";
 import { getWidgetScript, getWidgetPage, validateWidgetToken } from "../widget/widget.js";
 import {
     initPushNotifications,
@@ -227,11 +231,24 @@ async function pushTaskDrawer(): Promise<void> {
     }
 }
 
+// The owner's message a restart left unanswered: told once, on the chat bar's next connect.
+let interruptedAsk: string | null = null;
+const restartNotice = (ask: string) =>
+    `I restarted before I could answer “${ask.length > 120 ? `${ask.slice(0, 117)}…` : ask}”. Ask me again if you still need it.`;
+
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
     // Pick up where the conversation left off before a restart.
     if (getConversationHistory().length === 0) {
         const recent = recentChatContext(12 * 60 * 60 * 1000, 20);
+        // A message that got no reply (Bhai restarted mid-turn) leaves the history: the
+        // next, unrelated reply answered it blind ("Battery: I can't read… Paris.").
+        // The owner hears about it once instead (below, on connect).
+        if (recent.at(-1)?.role === "user") recent.pop();
+        interruptedAsk = unansweredAsk(10 * 60_000);
+        // The chat bar is usually hidden after a restart and its toast fades in 12s: a real
+        // notification reaches the owner. Standalone bot: the toast on connect (below).
+        if (interruptedAsk && notifyDesktop("stuck", "Bhai restarted", restartNotice(interruptedAsk))) interruptedAsk = null;
         if (recent.length) setConversationHistory(recent);
     }
     // Ensure the local bootstrap token exists on disk so the native Swift
@@ -511,6 +528,20 @@ export function initOverlayChat(llm: LLMClient): void {
                 try { client.send(json); } catch { /* ignore */ }
             }
         }
+        // Offline, chat-fallback.ts sends it to Telegram/WhatsApp; live, the inbox is silent without this.
+        if (ev.kind === "added" && ev.item.status === "pending" && ownerClients().length > 0) {
+            const { id, topic, suggestedAction } = ev.item.intent;
+            // topic is an internal label (a raw thought, "anomaly x"): the body is the composed text.
+            notifyDesktop("inbox", "Bhai has a suggestion", ev.item.composedText || suggestedAction?.summary || topic, {
+                tag: `inbox:${id}`,
+                actions: [
+                    { label: "Approve", ws: { type: "inbox:approve", id } },
+                    { label: "Dismiss", ws: { type: "inbox:reject", id } },
+                ],
+            });
+        } else if (ev.kind === "updated" && ev.item.status !== "pending") {
+            closeDesktopNotification(`inbox:${ev.item.intent.id}`);
+        }
     });
 
     wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
@@ -565,6 +596,10 @@ export function initOverlayChat(llm: LLMClient): void {
         // `busy`: an owner turn is still running (a reconnecting chat bar keeps waiting for it;
         // if none is, its reply was lost and it unlocks).
         ws.send(JSON.stringify({ type: "ready", busy: connKind === "native-overlay" && ownerTurnRunning() }));
+        if (connKind === "native-overlay" && interruptedAsk) {
+            ws.send(JSON.stringify({ type: "notification", text: restartNotice(interruptedAsk) }));
+            interruptedAsk = null;
+        }
 
         // Send current inbox state on connect (so a fresh overlay sees pending items).
         // Owner only: the inbox holds the owner's pending drafts and actions.
@@ -654,6 +689,29 @@ export function initOverlayChat(llm: LLMClient): void {
                     const { cancelLongTask } = await import("../agents/long-task.js");
                     const cancelled = (await cancelResearchById(msg.taskId)) || cancelLongTask(msg.taskId);
                     sendToClient(ws, cancelled ? { type: "task_cancelled", taskId: msg.taskId } : { type: "task_complete", taskId: msg.taskId });
+                    return;
+                }
+
+                if (msg.type === "research_action") {
+                    // The app's Research page: start (or dig deeper into a finished one), stop, continue.
+                    if (!wsIsOwner(ws)) return;
+                    const research = await import("../research/index.js");
+                    const owner = { channel: "overlay", userId: "local", isOwner: true, isPrivate: true };
+                    let out: { error?: string; research_id?: string } = {};
+                    if (msg.action === "cancel" && typeof msg.id === "string") {
+                        if (!(await research.cancelResearchById(msg.id))) out = { error: "It already finished." };
+                    } else if (msg.action === "resume" && typeof msg.id === "string") {
+                        out = JSON.parse(await research.deepResearch.handler({ resume_id: msg.id, _channelContext: owner }));
+                    } else if (msg.action === "start" && typeof msg.topic === "string" && msg.topic.trim()) {
+                        out = JSON.parse(await research.deepResearch.handler({
+                            topic: msg.topic.trim().slice(0, 2000),
+                            profile: typeof msg.profile === "string" ? msg.profile : "standard",
+                            builds_on: typeof msg.buildsOn === "string" ? msg.buildsOn : undefined,
+                            _originalPrompt: msg.topic.trim().slice(0, 2000),
+                            _channelContext: owner,
+                        }));
+                    }
+                    sendToClient(ws, { type: "research_action_result", action: msg.action, id: out.research_id ?? msg.id, error: out.error });
                     return;
                 }
 
@@ -800,17 +858,16 @@ export function initOverlayChat(llm: LLMClient): void {
     // This callback persists across agent iterations (unlike _onProgress which is cleared)
     // So background research progress + completion notifications always reach the overlay
     setOverlayResearchProgress(async (msg: string) => {
-        if (overlayClients.size === 0) return;
-        const isComplete =
-            msg.includes("Deep research complete") || msg.includes("✅") || msg.includes("Research complete");
-        for (const client of ownerClients()) {
-            // Background: never the running turn's live line.
-            sendToClient(client, { type: "progress", text: humanizeForOverlay(msg), background: true });
-            if (isComplete) {
-                // Signal overlay to auto-show and display results prominently
-                sendToClient(client, { type: "research_complete", text: msg });
-            }
-        }
+        // Background: never the running turn's live line.
+        for (const client of ownerClients()) sendToClient(client, { type: "progress", text: humanizeForOverlay(msg), background: true });
+    });
+    // The finished answer: a card that stays until dismissed, with the report one click away.
+    // The owner asked for it, so Do Not Disturb doesn't hold it back.
+    setOverlayResearchResult(async (text, taskId, reportFile) => {
+        const clients = ownerClients().filter((c) => c.readyState === 1);
+        for (const client of clients) sendToClient(client, { type: "research_complete", text, taskId, reportFile });
+        if (clients.length > 0) notifyDesktop("done", "Research ready", text);
+        return clients.length > 0;
     });
 
     // ── Context-Aware Placeholder ──────────────
@@ -878,6 +935,8 @@ function isScreenQuery(msg: string): boolean {
 
     // A stuck report's handoff reply ("retry it", "skip it") is about the task, not the screen.
     if (isStuckReplyPhrase(msg)) return false;
+    // "how much battery do i have" is a quick command, answered without a screenshot or a model.
+    if (parseQuickCommand(msg)) return false;
 
     // 1. Direct keyword match
     if (SCREEN_KEYWORDS.some(kw => lower.includes(kw))) return true;
@@ -959,6 +1018,14 @@ const turnAborts = new Map<WebSocket, AbortController>();
 /** The owner's turns share one conversation history, so only one may run at a time. */
 const ownerTurnRunning = (): boolean => [...turnAborts.keys()].some(wsIsOwner);
 const BUSY_TEXT = "I'm still on your last message. Wait for my reply, or press Esc to stop it.";
+const STUCK_NOTIFY_ACTIONS = stuckActionButtons();
+
+/** The turn ended asking the owner for a yes: a consent ask, or design docs / a new tool awaiting approval. */
+function askedOwnerSince(since: number): boolean {
+    const s = getPlanModeState();
+    const awaiting = s.mode === "awaiting_approval" || s.mode === "awaiting_dynamic_tool_approval";
+    return consentAskedSince(since) || (awaiting && s.enteredAt >= since);
+}
 
 function ownerClients(): WebSocket[] {
     return [...overlayClients].filter(wsIsOwner);
@@ -1062,6 +1129,7 @@ async function handleOverlayMessage(
     // its Stop handle.
     if (wsIsOwner(ws) && ownerTurnRunning()) {
         sendToClient(ws, { type: "error", text: BUSY_TEXT });
+        if (source === "notification") notifyDesktop("done", "Bhai is busy", "I'm still on your last message. Reply again once I'm done.");
         return;
     }
     // "/new" (or "/clear") starts over without a model call: clears the shared
@@ -1242,11 +1310,22 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             turn: live.turn,
             worked: live.worked(),
         });
+        if (wsIsOwner(ws)) {
+            notifyTurnEnd(interactive.text, startTime, {
+                chat,
+                stuck: result.stuck,
+                stuckActions: STUCK_NOTIFY_ACTIONS,
+                waiting: askedOwnerSince(startTime),
+                fromNotification: source === "notification",
+            });
+        }
     } catch (err) {
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
         console.error("[OVERLAY] Agent error:", err);
         const errorType = categorizeError(err as Error);
-        sendToClient(ws, { type: "error", text: turnFailedText(live, getErrorMessage(errorType)) });
+        const failedText = turnFailedText(live, getErrorMessage(errorType));
+        sendToClient(ws, { type: "error", text: failedText });
+        if (wsIsOwner(ws)) notifyTurnEnd(failedText, startTime, { chat, failed: true, fromNotification: source === "notification" });
     }
 }
 
@@ -1321,6 +1400,7 @@ async function handleFileAttachment(
         ? `${userText}${fileContext}\n\n[SOURCE: Desktop overlay chat — file attached: ${fileName}]`
         : `[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. The user dropped a file: "${fileName}". ${isImage ? "Analyze the image and describe what you see." : `Here is its content:${fileContext}`}]`;
 
+    const startTime = Date.now();
     try {
         // Reasoning goes as `thinking_content` (owner turns only), never as a progress line.
         const { result, stopped } = await runTurn(ws, live, (signal) =>
@@ -1364,6 +1444,9 @@ async function handleFileAttachment(
             turn: live.turn,
             worked: live.worked(),
         });
+        if (wsIsOwner(ws)) {
+            notifyTurnEnd(interactive.text, startTime, { chat, stuck: result.stuck, stuckActions: STUCK_NOTIFY_ACTIONS, waiting: askedOwnerSince(startTime) });
+        }
     } catch (err) {
         console.error("[OVERLAY] File attachment error:", err);
         sendToClient(ws, { type: "error", text: turnFailedText(live, "Could not process the file.") });
@@ -1642,7 +1725,11 @@ export async function sendOverlayNotification(message: string, opts: { requested
     }
 
     const clients = ownerClients();
-    if (clients.length === 0) return false;
+    // Something the owner asked for (a reminder, a scheduled task) shows even with no chat window open.
+    if (clients.length === 0) {
+        if (opts.requested) notifyDesktop("reminder", "Bhai", message);
+        return false;
+    }
     const isResearchComplete =
         message.includes("Deep research complete") ||
         message.includes("research complete") ||
@@ -1653,6 +1740,8 @@ export async function sendOverlayNotification(message: string, opts: { requested
             sendToClient(client, { type: "research_complete", text: message });
         }
     }
+    if (isResearchComplete) notifyDesktop("done", "Research complete", message);
+    else notifyDesktop(opts.requested ? "reminder" : "proactive", "Bhai", message);
 
     // Record notification for engagement tracking
     try {

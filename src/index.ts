@@ -3,6 +3,8 @@
 // See LICENSE.md for details.
 
 import "./security/log-redaction.js"; // first: redacts secrets/PII from every log line
+import { chmodSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { checkAccountStatus, initAccountGuard } from "./account-guard.js";
 import { runAgent } from "./agent.js";
@@ -69,6 +71,7 @@ import {
     executeTool,
     getToolNames,
     initDeepResearch,
+    resumeInterruptedResearch,
     loadDynamicTools,
     registerChannelSender,
     rotateAuditLog,
@@ -89,6 +92,7 @@ import {
     setSmartClickLLM,
     setSwarmLLM,
 } from "./tools/index.js";
+import { deliverOnFirst } from "./owner-delivery.js";
 import { restoreScheduledTasks, setTaskTriggerHandler } from "./tools/scheduled.js";
 import { initSpotify } from "./tools/spotify.js";
 import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
@@ -161,6 +165,13 @@ async function boot() {
     }
 
     // Saved secrets from the desktop app's vault arrive on stdin (security/vault.ts).
+    // ~/.atlas holds the owner's past requests (strategy library), tool analytics and
+    // tokens; the home folder lets every account in "staff" in, so it's owner-only.
+    try {
+        chmodSync(join(homedir(), ".atlas"), 0o700);
+    } catch {
+        /* not created yet, or not ours to change */
+    }
     const { initVault } = await import("./security/vault.js");
     initVault();
 
@@ -592,12 +603,9 @@ async function boot() {
         for (const [channel, fn] of Object.entries(sendPrimary)) {
             if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
         }
-
-        // Push notification for background research completion
-        if (msg.includes("complete") || msg.includes("finished")) {
-            sendPushNotification("Research Complete", msg.substring(0, 180)).catch(() => {});
-        }
     });
+    // Research a restart cut off continues now that its channels are wired.
+    resumeInterruptedResearch().catch((err) => console.warn("[BOOT] Research auto-resume failed (non-fatal):", err));
 
     // Live voice mode (real-time conversation — Gemini Live / OpenAI Realtime)
     try {
@@ -984,31 +992,38 @@ async function boot() {
 
     // A scheduled message for the owner: the primary channel first, the others as backup.
     const notifyOwnerEverywhere = async (message: string): Promise<void> => {
-        // Primary channel gets the message first
-        const sendPrimary: Record<string, () => Promise<unknown>> = {
+        // The desktop app always shows it (the owner asked for it: Smart DND doesn't hold it).
+        sendOverlayNotification(message, { requested: true }).catch(() => {});
+        // One chat channel, not all of them: the primary, else the first that delivers.
+        const chats: Record<string, () => Promise<unknown>> = {
             whatsapp: () => sendWhatsAppProactiveMessage(message),
             discord: () => sendDiscordProactiveMessage(message),
             slack: () => sendSlackProactiveMessage(message),
             matrix: () => sendMatrixProactiveMessage(message),
-            // The owner asked for it: Smart DND doesn't hold it back.
-            overlay: () => sendOverlayNotification(message, { requested: true }),
         };
-        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
-        console.log(`📬 Scheduled message → ${PRIMARY_CHANNEL} + ${Object.keys(sendPrimary).length - 1} other channel(s)`);
+        if (bot) chats.telegram = () => sendProactiveMessage(bot, config, message);
+        const via = await deliverOnFirst(PRIMARY_CHANNEL, chats);
+        console.log(`📬 Scheduled message → overlay${via ? ` + ${via}` : " (no chat channel delivered)"}`);
+    };
 
-        // Send to primary channel
-        const primaryFn = sendPrimary[PRIMARY_CHANNEL];
-        if (primaryFn) {
-            try {
-                await primaryFn();
-            } catch {
-                /* primary failed, will try others */
+    // A scheduled job sent to one channel: while the owner is at the computer it also shows on
+    // the desktop (a desktop job also reaches their chat channel). Same rule as proactive dispatch.
+    const mirrorScheduledResult = async (channel: string, message: string): Promise<void> => {
+        try {
+            const { isUserActive } = await import("./proactive/activity.js");
+            if (!(await isUserActive())) return;
+            if (channel !== "overlay") {
+                const { notifyDesktop } = await import("./desktop-notify.js");
+                notifyDesktop("reminder", "Bhai", message);
+                return;
             }
-        }
-
-        // Send to other active channels as backup (non-blocking)
-        for (const [channel, fn] of Object.entries(sendPrimary)) {
-            if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
+            const { mirrorChatChannel } = await import("./proactive/dispatch.js");
+            const { getChannelSender } = await import("./tools/channel-send.js");
+            const chat = mirrorChatChannel();
+            const send = chat ? getChannelSender(chat) : undefined;
+            if (send) await send(message);
+        } catch {
+            /* the job's own delivery already happened */
         }
     };
 
@@ -1176,6 +1191,8 @@ async function boot() {
                     await notifyOwnerEverywhere(response);
                     return true;
                 }
+                // At the computer: the result also reaches the other side (desktop ↔ chat app).
+                void mirrorScheduledResult(channel, response);
                 if (channel === "telegram") {
                     const {
                         getTelegramBot,
@@ -1267,12 +1284,6 @@ async function boot() {
         }
         await closeMCPServers();
         await closeBrowser();
-        try {
-            const { closeSearchBrowser } = await import("./research/engines.js");
-            await closeSearchBrowser();
-        } catch {
-            /* not loaded */
-        }
         closeChromeBridge();
         closeCanvas();
         closeOverlayChat();

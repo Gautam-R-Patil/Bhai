@@ -567,8 +567,14 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                     });
 
                     try {
-                        const agentMessage = `[DEEP RESEARCH REQUEST]\n\nTopic: ${topic}\n\nPlease conduct thorough deep research on this topic. Use the deep_research tool for comprehensive investigation.`;
-                        await runInThread(llm, agentMessage, interaction, `Research: ${topic.substring(0, 80)}`, "Deep Research Results", "complex");
+                        // Research runs on the owner's account and reports to the owner's DM, so it
+                        // starts there: in a server channel the owner's tools are off (anyone reads it).
+                        if (interaction.guildId) {
+                            await interaction.editReply("Deep research runs in a DM with me: send `/research` there and the answer comes back in that DM.");
+                        } else {
+                            const agentMessage = `[DEEP RESEARCH REQUEST]\n\nTopic: ${topic}\n\nPlease conduct thorough deep research on this topic. Use the deep_research tool for comprehensive investigation.`;
+                            await runAndReply(llm, agentMessage, interaction, undefined, "complex");
+                        }
                     } finally {
                         activeTasks.delete(taskId);
                     }
@@ -635,7 +641,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                         "Here are the available commands:",
                         [
                             { name: "/ask <message>", value: "Ask Bhai anything -- general questions, tool use, and more" },
-                            { name: "/research <topic>", value: "Start a deep research task (runs in a thread with progress updates)" },
+                            { name: "/research <topic>", value: "Start a deep research task (in a DM with me; the answer and report come back there)" },
                             { name: "/task <description>", value: "Start a long-running task (runs in a thread with progress updates)" },
                             { name: "/status", value: "Check Bhai uptime and running tasks" },
                             { name: "/help", value: "Show this help message" },

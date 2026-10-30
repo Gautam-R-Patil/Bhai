@@ -1,7 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Deep Research v2 — Research profiles and constants
 
-import { MODELS } from "../llm.js";
 import { join } from "node:path";
 import { getDocumentsDir } from "../config/paths.js";
 import type { ResearchProfile } from "./types.js";
@@ -14,7 +13,6 @@ export const CONCURRENT_FETCHES = 10;       // was 3
 export const ENGINE_COOLDOWN_MS = 15000;
 export const ENGINE_MAX_CONSECUTIVE_FAILURES = 3;
 export const CITATION_CHAIN_MAX_PER_SOURCE = 5;
-export const SEARCH_BROWSER_IDLE_MS = 5 * 60 * 1000;
 
 export const USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
@@ -35,17 +33,15 @@ export const PROFILES: Record<string, ResearchProfile> = {
         concurrentQueries: 2,
         citationDepth: 0,
         useAcademicEngines: false,
-        multiPass: false,
-        synthesisModel: MODELS.SONNET,
     },
     standard: {
         depth: 20,
-        maxSources: 150,
+        // The report draws on ~110 findings and a page gives several: 150 pages was mostly reading
+        // nobody saw (and a model call each). 80 keeps the coverage at about half the calls.
+        maxSources: 80,
         concurrentQueries: 4,
         citationDepth: 1,
         useAcademicEngines: false,
-        multiPass: false,
-        synthesisModel: MODELS.SONNET,
     },
     deep: {
         depth: 25,
@@ -53,8 +49,6 @@ export const PROFILES: Record<string, ResearchProfile> = {
         concurrentQueries: 5,
         citationDepth: 2,
         useAcademicEngines: true,
-        multiPass: true,
-        synthesisModel: MODELS.PRO,
     },
     exhaustive: {
         depth: 50,
@@ -62,8 +56,6 @@ export const PROFILES: Record<string, ResearchProfile> = {
         concurrentQueries: 5,
         citationDepth: 3,
         useAcademicEngines: true,
-        multiPass: true,
-        synthesisModel: MODELS.PRO,
     },
 };
 

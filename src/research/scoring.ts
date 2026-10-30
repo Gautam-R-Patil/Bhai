@@ -97,6 +97,22 @@ function getWords(text: string): Set<string> {
     );
 }
 
+// Words that say nothing about the topic: a page that has only these didn't mention it.
+const TOPIC_STOPWORDS = new Set(["what", "which", "with", "from", "about", "that", "this", "they", "have", "find", "best", "more", "most", "into", "your", "their", "there", "when", "where", "does", "should", "could", "would", "latest", "some", "than", "them", "were", "will", "also", "how", "the", "and", "for", "are", "why", "who"]);
+
+/**
+ * A page that never names the topic yields no findings, so it isn't worth a model call. Only
+ * judged for a topic in plain ASCII: a Hindi or CJK topic is often researched from English pages.
+ */
+export function mentionsTopic(content: string, topic: string): boolean {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the full ASCII range
+    if (!/^[\x00-\x7F]*$/.test(topic)) return true;
+    const words = [...getWords(topic)].filter((w) => !TOPIC_STOPWORDS.has(w));
+    if (words.length === 0) return true;
+    const text = content.slice(0, 20000).toLowerCase();
+    return words.filter((w) => text.includes(w)).length >= Math.min(2, words.length);
+}
+
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
     if (a.size === 0 || b.size === 0) return 0; // nothing to compare is not "the same"
     let intersection = 0;

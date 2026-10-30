@@ -352,6 +352,33 @@ export const browserExtract: ToolDefinition = {
             const page = await getActivePage();
             const selector = input.selector as string;
             const attr = (input.attribute as string) || "textContent";
+            // jQuery's :contains() isn't CSS, and models write it ("th:contains('Born') + td"):
+            // every try failed. Match by visible text instead, returning the whole table row.
+            const terms = [...String(selector).matchAll(/:contains\(\s*(['"]?)(.*?)\1\s*\)/g)].map((m) => m[2]).filter(Boolean);
+            if (terms.length) {
+                const rows = await page.evaluate(
+                    /* javascript-obfuscator:disable */ ({ words }: { words: string[] }) => {
+                        // No named helpers in here: the bundler's __name() wrapper doesn't exist in the page.
+                        const out: string[] = [];
+                        const lower = words.map((w) => w.toLowerCase());
+                        for (const el of Array.from(document.querySelectorAll("th, td, li, p, dt, dd, h1, h2, h3, h4, caption, b, strong"))) {
+                            const t = (el as HTMLElement).innerText?.trim();
+                            if (!t || t.length > 400 || !lower.every((w) => t.toLowerCase().includes(w))) continue;
+                            const row = ((el.closest("tr") ?? el) as HTMLElement).innerText.trim().replace(/\s+/g, " ").slice(0, 500);
+                            if (!out.includes(row)) out.push(row);
+                            if (out.length >= 10) break;
+                        }
+                        return out;
+                    },
+                    /* javascript-obfuscator:enable */ { words: terms },
+                );
+                return JSON.stringify({
+                    success: true,
+                    elements: rows,
+                    count: (rows as string[]).length,
+                    note: `:contains() isn't CSS: matched elements whose text has ${terms.map((t) => `"${t}"`).join(" and ")}.`,
+                });
+            }
             // Pass selector and attr as parameters — never interpolate user input into eval strings
             const elements = await page.evaluate(
                 /* javascript-obfuscator:disable */ ({ sel, at }: { sel: string; at: string }) =>

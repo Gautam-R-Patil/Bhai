@@ -87,6 +87,11 @@ export function checkConsent(key: string, confirmed: boolean, opts: { nextTurnOn
     return "needs_consent";
 }
 
+/** True when an action was refused for consent at or after `since` (ms): the turn ended asking for a yes. */
+export function consentAskedSince(since: number): boolean {
+    return [...pending.values()].some((p) => p.at >= since);
+}
+
 /** @internal — tests only. */
 export function _resetConsent(): void {
     ownerTurn = 0;

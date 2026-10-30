@@ -9,14 +9,14 @@ import type {
     ResearchRound, ResearchState, NotifyFn,
 } from "./types.js";
 import { RESEARCH_DIR, AdaptiveRateLimiter } from "./profiles.js";
-import { multiEngineSearch, resetEngineHealth } from "./engines.js";
+import { multiEngineSearch } from "./engines.js";
 import { fetchPages, rankOutboundLinks, scoreDomainQuality, getDomain } from "./fetcher.js";
 import {
     generateSeedQueries, generateMoreQueries, analyzeAndExtract,
     detectContradictions, identifyGaps, synthesizeResearch,
     shouldExtractContacts, extractContactsSection,
 } from "./analysis.js";
-import { crossReferenceFindings, dedupeByText, rankSource, UrlSet } from "./scoring.js";
+import { crossReferenceFindings, dedupeByText, mentionsTopic, rankSource, UrlSet } from "./scoring.js";
 import { saveResearchState, storeResearchInMemory } from "./persistence.js";
 import { generateHypotheses, updateHypothesis, type Hypothesis, type ResearchPlan } from "./hypothesis-engine.js";
 import { getCredibility, recordClaimVerification } from "./credibility-model.js";
@@ -56,27 +56,29 @@ export async function executeDeepResearch(
     const engineBreakdown: Record<string, number> = { ...resume?.research.engineBreakdown };
     research.engineBreakdown = engineBreakdown;
 
-    // Reset engine health at the start of each research session
-    resetEngineHealth();
+    // Engine health isn't reset per research: one engine backing off is the same engine for
+    // every research running at once, and a fresh start would just re-hit the dead ones.
 
     console.log(`[RESEARCH] 🔬 Starting: ${research.id} (${research.profile} profile)`);
     console.log(`[RESEARCH]   Topic: "${research.topic}"`);
     console.log(`[RESEARCH]   Depth: ${research.depth} rounds, max ${research.maxSources} sources`);
     console.log(`[RESEARCH]   Citation depth: ${profile.citationDepth}, Academic: ${profile.useAcademicEngines}`);
 
-    await notify(resume
-        ? `🔬 Resuming deep research: "${research.topic.substring(0, 50)}" (${allSources.length} sources so far)`
-        : `🔬 Deep research started: "${research.topic.substring(0, 50)}" (${research.profile} profile: ${research.depth} rounds, ${research.maxSources} sources)`);
+    // A fresh start was already announced by the agent's reply; a resume (often after a restart) wasn't.
+    // A follow-up arrives here with a finished research's sources: that isn't a resume.
+    const resuming = resume?.research.id === research.id;
+    if (resuming) await notify(`🔬 Picking up the research on "${research.topic.substring(0, 50)}" where it stopped (${allSources.length} sources so far)`, true);
+    else await notify(`🔬 Deep research started: "${research.topic.substring(0, 50)}" (${research.profile} profile: ${research.depth} rounds, ${research.maxSources} sources)`);
 
     try {
         // ── Generate seed queries ──
-        const pendingQueries = resume ? [...resume.pendingQueries] : await generateSeedQueries(llm, research.topic, profile);
-        if (!resume) console.log(`[RESEARCH] 🌱 Generated ${pendingQueries.length} seed queries`);
+        const pendingQueries = resume?.pendingQueries.length ? [...resume.pendingQueries] : await generateSeedQueries(llm, research.topic, profile);
+        if (!resuming) console.log(`[RESEARCH] 🌱 Generated ${pendingQueries.length} seed queries`);
 
         // ── Hypothesis-driven research planning ──
         let researchPlan: ResearchPlan | null = null;
         let hypotheses: Hypothesis[] = [];
-        if (!resume) try {
+        if (!resuming) try {
             researchPlan = await generateHypotheses(llm, research.topic);
             hypotheses = researchPlan.hypotheses;
             // Add hypothesis-designed queries to the pending queue
@@ -106,7 +108,7 @@ export async function executeDeepResearch(
         // Returns the pages that yielded findings, in page order.
         const analyzeBatch = async (pages: Page[]): Promise<Array<{ page: Page; analysis: Analysis }>> => {
             const usable = pages
-                .filter(p => p.content && p.content.length >= 100)
+                .filter(p => p.content && p.content.length >= 100 && mentionsTopic(p.content, research.topic))
                 .slice(0, Math.max(0, research.maxSources - allSources.length));
             const analyses = await pLimit(usable.map(p => () => signal.aborted
                 ? Promise.resolve<Analysis>({ findings: [], followUpQueries: [], categories: [] })
@@ -200,7 +202,7 @@ export async function executeDeepResearch(
                         if (netStatus === "offline" || isOffline()) {
                             console.error(`[RESEARCH] ❌ Internet offline — aborting research after ${allEnginesOfflineCount} rounds with 0 results`);
                             research.status = "failed";
-                            await notify(`Research aborted — internet connection appears to be down. Will resume when connectivity returns.`);
+                            await notify(`⚠️ Research on "${research.topic.substring(0, 50)}" stopped: the internet seems to be down. Ask me to continue it once you're back online.`, true);
                             return;
                         }
                     } catch { /* network monitor not loaded */ }
@@ -421,6 +423,9 @@ export async function executeDeepResearch(
             research.roundsCompleted = globalRound;
             research.findingsCount = allFindings.length;
             research.updatedAt = new Date().toISOString();
+            // Rounds still to go in this phase, at this run's pace, plus about a minute to write it up.
+            const avgPerRound = (Date.now() - roundStartTime) / Math.max(1, globalRound);
+            research.estimatedTimeRemaining = Math.round(((adjustedPhase2Rounds - round - 1) * avgPerRound) / 1000) + 60;
 
             if (round % 5 === 0) {
                 await notify(`📖 Phase 2 round ${round + 1}/${adjustedPhase2Rounds}: ${allSources.length} sources, ${allFindings.length} findings, ${citationQueue.length} citations queued`);
@@ -437,6 +442,7 @@ export async function executeDeepResearch(
         // ══════════════════════════════════════
 
         research.currentPhase = 3;
+        research.estimatedTimeRemaining = 60;
         console.log(`[RESEARCH] ═══ PHASE 3: VERIFICATION & SYNTHESIS ═══`);
         await notify(`🔬 Phase 3: Verifying ${allFindings.length} findings, detecting contradictions, synthesizing report...`);
 
@@ -457,7 +463,7 @@ export async function executeDeepResearch(
 
             const duration = Math.round((Date.now() - new Date(research.startedAt).getTime()) / 1000);
             console.log(`[RESEARCH] ⚠️ Completed with limited results: ${allSources.length} sources, ${allFindings.length} findings, ${duration}s`);
-            await notify(`⚠️ Research complete with limited results (${allSources.length} sources). Search engines may be having issues. Report saved.`);
+            await notify(`⚠️ Only ${allSources.length} source(s) found — writing up what there is…`);
             return;
         }
 
@@ -564,12 +570,8 @@ export async function executeDeepResearch(
 
         const duration = Math.round((Date.now() - new Date(research.startedAt).getTime()) / 1000);
         console.log(`[RESEARCH] ✅ Complete: ${allSources.length} sources, ${structuredFindings.length} findings, ${duration}s`);
-        // Brief status notify — the actual user-facing message is produced by the
-        // agent continuation in research/index.ts (which reads the report and
-        // either summarizes or executes follow-up actions). The "✅" + "Research
-        // complete" tokens here are what overlay-chat.ts matches to fire the
-        // research_complete UI signal.
-        await notify(`✅ Research complete — analyzing findings...`);
+        // Progress only: the answer itself comes from the follow-up run in research/index.ts.
+        await notify(`📝 Report written — reading it for you…`);
 
     } catch (err) {
         if (signal.aborted) {
@@ -580,6 +582,6 @@ export async function executeDeepResearch(
         research.error = (err as Error).message;
         research.updatedAt = new Date().toISOString();
         console.error(`[RESEARCH] ❌ Failed: ${(err as Error).message}`);
-        await notify(`❌ Deep research failed: ${(err as Error).message}`);
+        await notify(`❌ Research on "${research.topic.substring(0, 50)}" failed: ${(err as Error).message}`, true);
     }
 }

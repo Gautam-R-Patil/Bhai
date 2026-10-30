@@ -114,6 +114,16 @@ export async function listIndex(filter?: {
 // Boot recovery: any entry still marked "running" whose updatedAt is older than
 // INTERRUPTED_THRESHOLD_MS was killed mid-flight by a process restart. Mark it
 // "interrupted"; its checkpoint stays so deep_research({resume_id}) can continue it.
+function processAlive(pid: number): boolean {
+    if (pid === process.pid) return false; // this process just started; it runs nothing yet
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (err) {
+        return (err as NodeJS.ErrnoException).code === "EPERM";
+    }
+}
+
 export async function recoverInterruptedResearches(): Promise<{
     interrupted: ResearchIndexEntry[];
 }> {
@@ -124,7 +134,8 @@ export async function recoverInterruptedResearches(): Promise<{
         for (const entry of index.researches) {
             if (entry.status !== "running") continue;
             const updatedMs = new Date(entry.updatedAt).getTime();
-            if (now - updatedMs <= INTERRUPTED_THRESHOLD_MS) continue;
+            // Its process is gone (the app was relaunched): cut off, however recent the last update.
+            if (!(entry.pid && !processAlive(entry.pid)) && now - updatedMs <= INTERRUPTED_THRESHOLD_MS) continue;
             entry.status = "interrupted";
             entry.updatedAt = new Date().toISOString();
             entry.error = entry.error ?? "Process restarted while research was running";
@@ -173,7 +184,38 @@ export async function deleteResearchState(researchId: string): Promise<void> {
     } catch {}
 }
 
+/** Finished researches keep their sources for follow-ups: the newest KEEP_FINISHED of them. */
+const KEEP_FINISHED = 20;
+export async function pruneFinishedStates(): Promise<void> {
+    const finished = await listIndex({ status: ["completed"] });
+    for (const e of finished.slice(KEEP_FINISHED)) await deleteResearchState(e.id);
+}
+
 // ── Memory Integration ───────────────────────
+
+const words = (t: string) => new Set(t.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
+
+/** Strong then moderate findings, skipping any that mostly repeat one already picked. */
+export function pickMemorableFindings(findings: StructuredFinding[], max: number): StructuredFinding[] {
+    const picked: StructuredFinding[] = [];
+    const seen: Set<string>[] = [];
+    for (const level of ["strong", "moderate"]) {
+        for (const f of findings) {
+            if (picked.length >= max) return picked;
+            if (f.confidence !== level) continue;
+            const w = words(f.text);
+            const repeats = seen.some((s) => {
+                let shared = 0;
+                for (const x of w) if (s.has(x)) shared++;
+                return shared / Math.max(1, Math.min(w.size, s.size)) >= 0.6;
+            });
+            if (repeats) continue;
+            picked.push(f);
+            seen.push(w);
+        }
+    }
+    return picked;
+}
 // Store research findings in the memory system so the agent can answer
 // follow-up questions about the research in future conversations.
 
@@ -192,35 +234,21 @@ export async function storeResearchInMemory(
                 `Deep research completed on "${topic}": ${summaryMatch[1].trim().substring(0, 500)}`,
                 "research",
                 `research,${topic.substring(0, 50)}`,
-                9,
+                7, // below 8: an unused research summary can fade (8+ never weakens)
+                "tool", // not "user": the owner's-words boost lifted these to 10
             );
         }
 
-        // Store strong findings (up to 15)
-        const strongFindings = findings
-            .filter(f => f.confidence === "strong")
-            .slice(0, 15);
-
-        for (const f of strongFindings) {
+        // The best findings, strongest first, without near-repeats: one run stored up to
+        // 25, half of them the same fact from different articles.
+        const picked = pickMemorableFindings(findings, 8);
+        for (const f of picked) {
             remember(
-                `[Research: ${topic}] ${f.text} (Source: ${f.sourceTitle})`,
+                `[Research: ${topic}] ${f.text}${f.confidence === "strong" ? ` (Source: ${f.sourceTitle})` : ""}`,
                 "research",
                 `research,${topic.substring(0, 30)},${f.category}`,
-                7,
-            );
-        }
-
-        // Store moderate findings (up to 10)
-        const moderateFindings = findings
-            .filter(f => f.confidence === "moderate")
-            .slice(0, 10);
-
-        for (const f of moderateFindings) {
-            remember(
-                `[Research: ${topic}] ${f.text}`,
-                "research",
-                `research,${topic.substring(0, 30)},${f.category}`,
-                5,
+                f.confidence === "strong" ? 6 : 5,
+                "tool",
             );
         }
 
@@ -229,10 +257,11 @@ export async function storeResearchInMemory(
             `Research report on "${topic}" saved to ~/Documents/Research/. Use check_deep_research to read.`,
             "research",
             `research,${topic.substring(0, 50)},report`,
-            8,
+            6,
+            "tool",
         );
 
-        console.log(`[RESEARCH] Stored ${strongFindings.length + moderateFindings.length + 2} research memories for follow-up queries`);
+        console.log(`[RESEARCH] Stored ${picked.length + 2} research memories for follow-up queries`);
     } catch (err) {
         console.warn(`[RESEARCH] Failed to store in memory:`, (err as Error).message);
     }

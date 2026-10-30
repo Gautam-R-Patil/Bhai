@@ -29,16 +29,18 @@ export interface Arm {
     model: string;
     /** Credits per call (convex/credit_cost.ts). */
     credits: number;
-    /** Takes images. */
+    /** Can work from images: find a UI element in a screenshot, not just accept one. */
     vision: boolean;
 }
 
 export const ARMS: Arm[] = [
     { id: "haiku", model: "anthropic/claude-haiku-4.5", credits: 0.25, vision: true },
     { id: "sonnet", model: "anthropic/claude-sonnet-4.6", credits: 1, vision: true },
-    { id: "gpt-4.1-nano", model: "azure/gpt-4.1-nano", credits: 0.25, vision: true },
-    { id: "gpt-4o-mini", model: "azure/gpt-4o-mini", credits: 0.25, vision: true },
-    { id: "gpt-5-mini", model: "azure/gpt-5-mini", credits: 0.25, vision: true },
+    // These take images but can't find things in a screenshot (scripts/eval-grounding.ts, 32 UI
+    // targets: gpt-4.1-nano 3%, gpt-4o-mini 3%, gpt-5-mini 19%; Haiku 94%, terra 91%).
+    { id: "gpt-4.1-nano", model: "azure/gpt-4.1-nano", credits: 0.25, vision: false },
+    { id: "gpt-4o-mini", model: "azure/gpt-4o-mini", credits: 0.25, vision: false },
+    { id: "gpt-5-mini", model: "azure/gpt-5-mini", credits: 0.25, vision: false },
     { id: "gpt-6.1-terra", model: "azure/gpt-6.1-terra", credits: 1, vision: true },
 ];
 

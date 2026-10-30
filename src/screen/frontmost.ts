@@ -107,3 +107,17 @@ export async function restoreFrontIfStolen(): Promise<string | undefined> {
     }
     return undefined;
 }
+
+/** The pid of a running app by name ("Calculator"), cheaply; 0 when it isn't running. */
+export async function pidOfApp(appName: string): Promise<number> {
+    if (process.platform !== "darwin") return 0;
+    try {
+        const { stdout: asn } = await execFileAsync("lsappinfo", ["find", `name=${appName}`], { timeout: 1500 });
+        const first = asn.trim().split(/\s+/)[0];
+        if (!first) return 0;
+        const { stdout } = await execFileAsync("lsappinfo", ["info", "-only", "pid", first], { timeout: 1500 });
+        return Number(/pid\s*=\s*(\d+)/.exec(stdout)?.[1] ?? 0);
+    } catch {
+        return 0;
+    }
+}

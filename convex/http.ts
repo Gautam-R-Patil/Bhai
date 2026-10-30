@@ -2154,7 +2154,7 @@ http.route({
                         content: `Search the web for: ${query}\n\nThen, for each useful result, say in one line what that page says that answers the search, citing it.`,
                     },
                 ],
-            });
+            }, { timeout: 11_000, maxRetries: 0 }); // the app stops waiting at 12s: past that, refund rather than charge
             const results: Array<{ url: string; title: string; snippet: string; page_age: string | null }> = [];
             const snippets = new Map<string, string>();
             for (const block of msg.content) {
