@@ -103,4 +103,17 @@ describe("os_inspect query", () => {
         const none = JSON.parse(await osInspect.handler({ query: "printer" }));
         expect(none.hint).toMatch(/without query/);
     });
+
+    // From the all-nano eval: query "BhaiEval" listed [195]; nano clicked id=1 ("Recents").
+    it("won't click a list position taken for an id", async () => {
+        frontPid = 55;
+        tree = app("Finder", 55, [n("AXRow", "Recents", null, 10), n("AXImage", "BhaiEval", null, 40)]);
+        const out = JSON.parse(await osInspect.handler({ query: "bhaieval" }));
+        expect(out.tip).toContain("os_click_id id=2");
+        click.mockClear();
+        const wrong = JSON.parse(await osClickId.handler({ id: 1 }));
+        expect(wrong.error).toContain('[2] "BhaiEval"');
+        expect(click).not.toHaveBeenCalled();
+        expect(JSON.parse(await osClickId.handler({ id: 2 })).success).toBe(true);
+    });
 });

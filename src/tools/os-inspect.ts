@@ -36,6 +36,8 @@ interface InspectCache {
     wasFront: boolean;
     depth: number;
     timestamp: number;
+    /** The elements a query-filtered inspect listed (their ids are not 1..n). */
+    shown?: AxFlatElement[];
 }
 
 /** Elements whose label (or a static text's value) shares words with the query, best first. */
@@ -148,6 +150,7 @@ export const osInspect: ToolDefinition = {
                 wasFront: !pid || (await getFrontmostApp())?.pid === dump.pid,
                 depth,
                 timestamp: Date.now(),
+                ...(query ? { shown: elements } : {}),
             };
 
             // SECURITY: summary uses `label`, and `value` only for read-only static text (a
@@ -196,7 +199,7 @@ export const osInspect: ToolDefinition = {
                 truncated: all.length > lines.length,
                 elements: summary,
                 hint,
-                tip: `Use os_click_id with id=<number> to click an element. Or query by text: os_click_id with text="<query>". Cache TTL: ${Math.round(INSPECT_CACHE_TTL_MS / 1000)}s.`,
+                tip: `${query && elements.length ? `To click "${truncate(elements[0].label || elements[0].role, 40)}": os_click_id id=${elements[0].id} (the number in brackets, not its place in this list). ` : ""}Use os_click_id with id=<number> to click an element. Or query by text: os_click_id with text="<query>". Cache TTL: ${Math.round(INSPECT_CACHE_TTL_MS / 1000)}s.`,
             });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
@@ -248,6 +251,18 @@ export const osClickId: ToolDefinition = {
 
         let el: AxFlatElement | null = null;
         if (id !== null) {
+            // os_inspect query="BhaiEval" listed [195] "BhaiEval"; gpt-4.1-nano clicked id=1
+            // (the first in the list), which was "Recents".
+            const shown = cache.shown;
+            if (shown?.length && id <= shown.length && !shown.some((e) => e.id === id)) {
+                return JSON.stringify({
+                    success: false,
+                    error: `Not clicked: id=${id} wasn't in your last os_inspect list. Ids are the numbers in brackets: ${shown
+                        .slice(0, 5)
+                        .map((e) => `[${e.id}] "${truncate(e.label || e.role, 40)}"`)
+                        .join(", ")}.`,
+                });
+            }
             el = cache.elements.find((e) => e.id === id) || null;
             if (!el)
                 return JSON.stringify({
