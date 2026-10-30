@@ -681,6 +681,29 @@ export function initOverlayChat(llm: LLMClient): void {
                     return;
                 }
 
+                if (msg.type === "research_action") {
+                    // The app's Research page: start (or dig deeper into a finished one), stop, continue.
+                    if (!wsIsOwner(ws)) return;
+                    const research = await import("../research/index.js");
+                    const owner = { channel: "overlay", userId: "local", isOwner: true, isPrivate: true };
+                    let out: { error?: string; research_id?: string } = {};
+                    if (msg.action === "cancel" && typeof msg.id === "string") {
+                        if (!(await research.cancelResearchById(msg.id))) out = { error: "It already finished." };
+                    } else if (msg.action === "resume" && typeof msg.id === "string") {
+                        out = JSON.parse(await research.deepResearch.handler({ resume_id: msg.id, _channelContext: owner }));
+                    } else if (msg.action === "start" && typeof msg.topic === "string" && msg.topic.trim()) {
+                        out = JSON.parse(await research.deepResearch.handler({
+                            topic: msg.topic.trim().slice(0, 2000),
+                            profile: typeof msg.profile === "string" ? msg.profile : "standard",
+                            builds_on: typeof msg.buildsOn === "string" ? msg.buildsOn : undefined,
+                            _originalPrompt: msg.topic.trim().slice(0, 2000),
+                            _channelContext: owner,
+                        }));
+                    }
+                    sendToClient(ws, { type: "research_action_result", action: msg.action, id: out.research_id ?? msg.id, error: out.error });
+                    return;
+                }
+
                 if (msg.type === "stop") {
                     // Stop button / Esc: abort this socket's running turn. No new
                     // tool starts after this (agent.ts checks the signal per tool).

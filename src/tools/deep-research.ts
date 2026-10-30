@@ -11,6 +11,8 @@ export {
     getResearchStatusSnippet,
     initDeepResearch,
     multiEngineSearch,
+    registerResearchStatusCard,
+    researchStatusLine,
     resumeInterruptedResearch,
     type SearchResult,
     setDeepResearchLLM,

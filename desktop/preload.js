@@ -47,6 +47,13 @@ contextBridge.exposeInMainWorld("atlas", {
     saveLegalAcceptance: (payload) => ipcRenderer.invoke("setup:save-legal", payload),
     openExternalUrl: (url) => ipcRenderer.invoke("util:open-external", url),
     openReport: (filePath) => ipcRenderer.send("overlay:open-report", filePath),
+    research: {
+        list: () => ipcRenderer.invoke("research:list"),
+        report: (id) => ipcRenderer.invoke("research:report", id),
+        open: (id) => ipcRenderer.send("research:open", id),
+        openSource: (id, url) => ipcRenderer.send("research:open-source", id, url),
+        action: (a) => ipcRenderer.invoke("research:action", a),
+    },
     setupReseedNow: () => ipcRenderer.invoke("setup:reseed-now"),
     chooseWorkspace: () => ipcRenderer.invoke("setup:choose-workspace"),
     createWorkspace: (path) => ipcRenderer.invoke("setup:create-workspace", path),

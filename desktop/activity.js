@@ -28,7 +28,7 @@ const PHRASES = {
     open_settings: (a) => a.pane && `Opened ${short(a.pane, 30)} settings`,
     calendar_tool: (a) => a.action === "create" && a.title && `Added to your calendar: ${short(a.title, 50)}`,
     write: (a) => a.file_path && `Saved ${base(a.file_path)}`,
-    deep_research: (a) => a.topic && `Researched ${short(a.topic, 50)}`,
+    deep_research: (a) => a.topic && `Started research: ${short(a.topic, 50)}`, // logged when it starts, not when it's done
     set_volume: () => "Changed the volume",
     weather: (a) => `Checked the weather${a.location ? ` in ${short(a.location, 30)}` : ""}`,
 };

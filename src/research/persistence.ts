@@ -184,6 +184,13 @@ export async function deleteResearchState(researchId: string): Promise<void> {
     } catch {}
 }
 
+/** Finished researches keep their sources for follow-ups: the newest KEEP_FINISHED of them. */
+const KEEP_FINISHED = 20;
+export async function pruneFinishedStates(): Promise<void> {
+    const finished = await listIndex({ status: ["completed"] });
+    for (const e of finished.slice(KEEP_FINISHED)) await deleteResearchState(e.id);
+}
+
 // ── Memory Integration ───────────────────────
 
 const words = (t: string) => new Set(t.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);

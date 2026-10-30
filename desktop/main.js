@@ -2644,12 +2644,68 @@ function registerIPC() {
     });
     // A finished research report. The page names the file, so only a .md that sits in a
     // folder named Research opens: a planted path can't launch anything else.
-    ipcMain.on("overlay:open-report", (_, filePath) => {
-        if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return;
+    const safeReportPath = (filePath) => {
+        if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return null;
         let file;
-        try { file = fs.realpathSync(filePath); } catch { return; } // a link named .md can't point at an app
-        if (path.extname(file).toLowerCase() !== ".md" || path.basename(path.dirname(file)) !== "Research") return;
-        shell.openPath(file);
+        try { file = fs.realpathSync(filePath); } catch { return null; } // a link named .md can't point at an app
+        if (path.extname(file).toLowerCase() !== ".md" || path.basename(path.dirname(file)) !== "Research") return null;
+        return file;
+    };
+    ipcMain.on("overlay:open-report", (_, filePath) => {
+        const file = safeReportPath(filePath);
+        if (file) shell.openPath(file);
+    });
+
+    // The Research page: past and running researches from the bot's index, their reports,
+    // and start / stop / continue / dig deeper, which go to the bot over the chat socket.
+    const researchEntries = () => {
+        try {
+            const index = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "research-index.json"), "utf8"));
+            return Array.isArray(index.researches) ? index.researches : [];
+        } catch { return []; }
+    };
+    ipcMain.handle("research:list", () =>
+        researchEntries()
+            .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
+            .slice(0, 100)
+            .map((e) => ({
+                id: e.id, topic: e.topic, profile: e.profile, status: e.status, startedAt: e.startedAt,
+                updatedAt: e.updatedAt, completedAt: e.completedAt, durationSec: e.durationSec,
+                sourcesProcessed: e.sourcesProcessed, findingsCount: e.findingsCount, error: e.error,
+                hasReport: !!e.reportFile,
+            })));
+    ipcMain.handle("research:report", (_, id) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        try { return file ? fs.readFileSync(file, "utf8").slice(0, 1_000_000) : null; } catch { return null; }
+    });
+    ipcMain.on("research:open", (_, id) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        if (file) shell.openPath(file);
+    });
+    // A source cited in a report: only a web link that is in that report opens.
+    ipcMain.on("research:open-source", (_, id, url) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        let parsed;
+        try { parsed = new URL(url); } catch { return; }
+        if (!file || !["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return;
+        try { if (fs.readFileSync(file, "utf8").includes(url)) shell.openExternal(parsed.href); } catch { /* report gone */ }
+    });
+    ipcMain.handle("research:action", async (_, a = {}) => {
+        const action = ["start", "cancel", "resume"].includes(a.action) ? a.action : null;
+        const id = typeof a.id === "string" ? a.id.slice(0, 80) : undefined;
+        const topic = typeof a.topic === "string" ? a.topic.trim().slice(0, 2000) : "";
+        if (!action || (action === "start" ? !topic : !id)) return { ok: false, error: "Nothing to do" };
+        try {
+            const ws = await appChatSocket();
+            ws.send(JSON.stringify({
+                type: "research_action", action, id, topic,
+                profile: ["quick", "standard", "deep", "exhaustive"].includes(a.profile) ? a.profile : "standard",
+                buildsOn: typeof a.buildsOn === "string" ? a.buildsOn.slice(0, 80) : undefined,
+            }));
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
     });
 
     // Open auth window from renderer. Short-circuits if a valid session already exists.

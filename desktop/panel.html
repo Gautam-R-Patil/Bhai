@@ -58,6 +58,16 @@
                     </svg>
                     <span>Dashboard</span>
                 </button>
+                <button class="nav-item" data-tab="research" onclick="switchTab('research')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="7"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        <line x1="8" y1="9" x2="14" y2="9"></line>
+                        <line x1="8" y1="13" x2="12" y2="13"></line>
+                    </svg>
+                    <span>Research</span>
+                </button>
                 <button class="nav-item" data-tab="channels" onclick="switchTab('channels')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -187,6 +197,35 @@
                         <div id="recentList"></div>
                     </section>
 
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════ -->
+            <!-- TAB: Research                  -->
+            <!-- ═══════════════════════════════ -->
+            <div class="tab-content" id="tab-research">
+                <div class="tab-header">
+                    <h2 class="tab-title">Research</h2>
+                </div>
+                <form class="surface-card research-new" id="researchNew" onsubmit="event.preventDefault(); startResearch();">
+                    <div class="research-basis" id="researchBasis" hidden>
+                        <span id="researchBasisText"></span>
+                        <button type="button" class="link-like" onclick="setResearchBasis(null)">Start fresh instead</button>
+                    </div>
+                    <div class="research-new-row">
+                        <input class="clean-input" id="researchTopic" type="text" placeholder="What should Bhai research?" autocomplete="off" aria-label="Research topic">
+                        <select class="clean-input research-depth" id="researchProfile" aria-label="How deep">
+                            <option value="quick">Quick · ~2 min</option>
+                            <option value="standard" selected>Standard · ~5 min</option>
+                            <option value="deep">Deep · ~15 min</option>
+                            <option value="exhaustive">Exhaustive · 30+ min</option>
+                        </select>
+                        <button type="submit" class="btn btn-primary btn-sm">Start</button>
+                    </div>
+                </form>
+                <div class="chats-layout research-layout">
+                    <div class="chats-list surface-card" id="researchList" aria-label="Research"></div>
+                    <div class="chats-pane surface-card research-pane" id="researchPane" aria-live="polite"></div>
                 </div>
             </div>
 
@@ -1432,6 +1471,8 @@
             moveNavPill();
 
             if (tabId === 'settings') { loadSettings(); loadPreferences(); autoCheckUpdates(); }
+            clearInterval(researchPoll);
+            if (tabId === 'research') { loadResearch(); researchPoll = setInterval(loadResearch, 5000); }
             if (tabId === 'memory') {
                 if (window.MemoryStudio && typeof window.MemoryStudio.mount === 'function') {
                     window.MemoryStudio.mount();
@@ -1715,6 +1756,14 @@
             if (document.getElementById('tab-chats').classList.contains('active')) loadChats(true); // list only: the thread is already live
             loadRecentChats();
         }
+
+        atlas.onChatEvent(({ msg }) => {
+            if (msg && msg.type === 'research_action_result') {
+                if (msg.error) showToast(msg.error, true);
+                else if (msg.action === 'start' && msg.id) researchOpenId = msg.id;
+                loadResearch();
+            } else if (msg && msg.type === 'research_complete') loadResearch();
+        });
 
         atlas.onChatEvent(({ chat, msg }) => {
             // Something Bhai finished in the background (a research report): into the open chat.
@@ -4619,6 +4668,116 @@
             const div = document.createElement('div');
             div.textContent = text || '';
             return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // ── Research: past and running researches, their reports, start / stop / continue / dig deeper ──
+        let researchPoll = null;
+        let researchOpenId = null;
+        let researchBasis = null; // a finished research the next one builds on
+        let researchShown = ''; // id + status of the report on screen, so a poll doesn't re-render it
+        const RESEARCH_STATUS = { running: 'Running', completed: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Stopped' };
+
+        async function loadResearch() {
+            if (!document.getElementById('tab-research').classList.contains('active')) return;
+            const list = document.getElementById('researchList');
+            const items = await atlas.research.list().catch(() => []);
+            list.replaceChildren();
+            if (!items.length) {
+                list.innerHTML = '<div class="chats-empty">No research yet</div>';
+                document.getElementById('researchPane').innerHTML = '<div class="chats-empty">Ask for anything above: Bhai reads the sources, checks them against each other and writes a cited report.</div>';
+                researchShown = '';
+                return;
+            }
+            const open = items.find((r) => r.id === researchOpenId) || items[0];
+            for (const r of items) {
+                const item = document.createElement('button');
+                item.className = 'chats-item' + (r.id === open.id ? ' active' : '');
+                const title = document.createElement('span');
+                title.className = 'chats-item-title';
+                title.textContent = r.topic || 'Research';
+                const meta = document.createElement('span');
+                meta.className = 'chats-item-meta';
+                meta.textContent = `${RESEARCH_STATUS[r.status] || r.status} · ${chatWhen(Date.parse(r.startedAt))} · ${r.sourcesProcessed || 0} sources`;
+                item.append(title, meta);
+                item.onclick = () => { researchOpenId = r.id; loadResearch(); };
+                list.appendChild(item);
+            }
+            researchOpenId = open.id;
+            showResearch(open);
+        }
+
+        async function showResearch(r) {
+            const pane = document.getElementById('researchPane');
+            const key = `${r.id}|${r.status}|${r.status === 'running' ? r.sourcesProcessed : ''}`;
+            if (key === researchShown) return;
+            researchShown = key;
+            const head = document.createElement('div');
+            head.className = 'research-head';
+            const h = document.createElement('h3');
+            h.textContent = r.topic;
+            const meta = document.createElement('div');
+            meta.className = 'chats-item-meta';
+            const mins = r.durationSec ? ` · took ${Math.max(1, Math.round(r.durationSec / 60))} min` : '';
+            meta.textContent = `${RESEARCH_STATUS[r.status] || r.status} · ${r.profile} · ${r.sourcesProcessed || 0} sources · ${r.findingsCount || 0} findings${mins}`;
+            const actions = document.createElement('div');
+            actions.className = 'research-actions';
+            const button = (label, fn, primary) => {
+                const b = document.createElement('button');
+                b.className = `btn ${primary ? 'btn-primary' : 'btn-secondary'} btn-sm`;
+                b.textContent = label;
+                b.onclick = fn;
+                actions.appendChild(b);
+            };
+            if (r.status === 'running') button('Stop', () => researchAction({ action: 'cancel', id: r.id }));
+            if (r.status === 'interrupted' || r.status === 'failed') button('Continue', () => researchAction({ action: 'resume', id: r.id }), true);
+            if (r.status === 'completed') button('Dig deeper', () => setResearchBasis(r), true);
+            if (r.hasReport) button('Open in app', () => atlas.research.open(r.id));
+            head.append(h, meta, actions);
+            const body = document.createElement('div');
+            body.className = 'research-report';
+            if (r.status === 'running') body.innerHTML = '<p class="chats-working">Reading sources… the report shows up here when it\'s done.</p>';
+            else if (r.error && r.status !== 'completed') body.textContent = r.error;
+            if (r.hasReport) {
+                const text = await atlas.research.report(r.id).catch(() => null);
+                if (researchOpenId !== r.id) return; // another one was opened meanwhile
+                // Links stay text until clicked: a click opens a source only if it's in this report.
+                body.innerHTML = text
+                    ? renderMarkdown(text).replace(/https?:\/\/[^\s<>"']+/g, (u) => `<a href="#" class="research-link">${u}</a>`)
+                    : '<p class="chats-empty">The report file is gone.</p>';
+                body.onclick = (e) => {
+                    const a = e.target.closest('a.research-link');
+                    if (!a) return;
+                    e.preventDefault();
+                    atlas.research.openSource(r.id, a.textContent);
+                };
+            }
+            pane.replaceChildren(head, body);
+        }
+
+        async function researchAction(a) {
+            const res = await atlas.research.action(a).catch((err) => ({ ok: false, error: err.message }));
+            if (!res.ok) showToast(res.error || "Couldn't reach Bhai", true);
+            else setTimeout(loadResearch, 1200);
+        }
+
+        function setResearchBasis(r) {
+            researchBasis = r ? r.id : null;
+            document.getElementById('researchBasis').hidden = !r;
+            if (r) document.getElementById('researchBasisText').textContent = `Building on “${r.topic}” (its ${r.sourcesProcessed} sources are reused).`;
+            const input = document.getElementById('researchTopic');
+            input.placeholder = r ? 'What should Bhai dig into next?' : 'What should Bhai research?';
+            input.focus();
+        }
+
+        async function startResearch() {
+            const input = document.getElementById('researchTopic');
+            const topic = input.value.trim();
+            if (!topic) return input.focus();
+            const res = await atlas.research.action({ action: 'start', topic, profile: document.getElementById('researchProfile').value, buildsOn: researchBasis || undefined }).catch((err) => ({ ok: false, error: err.message }));
+            if (!res.ok) return showToast(res.error || "Couldn't reach Bhai", true);
+            input.value = '';
+            setResearchBasis(null);
+            showToast('Research started');
         }
 
         // Simple markdown to HTML converter

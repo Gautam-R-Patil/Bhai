@@ -65,18 +65,20 @@ export async function executeDeepResearch(
     console.log(`[RESEARCH]   Citation depth: ${profile.citationDepth}, Academic: ${profile.useAcademicEngines}`);
 
     // A fresh start was already announced by the agent's reply; a resume (often after a restart) wasn't.
-    if (resume) await notify(`🔬 Picking up the research on "${research.topic.substring(0, 50)}" where it stopped (${allSources.length} sources so far)`, true);
+    // A follow-up arrives here with a finished research's sources: that isn't a resume.
+    const resuming = resume?.research.id === research.id;
+    if (resuming) await notify(`🔬 Picking up the research on "${research.topic.substring(0, 50)}" where it stopped (${allSources.length} sources so far)`, true);
     else await notify(`🔬 Deep research started: "${research.topic.substring(0, 50)}" (${research.profile} profile: ${research.depth} rounds, ${research.maxSources} sources)`);
 
     try {
         // ── Generate seed queries ──
-        const pendingQueries = resume ? [...resume.pendingQueries] : await generateSeedQueries(llm, research.topic, profile);
-        if (!resume) console.log(`[RESEARCH] 🌱 Generated ${pendingQueries.length} seed queries`);
+        const pendingQueries = resume?.pendingQueries.length ? [...resume.pendingQueries] : await generateSeedQueries(llm, research.topic, profile);
+        if (!resuming) console.log(`[RESEARCH] 🌱 Generated ${pendingQueries.length} seed queries`);
 
         // ── Hypothesis-driven research planning ──
         let researchPlan: ResearchPlan | null = null;
         let hypotheses: Hypothesis[] = [];
-        if (!resume) try {
+        if (!resuming) try {
             researchPlan = await generateHypotheses(llm, research.topic);
             hypotheses = researchPlan.hypotheses;
             // Add hypothesis-designed queries to the pending queue

@@ -5,7 +5,7 @@
 import type { ToolDefinition } from "../tools/get-current-time.js";
 import type { LLMClient } from "../llm.js";
 import type { ChannelContext } from "../agent.js";
-import type { ActiveResearch, NotifyFn, ResearchIndexEntry } from "./types.js";
+import type { ActiveResearch, NotifyFn, ResearchIndexEntry, ResearchState } from "./types.js";
 import { PROFILES } from "./profiles.js";
 import { getChannelSender } from "../tools/channel-send.js";
 import { executeDeepResearch } from "./executor.js";
@@ -20,6 +20,7 @@ import {
     loadResearchState,
     deleteResearchState,
     saveResearchState,
+    pruneFinishedStates,
 } from "./persistence.js";
 
 // ── State ────────────────────────────────────
@@ -99,6 +100,7 @@ export async function initDeepResearch(): Promise<void> {
     _initialized = true;
     try {
         _cutOff = (await recoverInterruptedResearches()).interrupted.map((e) => e.id);
+        await pruneFinishedStates();
     } catch (err) {
         console.warn(`[RESEARCH] Boot recovery failed:`, (err as Error).message);
     }
@@ -137,6 +139,18 @@ export function listRunningResearch(): Array<{ id: string; topic: string; progre
             progress: r.maxSources > 0 ? Math.min(99, (100 * r.sourcesProcessed) / r.maxSources) : 0,
             phase: `${r.sourcesProcessed} sources · ${r.findingsCount} findings`,
         }));
+}
+
+/** One line on where a research stands, for a Status button. */
+export async function researchStatusLine(id: string): Promise<string> {
+    const r = activeResearches.get(id);
+    if (r?.status === "running") {
+        const eta = typeof r.estimatedTimeRemaining === "number" ? `, about ${Math.max(1, Math.round(r.estimatedTimeRemaining / 60))} min left` : "";
+        return `Phase ${r.currentPhase} of 3: ${r.sourcesProcessed} sources read, ${r.findingsCount} findings${eta}.`;
+    }
+    const e = r ?? (await getIndexEntry(id));
+    if (!e) return "That research isn't on record any more.";
+    return e.status === "completed" ? `Finished: ${e.sourcesProcessed} sources read.` : `${e.status[0].toUpperCase()}${e.status.slice(1)}.`;
 }
 
 /** Stop a running research; false when there is none by that id. */
@@ -179,6 +193,16 @@ export function sanitizePromptForFencing(s: string): string {
 const DESKTOP_CHANNELS = new Set(["overlay", "chrome-extension", "web-widget"]);
 export const startedOnDesktop = (origin?: ChannelContext): boolean => !!origin && DESKTOP_CHANNELS.has(origin.channel);
 
+// A chat that can edit a message (Telegram) gets one live status message for the research
+// instead of nothing until the end: edited in place as it moves, with Status/Cancel buttons.
+/** Edits the research's status message; done drops its buttons. */
+export type StatusCard = (text: string, done?: boolean) => Promise<void>;
+type StatusCardFactory = (origin: ChannelContext, researchId: string, text: string) => Promise<StatusCard | null>;
+const statusCards = new Map<string, StatusCardFactory>();
+export function registerResearchStatusCard(channel: string, factory: StatusCardFactory): void {
+    statusCards.set(channel, factory);
+}
+
 /** To the channel it was asked on; when that can't take it, every channel, so it isn't lost. */
 async function sendToOrigin(origin: ChannelContext | undefined, text: string, file?: string): Promise<void> {
     const sender = origin && getChannelSender(startedOnDesktop(origin) ? "overlay" : origin.channel);
@@ -186,9 +210,10 @@ async function sendToOrigin(origin: ChannelContext | undefined, text: string, fi
     if (_telegramNotifier) await _telegramNotifier(text).catch(() => {});
 }
 
-export function createNotify(origin?: ChannelContext): NotifyFn {
+export function createNotify(origin?: ChannelContext, card?: StatusCard | null, title = ""): NotifyFn {
     return async (msg: string, important?: boolean) => {
         if (_overlayProgress) await _overlayProgress(msg).catch(() => {});
+        if (card) await card(`${title}\n${msg}`).catch(() => {});
         if (important) await sendToOrigin(origin, msg);
     };
 }
@@ -209,7 +234,7 @@ Unlike web_search (for quick lookups), this tool performs TRUE deep research:
 
 Research profiles:
 - "quick": ~2 min, 20 sources — fast overview
-- "standard": ~5 min, up to 150 sources — solid coverage (default)
+- "standard": ~5 min, up to 80 sources — solid coverage (default)
 - "deep": ~15 min, up to 200 sources, academic databases, 2-level citation chains
 - "exhaustive": ~30+ min, up to 500 sources, 3-level citation chains
 
@@ -221,7 +246,9 @@ CRITICAL — what to do AFTER this returns:
 
 Findings are stored in memory — you can answer follow-up questions about the research in future turns. Use check_deep_research only when the user explicitly asks for status or the report.
 
-A research that was interrupted or failed can be continued from its last checkpoint with deep_research({ resume_id }) (topic is then ignored).`,
+A research that was interrupted or failed can be continued from its last checkpoint with deep_research({ resume_id }) (topic is then ignored).
+
+To dig deeper into a FINISHED research ("go deeper on X", "now compare the top two"), pass builds_on: its id with the new topic: it starts from the sources and findings already gathered instead of re-reading them, and the new report covers both.`,
             parameters: {
                 type: "object",
                 properties: {
@@ -246,6 +273,10 @@ A research that was interrupted or failed can be continued from its last checkpo
                         type: "string",
                         description: "ID of an interrupted or failed research to continue from its checkpoint.",
                     },
+                    builds_on: {
+                        type: "string",
+                        description: "ID of a finished research this one follows up on: its sources and findings are reused.",
+                    },
                 },
                 required: ["topic"],
             },
@@ -263,6 +294,14 @@ A research that was interrupted or failed can be continued from its last checkpo
         const resumeState = resumeId ? await loadResearchState(resumeId) : null;
         if (resumeId && !resumeState) return JSON.stringify({ error: `No checkpoint for research "${resumeId}" — it can't be resumed. Start a new deep_research instead.` });
         if (resumeId && activeResearches.get(resumeId)?.status === "running") return JSON.stringify({ error: `Research "${resumeId}" is already running.` });
+        if (resumeId && (await getIndexEntry(resumeId))?.status === "completed")
+            return JSON.stringify({ error: `Research "${resumeId}" already finished. To dig deeper, start a new one with builds_on: "${resumeId}".` });
+
+        // A follow-up starts from a finished research's sources and findings (kept for this).
+        const basisId = resumeId ? undefined : (input.builds_on as string | undefined);
+        if (basisId && !isResearchId(basisId)) return JSON.stringify({ error: "Invalid builds_on — expected a research id like research_<n>_<timestamp>." });
+        const basis = basisId ? await loadResearchState(basisId) : null;
+        if (basisId && !basis) return JSON.stringify({ error: `Research "${basisId}" has no saved sources (too old, or it didn't finish). Start a new deep_research instead.` });
 
         const topic = resumeState?.research.topic ?? (input.topic as string);
         if (!topic) return JSON.stringify({ error: "Missing 'topic' parameter" });
@@ -290,7 +329,9 @@ A research that was interrupted or failed can be continued from its last checkpo
         const profile = PROFILES[profileName] || PROFILES.standard;
 
         const depth = resumeState?.research.depth ?? Math.min(Math.max((input.depth as number) || profile.depth, 1), 50);
-        const maxSources = resumeState?.research.maxSources ?? Math.min(Math.max((input.max_sources as number) || profile.maxSources, 5), 500);
+        // A follow-up reads up to a profile's worth of new pages on top of the ones it starts with.
+        const maxSources = resumeState?.research.maxSources
+            ?? Math.min(Math.max((input.max_sources as number) || profile.maxSources, 5), 500) + (basis?.allSources.length ?? 0);
 
         const id = resumeState?.research.id ?? `research_${++researchCounter}_${Date.now()}`;
 
@@ -329,13 +370,30 @@ A research that was interrupted or failed can be continued from its last checkpo
 
         activeResearches.set(id, research);
         void syncActiveToIndex(research);
+        // Starting point handed to the executor: its own checkpoint, or the finished research it builds on.
+        const startFrom: ResearchState | undefined = resumeState ?? (basis ? {
+            research: { ...research, abortController: undefined } as unknown as ResearchState["research"],
+            allFindings: basis.allFindings,
+            allSources: basis.allSources,
+            visitedUrls: basis.visitedUrls,
+            usedQueries: basis.usedQueries,
+            pendingQueries: [],
+            rounds: [],
+            currentRound: 0,
+        } : undefined);
 
-        const capturedNotify = createNotify(capturedChannelContext);
+        const cardTitle = `🔬 Research: ${topic.substring(0, 80)}`;
+        const makeCard = capturedChannelContext && !startedOnDesktop(capturedChannelContext) ? statusCards.get(capturedChannelContext.channel) : undefined;
+        const card = makeCard && capturedChannelContext
+            ? await makeCard(capturedChannelContext, id, `${cardTitle}\nStarting…`).catch(() => null)
+            : null;
+        const capturedNotify = createNotify(capturedChannelContext, card, cardTitle);
         // The answer, with the report: on the computer as a card that stays until dismissed when it
         // was asked there; otherwise on its channel with the report file attached. The header marks
         // it as something the owner asked for, so Do Not Disturb doesn't swallow it.
         const deliverResult = async (text: string) => {
             const file = research.reportFile || undefined;
+            await card?.(`${cardTitle}\n✅ Done: ${research.sourcesProcessed} sources read. The answer is below.`, true).catch(() => {});
             void import("../notifications/push.js")
                 .then(({ sendPushNotification }) => sendPushNotification("Research ready", topic.substring(0, 180)))
                 .catch(() => {});
@@ -345,12 +403,17 @@ A research that was interrupted or failed can be continued from its last checkpo
         const capturedLLM = _llm!;
 
         // Fire and forget — runs in background
-        executeDeepResearch(research, { ...profile, depth, maxSources }, capturedLLM, capturedNotify, resumeState ?? undefined).then(async () => {
+        executeDeepResearch(research, { ...profile, depth, maxSources }, capturedLLM, capturedNotify, startFrom).then(async () => {
             // Always reflect terminal state to the index (completed | failed | cancelled).
             await syncActiveToIndex(research);
-            // A failed run keeps its checkpoint so deep_research({resume_id}) can continue it.
-            if (research.status === "completed" || research.status === "cancelled") await deleteResearchState(id);
-            if (research.status !== "completed") return;
+            // A failed run keeps its checkpoint so deep_research({resume_id}) can continue it, and a
+            // finished one so a follow-up (builds_on) can reuse its sources; a cancelled one is dropped.
+            if (research.status === "cancelled") await deleteResearchState(id);
+            if (research.status !== "completed") {
+                const how = research.status === "cancelled" ? "🛑 Stopped." : `❌ Stopped: ${research.error ?? research.status}`;
+                await card?.(`${cardTitle}\n${how}`, true).catch(() => {});
+                return;
+            }
 
             const continuationPrompt = `Background deep research on "${topic}" is now complete (${research.sourcesProcessed} sources, ${research.findingsCount} findings, report saved at ${research.reportFile}).
 
@@ -400,6 +463,7 @@ Always end by sending a final user-facing message describing what you found and 
                 // purgeMapToCap() in .finally() can evict the entry.
                 await syncActiveToIndex(research);
                 await capturedNotify(`❌ Research on "${topic.substring(0, 50)}" failed: ${research.error}`, true);
+                await card?.(`${cardTitle}\n❌ Stopped: ${research.error}`, true).catch(() => {});
             })
             .finally(() => {
                 purgeMapToCap();

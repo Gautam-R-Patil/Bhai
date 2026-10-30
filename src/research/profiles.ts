@@ -36,7 +36,9 @@ export const PROFILES: Record<string, ResearchProfile> = {
     },
     standard: {
         depth: 20,
-        maxSources: 150,
+        // The report draws on ~110 findings and a page gives several: 150 pages was mostly reading
+        // nobody saw (and a model call each). 80 keeps the coverage at about half the calls.
+        maxSources: 80,
         concurrentQueries: 4,
         citationDepth: 1,
         useAcademicEngines: false,
