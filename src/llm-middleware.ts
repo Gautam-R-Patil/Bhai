@@ -223,9 +223,16 @@ export function createTelemetryMiddleware(): LLMMiddleware {
 
         // Only log if meaningful (skip noise from cached responses)
         if (elapsed > 0) {
+            // The prompt-cache prefix is tools → system → history: a changed tool set
+            // (fingerprint) misses the whole cache. Claude calls were 12-18% cached.
+            const tools = (params.tools ?? []) as Array<{ function?: { name?: string } }>;
+            const toolNames = tools.map((t) => t.function?.name ?? "").join(",");
+            const toolKb = Math.round(JSON.stringify(tools).length / 1024);
+            const fp = createHash("sha1").update(toolNames).digest("hex").slice(0, 6);
             console.log(
                 `  [LLM-TELEMETRY] ${model} | ${elapsed}ms | ` +
-                `${promptTokens} in / ${completionTokens} out (${totalTokens} total, ${cachedTokens} cached)`,
+                `${promptTokens} in / ${completionTokens} out (${totalTokens} total, ${cachedTokens} cached)` +
+                ` | tools ${tools.length}/${toolKb}KB#${fp} msgs ${params.messages.length}`,
             );
         }
 
