@@ -547,6 +547,19 @@ export function requiresConfirmation(
             };
     }
 
+    // Sent from the open page with the owner's cookies: anything but a read can change
+    // their account on that site, and nothing on screen shows it happened.
+    if (toolName === "browser_batch_fetch") {
+        const method = String(args.method ?? "GET").toUpperCase();
+        if (method !== "GET" && method !== "HEAD") {
+            const urls = Array.isArray(args.urls) ? args.urls.slice(0, 3).join(", ") : "";
+            return {
+                needsConfirmation: true,
+                warningMessage: `⚠️ A ${method} to ${urls || "these URLs"} goes out signed in as the user and can change things there. Confirm with the user before sending it.`,
+            };
+        }
+    }
+
     const hotkey = hotkeysIn(toolName, args).find(isDestructiveHotkey);
     if (hotkey) {
         return {

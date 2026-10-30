@@ -278,13 +278,17 @@ export const remove = mutation({
 export const markHelpful = mutation({
   args: {
     reviewId: v.id("store_reviews"),
+    userId: v.string(), // set by the HTTP route from the session, never the caller
   },
   handler: async (ctx, args) => {
     const review = await ctx.db.get(args.reviewId);
     if (!review) throw new Error("Review not found");
+    const by = review.helpfulBy ?? [];
+    if (by.includes(args.userId)) return; // one vote each
 
     await ctx.db.patch(args.reviewId, {
       helpful: review.helpful + 1,
+      helpfulBy: [...by, args.userId],
     });
   },
 });

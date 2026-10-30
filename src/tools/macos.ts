@@ -1883,45 +1883,18 @@ export const setBrightness: ToolDefinition = {
         const clamped = Math.max(0, Math.min(100, rawLevel));
         const fraction = clamped / 100;
 
-        // Fallback chain: brightness CLI tool → CoreDisplay JXA → key simulation
-        try {
-            // First try the 'brightness' CLI tool (brew install brightness)
-            const { stdout } = await execFileAsync("brightness", [String(fraction)], { timeout: 5000 });
-            return JSON.stringify({
-                success: true,
-                brightness: clamped,
-                fraction,
-                method: "brightness-cli",
-            });
-        } catch {
-            // Fallback: Use osascript with JXA + private CoreDisplay API
-            const jxaScript = `
-ObjC.import('Cocoa');
-const lib = ObjC.unwrap($.NSBundle.bundleWithPath("/System/Library/Frameworks/CoreDisplay.framework").load());
-$.CFRelease = ObjC.castRefToObject($.objc_getClass("NSObject"));
-// CoreDisplay_Display_SetUserBrightness is available on macOS 10.12+
-const CGDirectDisplayID = 0; // main display
-ObjC.bindFunction('CoreDisplay_Display_SetUserBrightness', ['void', ['unsigned int', 'double']]);
-$.CoreDisplay_Display_SetUserBrightness(CGDirectDisplayID, ${fraction});
-'done'`;
-
-            try {
-                const tmpFile = join(tmpdir(), `atlas_brightness_${Date.now()}.js`);
-                await fs.writeFile(tmpFile, jxaScript, "utf-8");
-                await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
-                await fs.unlink(tmpFile).catch(() => {});
-                return JSON.stringify({
-                    success: true,
-                    brightness: clamped,
-                    fraction,
-                    method: "CoreDisplay",
-                });
-            } catch {
-                // Last resort: simulate key presses (less precise but always works)
-                // Key code 144 = brightness down, 145 = brightness up (F1/F2 without fn)
-                // Press brightness down 16 times to reach 0, then up the right number
-                const stepsUp = Math.round((clamped / 100) * 16);
-                const keyScript = `tell application "System Events"
+        // The 'brightness' CLI (brew install brightness) when it can drive this display. It exits 0
+        // even when it can't (Apple Silicon's built-in panel: "failed to set brightness"), so read
+        // what it says. (A CoreDisplay JXA step here threw on every call and was dropped.)
+        const cli = await execFileAsync("brightness", [String(fraction)], { timeout: 5000 }).catch(() => null);
+        if (cli && !/fail|error/i.test(`${cli.stdout}${cli.stderr}`)) {
+            return JSON.stringify({ success: true, brightness: clamped, fraction, method: "brightness-cli" });
+        }
+        // Simulate key presses (less precise, needs Accessibility)
+        // Key code 144 = brightness down, 145 = brightness up (F1/F2 without fn)
+        // Press brightness down 16 times to reach 0, then up the right number
+        const stepsUp = Math.round((clamped / 100) * 16);
+        const keyScript = `tell application "System Events"
     -- First go to 0 (key code 144 = brightness down / F1)
     repeat 16 times
         key code 144
@@ -1931,24 +1904,22 @@ $.CoreDisplay_Display_SetUserBrightness(CGDirectDisplayID, ${fraction});
         key code 145
     end repeat
 end tell`;
-                const tmpFile = join(tmpdir(), `atlas_brightness_${Date.now()}.scpt`);
-                try {
-                    await fs.writeFile(tmpFile, keyScript, "utf-8");
-                    await execFileAsync("osascript", [tmpFile], { timeout: 15000 });
-                    await fs.unlink(tmpFile).catch(() => {});
-                    return JSON.stringify({
-                        success: true,
-                        brightness: clamped,
-                        fraction,
-                        method: "key-simulation",
-                        note: "Used key simulation — brightness may not be exact. Install 'brightness' CLI (brew install brightness) for precise control.",
-                    });
-                } catch (err) {
-                    await fs.unlink(tmpFile).catch(() => {});
-                    const error = err as { message?: string };
-                    return JSON.stringify({ success: false, error: error.message || "Failed to set brightness" });
-                }
-            }
+        const tmpFile = join(tmpdir(), `atlas_brightness_${Date.now()}.scpt`);
+        try {
+            await fs.writeFile(tmpFile, keyScript, "utf-8");
+            await execFileAsync("osascript", [tmpFile], { timeout: 15000 });
+            await fs.unlink(tmpFile).catch(() => {});
+            return JSON.stringify({
+                success: true,
+                brightness: clamped,
+                fraction,
+                method: "key-simulation",
+                note: "Set with the brightness keys (16 steps), so the level is approximate.",
+            });
+        } catch (err) {
+            await fs.unlink(tmpFile).catch(() => {});
+            const error = err as { message?: string };
+            return JSON.stringify({ success: false, error: error.message || "Failed to set brightness" });
         }
     },
 };
