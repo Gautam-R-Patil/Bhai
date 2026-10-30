@@ -322,6 +322,12 @@ Task: ${description}${memoryContext}`;
 
 // ── Execute Long Task ─────────────────────────
 
+let onLongTaskStart: (() => void) | null = null;
+/** Told whenever a long task starts or resumes running (the chat bar's task drawer starts polling). */
+export function setLongTaskStartHook(fn: () => void): void {
+    onLongTaskStart = fn;
+}
+
 export async function startLongTask(
     llm: LLMClient,
     description: string,
@@ -350,6 +356,7 @@ export async function startLongTask(
     };
 
     activeTasks.set(id, task);
+    onLongTaskStart?.();
     taskAbortControllers.set(id, abortController);
     await saveCheckpoint(task);
 
@@ -688,6 +695,7 @@ export async function resumeLongTask(
 
     const abortController = new AbortController();
     activeTasks.set(taskId, task);
+    onLongTaskStart?.();
     taskAbortControllers.set(taskId, abortController);
 
     console.log(`[LONG-TASK] 🔄 Resuming task ${taskId} from phase ${nextPhase + 1}/${task.phases.length}`);

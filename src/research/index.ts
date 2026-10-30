@@ -30,6 +30,7 @@ let _llm: LLMClient | null = null;
 let _telegramNotifier: ((msg: string) => Promise<void>) | null = null;
 let _overlayProgress: ((msg: string) => Promise<void>) | null = null;
 let _overlayResult: ((text: string, id: string, reportFile?: string) => Promise<boolean>) | null = null;
+let _onResearchStart: (() => void) | null = null;
 
 const activeResearches = new Map<string, ActiveResearch>();
 let researchCounter = 0;
@@ -197,6 +198,8 @@ export function setOverlayResearchProgress(fn: (msg: string) => Promise<void>): 
 export function clearOverlayResearchProgress(): void { _overlayProgress = null; }
 /** The finished answer in the chat bar and the app; false when no window is open to take it. */
 export function setOverlayResearchResult(fn: (text: string, id: string, reportFile?: string) => Promise<boolean>): void { _overlayResult = fn; }
+/** Told whenever a research starts running (the chat bar's task drawer starts polling). */
+export function setResearchStartHook(fn: () => void): void { _onResearchStart = fn; }
 
 // Re-export for web-search.ts compatibility
 export { multiEngineSearch, type SearchResult };
@@ -431,6 +434,7 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
         };
 
         activeResearches.set(id, research);
+        _onResearchStart?.();
         // Awaited: the app's Research page reads the index as soon as this returns.
         await syncActiveToIndex(research);
         // Starting point handed to the executor: its own checkpoint, or the finished research it builds on.

@@ -194,11 +194,34 @@ const chatOf = (ws: WebSocket) => chatIds.get(ws) || "overlay";
 const offeredUndo = new WeakMap<WebSocket, string>();
 
 let drawerIds = new Set<string>();
+let drawerTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Send the owner's open chat bars every running research / long task, and what has ended. */
-async function pushTaskDrawer(): Promise<void> {
+/**
+ * Poll the task drawer every 4 s while a research / long task runs (one more push sends its
+ * end), and not at all otherwise. Woken when a task starts and when an owner chat bar connects.
+ */
+function wakeTaskDrawer(): void {
+    if (drawerTimer) return;
+    drawerTimer = setInterval(() => {
+        pushTaskDrawer()
+            .then((busy) => {
+                if (!busy && drawerTimer) {
+                    clearInterval(drawerTimer);
+                    drawerTimer = null;
+                }
+            })
+            .catch(() => {});
+    }, 4000);
+    drawerTimer.unref?.();
+}
+
+/**
+ * Send the owner's open chat bars every running research / long task, and what has ended.
+ * True while there is something to keep watching (no open chat bar: false, its connect wakes it).
+ */
+async function pushTaskDrawer(): Promise<boolean> {
     const owners = ownerClients().filter((c) => c.readyState === 1);
-    if (owners.length === 0) return;
+    if (owners.length === 0) return false;
     const [{ listRunningResearch }, { listActiveLongTasks }] = await Promise.all([
         import("../research/index.js"),
         import("../agents/long-task.js"),
@@ -224,11 +247,12 @@ async function pushTaskDrawer(): Promise<void> {
     const now = new Set(items.map((i) => i.taskId));
     const ended = [...drawerIds].filter((id) => !now.has(id));
     drawerIds = now;
-    if (items.length === 0 && ended.length === 0) return;
+    if (items.length === 0 && ended.length === 0) return false;
     for (const c of owners) {
         for (const i of items) c.send(JSON.stringify({ type: "task_progress", ...i }));
         for (const taskId of ended) c.send(JSON.stringify({ type: "task_complete", taskId }));
     }
+    return items.length > 0;
 }
 
 // The owner's message a restart left unanswered: told once, on the chat bar's next connect.
@@ -589,6 +613,7 @@ export function initOverlayChat(llm: LLMClient): void {
         chatIds.set(ws, `${connKind || "client"}-${randomBytes(4).toString("hex")}`);
         overlayClients.add(ws);
         console.log(`💬 ${isWidget ? "Widget" : "Overlay"} chat connected (${overlayClients.size} client${overlayClients.size > 1 ? "s" : ""})`);
+        if (wsIsOwner(ws)) wakeTaskDrawer(); // tasks may have started while no chat bar was open
 
         // Send ready signal
         // `busy`: an owner turn is still running (a reconnecting chat bar keeps waiting for it;
@@ -849,9 +874,8 @@ export function initOverlayChat(llm: LLMClient): void {
 
     // The chat bar's task drawer: running deep researches and long tasks, with Cancel.
     // (The drawer existed but nothing on the server ever sent it a task.)
-    setInterval(() => {
-        pushTaskDrawer().catch(() => {});
-    }, 4000).unref();
+    void import("../research/index.js").then((m) => m.setResearchStartHook(wakeTaskDrawer)).catch(() => {});
+    void import("../agents/long-task.js").then((m) => m.setLongTaskStartHook(wakeTaskDrawer)).catch(() => {});
 
     // ── Persistent Overlay Research Progress ──────
     // Its own event, not "progress": that one is a turn's status line (the chat bar's card,
@@ -2121,6 +2145,7 @@ async function handleLiveVoiceMute(ws: WebSocket, muted: boolean): Promise<void>
 export function closeOverlayChat(): void {
     if (activeRecording) { try { activeRecording.kill(); } catch { /* */ } activeRecording = null; }
     if (placeholderInterval) { clearInterval(placeholderInterval); placeholderInterval = null; }
+    if (drawerTimer) { clearInterval(drawerTimer); drawerTimer = null; }
     if (wss) { wss.close(); wss = null; }
     if (httpServer) { httpServer.close(); httpServer = null; }
     overlayClients.clear();
