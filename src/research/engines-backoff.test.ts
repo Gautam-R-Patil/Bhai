@@ -3,7 +3,13 @@
 // every other engine — otherwise a dead endpoint is re-queried (and blocks each
 // academic round on its 12s timeout) forever.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { __isEngineAvailable, resetEngineHealth, searchArxiv, searchSemanticScholar } from "./engines.js";
+vi.mock("../session.js", () => ({ getSessionToken: async () => "tok" }));
+vi.mock("../config/keys.js", () => ({ getConvexSiteUrl: () => "https://convex.test" }));
+vi.mock("../crypto-transport.js", () => ({
+    encryptedFetch: async () => new Response("Parallel not configured", { status: 500 }),
+}));
+
+import { __isEngineAvailable, multiEngineSearch, resetEngineHealth, searchArxiv, searchSemanticScholar } from "./engines.js";
 
 beforeEach(() => resetEngineHealth());
 afterEach(() => vi.unstubAllGlobals());
@@ -40,5 +46,14 @@ describe("academic engine backoff", () => {
         await searchSemanticScholar("q");
         await searchSemanticScholar("q"); // should short-circuit via isAvailable()
         expect(f).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("parallel (primary engine)", () => {
+    it("stops asking once the server says it isn't configured", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fetch failed")));
+        await multiEngineSearch("q");
+        resetEngineHealth(); // a new research run: still not configured
+        expect(__isEngineAvailable("parallel")).toBe(false);
     });
 });

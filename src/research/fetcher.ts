@@ -231,7 +231,7 @@ export function tagsToText(html: string): string {
     return out;
 }
 
-/** null: a failure a retry can't fix (blocked URL, 4xx other than 408/429). */
+/** null: a failure a retry can't fix (blocked URL, 4xx other than 408/429, a PDF that won't read). */
 async function fetchPageContentOnce(url: string): Promise<string | null> {
     // SSRF guard. Attacker-supplied URLs (search results, outbound links) must
     // not reach private/loopback/metadata targets. Fail-open: research continues.
@@ -268,12 +268,14 @@ async function fetchPageContentOnce(url: string): Promise<string | null> {
         // Papers and reports are often PDFs: read them (in the document reader's sandboxed
         // process) instead of dropping them. A PDF cut off at the cap doesn't parse; it's skipped.
         if (contentType.includes("application/pdf")) {
-            const buf = await readBodyCapped(response, MAX_PDF_BYTES);
+            const buf = await readBodyCapped(response, MAX_PDF_BYTES + 1);
             clearTimeout(timeout);
-            if (buf.length >= MAX_PDF_BYTES) return "";
+            // Too big, scanned or unparseable: the same bytes come back next time, so don't
+            // download and parse it again (null = no retry).
+            if (buf.length > MAX_PDF_BYTES) return null;
             const { extractText } = await import("../documents/ingest.js");
             const text = await extractText(Buffer.from(buf)).catch(() => "");
-            return text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().substring(0, MAX_CONTENT_PER_PAGE);
+            return text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().substring(0, MAX_CONTENT_PER_PAGE) || null;
         }
         const plain = contentType.includes("text/plain");
         if (!plain && !contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
@@ -351,7 +353,7 @@ export function extractOutboundLinks(html: string, baseUrl: string): string[] {
             if (linkDomain === baseDomain.toLowerCase().replace(/^www\./, "")) continue;
             if (url.includes("javascript:") || url.includes("mailto:")) continue;
             // Skip obvious non-content URLs
-            if (url.match(/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|ttf|pdf)$/i)) continue;
+            if (url.match(/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|ttf)$/i)) continue;
 
             links.push(url);
         } catch { /* invalid URL */ }

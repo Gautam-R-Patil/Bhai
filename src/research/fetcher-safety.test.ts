@@ -12,6 +12,9 @@ vi.mock("../security/url-safety.js", () => ({
     fetchWithRedirectGuard: async () => ({ response: nextResponse() }),
 }));
 
+let pdfParses = 0;
+vi.mock("../documents/ingest.js", () => ({ extractText: async () => { pdfParses++; return ""; } }));
+
 const { fetchPages, fetchPageContent } = await import("./fetcher.js");
 
 describe("fetcher response-body safety", () => {
@@ -86,6 +89,17 @@ describe("fetch retries", () => {
         expect(await calls(404)).toBe(1);
         expect(await calls(503)).toBe(3);
         expect(await calls(429)).toBe(3);
+    });
+
+    it("downloads and parses a PDF that yields no text only once", async () => {
+        let n = 0;
+        nextResponse = () => {
+            n++;
+            return new Response("%PDF-1.4 scanned", { headers: { "content-type": "application/pdf" } });
+        };
+        pdfParses = 0;
+        expect(await fetchPageContent("https://x.com/scan.pdf")).toBe("");
+        expect([n, pdfParses]).toEqual([1, 1]);
     });
 });
 
