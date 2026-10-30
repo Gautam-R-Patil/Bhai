@@ -50,10 +50,11 @@ async function probeAppleScript(): Promise<{ ok: boolean; reason?: string }> {
     } catch (err) {
         const e = err as { message?: string; stderr?: Buffer | string };
         const stderr = (e.stderr || "").toString();
-        const reason = stderr.includes("1002") || stderr.toLowerCase().includes("not authorized")
-            ? "tcc_denied"
-            : stderr.includes("-1743")
-              ? "tcc_denied_apple_events"
+        // -1743's text also says "not authorized", so check it first.
+        const reason = stderr.includes("-1743")
+            ? "tcc_denied_apple_events"
+            : stderr.includes("1002") || stderr.toLowerCase().includes("not authorized")
+              ? "tcc_denied"
               : e.message?.includes("timeout")
                 ? "timeout"
                 : (stderr.slice(0, 120) || e.message?.slice(0, 120) || "unknown_error");
@@ -116,8 +117,11 @@ export async function probeAndLogMacPermissions(): Promise<MacPermissionState> {
     }
 
     // The desktop app turns this into a "click to fix" notification: macOS can report a
-    // stale grant as granted, so the app can't see this on its own.
-    console.log(`##ATLAS_PERMS##${JSON.stringify({ accessibility: axOk, screen: srOk })}`);
+    // stale grant as granted, so the app can't see this on its own. Only an assistive-access
+    // denial means Accessibility; an Apple Events (Automation) denial or a slow System Events
+    // launch would send the user to the wrong pane.
+    const axDenied = state.appleScript.reason === "tcc_denied";
+    if (axDenied || !srOk) console.log(`##ATLAS_PERMS##${JSON.stringify({ accessibility: !axDenied, screen: srOk })}`);
     console.warn("⚠️  [permissions] One or more macOS permissions missing — vision-nav will degrade:");
     if (!axOk) {
         console.warn(`   ✗ Accessibility / Apple Events: ${state.appleScript.reason}`);

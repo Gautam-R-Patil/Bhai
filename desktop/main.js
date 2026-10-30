@@ -1249,11 +1249,13 @@ function getBotStatus() {
 
 // The bot's boot probe found Accessibility or Screen Recording not working (a stale
 // grant macOS still reports as granted, or a revoked one): say so once per app run.
+// Not during setup (the permission tiles ask there) and not for one the user skipped.
 let permsNotice = null; // kept referenced so its click handler survives GC
 function notifyBrokenPermission(p) {
-    const name = !p.accessibility ? "accessibility" : !p.screen ? "screen" : null;
+    const skipped = store.get("skippedPermissions") || {};
+    const name = ["accessibility", "screen"].find((k) => p[k] === false && !skipped[k]);
     const { Notification } = require("electron");
-    if (!name || permsNotice || !Notification.isSupported()) return;
+    if (!name || permsNotice || !fs.existsSync(SETUP_FLAG) || !Notification.isSupported()) return;
     const { prefPaneUrlFor } = require("./components/permissions-grid");
     permsNotice = new Notification({
         title: "Bhai",

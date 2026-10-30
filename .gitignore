@@ -108,6 +108,7 @@ desktop/hostinger-upload/
 !src/tool-router.assemble.test.ts
 !src/tool-router-analytics.test.ts
 !src/__tests__/network-watcher.test.ts
+!src/utils/macos-permissions.test.ts
 !src/channel-text.test.ts
 !src/telegram-batch.test.ts
 !src/step-status.test.ts
