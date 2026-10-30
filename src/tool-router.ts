@@ -694,7 +694,9 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
         category: "file_system",
     },
     { pattern: /\b(empty|clear)\b.{0,12}\b(the |my )?(trash|bin)\b/i, tool: "trash_manager", category: "file_system" },
-    { pattern: /\bapple notes\b|\bnotes app\b|\b(a|new) note\b/i, tool: "apple_notes", category: "scheduling" },
+    { pattern: /\bapple notes?\b|\bnotes app\b|\b(a|new) note\b/i, tool: "apple_notes", category: "scheduling" },
+    // A file named in the request ("Read task.txt and…") got no file tools at all.
+    { pattern: /\b[\w-]+\.(txt|md|csv|json|log|pdf|docx?|rtf|html?)\b/i, tool: "read", category: "file_system" },
     {
         pattern: /\b(convert|resize|scale|shrink|make)\b.*\b(images?|photos?|pictures?|png|jpe?g|heic|tiff|gif|webp)\b|\b(dimensions|resolution)\b.*\b(images?|photos?|pictures?|png|jpe?g)\b/i,
         tool: "image_edit",
