@@ -1736,7 +1736,8 @@
                 : status === 'failed' ? 'Bhai kept crashing, so it stopped restarting. Check Logs, then press Start to try again.'
                 : 'Start Bhai to use chat, channels and automations.';
             sub.style.color = status === 'crashed' || status === 'failed' ? 'var(--accent-danger)' : '';
-            if (status === 'failed') showToast('❌ Bhai crashed repeatedly and stopped. Press Start to try again.', true);
+            if (status === 'failed') showToast('Bhai crashed repeatedly and stopped. Press Start to try again.', true);
+            if (!isRunning && status !== 'crashed' && status !== 'failed') showSignInHint();
 
             document.getElementById('statusOnline').style.display = isRunning ? 'block' : 'none';
             document.getElementById('statusOffline').style.display = isRunning ? 'none' : 'block';
@@ -1744,6 +1745,7 @@
             document.getElementById('stopBtn').disabled = !isRunning;
             document.getElementById('chatBtn').style.display = isRunning ? '' : 'none';
             document.getElementById('startBtn').style.display = isRunning ? 'none' : '';
+            document.getElementById('stopBtn').style.display = isRunning ? '' : 'none';
 
             // Live stats
             document.getElementById('statsGrid').style.display = isRunning ? '' : 'none';
@@ -1759,6 +1761,17 @@
                 // Stop credit auto-refresh when bot stops
                 stopCreditAutoRefresh();
             }
+        }
+
+        // A Mac that must sign in again can't start Bhai: say so, and make the button sign in.
+        async function showSignInHint() {
+            const info = await atlas.getAccountInfo().catch(() => null);
+            if (lastBotStatus === 'running' || botStarting) return;
+            const need = !!info?.signInAgain;
+            document.getElementById('startBtn').textContent = need ? 'Sign in' : 'Start Bhai';
+            if (need) document.getElementById('statusOfflineSub').textContent = info.deviceRemoved
+                ? 'This Mac was removed from your account. Sign in to use Bhai here again.'
+                : 'This Mac needs to sign in once before Bhai can start.';
         }
 
         async function refreshStats() {
@@ -1798,17 +1811,26 @@
             // Account gate: check status before starting
             try {
                 const info = await atlas.getAccountInfo();
+                if (info && info.signInAgain) {
+                    // Bhai starts by itself once the sign-in goes through.
+                    await atlas.openAuthWindow().catch(() => {});
+                    document.getElementById('startBtn').disabled = false;
+                    botStarting = false;
+                    setMood();
+                    showSignInHint();
+                    return;
+                }
                 if (info && info.signedIn) {
                     const status = (info.status || 'active').toLowerCase();
                     if (status === 'blocked') {
-                        showToast('⛔ Account blocked. Contact support@codingdesk.info');
+                        showToast('Account blocked. Contact support@codingdesk.info');
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('startBtn').textContent = 'Start Bhai';
                         startFailed();
                         return;
                     }
                     if (status === 'suspended') {
-                        showToast('⛔ Account suspended. Contact support@codingdesk.info');
+                        showToast('Account suspended. Contact support@codingdesk.info');
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('startBtn').textContent = 'Start Bhai';
                         startFailed();
@@ -1817,7 +1839,7 @@
                     // Block if out of credits. null means data temporarily unavailable
                     // (bot process will enforce credits itself via account-guard).
                     if (info.ai_credits === 0) {
-                        showToast('⛔ Out of AI credits. Reach the XAGI Labs team at xagilab.com for more.');
+                        showToast('Out of AI credits. Reach the XAGI Labs team at xagilab.com for more.');
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('startBtn').textContent = 'Start Bhai';
                         startFailed();
@@ -3175,7 +3197,7 @@
                 setTimeout(() => btn.classList.remove('spinning'), 1000);
             }
             await refreshCreditDisplay();
-            showToast('✓ Credits refreshed');
+            showToast('Credits refreshed');
         }
 
         function startCreditAutoRefresh() {
@@ -3192,7 +3214,7 @@
         }
 
         // Listen for account status changes
-        atlas.onAccountStatusChange(() => loadAccountInfo());
+        atlas.onAccountStatusChange(() => { loadAccountInfo(); showSignInHint(); });
 
         // ── Update Banner ─────────────────────────────
 
@@ -3858,6 +3880,7 @@
                 updateUI(status);
                 updateConnectionStatus();
             } catch { /* */ }
+            loadRecentChats(); // local history: shown even while Bhai is stopped
 
             try {
                 const info = await atlas.getAppInfo();

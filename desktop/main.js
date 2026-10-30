@@ -937,7 +937,20 @@ let tray = null;
 let overlayWindow = null;
 let overlayResizeTimer = null;
 let botStartTime = null;
-let botMessageCount = 0;
+// Messages today: kept per calendar day on disk, so a restart doesn't zero it.
+const MESSAGES_TODAY_FILE = path.join(DATA_DIR, "messages-today.json");
+const localDay = () => new Date().toLocaleDateString("en-CA");
+let messagesToday = { day: localDay(), count: 0 };
+try { messagesToday = JSON.parse(fs.readFileSync(MESSAGES_TODAY_FILE, "utf-8")); } catch { /* first run */ }
+function countMessagesToday() {
+    if (messagesToday.day !== localDay()) messagesToday = { day: localDay(), count: 0 };
+    return messagesToday.count;
+}
+function addMessageToday() {
+    countMessagesToday();
+    messagesToday.count++;
+    try { fs.writeFileSync(MESSAGES_TODAY_FILE, JSON.stringify(messagesToday)); } catch { /* best effort */ }
+}
 let botToolCount = 0;
 const channelStatuses = {};
 
@@ -1404,7 +1417,7 @@ async function startBot() {
         if (msg) {
             sendLog(msg);
             // Track stats from log output
-            if (msg.includes("User:") || msg.includes("[Overlay] User:")) botMessageCount++;
+            if (msg.includes("User:")) addMessageToday();
             if (msg.includes("Tools   :")) {
                 const match = msg.match(/(\d+)\s*registered/);
                 if (match) botToolCount = parseInt(match[1]);
@@ -1556,7 +1569,6 @@ async function startBot() {
     }
     updateTrayMenu();
     botStartTime = Date.now();
-    botMessageCount = 0;
 
     return { status: "started" };
 }
@@ -2639,7 +2651,8 @@ function registerIPC() {
                 const Database = require("better-sqlite3");
                 const db = new Database(dbPath, { readonly: true, fileMustExist: true });
                 try {
-                    const row = db.prepare("SELECT COUNT(*) AS cnt FROM behavioral_traits WHERE confidence > 0.3").get();
+                    // Same count the Memory page shows.
+                    const row = db.prepare("SELECT COUNT(*) AS cnt FROM memories WHERE consolidated_into IS NULL").get();
                     if (row) memCount = String(row.cnt);
                 } finally {
                     db.close();
@@ -2648,7 +2661,7 @@ function registerIPC() {
         } catch { /* DB may be locked or table may not exist */ }
         return {
             uptimeMs: Date.now() - botStartTime,
-            messagesHandled: botMessageCount,
+            messagesHandled: countMessagesToday(),
             memoryCount: memCount,
             toolCount: botToolCount || "—",
         };
