@@ -983,7 +983,7 @@ async function boot() {
     }
 
     // ── Scheduled Tasks ───────────────────────
-    setTaskTriggerHandler(async (taskId: string, action: string) => {
+    setTaskTriggerHandler(async (taskId: string, action: string, description?: string) => {
         // ── Marketing scheduled post detection ──────────────────────────────
         // Actions encoded as JSON by marketing_schedule tool are executed directly.
         // Format: {"__marketing_post":true,"brandId":"...","itemId":N,"platform":"...","caption":"...","mediaPath":"...","hashtags":[...]}
@@ -1022,7 +1022,9 @@ async function boot() {
             return;
         }
 
-        const message = `🔔 **Task Triggered**\n\n${action}`;
+        // A reminder reads as one ("⏰ Check the oven"), not as the agent instruction behind it.
+        const isReminder = taskId.startsWith("reminder_") && !!description;
+        const message = isReminder ? `⏰ Reminder: ${description}` : `🔔 **Task Triggered**\n\n${action}`;
 
         // Primary channel gets the message first
         const sendPrimary: Record<string, () => Promise<unknown>> = {
@@ -1053,7 +1055,7 @@ async function boot() {
         }
 
         // Always send push notification for task triggers
-        sendPushNotification("Task Triggered", action.substring(0, 180)).catch(() => {});
+        sendPushNotification(isReminder ? "Reminder" : "Task Triggered", (isReminder ? description : action).substring(0, 180)).catch(() => {});
     });
     const restored = restoreScheduledTasks();
     if (restored) console.log(`   Tasks   : ${restored} scheduled task(s) restored`);

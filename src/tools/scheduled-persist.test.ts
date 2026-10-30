@@ -22,10 +22,12 @@ async function boot() {
     vi.resetModules();
     const mod = await import("./scheduled.js");
     const fired: string[] = [];
-    mod.setTaskTriggerHandler(async (_id, action) => {
+    const described: Array<string | undefined> = [];
+    mod.setTaskTriggerHandler(async (_id, action, description) => {
         fired.push(action);
+        described.push(description);
     });
-    return { ...mod, fired, restored: mod.restoreScheduledTasks() };
+    return { ...mod, fired, described, restored: mod.restoreScheduledTasks() };
 }
 
 describe("scheduled tasks across restarts", () => {
@@ -40,6 +42,7 @@ describe("scheduled tasks across restarts", () => {
         expect(listed.count).toBe(2);
         await vi.advanceTimersByTimeAsync(10 * 60_000);
         expect(second.fired).toEqual(["Remind me to drink water"]);
+        expect(second.described).toEqual(["water"]); // what the owner sees
         // Fired one-offs are gone from disk too.
         expect((await boot()).restored).toBe(1);
     });

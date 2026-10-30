@@ -31,11 +31,13 @@ interface ScheduledTask extends SavedTask {
 
 const tasks = new Map<string, ScheduledTask>();
 let taskCounter = 0;
-let onTaskTrigger: ((taskId: string, action: string) => Promise<void>) | null = null;
+let onTaskTrigger: ((taskId: string, action: string, description?: string) => Promise<void>) | null = null;
 // setTimeout fires at once past ~24.8 days, so long waits go in steps.
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
-export function setTaskTriggerHandler(handler: (taskId: string, action: string) => Promise<void>): void {
+export function setTaskTriggerHandler(
+    handler: (taskId: string, action: string, description?: string) => Promise<void>,
+): void {
     onTaskTrigger = handler;
 }
 
@@ -60,9 +62,9 @@ function save(): void {
     }
 }
 
-async function trigger(id: string, action: string): Promise<void> {
+async function trigger(id: string, action: string, description: string): Promise<void> {
     try {
-        await onTaskTrigger?.(id, action);
+        await onTaskTrigger?.(id, action, description);
     } catch (err) {
         console.error(`[SCHEDULED] ${id} failed:`, (err as Error).message);
     }
@@ -83,14 +85,14 @@ function arm(saved: SavedTask): ScheduledTask {
             console.log(`⏰ Reminder triggered: ${saved.id} - ${saved.description}`);
             tasks.delete(saved.id); // one-off: done once it fires
             save();
-            void trigger(saved.id, saved.action);
+            void trigger(saved.id, saved.action, saved.description);
         };
         wait();
         task = { stop: () => clearTimeout(timer) };
     } else {
         task = cron.schedule(saved.expression, () => {
             console.log(`⏰ Scheduled task triggered: ${saved.id} - ${saved.description}`);
-            void trigger(saved.id, saved.action);
+            void trigger(saved.id, saved.action, saved.description);
         });
     }
     const entry: ScheduledTask = { ...saved, status: "active", task };
