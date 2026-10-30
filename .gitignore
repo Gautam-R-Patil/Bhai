@@ -477,3 +477,4 @@ brag-output/
 !src/overlay/notify-requested.test.ts
 !src/tools/web-search-grace.test.ts
 !src/proactive/sources/_shared/daily-done.test.ts
+!src/tools/web-search-claude-backup.test.ts
