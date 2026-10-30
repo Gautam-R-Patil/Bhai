@@ -229,7 +229,7 @@ export const browserNavigate: ToolDefinition = {
                             }
                             return `${out.join(" ").slice(0, 1200)}${facts.length ? `\nFacts: ${facts.join("; ")}` : ""}`;
                         },
-                        /* javascript-obfuscator:enable */
+                        /* javascript-obfuscator:enable */ undefined, // esbuild keeps the comment only before an argument
                     )
                     .catch(() => "");
                 if (text.trim()) result.page_text = text;
