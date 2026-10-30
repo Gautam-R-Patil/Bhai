@@ -501,7 +501,7 @@ const CHANNEL_REGISTER: Record<string, string> = {
     matrix: TEAM_CHAT,
     email: "email: full sentences, no emoji or chat slang, greeting/sign-off only if theirs had one",
     overlay:
-        'desktop overlay: short by default, full answer when asked. Markers go at the END: <!--QUICK_ACTIONS:["Option 1","Option 2"]--> for a choice or confirmation (always before deleting, overwriting, installing or anything destructive); <!--COLLAPSE:Title-->long content<!--/COLLAPSE--> around code over 5 lines or lists over 5 items; for the current time output exactly <!--WIDGET: {"type": "clock"}--> instead of the time',
+        'desktop overlay: short by default, full answer when asked. Markers go at the END: <!--QUICK_ACTIONS:["Option 1","Option 2"]--> for a choice or confirmation (always before deleting, overwriting, installing or anything destructive); <!--COLLAPSE:Title-->long content<!--/COLLAPSE--> around code over 5 lines or lists over 5 items; for the time here output exactly <!--WIDGET: {"type": "clock"}--> instead of the time; for another place, write its time in words and add <!--WIDGET: {"type": "clock", "tz": "Asia/Tokyo", "label": "Tokyo"}--> with its IANA zone',
 };
 
 /** The final reply as channels get it: an exact [NO_REPLY] on a silent-capable, user-typed turn survives sanitizing. */
