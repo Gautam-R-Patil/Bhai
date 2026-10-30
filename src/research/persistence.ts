@@ -11,6 +11,7 @@ import type {
     ResearchStatus,
 } from "./types.js";
 import { getDataDir } from "../config/paths.js";
+import { atomicJsonWrite } from "../utils/atomic-io.js";
 
 // ── Research Index ───────────────────────────
 // Survives process restarts. Lives under data/ (internal state, not user-facing).
@@ -139,21 +140,29 @@ export async function recoverInterruptedResearches(): Promise<{
 
 // ── State Persistence ────────────────────────
 
+/** Research ids are minted as `research_<counter>_<epochMs>` (index.ts); anything else is refused before it reaches a path. */
+export function isResearchId(id: unknown): id is string {
+    return typeof id === "string" && /^research_\d+_\d+$/.test(id);
+}
+
 export async function saveResearchState(state: ResearchState): Promise<void> {
     try {
         await fs.mkdir(STATE_DIR, { recursive: true });
         const filePath = join(STATE_DIR, `${state.research.id}.state.json`);
-        await fs.writeFile(filePath, JSON.stringify(state, null, 2));
+        // Atomic: resume reads this checkpoint, and a kill mid-write must not leave truncated JSON.
+        await atomicJsonWrite(filePath, state);
     } catch (err) {
         console.warn(`[RESEARCH] Failed to save state:`, (err as Error).message);
     }
 }
 
 export async function loadResearchState(researchId: string): Promise<ResearchState | null> {
+    if (!isResearchId(researchId)) return null;
     try {
         const filePath = join(STATE_DIR, `${researchId}.state.json`);
         const data = await fs.readFile(filePath, "utf-8");
-        return JSON.parse(data);
+        const state = JSON.parse(data) as ResearchState;
+        return state?.research?.id === researchId ? state : null;
     } catch { return null; }
 }
 

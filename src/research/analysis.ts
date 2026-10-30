@@ -407,8 +407,9 @@ export async function synthesizeResearch(
     const verifiedLines = verifiedShown.map((f, i) => `V${i + 1}. ${f.text} ${cite(f)} [+${f.supportingSources.length} other sources]`);
     const corroboratedLines = corroboratedShown.map((f, i) => `C${i + 1}. ${f.text} ${cite(f)}`);
     const singleLines = singleShown.map((f, i) => `S${i + 1}. ${f.text} ${cite(f)}`);
-    // Plain URLs, no markdown link syntax: page titles are untrusted and must not shape links.
-    const sourceLines = [...sourceNumbers.values()].map(e => `[${e.n}] ${sanitizeFenced(e.title).replace(/\s+/g, " ")} — ${e.url}`);
+    // Plain URLs, no markdown link syntax: page titles are untrusted and must not shape links,
+    // so markdown-significant characters in them are escaped.
+    const sourceLines = [...sourceNumbers.values()].map(e => `[${e.n}] ${sanitizeFenced(e.title).replace(/\s+/g, " ").replace(/[\\[\]()!<>`]/g, "\\$&")} — ${e.url}`);
     const sourcesSection = sourceLines.length ? `\n\n## Sources\n${sourceLines.join("\n")}\n` : "";
 
     const enginesStr = Object.entries(engineBreakdown).map(([e, c]) => `${e}: ${c}`).join(", ");

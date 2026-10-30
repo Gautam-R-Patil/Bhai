@@ -52,7 +52,7 @@ export async function executeDeepResearch(
         allFindings.sort((a, b) => b.text.length - a.text.length);
         allFindings.length = MAX_FINDINGS;
     }
-    const engineBreakdown: Record<string, number> = {};
+    const engineBreakdown: Record<string, number> = { ...resume?.research.engineBreakdown };
 
     // Reset engine health at the start of each research session
     resetEngineHealth();

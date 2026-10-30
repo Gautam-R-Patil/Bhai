@@ -15,6 +15,7 @@ import {
     getIndexEntry,
     listIndex,
     recoverInterruptedResearches,
+    isResearchId,
     loadResearchState,
     deleteResearchState,
 } from "./persistence.js";
@@ -216,6 +217,10 @@ A research that was interrupted or failed can be continued from its last checkpo
         if (!_llm) return JSON.stringify({ error: "Deep research not initialized — LLM client not set" });
 
         const resumeId = input.resume_id as string | undefined;
+        if (resumeId && !isResearchId(resumeId))
+            return JSON.stringify({
+                error: "Invalid resume_id — expected a research id like research_<n>_<timestamp>.",
+            });
         const resumeState = resumeId ? await loadResearchState(resumeId) : null;
         if (resumeId && !resumeState) return JSON.stringify({ error: `No checkpoint for research "${resumeId}" — it can't be resumed. Start a new deep_research instead.` });
         if (resumeId && activeResearches.get(resumeId)?.status === "running") return JSON.stringify({ error: `Research "${resumeId}" is already running.` });

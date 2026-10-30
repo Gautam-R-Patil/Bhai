@@ -1,6 +1,9 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Untrusted fetched page text must be wrapped in a delimited, instruction-free
 // block (and sanitized) before it reaches the LLM — it is the injection vector.
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../model-router.js", () => ({
@@ -82,5 +85,68 @@ describe("synthesized report sources", () => {
         expect(prompt).toContain("three [2]");
         const sources = report.split("## Sources\n")[1].trim().split("\n");
         expect(sources).toEqual(["[1] A post — https://www.a.example/post", "[2] B page — https://b.example/x"]);
+    });
+});
+
+describe("Sources section with hostile page titles", () => {
+    it("escapes markdown link/image syntax so a title cannot render as a link", async () => {
+        const llm = {
+            chat: async () => ({ choices: [{ message: { content: "# Research Report: t\n\nA claim [1]." } }] }),
+        };
+        const report = await synthesizeResearch(
+            llm as never,
+            "t",
+            [
+                {
+                    text: "one",
+                    sourceUrl: "https://a.example/",
+                    sourceTitle: "Click ![x](https://evil.example/i.png) [here](https://evil.example) <b>`c`</b>",
+                    confidence: "weak" as const,
+                    supportingSources: [],
+                    contradictedBy: [],
+                    category: "c",
+                },
+            ],
+            1,
+            1,
+            {},
+            [],
+            [],
+            {} as never,
+        );
+        const line = report.split("## Sources\n")[1].trim();
+        expect(line).toBe(
+            "[1] Click \\!\\[x\\]\\(https://evil.example/i.png\\) \\[here\\]\\(https://evil.example\\) \\<b\\>\\`c\\`\\</b\\> — https://a.example/",
+        );
+    });
+});
+
+describe("research checkpoint persistence", () => {
+    it("writes atomically, refuses ids not minted by deep_research, and checks the stored id", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "research-state-"));
+        const prev = process.env.ATLAS_DATA_DIR;
+        process.env.ATLAS_DATA_DIR = dir;
+        vi.resetModules();
+        try {
+            const { saveResearchState, loadResearchState, isResearchId } = await import("./persistence.js");
+            const state = { research: { id: "research_3_1730000000000", topic: "t" }, allFindings: [] } as never;
+            await saveResearchState(state);
+            expect(readdirSync(join(dir, "research"))).toEqual(["research_3_1730000000000.state.json"]); // no temp file left behind
+            expect(await loadResearchState("research_3_1730000000000")).toEqual(state);
+
+            for (const bad of ["../research-index", "research_1_2/../../x", "research_1", "", "research_1_2.state"]) {
+                expect(isResearchId(bad)).toBe(false);
+                expect(await loadResearchState(bad)).toBeNull();
+            }
+            // A checkpoint whose contents name another research is not served under this id.
+            writeFileSync(
+                join(dir, "research", "research_4_1.state.json"),
+                JSON.stringify({ research: { id: "research_5_1" } }),
+            );
+            expect(await loadResearchState("research_4_1")).toBeNull();
+        } finally {
+            if (prev === undefined) delete process.env.ATLAS_DATA_DIR;
+            else process.env.ATLAS_DATA_DIR = prev;
+        }
     });
 });

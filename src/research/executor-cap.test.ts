@@ -169,7 +169,12 @@ describe("executeDeepResearch source cap", () => {
             findings: ["f"],
             outboundLinks: [],
         });
-        const { abortController: _, ...saved } = { ...newResearch(), currentPhase: 2, sourcesProcessed: 3 };
+        const { abortController: _, ...saved } = {
+            ...newResearch(),
+            currentPhase: 2,
+            sourcesProcessed: 3,
+            engineBreakdown: { earlier: 4 },
+        };
         const state: ResearchState = {
             research: saved,
             allFindings: ["r1", "r2", "r3"].map((u) => ({
@@ -191,6 +196,9 @@ describe("executeDeepResearch source cap", () => {
         expect(research.status).toBe("completed");
         expect(research.sourcesProcessed).toBeGreaterThanOrEqual(3);
         expect(research.roundsCompleted).toBeGreaterThan(4);
+        // Engine counts from before the interruption carry over into the report's "Engines used".
+        expect(research.engineBreakdown?.earlier).toBe(4);
+        expect(research.engineBreakdown?.mock).toBeGreaterThan(0);
     }, 30_000);
 });
 
