@@ -187,7 +187,7 @@ Gitignored; internal state ≠ user-facing outputs (see Workspace). `memories.db
 `mcts-planner.ts` (UCB1, PRM-scored), `hierarchical-planner.ts`, `process-reward.ts`, `logic-verifier.ts`. Swarm runs them only with `ATLAS_SWARM_DEEP_PLANNING=true` (~25 extra LLM calls per plan).
 
 ### Local Models (`src/models/` — 5 files) — zero-API-cost on-device
-`function-gemma.ts` (270M Ollama tool routing, 85% acc, LLM fallback), `local-asr.ts`, `local-tts.ts`, `local-ocr.ts`, `local-vision.ts`.
+`function-gemma.ts` (270M via Ollama, used only by Forge lookup, not tool routing), `local-asr.ts`, `local-tts.ts`, `local-ocr.ts`, `local-vision.ts`.
 
 ### Dynamic Prompts (`src/prompts/`)
 `dynamic-assembler.ts` (context-aware assembly: task type, emotional state, relationship depth, hour-of-day), `prompt-evolver.ts` (iterative refinement), `watermark.ts`.

@@ -432,7 +432,7 @@ export const shellKillProcess: ToolDefinition = {
                 properties: {
                     process_id: {
                         type: "string",
-                        description: "Process ID to kill",
+                        description: "Process ID to kill (proc_N_… id, or the OS pid of a process started here)",
                     },
                 },
                 required: ["process_id"],
@@ -441,8 +441,11 @@ export const shellKillProcess: ToolDefinition = {
     },
 
     async handler(input) {
-        const processId = input.process_id as string;
-        const bp = processes.get(processId);
+        const processId = String(input.process_id ?? "");
+        // The OS pid of a process started here works too (demo_project reports
+        // one); a pid this monitor did not start is never killed.
+        const bp =
+            processes.get(processId) ?? [...processes.values()].find((p) => p.pid > 0 && String(p.pid) === processId);
         if (!bp) {
             return JSON.stringify({ error: `Process "${processId}" not found` });
         }
@@ -468,7 +471,7 @@ export const shellKillProcess: ToolDefinition = {
 
             return JSON.stringify({
                 success: true,
-                process_id: processId,
+                process_id: bp.id,
                 message: "Process killed.",
             });
         } catch (err) {

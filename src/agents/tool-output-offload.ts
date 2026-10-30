@@ -27,7 +27,7 @@ import { CODE_TOOLS, protect } from "../security/pii-vault.js";
  * enough that we don't spam the disk for normal tool calls, but small
  * enough to matter: a 4KB preview is already plenty to see what happened.
  */
-const OFFLOAD_THRESHOLD_BYTES = 8 * 1024;
+export const OFFLOAD_THRESHOLD_BYTES = 8 * 1024;
 
 /**
  * Size of the preview emitted into LLM context when we offload. Keep

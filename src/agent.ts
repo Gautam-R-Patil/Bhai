@@ -52,7 +52,7 @@ import {
     createGuardrailState,
     recordToolCall as recordGuardrailCall,
 } from "./agents/tool-call-guardrail.js";
-import { offloadIfLarge } from "./agents/tool-output-offload.js";
+import { OFFLOAD_THRESHOLD_BYTES, offloadIfLarge } from "./agents/tool-output-offload.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
 import { withoutGrid } from "./screen/grid-overlay.js";
 import { anySecretTyped, hasVaultToken, resetVaultTask, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
@@ -632,7 +632,9 @@ const TOOL_RESULT_LIMITS: Record<string, number> = {
     glob: 2000,
     deep_research: 6000,
     os_inspect: 8000, // a whole 60-element list, still under the 8KB offload line
-    test_run: 8000, // failures[] + raw_tail; bigger results are offloaded with a head+tail preview
+    // failures[] + raw_tail; bigger results are offloaded with a head+tail preview. A result
+    // that stayed inline is at most this many bytes, so at most this many chars: kept whole.
+    test_run: OFFLOAD_THRESHOLD_BYTES,
 };
 const DEFAULT_RESULT_LIMIT = 4000;
 

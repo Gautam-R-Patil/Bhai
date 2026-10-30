@@ -290,6 +290,7 @@ export const demoProjectTool: ToolDefinition = {
             command: `${det.command} ${det.args.join(" ")}`.trim(),
             cwd: dir,
             pid,
+            process_id: processId,
             url,
             url_ready: urlReady,
             note: det.note,
