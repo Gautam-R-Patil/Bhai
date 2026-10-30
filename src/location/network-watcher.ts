@@ -2,6 +2,7 @@
 // Network Watcher — detects network changes (Wi-Fi switch, new IP) and triggers location refresh.
 
 import os from "node:os";
+import { reportNetworkError } from "../network-health.js";
 import { refreshLocation } from "./index.js";
 
 // ── Constants ────────────────────────────────
@@ -11,6 +12,7 @@ const POLL_INTERVAL_MS = 60_000;
 // ── State ────────────────────────────────────
 
 let _lastNet: string | null = null;
+let _lastHealthNet: string | null = null; // includes "" (no network), which location ignores
 let _pollTimer: NodeJS.Timeout | null = null;
 
 // ── Network signature ────────────────────────
@@ -32,6 +34,10 @@ export function networkSignature(ifaces: ReturnType<typeof os.networkInterfaces>
 
 function checkForNetworkChange(): void {
     const current = networkSignature();
+
+    // An interface came or went (Wi-Fi off, new network): re-check connectivity now.
+    if (_lastHealthNet !== null && current !== _lastHealthNet) void reportNetworkError().catch(() => {});
+    _lastHealthNet = current;
 
     if (!current) return;
 
@@ -69,4 +75,5 @@ export function stopNetworkWatcher(): void {
         _pollTimer = null;
     }
     _lastNet = null;
+    _lastHealthNet = null;
 }
