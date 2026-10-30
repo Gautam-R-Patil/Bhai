@@ -7,6 +7,7 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import type { AgentResponse, ChannelContext } from "../agent.js";
+import { readChatLog } from "./chat-log.js";
 
 process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-overlay-chat-turns-"));
 process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
@@ -164,6 +165,12 @@ it("stop sends the partial answer plus Stopped.", async () => {
     bar.send({ type: "stop" });
     const res = await bar.next("response");
     expect(res).toMatchObject({ text: "Here is the par\n\nStopped.", stopped: true });
+    // The Chats list keeps the stopped reply like any other.
+    expect(
+        readChatLog()
+            .filter((e) => e.chat === "bar-4")
+            .map((e) => `${e.role}:${e.text}`),
+    ).toEqual(["user:count my unread emails", "assistant:Here is the par\n\nStopped."]);
     bar.ws.close();
 });
 

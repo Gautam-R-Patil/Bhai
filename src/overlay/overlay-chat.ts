@@ -1086,14 +1086,12 @@ async function runTurn(
     }
 }
 
-/** A stopped turn keeps the answer it had already streamed. */
-const stoppedReply = (r: AgentResponse, live: OverlayTurn) => ({
-    type: "response",
-    text: r.partialText ? `${r.partialText}\n\nStopped.` : "Stopped.",
-    stopped: true,
-    turn: live.turn,
-    worked: live.worked(),
-});
+/** A stopped turn keeps the answer it had already streamed, in the reply and in the chat's history. */
+function sendStoppedReply(ws: WebSocket, chat: string, r: AgentResponse, live: OverlayTurn, source?: string) {
+    const text = r.partialText ? `${r.partialText}\n\nStopped.` : "Stopped.";
+    logChatMessage(chat, "assistant", text, source);
+    sendToClient(ws, { type: "response", text, stopped: true, turn: live.turn, worked: live.worked() });
+}
 
 /** The turn failed: if its answer was already on screen, say the answer was cut off. */
 const turnFailedText = (live: OverlayTurn, fallback: string) =>
@@ -1258,7 +1256,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         // Clear timeout warning timer
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
         if (stopped) {
-            sendToClient(ws, stoppedReply(result, live));
+            sendStoppedReply(ws, chat, result, live, source);
             return;
         }
 
@@ -1415,7 +1413,7 @@ async function handleFileAttachment(
             }),
         );
         if (stopped) {
-            sendToClient(ws, stoppedReply(result, live));
+            sendStoppedReply(ws, chat, result, live);
             return;
         }
         const cleanText = withStuckReplyLine(result, wsIsOwner(ws))
