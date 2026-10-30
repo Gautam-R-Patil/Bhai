@@ -154,7 +154,7 @@ import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/br
 import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
 import { runQuickCommand } from "./quick-commands.js";
 import * as learnedRouter from "./routing/learned-router.js";
-import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
+import { clearCache, executeTool, getToolSchemasByNames, resetRateLimits, withTurnSignal } from "./tools/index.js";
 import { sendFailed, withSendLedger } from "./tools/send-ledger.js";
 import { ownerMemoryTool } from "./tools/tool-intelligence.js";
 
@@ -932,6 +932,8 @@ interface ToolCallResult {
     receiptUrl?: string;
     /** Touched the vault (a vault tool or a {{vault:…}} token) or had its screenshot withheld. */
     secret?: boolean;
+    /** Its full output was saved to a file the result tells the model to `read`. */
+    savedOutput?: boolean;
 }
 
 /** The tool call failed, judged from its own result flags, not from the word "error" in its output. */
@@ -1255,7 +1257,11 @@ async function executeAndProcessToolCall(
     }
 
     let result = truncateToolResult(fnName, workingResult);
-    if (!savedAt) result = keepRestReadable(fnName, toolCall.id, currentTurnId(), rawResult, result);
+    if (!savedAt) {
+        const cut = result;
+        result = keepRestReadable(fnName, toolCall.id, currentTurnId(), rawResult, cut);
+        if (result !== cut) savedAt = "saved";
+    }
     console.log(`  ✅ Tool result: ${ownerMemoryTool(fnName) ? `(${result.length} chars)` : result.substring(0, 500)}`);
 
     // Fence attacker-influenceable tool output (web/browser/MCP/research) so the
@@ -1291,6 +1297,7 @@ async function executeAndProcessToolCall(
         isBrowser,
         isError,
         reportedFailure,
+        savedOutput: !!savedAt,
         imageUrl,
         receiptUrl,
         secret,
@@ -4321,6 +4328,14 @@ PLAN:`,
         // A tool made or turned on this batch must be offered next iteration.
         if (batchResults.some((r) => !r.isError && (r.fnName === "create_tool" || r.fnName === "approve_dynamic_tool")))
             turnToolSelection = undefined;
+        // A result saved to a file says "Call `read`": a browser or search turn must have it.
+        // (A guest turn's allowlist still filters it out before the model sees it.)
+        else if (
+            turnToolSelection &&
+            batchResults.some((r) => r.savedOutput) &&
+            !turnToolSelection.tools.some((t) => t.function.name === "read")
+        )
+            turnToolSelection = { ...turnToolSelection, tools: [...turnToolSelection.tools, ...getToolSchemasByNames(["read"])] };
 
         // Circuit breaker: tool calls completed = progress
         const batchHasSuccess = batchResults.some((r) => !r.isError);
