@@ -5614,7 +5614,7 @@ body.hig {
     --r-tile: 14px;
     --r-group: 18px;
     --r-hero: 20px;
-    --orb-k: 1;                       /* orb intensity; lower while Bhai naps */
+    --orb-k: 0.32;                    /* orb intensity: a quiet wash, lower while Bhai naps */
 }
 body.hig.theme-dark {
     --lg-color: saturate(170%) brightness(0.94);
@@ -5638,16 +5638,16 @@ body.hig .lg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
     overflow: hidden;
     pointer-events: none;
     background:
-        radial-gradient(90% 70% at 0% 0%, rgba(255, 216, 190, 0.6), transparent 70%),
-        radial-gradient(80% 60% at 100% 100%, rgba(255, 205, 214, 0.45), transparent 70%),
+        radial-gradient(90% 70% at 0% 0%, rgba(255, 216, 190, 0.3), transparent 70%),
+        radial-gradient(80% 60% at 100% 100%, rgba(255, 205, 214, 0.2), transparent 70%),
         var(--bg-window);
 }
 body.theme-dark :is(.ambient, .bg-canvas) {
     background:
-        radial-gradient(90% 70% at 0% 0%, rgba(110, 48, 16, 0.38), transparent 70%),
+        radial-gradient(90% 70% at 0% 0%, rgba(110, 48, 16, 0.2), transparent 70%),
         var(--bg-window);
 }
-body.hig:has(#heroCard[data-phase="stopped"]) { --orb-k: 0.78; }
+body.hig:has(#heroCard[data-phase="stopped"]) { --orb-k: 0.24; }
 
 /* Film grain: static, under the glass (so glass reads smooth on top of it). */
 :is(body.hig .ambient, .bg-canvas)::after {
@@ -5677,13 +5677,13 @@ body.theme-dark :is(.ambient, .bg-canvas)::after { opacity: 0.06; mix-blend-mode
     animation: lgOrbDrift var(--t) ease-in-out var(--delay) infinite alternate;
     transition: opacity 1.4s ease;
 }
-body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--orb-k, 1) * 0.62); mix-blend-mode: screen; }
+body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--orb-k, 1) * 0.4); mix-blend-mode: screen; }
 
 :is(.ambient, .bg-canvas) .orb-1 { --c: #E87B2D; --x: -18vw; --y: -26vh; --d: 62vmax; --o: 0.5; --t: 52s; --delay: -14s; --dx: 16vw; --dy: 14vh; --dx2: 4vw; --dy2: 26vh; --s1: 1.12; --s2: 0.94; }
 :is(.ambient, .bg-canvas) .orb-2 { --c: #FFB37A; --x: 52vw; --y: -30vh; --d: 58vmax; --o: 0.56; --t: 64s; --delay: -30s; --dx: -14vw; --dy: 20vh; --dx2: 8vw; --dy2: 32vh; --s1: 0.92; --s2: 1.1; }
 :is(.ambient, .bg-canvas) .orb-3 { --c: #FF7A8A; --x: 34vw; --y: 40vh; --d: 46vmax; --o: 0.4; --t: 46s; --delay: -8s; --dx: 18vw; --dy: -16vh; --dx2: -12vw; --dy2: -6vh; --s1: 1.14; --s2: 0.9; }
 :is(.ambient, .bg-canvas) .orb-4 { --c: #FFD36E; --x: -12vw; --y: 52vh; --d: 50vmax; --o: 0.54; --t: 70s; --delay: -40s; --dx: 20vw; --dy: -10vh; --dx2: 30vw; --dy2: 6vh; --s1: 1.08; --s2: 0.96; }
-:is(.ambient, .bg-canvas) .orb-5 { --c: #9B87F5; --x: 68vw; --y: 48vh; --d: 34vmax; --o: 0.38; --core: 84%; --rim: 95%; --t: 58s; --delay: -22s; --dx: -20vw; --dy: -14vh; --dx2: -6vw; --dy2: -26vh; --s1: 1.16; --s2: 0.92; }
+:is(.ambient, .bg-canvas) .orb-5 { --c: #FFC2A0; --x: 68vw; --y: 48vh; --d: 34vmax; --o: 0.38; --core: 84%; --rim: 95%; --t: 58s; --delay: -22s; --dx: -20vw; --dy: -14vh; --dx2: -6vw; --dy2: -26vh; --s1: 1.16; --s2: 0.92; }
 :is(.ambient, .bg-canvas) .orb-6 { --c: #FF9F5A; --x: 36vw; --y: 2vh; --d: 24vmax; --o: 0.5; --core: 86%; --rim: 96%; --t: 38s; --delay: -5s; --dx: -18vw; --dy: 24vh; --dx2: 14vw; --dy2: 30vh; --s1: 1.2; --s2: 0.86; }
 
 @keyframes lgOrbDrift {
