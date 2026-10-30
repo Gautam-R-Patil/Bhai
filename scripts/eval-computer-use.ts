@@ -404,10 +404,7 @@ setDecisionTransport(
           }
         : null,
 );
-if (process.env.DECISION_DEPLOYMENT) {
-    process.env.ATLAS_DECISION_ROUTER = "true";
-    process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "6000";
-}
+if (process.env.DECISION_DEPLOYMENT) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "6000";
 let planCost = 0; // PLAN=1: the planner's own cost, added to the task's
 const only = process.argv.slice(2);
 const results = [];

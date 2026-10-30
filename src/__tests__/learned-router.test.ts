@@ -22,7 +22,8 @@ describe("learned router", () => {
         expect(pick("chat")).toBe("haiku");
         expect(pick("general")).toBe("haiku");
         expect(pick("coding")).toBe("sonnet");
-        expect(pick("browser")).toBe("sonnet");
+        // Web lookups: both passed every one, Haiku at a fifteenth of the cost.
+        expect(pick("browser")).toBe("haiku");
     });
 
     it("two failures don't write a model off, and it recovers as the evidence fades", () => {

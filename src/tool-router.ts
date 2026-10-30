@@ -572,7 +572,7 @@ export function isConversationalBanter(message: string): boolean {
 // (scripts/bench-decision.ts on the 49 eval tasks: every needed category 48/49 vs 32/49 for the
 // gpt-4.1-nano classifier; ~0.5s vs ~1s; ~$0.0001 a turn; chat prompts 6/6 chat). Called via
 // Convex /api/decide (the Azure key stays server-side); any failure falls back to the LLM.
-// ATLAS_DECISION_ROUTER=true turns it on (see classifyWithDecision).
+// On by default; ATLAS_NO_DECISION_ROUTER=true turns it off (see classifyWithDecision).
 export type DecisionTransport = (
     state: string,
     questions: Record<string, unknown>,
@@ -603,6 +603,9 @@ export function setDecisionTransport(t: DecisionTransport | null): void {
     decisionTransport = t;
 }
 
+let decisionFailures = 0;
+let decisionPausedUntil = 0;
+
 const TIER_CRITERIA = {
     chat: "No tools at all: small talk, opinions, advice, writing, math, explaining, or general knowledge",
     simple: "One quick action or lookup on the computer or the web",
@@ -611,10 +614,11 @@ const TIER_CRITERIA = {
 };
 
 async function classifyWithDecision(message: string, context: string, deadline: number): Promise<IntentClassification | null> {
-    // Opt-in: on the full 50 in router mode it matched the LLM classifier (50/50) and was ~10%
-    // faster per task, but its categories sent more turns to Haiku/Sonnet than to nano
-    // ($0.0056 vs $0.0021 a task). On by default once the router's classes are tuned for it.
-    if (!decisionTransport || process.env.ATLAS_DECISION_ROUTER !== "true") return null;
+    // Full 50 in router mode, same browser priors: 50/50 either way at $0.0013 a task, tool
+    // selection 1151 vs 1390 ms mean. Two failures in a row pause it for 10 minutes, so an
+    // outage costs at most two short waits before the LLM classifier takes over.
+    if (!decisionTransport || process.env.ATLAS_NO_DECISION_ROUTER === "true" || Date.now() < decisionPausedUntil)
+        return null;
     const cats = Object.entries(CATEGORIES).filter(([, def]) => !def.alwaysInclude);
     const questions: Record<string, unknown> = {};
     for (const [name, def] of cats)
@@ -635,8 +639,9 @@ async function classifyWithDecision(message: string, context: string, deadline: 
     const state = context ? `${context}\n\nMESSAGE TO ROUTE:\n${message}` : message;
     try {
         const left = Math.max(1000, deadline - Date.now());
-        const answers = await beforeDeadline(decisionTransport(state, questions, Math.min(left, 4000)), deadline);
-        if (!answers) return null;
+        const answers = await beforeDeadline(decisionTransport(state, questions, Math.min(left, 2500)), deadline);
+        if (!answers) throw new Error("no answers");
+        decisionFailures = 0;
         const primary = answers.primary?.choice && CATEGORIES[answers.primary.choice] ? answers.primary.choice : undefined;
         const scored = [
             ...(primary ? [{ name: primary, p: answers.primary?.confidence ?? 0.9 }] : []),
@@ -653,13 +658,19 @@ async function classifyWithDecision(message: string, context: string, deadline: 
             specific_tools: [],
             confidence: tier === "chat" ? (answers.tier?.confidence ?? 0.8) : (scored[0]?.p ?? 0.5),
             tier,
-            multi_step: (answers.multi_step?.noul ?? 0) >= 0.5,
+            // It says multi-step even for "play X on Spotify": on a simple turn that moved the
+            // learned router's class from quick (nano) to desktop (Haiku), most of a 2.6x cost.
+            multi_step: tier !== "simple" && (answers.multi_step?.noul ?? 0) >= 0.5,
         };
         console.log(
             `🧠 Decision classifier: cats=[${categories}] tier=${tier ?? "?"}${result.multi_step ? " multi-step" : ""} conf=${result.confidence.toFixed(2)}`,
         );
         return result;
     } catch (err) {
+        if (++decisionFailures >= 2) {
+            decisionPausedUntil = Date.now() + 10 * 60_000;
+            decisionFailures = 0;
+        }
         console.warn(`🧠 Decision classifier: fallback to LLM (${(err as Error).message})`);
         return null;
     }
