@@ -53,8 +53,9 @@ const TimeMatcher = createRequire(import.meta.url)("node-cron/src/time-matcher.j
 ) => { expressions: string[]; match(date: Date): boolean };
 
 /**
- * The next minute after `from` a 5-field cron expression fires on (local time); null if it never
- * does. The scan covers 8 years: Feb 29 can be 8 years apart (2096 → 2104), Friday the 13th 14 months.
+ * The next minute after `from` a 5-field cron expression fires on (local time); null if none within
+ * 8 years. That covers Feb 29 (2096 → 2104) and Friday the 13th (14 months), not every expression:
+ * Dec 31 on a Friday skips 2038 → 2049, so a null is not "never" (armCronTimer looks again later).
  */
 export function nextCronMinute(expression: string, from: number): number | null {
     const matcher = new TimeMatcher(expression);
@@ -90,11 +91,11 @@ export function cronTimersOnWake(): void {
  * A recurring 5-field job on one timer instead of node-cron's check every second. Waits go in
  * steps of at most a minute (a sleeping Mac's timers run late), and a run fires only inside its
  * own second, as node-cron's does, or late when it fell after a wake: a run the machine slept
- * through is skipped. Null when the expression never fires (node-cron keeps those).
+ * through is skipped. With no run in the 8-year scan it looks again every ~24.8 days, so a job
+ * whose runs are further apart (or that never fires) stays armed, as node-cron keeps it.
  */
-function armCronTimer(expression: string, run: () => void): { stop: () => void } | null {
+function armCronTimer(expression: string, run: () => void): { stop: () => void } {
     let next = nextCronMinute(expression, Date.now());
-    if (next === null) return null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
     let armedAt = Date.now();
@@ -105,18 +106,16 @@ function armCronTimer(expression: string, run: () => void): { stop: () => void }
     const check = (from: number | null, runLate: boolean) => {
         const now = Date.now();
         if (from !== null) next = nextCronMinute(expression, Math.max(from, lastRun));
-        if (next === null) return;
-        if (next <= now) {
+        if (next !== null && next <= now) {
             if (runLate || now - next < 1000) {
                 lastRun = next;
                 run();
             }
             next = nextCronMinute(expression, now);
-            if (next === null) return;
         }
         armedAt = now;
         armedMono = performance.now();
-        step = Math.min(next - now, 60_000);
+        step = next === null ? MAX_TIMER_MS : Math.min(next - now, 60_000);
         timer = setTimeout(wait, step);
     };
     const wait = () => {
@@ -125,7 +124,8 @@ function armCronTimer(expression: string, run: () => void): { stop: () => void }
         // macOS timers pause in sleep, so a step pending at sleep fires up to `step` after wake:
         // look for the run from the earliest moment the Mac can have woken.
         const slept = now - armedAt - step > 2000;
-        check(slept ? now - step - 1000 : null, slept);
+        // No run was in sight: scan again from now.
+        check(slept ? now - step - 1000 : next === null ? now : null, slept);
     };
     // The desktop says the machine just woke: check now instead of when the paused step ends.
     // Runs since the wake are due (the signal can come a few seconds after it: the awake time
@@ -201,7 +201,7 @@ function arm(saved: SavedTask): ScheduledTask {
         };
         // 6-field expressions (with seconds) stay on node-cron.
         const fiveField = saved.expression.trim().split(/\s+/).length === 5;
-        task = (fiveField && armCronTimer(saved.expression, run)) || cron.schedule(saved.expression, run);
+        task = fiveField ? armCronTimer(saved.expression, run) : cron.schedule(saved.expression, run);
     }
     const entry: ScheduledTask = { ...saved, status: "active", task };
     tasks.set(saved.id, entry);

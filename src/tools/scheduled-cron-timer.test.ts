@@ -126,3 +126,20 @@ it("a wake signal that comes a few seconds late still runs a job due after the w
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(fired).toHaveLength(1);
 });
+
+it("keeps a job whose next run is more than 8 years after a run (Dec 31 on a Friday: 2038, then 2049)", async () => {
+    vi.setSystemTime(new Date(2038, 11, 30, 12, 0)); // Thu 30 Dec 2038
+    const { scheduleTask, fired, nextCronMinute } = await load();
+    expect(nextCronMinute("0 0 31 12 5", new Date(2038, 11, 31, 0, 0).getTime())).toBeNull(); // past the scan
+    await scheduleTask.handler({ expression: "0 0 31 12 5", description: "d", action: "a" });
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+    expect(fired.map((t) => new Date(t).toDateString())).toEqual(["Fri Dec 31 2038"]);
+    expect(vi.getTimerCount()).toBeGreaterThan(0); // still armed, looking again later
+    vi.setSystemTime(new Date(2049, 11, 1)); // the process stays up (time jumps, as across a sleep)
+    await vi.advanceTimersByTimeAsync(2 ** 31 - 1); // the long look-again step ends: 2049 is in the scan
+    await vi.advanceTimersByTimeAsync(7 * 24 * 60 * 60_000);
+    expect(fired.map((t) => new Date(t).toString().slice(0, 24))).toEqual([
+        "Fri Dec 31 2038 00:00:00",
+        "Fri Dec 31 2049 00:00:00",
+    ]);
+});
