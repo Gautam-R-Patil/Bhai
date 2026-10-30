@@ -231,6 +231,16 @@ export function takeStuckMarker(text: string): { text: string; stuck: boolean } 
     return { text: stripped.replace(/\n{3,}/g, "\n\n").trim(), stuck: true };
 }
 
+const STUCK_BARE_RE = new RegExp(STUCK_MARKER, "gi");
+
+/**
+ * takeStuckMarker for a stream: drops the marker but not the spaces before a mid-line one,
+ * and neither trims nor collapses blank lines, since streamed text can't be taken back.
+ */
+export function dropStuckMarker(text: string): string {
+    return text.replace(STUCK_LINE_START_RE, "").replace(STUCK_BARE_RE, "");
+}
+
 /** Where a channel has no buttons, a stuck report to the owner ends with this line. */
 // "retry it" / "skip it", not a bare "skip": exact-match handlers (WhatsApp's inbox fallback) own bare words.
 export const STUCK_REPLY_LINE = "Reply: retry it · skip it · I'll take over";

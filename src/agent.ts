@@ -20,6 +20,7 @@ import {
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
 import { takeStuckMarker } from "./channel-text.js";
+import { stripInternalTags, stripOverlayMarkers } from "./stream-filter.js";
 import { historyForCaller } from "./guest-history.js";
 import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
@@ -477,14 +478,7 @@ export function isDeferrable(tc: { function: { name: string; arguments: string }
 
 /** Strip internal debug tags and LLM artifacts from responses before returning to channels */
 function sanitizeAgentResponse(text: string): string {
-    return text
-        .replace(/<system_log>[\s\S]*?<\/system_log>/g, "")
-        .replace(/<tool_log[\s\S]*?<\/tool_log>/g, "")
-        .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, "")
-        .replace(/\[NO_REPLY\]/gi, "")
-        .replace(/\[no_reply\]/gi, "")
-        .replace(/\[SOURCE:.*?\]/gs, "")
-        .trim();
+    return stripInternalTags(text).trim();
 }
 
 /** Channels that stay silent when the whole reply is [NO_REPLY]; the overlay and the rest always answer. */
@@ -517,9 +511,7 @@ export function finalReplyText(raw: string, channelContext?: ChannelContext): st
     const text = sanitizeAgentResponse(raw);
     // Overlay markers (<!--QUICK_ACTIONS-->, <!--WIDGET-->, <!--COLLAPSE-->) mean nothing elsewhere and would show
     // as literal text. Only those: other HTML comments can be real content (code, "A --> B").
-    return channelContext?.channel === "overlay"
-        ? text
-        : text.replace(/<!--\s*(?:QUICK_ACTIONS|WIDGET|\/?COLLAPSE)\b[\s\S]*?-->/g, "").trim();
+    return channelContext?.channel === "overlay" ? text : stripOverlayMarkers(text).trim();
 }
 
 /**
