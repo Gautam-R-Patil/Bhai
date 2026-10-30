@@ -186,7 +186,14 @@ Rules:
 - Patterns must be reusable across projects, not "I fixed foo.ts line 42"`;
 
 const REFLECTION_NARRATIVE_INSTRUCTION = `You compress a user profile and traits (provided in the user message) into a single-sentence identity narrative (max 50 words).
+Refer to the user by name or as "they". Use he/she only when the profile or traits state the user's pronouns: a name says nothing about them.
 Output ONLY the narrative text, no JSON, no quotes, nothing else.`;
+
+/** he/she guessed from a name: a narrative using them, with no pronouns stated anywhere, is redone. */
+const GENDERED_PRONOUN = /\b(he|she|him|her|his|hers|himself|herself)\b/i;
+export function narrativeGuessesPronouns(narrative: string, profileText: string): boolean {
+    return GENDERED_PRONOUN.test(narrative) && !/pronoun/i.test(profileText);
+}
 
 // ── Reflection Counter (for periodic consolidation) ──
 let _reflectionCounter = 0;
@@ -785,7 +792,8 @@ async function generateNarrativeCompression(llm: LLMClient): Promise<void> {
     // Check if narrative exists and is recent
     const allTraits = getAllTraits();
     const existing = allTraits.find((t) => t.trait_key === "identity_narrative");
-    if (existing) {
+    const profileText = JSON.stringify(getIdentityProfile()) + allTraits.map((t) => ` ${t.trait_key}=${t.value}`).join("");
+    if (existing && !narrativeGuessesPronouns(String(existing.value), profileText)) {
         const daysOld = (Date.now() - new Date(existing.last_seen_ts).getTime()) / (1000 * 60 * 60 * 24);
         if (daysOld < 30) {
             console.log("[MEMORY][REPLAY] Narrative compression skipped — recent enough");
