@@ -59,11 +59,14 @@ export async function pipeClaudeStream(
  * `run` throws (a thrown `{status, error}` keeps its values, anything else is a 502).
  * Frames are written in emit order; once a write fails (client gone) nothing more is
  * written. `message` is set whenever the provider answered, delivered or not.
+ * `beforeDone` (the success bookkeeping) runs before the `done` frame: the client
+ * hangs up at `done`, and work after that may never run. Its failure is logged only.
  */
 export async function streamCompletion(
     write: (line: string) => Promise<void>,
     run: (emit: (f: Frame) => void) => Promise<Beta.BetaMessage>,
     encode: (f: Frame, final: boolean) => Promise<string>,
+    opts: { beforeDone?: (completion: unknown) => Promise<void> } = {},
 ): Promise<{ ok: boolean; message?: Beta.BetaMessage }> {
     let broken = false;
     let chain = Promise.resolve();
@@ -94,6 +97,11 @@ export async function streamCompletion(
             true,
         );
         return { ok: false };
+    }
+    try {
+        await opts.beforeDone?.(completion);
+    } catch (err) {
+        console.error("[llmStream] success bookkeeping failed:", (err as Error)?.message);
     }
     await send({ kind: "done", completion }, true);
     return { ok: !broken, message };

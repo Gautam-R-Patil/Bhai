@@ -716,7 +716,7 @@ http.route({
       // provider error refunds before its final `error` frame.
       void (async () => {
         try {
-          const res = await streamCompletion(
+          await streamCompletion(
             (line) => writer.write(enc.encode(line)),
             async (emit) => {
               try {
@@ -750,8 +750,9 @@ http.route({
               }
             },
             (f, final) => encodeFrame(f, seq++, final, frames.rid, frames.key),
+            // Audit row + usage counter before `done`: the client hangs up there.
+            { beforeDone: recordSuccess },
           );
-          if (res.message) await recordSuccess(toOpenAIResponse(res.message));
         } catch (err) {
           console.error("[HTTP Proxy] stream task failed:", (err as Error)?.message);
         } finally {

@@ -275,4 +275,43 @@ describe("streamCompletion", () => {
         expect(res).toEqual({ ok: false, message: msg });
         expect(calls).toBe(1);
     });
+
+    it("bookkeeping runs before the final done frame, with the same completion", async () => {
+        const { lines, write } = collect();
+        const msg = await message();
+        const order: string[] = [];
+        const res = await streamCompletion(
+            async (l) => {
+                order.push(`write:${JSON.parse(l).f.kind}`);
+                await write(l);
+            },
+            async (emit) => {
+                emit({ kind: "text", text: "Hello" });
+                return msg;
+            },
+            encode,
+            {
+                beforeDone: async (completion) => {
+                    await new Promise((r) => setTimeout(r, 5));
+                    expect(completion).toEqual(toOpenAIResponse(msg));
+                    order.push("recordSuccess");
+                },
+            },
+        );
+        expect(res).toEqual({ ok: true, message: msg });
+        expect(order).toEqual(["write:text", "recordSuccess", "write:done"]);
+        expect(lines.map((l) => l.f.kind)).toEqual(["text", "done"]);
+    });
+
+    it("failed bookkeeping still writes the done frame", async () => {
+        const { lines, write } = collect();
+        const msg = await message();
+        const res = await streamCompletion(write, async () => msg, encode, {
+            beforeDone: async () => {
+                throw new Error("db down");
+            },
+        });
+        expect(res.ok).toBe(true);
+        expect(lines.map((l) => l.f.kind)).toEqual(["done"]);
+    });
 });
