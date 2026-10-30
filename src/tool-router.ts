@@ -856,7 +856,10 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
     },
 ];
 
-const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
+const CHANGING_FACT =
+    /\b(yet|latest|newest|currently|right now|as of (?:now|today)|nowadays|today'?s|this (?:week|month|year)|news|recent(?:ly)?|release date|price of)\b/i;
+
+export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
     // Music / Media
     {
         pattern: /\b(play|pause|skip|next|previous|shuffle|repeat|queue|now.?playing)\b/i,
@@ -873,6 +876,9 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     { pattern: /\b(spectrogram|waveform|audio.?viz)\b/i, category: "media", minScore: 0.7 },
     // Weather / Search
     { pattern: /\b(weather|forecast|temperature|rain|sunny|humid)\b/i, category: "web_search", minScore: 0.7 },
+    // Facts that change: "has Node 26 become LTS yet?" went to the classifier as chat (0.53)
+    // and was answered from stale context with no search tool offered.
+    { pattern: CHANGING_FACT, category: "web_search", minScore: 0.7 },
     // Scheduling / Notes
     { pattern: /\b(remind|reminder|todo|to.?do)\b/i, category: "scheduling", minScore: 0.65 },
     { pattern: /\b(note|notes|apple.?notes)\b/i, category: "scheduling", minScore: 0.6 },
@@ -1857,8 +1863,11 @@ export async function selectTools(opts: {
     // Banter ("… roast me") the classifier answered with no categories also takes
     // the lane. With no classifier answer at all (timeout), routing stays normal:
     // a guessed chat lane would turn real requests into chat.
-    const chatResult =
-        llmResult?.tier === "chat" && llmResult.confidence >= 0.6
+    // A question about something that changes needs a search, not the tool-less chat lane.
+    const askingChangingFact = /\?\s*$/.test(opts.message) && CHANGING_FACT.test(opts.message);
+    const chatResult = askingChangingFact
+        ? null
+        : llmResult?.tier === "chat" && llmResult.confidence >= 0.6
             ? llmResult
             : llmResult && llmResult.categories.length === 0 && isConversationalBanter(opts.message)
               ? { intent: "banter", categories: [], confidence: 0.6 }

@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { assembleToolNames } from "./tool-router.js";
+import { assembleToolNames, KEYWORD_BOOSTS } from "./tool-router.js";
 
 const OS = ["os_smart_click", "os_inspect", "os_click_id", "os_type", "os_screenshot", "os_click", "os_visual_verify",
     "os_keyboard_shortcuts", "os_context", "apple_script", "os_computer_action", "os_zoom_region", "os_ocr_click", "os_nav"];
@@ -48,5 +48,12 @@ describe("assembleToolNames", () => {
     it("a browser turn also gets web_read: reading a page needs no tab", () => {
         const all = new Set(["browser_navigate", "browser_click", "web_read", "memory_store", "memory_search"]);
         expect(assembleToolNames(["browser"], ["browser_click"], all, 36).has("web_read")).toBe(true);
+    });
+
+    it("a question about something that changes brings web search", () => {
+        const boosts = (m: string) => KEYWORD_BOOSTS.filter((b) => b.minScore >= 0.7 && b.pattern.test(m)).map((b) => b.category);
+        expect(boosts("Has Node.js 26 become an LTS release yet?")).toContain("web_search");
+        expect(boosts("what's the latest on the Artemis launch")).toContain("web_search");
+        expect(boosts("thanks bhai, good night")).not.toContain("web_search");
     });
 });
