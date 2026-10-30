@@ -16,7 +16,7 @@ import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { getDownloadsDir, getWorkspaceDir } from "../config/paths.js";
-import { isStuckReplyPhrase, withStuckReplyLine } from "../channel-text.js";
+import { isStuckReplyPhrase, stuckActionButtons, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
 import {
     runAgent,
@@ -28,7 +28,9 @@ import {
 import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
 import { formatStepStatus, parseStepLine } from "../step-status.js";
-import { notifyDesktop, notifyTurnEnd } from "../desktop-notify.js";
+import { closeDesktopNotification, notifyDesktop, notifyTurnEnd } from "../desktop-notify.js";
+import { getPlanModeState } from "../agents/plan-mode.js";
+import { consentAskedSince } from "../security/consent.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
 import { classifyQuery } from "../memory/classifier.js";
 import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
@@ -511,6 +513,20 @@ export function initOverlayChat(llm: LLMClient): void {
                 try { client.send(json); } catch { /* ignore */ }
             }
         }
+        // Offline, chat-fallback.ts sends it to Telegram/WhatsApp; live, the inbox is silent without this.
+        if (ev.kind === "added" && ev.item.status === "pending" && ownerClients().length > 0) {
+            const { id, topic, suggestedAction } = ev.item.intent;
+            // topic is an internal label (a raw thought, "anomaly x"): the body is the composed text.
+            notifyDesktop("inbox", "Bhai has a suggestion", ev.item.composedText || suggestedAction?.summary || topic, {
+                tag: `inbox:${id}`,
+                actions: [
+                    { label: "Approve", ws: { type: "inbox:approve", id } },
+                    { label: "Dismiss", ws: { type: "inbox:reject", id } },
+                ],
+            });
+        } else if (ev.kind === "updated" && ev.item.status !== "pending") {
+            closeDesktopNotification(`inbox:${ev.item.intent.id}`);
+        }
     });
 
     wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
@@ -950,6 +966,14 @@ const turnAborts = new Map<WebSocket, AbortController>();
 /** The owner's turns share one conversation history, so only one may run at a time. */
 const ownerTurnRunning = (): boolean => [...turnAborts.keys()].some(wsIsOwner);
 const BUSY_TEXT = "I'm still on your last message. Wait for my reply, or press Esc to stop it.";
+const STUCK_NOTIFY_ACTIONS = stuckActionButtons();
+
+/** The turn ended asking the owner for a yes: a consent ask, or design docs / a new tool awaiting approval. */
+function askedOwnerSince(since: number): boolean {
+    const s = getPlanModeState();
+    const awaiting = s.mode === "awaiting_approval" || s.mode === "awaiting_dynamic_tool_approval";
+    return consentAskedSince(since) || (awaiting && s.enteredAt >= since);
+}
 
 function ownerClients(): WebSocket[] {
     return [...overlayClients].filter(wsIsOwner);
@@ -976,6 +1000,7 @@ async function handleOverlayMessage(
     // its Stop handle.
     if (wsIsOwner(ws) && ownerTurnRunning()) {
         sendToClient(ws, { type: "error", text: BUSY_TEXT });
+        if (source === "notification") notifyDesktop("done", "Bhai is busy", "I'm still on your last message. Reply again once I'm done.");
         return;
     }
     // "/new" (or "/clear") starts over without a model call: clears the shared
@@ -1162,13 +1187,21 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
         });
-        if (wsIsOwner(ws)) notifyTurnEnd(interactive.text, startTime, result.stuck);
+        if (wsIsOwner(ws)) {
+            notifyTurnEnd(interactive.text, startTime, {
+                chat,
+                stuck: result.stuck,
+                stuckActions: STUCK_NOTIFY_ACTIONS,
+                waiting: askedOwnerSince(startTime),
+                fromNotification: source === "notification",
+            });
+        }
     } catch (err) {
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
         console.error("[OVERLAY] Agent error:", err);
         const errorType = categorizeError(err as Error);
         sendToClient(ws, { type: "error", text: getErrorMessage(errorType) });
-        if (wsIsOwner(ws)) notifyTurnEnd(getErrorMessage(errorType), startTime, false, true);
+        if (wsIsOwner(ws)) notifyTurnEnd(getErrorMessage(errorType), startTime, { chat, failed: true, fromNotification: source === "notification" });
     }
 }
 
@@ -1282,7 +1315,9 @@ async function handleFileAttachment(
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
         });
-        if (wsIsOwner(ws)) notifyTurnEnd(interactive.text, startTime, result.stuck);
+        if (wsIsOwner(ws)) {
+            notifyTurnEnd(interactive.text, startTime, { chat, stuck: result.stuck, stuckActions: STUCK_NOTIFY_ACTIONS, waiting: askedOwnerSince(startTime) });
+        }
     } catch (err) {
         console.error("[OVERLAY] File attachment error:", err);
         sendToClient(ws, { type: "error", text: "Could not process the file." });

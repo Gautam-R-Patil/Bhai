@@ -1,11 +1,19 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Whether a "##BHAI_NOTIFY##" line from the bot (src/desktop-notify.ts) becomes
-// a native notification. "done" and "proactive" are skipped while a Bhai window
-// is in front (the owner already sees it); a reminder the owner asked for, and
-// "stuck"/"handoff" (Bhai waits on the owner), always show unless notifications
-// are off altogether.
+// a native notification. "done", "proactive" and "inbox" are skipped while a
+// Bhai window is in front (the owner already sees it); a reminder the owner asked
+// for, and "stuck"/"waiting"/"handoff" (Bhai waits on the owner), always show
+// unless notifications are off altogether.
 
-const PREF = { done: "notifyOnTask", proactive: "notifyOnMessage", reminder: null, stuck: null, handoff: null };
+const PREF = {
+    done: "notifyOnTask",
+    proactive: "notifyOnMessage",
+    inbox: "notifyOnMessage",
+    reminder: null,
+    stuck: null,
+    waiting: null,
+    handoff: null,
+};
 const REPEAT_MS = 10_000;
 
 function createNotifyGate(getPref) {
@@ -21,4 +29,13 @@ function createNotifyGate(getPref) {
     };
 }
 
-module.exports = { createNotifyGate };
+// What a notification button does, from the bot's description of it: say a
+// message in chat, or send an inbox decision. Anything else does nothing.
+function actionToSend(a) {
+    if (a && typeof a.message === "string" && a.message.trim()) return { text: a.message.slice(0, 500) };
+    const ws = a && a.ws;
+    if (ws && /^inbox:(approve|reject)$/.test(ws.type) && typeof ws.id === "string") return { raw: { type: ws.type, id: ws.id.slice(0, 100) } };
+    return null;
+}
+
+module.exports = { createNotifyGate, actionToSend };

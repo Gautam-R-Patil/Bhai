@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, it, expect } from "vitest";
-import { createNotifyGate } from "../notify-gate.js";
+import { actionToSend, createNotifyGate } from "../notify-gate.js";
 
 const gate = (prefs = {}) => createNotifyGate((k) => prefs[k]);
 
@@ -23,6 +23,19 @@ describe("bot notification gate", () => {
         expect(gate({ notifyOnTask: false })({ kind: "done", body: "a" }, false)).toBe(false);
         expect(gate({ notifyOnMessage: false })({ kind: "proactive", body: "a" }, false)).toBe(false);
         expect(gate({ notifyOnMessage: false })({ kind: "done", body: "a" }, false)).toBe(true);
+    });
+
+    it("treats waiting like stuck and inbox like proactive", () => {
+        expect(gate()({ kind: "waiting", body: "a" }, true)).toBe(true);
+        expect(gate()({ kind: "inbox", body: "b" }, true)).toBe(false);
+        expect(gate({ notifyOnMessage: false })({ kind: "inbox", body: "c" }, false)).toBe(false);
+    });
+
+    it("turns buttons into a chat message or an inbox decision, nothing else", () => {
+        expect(actionToSend({ label: "Retry", message: "Try again." })).toEqual({ text: "Try again." });
+        expect(actionToSend({ label: "Approve", ws: { type: "inbox:approve", id: "i1" } })).toEqual({ raw: { type: "inbox:approve", id: "i1" } });
+        expect(actionToSend({ label: "x", ws: { type: "stop", id: "i1" } })).toBeNull();
+        expect(actionToSend(undefined)).toBeNull();
     });
 
     it("drops the same text repeated within 10s and unknown kinds", () => {

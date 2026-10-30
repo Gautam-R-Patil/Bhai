@@ -214,6 +214,11 @@ const STUCK_ACTIONS = new Map([
     ["skip", { label: "Skip", message: "Skip that part and carry on with the rest." }],
 ]);
 
+/** The handoff choices as buttons that say their message (the desktop notification's). */
+export function stuckActionButtons(): Array<{ label: string; message: string }> {
+    return [...STUCK_ACTIONS.values()].map(({ label, message }) => ({ label, message }));
+}
+
 /**
  * The stuck-report marker [[STUCK]] (or **[[ stuck ]]**, `[[STUCK]]`, _[[STUCK]]_), anywhere in the reply:
  * the double-bracket token only exists as our prompt's protocol marker, so it never reaches the user.

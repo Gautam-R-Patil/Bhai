@@ -1292,19 +1292,49 @@ function notifyBrokenPermission(p) {
     permsNotice.show();
 }
 
-// Bot → "##BHAI_NOTIFY##{kind,title,body}" (src/desktop-notify.ts): a finished long
-// task, a proactive message, Bhai stuck or needing a tap. A click opens the chat the
-// owner last used, where the reply is (or `onClick`).
-const shouldNotify = require("./notify-gate").createNotifyGate((k) => store.get(k));
+// Bot → "##BHAI_NOTIFY##{kind,title,body,tag?,actions?}" (src/desktop-notify.ts): a
+// finished long task, a proactive message, an inbox suggestion, Bhai stuck or waiting
+// for a yes. A click opens the chat the owner last used, where the reply is (or
+// `onClick`); the reply box and buttons answer Bhai without opening anything. A tag
+// replaces the earlier notification with that tag; {close: tag} takes it away.
+const { createNotifyGate, actionToSend } = require("./notify-gate");
+const shouldNotify = createNotifyGate((k) => store.get(k));
+const liveNotes = new Map(); // tag → its notification, still on screen
 let lastChatSurface = "overlay"; // "panel" once the owner chats in the app window
+let sendFromNotification = null; // ({text, chat} | {raw}) → the bot, over the in-app chat socket (registerIPC)
+function closeNotes(match) {
+    for (const [tag, n] of liveNotes) if (match(tag)) { liveNotes.delete(tag); n.close(); }
+}
+// Back in a Bhai window: its turn notifications are read.
+app.on("browser-window-focus", () => closeNotes((t) => t.startsWith("turn:")));
 function showBotNotification(note, onClick) {
     const { Notification, BrowserWindow } = require("electron");
+    if (typeof note.close === "string") return closeNotes((t) => t === note.close);
     if (!Notification.isSupported() || !shouldNotify(note, !!BrowserWindow.getFocusedWindow())) return;
+    const tag = typeof note.tag === "string" ? note.tag : null;
+    const chat = tag && tag.startsWith("turn:") ? tag.slice(5) : undefined;
+    const actions = (Array.isArray(note.actions) ? note.actions : []).slice(0, 3);
     const n = new Notification({
         title: String(note.title || "Bhai").slice(0, 80),
         body: String(note.body).slice(0, 240),
         icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
+        hasReply: note.kind !== "handoff" && !onClick,
+        replyPlaceholder: "Reply to Bhai",
+        actions: actions.map((a) => ({ type: "button", text: String(a.label || "").slice(0, 40) })),
     });
+    n.on("reply", (details, legacyReply) => {
+        const text = String(details?.reply ?? legacyReply ?? "").trim();
+        if (text) sendFromNotification?.({ text, chat });
+    });
+    n.on("action", (details, legacyIndex) => {
+        const send = actionToSend(actions[details?.actionIndex ?? legacyIndex]);
+        if (send) sendFromNotification?.({ ...send, chat });
+    });
+    if (tag) {
+        closeNotes((t) => t === tag);
+        liveNotes.set(tag, n);
+        n.on("close", () => { if (liveNotes.get(tag) === n) liveNotes.delete(tag); });
+    }
     n.on("click", () => {
         if (onClick) onClick();
         else if (lastChatSurface === "panel" && mainWindow && !mainWindow.isDestroyed()) {
@@ -1645,7 +1675,7 @@ async function startBot() {
         if (code === 78) botDownMessage = SIGN_IN_AGAIN_MSG;
         // Down for good (gave up restarting, or signed out): say so even with no Bhai window open.
         if (exitStatus === "failed" || code === 78) {
-            showBotNotification({ kind: "stuck", title: "Bhai stopped", body: botDownMessage }, () => {
+            showBotNotification({ kind: "stuck", title: "Bhai stopped", body: botDownMessage, tag: "bot-down" }, () => {
                 if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
             });
         }
@@ -1660,6 +1690,7 @@ async function startBot() {
         updateTrayMenu();
     });
 
+    closeNotes((t) => t === "bot-down"); // it's back
     // Notify renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("bot-status", "running");
@@ -2567,6 +2598,15 @@ function registerIPC() {
             if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("chat:event", { chat: appChatId, msg });
         };
     });
+    sendFromNotification = async ({ text, chat, raw }) => {
+        try {
+            const ws = await appChatSocket();
+            if (raw) return ws.send(JSON.stringify(raw));
+            appChatId = (chat || appChatId || `notify-${Date.now().toString(36)}`).slice(0, 64);
+            // source "notification": Bhai answers with a notification too, however quick the turn.
+            ws.send(JSON.stringify({ type: "chat", chat: appChatId, text: String(text).slice(0, 8000), meta: { source: "notification" } }));
+        } catch { /* Bhai isn't running: nothing to hand it to */ }
+    };
     ipcMain.handle("chat:send", async (_, { chat, text, file } = {}) => {
         lastChatSurface = "panel";
         const t = String(text || "").trim().slice(0, 8000);
