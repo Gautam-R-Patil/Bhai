@@ -2006,6 +2006,13 @@
                 updateUI('running');
                 // Update credit display
                 refreshCreditDisplay();
+            } else if (result.status === 'signed_out' || result.status === 'sign_in_required') {
+                // Bhai starts by itself once the sign-in goes through.
+                await atlas.openAuthWindow().catch(() => {});
+                document.getElementById('startBtn').disabled = false;
+                botStarting = false;
+                setMood();
+                showSignInHint();
             } else {
                 document.getElementById('startBtn').disabled = false;
                 startFailed();

@@ -170,7 +170,7 @@ async function boot() {
     for (let attempt = 1; attempt <= 3; attempt++) {
         sessionOk = await initSession();
         if (sessionOk) break;
-        if (sessionNeedsSignIn()) {
+        if (sessionNeedsSignIn() || !process.env.ATLAS_OTPLESS_USER_ID) {
             // 78: not allowed to run — the app shows "sign in again" and won't auto-restart.
             console.error("❌ This device needs to sign in again (Account in the Bhai app)");
             process.exit(78);

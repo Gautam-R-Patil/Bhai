@@ -1296,8 +1296,12 @@ async function startBot() {
     if (stopPromise) await stopPromise; // never run two bots at once
     if (isAlive(botProcess)) return { status: "already_running" };
 
-    // ── Account gate: a device without its sign-in secret only gets refused ──
+    // ── Account gate: signed out, or a device without its sign-in secret, only gets refused ──
     const session = loadAccountSession();
+    if (!session?.userId) {
+        console.log("[BOT] Not starting: signed out (Account → Sign in)");
+        return { status: "signed_out" };
+    }
     if (session?.userId && !session.deviceSecret) {
         _signInNeeded = "sign_in_required";
         botDownMessage = SIGN_IN_AGAIN_MSG;
