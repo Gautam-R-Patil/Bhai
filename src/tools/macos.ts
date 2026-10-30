@@ -2713,6 +2713,31 @@ export const osMultiAction: ToolDefinition = {
 
 // ── Region Zoom Tool ────────────────────────
 
+/**
+ * The region of `img` (clamped to it) at 2x, as JPEG; null unless all four are numbers and
+ * the size is positive. It ran Python/Pillow, which most Macs lack, with the four values
+ * pasted into the script, so a non-number became Python code.
+ */
+export async function zoomImageRegion(
+    img: Buffer,
+    ...vals: unknown[]
+): Promise<{ buffer: Buffer; region: { x: number; y: number; width: number; height: number }; size: string } | null> {
+    const [x0, y0, w0, h0] = vals.map((v) => (typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : Number.NaN));
+    if (![x0, y0, w0, h0].every(Number.isFinite) || w0 <= 0 || h0 <= 0) return null;
+    const sharp = (await import("sharp")).default;
+    const { width = 0, height = 0 } = await sharp(img).metadata();
+    const x = Math.max(0, Math.min(Math.round(x0), width - 1));
+    const y = Math.max(0, Math.min(Math.round(y0), height - 1));
+    const w = Math.max(1, Math.min(Math.round(w0), width - x));
+    const h = Math.max(1, Math.min(Math.round(h0), height - y));
+    const buffer = await sharp(img)
+        .extract({ left: x, top: y, width: w, height: h })
+        .resize(w * 2, h * 2, { kernel: "lanczos3" })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+    return { buffer, region: { x, y, width: w, height: h }, size: `${w * 2}x${h * 2}` };
+}
+
 export const osZoomRegion: ToolDefinition = {
     schema: {
         type: "function",
@@ -2738,8 +2763,6 @@ export const osZoomRegion: ToolDefinition = {
             return JSON.stringify({ error: "os_zoom_region is only available on macOS." });
         }
 
-        const args = input as { x: number; y: number; width: number; height: number };
-
         if (!_lastScreenshotBuffer) {
             return JSON.stringify({
                 success: false,
@@ -2748,43 +2771,14 @@ export const osZoomRegion: ToolDefinition = {
         }
 
         try {
-            const tmpIn = join(tmpdir(), `atlas-zoom-in-${Date.now()}.png`);
-            const tmpOut = join(tmpdir(), `atlas-zoom-out-${Date.now()}.jpg`);
-
-            // Write the last screenshot to disk
-            await fs.writeFile(tmpIn, _lastScreenshotBuffer);
-
-            // Crop and zoom using Python/Pillow
-            const cropScript = `
-from PIL import Image
-import sys
-img = Image.open("${tmpIn}")
-x, y, w, h = ${args.x}, ${args.y}, ${args.width}, ${args.height}
-# Clamp to image bounds
-x = max(0, min(x, img.width - 1))
-y = max(0, min(y, img.height - 1))
-w = min(w, img.width - x)
-h = min(h, img.height - y)
-cropped = img.crop((x, y, x + w, y + h))
-# Scale up 2x for detail
-zoomed = cropped.resize((w * 2, h * 2), Image.LANCZOS)
-zoomed.save("${tmpOut}", "JPEG", quality=90)
-print(f"{zoomed.width}x{zoomed.height}")
-`;
-            const { stdout } = await execFileAsync("python3", ["-c", cropScript], { timeout: 5000 });
-
-            const buffer = await fs.readFile(tmpOut);
-            const base64 = buffer.toString("base64");
-
-            await fs.unlink(tmpIn).catch(() => {});
-            await fs.unlink(tmpOut).catch(() => {});
-
+            const zoom = await zoomImageRegion(_lastScreenshotBuffer, input.x, input.y, input.width, input.height);
+            if (!zoom) return JSON.stringify({ success: false, error: "x, y, width and height must be numbers, width and height above 0." });
             return JSON.stringify({
                 success: true,
-                zoomed_base64: base64,
+                zoomed_base64: zoom.buffer.toString("base64"),
                 mime_type: "image/jpeg",
-                region: { x: args.x, y: args.y, width: args.width, height: args.height },
-                zoomed_size: stdout.trim(),
+                region: zoom.region,
+                zoomed_size: zoom.size,
                 tip: "This is a 2x zoomed view of the selected region. Use os_click with the ORIGINAL screenshot coordinates (not zoomed coordinates) to interact.",
             });
         } catch (err) {
