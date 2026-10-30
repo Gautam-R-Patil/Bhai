@@ -114,6 +114,16 @@ export async function listIndex(filter?: {
 // Boot recovery: any entry still marked "running" whose updatedAt is older than
 // INTERRUPTED_THRESHOLD_MS was killed mid-flight by a process restart. Mark it
 // "interrupted"; its checkpoint stays so deep_research({resume_id}) can continue it.
+function processAlive(pid: number): boolean {
+    if (pid === process.pid) return false; // this process just started; it runs nothing yet
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (err) {
+        return (err as NodeJS.ErrnoException).code === "EPERM";
+    }
+}
+
 export async function recoverInterruptedResearches(): Promise<{
     interrupted: ResearchIndexEntry[];
 }> {
@@ -124,7 +134,8 @@ export async function recoverInterruptedResearches(): Promise<{
         for (const entry of index.researches) {
             if (entry.status !== "running") continue;
             const updatedMs = new Date(entry.updatedAt).getTime();
-            if (now - updatedMs <= INTERRUPTED_THRESHOLD_MS) continue;
+            // Its process is gone (the app was relaunched): cut off, however recent the last update.
+            if (!(entry.pid && !processAlive(entry.pid)) && now - updatedMs <= INTERRUPTED_THRESHOLD_MS) continue;
             entry.status = "interrupted";
             entry.updatedAt = new Date().toISOString();
             entry.error = entry.error ?? "Process restarted while research was running";

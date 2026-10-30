@@ -119,10 +119,12 @@ import {
     deepResearch,
     getResearchStatusSnippet,
     initDeepResearch,
+    resumeInterruptedResearch,
     setDeepResearchLLM,
     setDeepResearchNotifier,
     setDeepResearchProgress,
     setOverlayResearchProgress,
+    setOverlayResearchResult,
 } from "./deep-research.js";
 import { documentTools, initDocumentTools } from "./document.js";
 import { emailSend } from "./email-tool.js";
@@ -294,6 +296,7 @@ export {
     clearSwarmProgress,
     getResearchStatusSnippet,
     initDeepResearch,
+    resumeInterruptedResearch,
     setCodeActionExecutor,
     setCodeActionLLM,
     setDeepResearchLLM,
@@ -302,6 +305,7 @@ export {
     setLongTaskLLM,
     setLongTaskProgress,
     setOverlayResearchProgress,
+    setOverlayResearchResult,
     setSwarmLLM,
     setSwarmProgress,
 };

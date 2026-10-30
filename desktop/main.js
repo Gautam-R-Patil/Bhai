@@ -2602,6 +2602,16 @@ function registerIPC() {
         }
         return { ok: false, error: "live-voice not available" };
     });
+    // A finished research report. The page names the file, so only a .md that sits in a
+    // folder named Research opens: a planted path can't launch anything else.
+    ipcMain.on("overlay:open-report", (_, filePath) => {
+        if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return;
+        let file;
+        try { file = fs.realpathSync(filePath); } catch { return; } // a link named .md can't point at an app
+        if (path.extname(file).toLowerCase() !== ".md" || path.basename(path.dirname(file)) !== "Research") return;
+        shell.openPath(file);
+    });
+
     // Open auth window from renderer. Short-circuits if a valid session already exists.
     ipcMain.handle("window:openAuth", () => {
         const existing = loadAccountSession();

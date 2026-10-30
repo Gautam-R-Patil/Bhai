@@ -19,14 +19,15 @@ import {
     isResearchId,
     loadResearchState,
     deleteResearchState,
+    saveResearchState,
 } from "./persistence.js";
 
 // ── State ────────────────────────────────────
 
 let _llm: LLMClient | null = null;
-let _onProgress: ((msg: string) => Promise<void>) | null = null;
 let _telegramNotifier: ((msg: string) => Promise<void>) | null = null;
 let _overlayProgress: ((msg: string) => Promise<void>) | null = null;
+let _overlayResult: ((text: string, id: string, reportFile?: string) => Promise<boolean>) | null = null;
 
 const activeResearches = new Map<string, ActiveResearch>();
 let researchCounter = 0;
@@ -52,6 +53,7 @@ function syncActiveToIndex(research: ActiveResearch): Promise<void> {
         reportFile: research.reportFile || undefined,
         originalPrompt: research.originalPrompt,
         error: research.error,
+        pid: isTerminal ? undefined : process.pid,
         completedAt: isTerminal ? research.updatedAt : undefined,
         durationSec: isTerminal ? Math.max(0, Math.round((updatedMs - startedMs) / 1000)) : undefined,
     };
@@ -87,17 +89,37 @@ const _indexHeartbeat = setInterval(() => {
 }, INDEX_HEARTBEAT_MS);
 _indexHeartbeat.unref();
 
-// Boot-time recovery: any research marked "running" in the index whose
-// updatedAt is stale was killed by a process restart. Mark it interrupted.
-// Call this from src/index.ts at boot.
+// Boot-time recovery: any research marked "running" in the index whose process
+// is gone was killed by a restart. Mark it interrupted; resumeInterruptedResearch
+// continues it once the channels are wired. Call this from src/index.ts at boot.
 let _initialized = false;
+let _cutOff: string[] = [];
 export async function initDeepResearch(): Promise<void> {
     if (_initialized) return;
     _initialized = true;
     try {
-        await recoverInterruptedResearches();
+        _cutOff = (await recoverInterruptedResearches()).interrupted.map((e) => e.id);
     } catch (err) {
         console.warn(`[RESEARCH] Boot recovery failed:`, (err as Error).message);
+    }
+}
+
+// A research the restart cut off continues from its checkpoint on its own, at most twice, so
+// one that keeps crashing the app isn't restarted forever. One with no checkpoint yet stays
+// "interrupted" in the status snippet for the agent to mention.
+const MAX_AUTO_RESUMES = 2;
+export async function resumeInterruptedResearch(): Promise<void> {
+    const ids = _cutOff;
+    _cutOff = [];
+    for (const id of ids) {
+        const state = await loadResearchState(id);
+        if (!state || (state.research.autoResumes ?? 0) >= MAX_AUTO_RESUMES) continue;
+        // Counted before it runs: a resume that crashes the app at once still uses up a try.
+        state.research.autoResumes = (state.research.autoResumes ?? 0) + 1;
+        await saveResearchState(state);
+        const out = JSON.parse(await deepResearch.handler({ resume_id: id })) as { error?: string };
+        if (out.error) console.warn(`[RESEARCH] Auto-resume of ${id} failed: ${out.error}`);
+        else console.log(`[RESEARCH] Auto-resumed ${id} after a restart`);
     }
 }
 
@@ -127,11 +149,15 @@ export async function cancelResearchById(id: string): Promise<boolean> {
     await syncActiveToIndex(research);
     return true;
 }
-export function setDeepResearchProgress(fn: (msg: string) => Promise<void>): void { _onProgress = fn; }
-export function clearDeepResearchProgress(): void { _onProgress = null; }
+// Research runs past the turn that started it, so the turn's progress line isn't used: a
+// round finishing during some later turn would show up in that turn's status.
+export function setDeepResearchProgress(_fn: (msg: string) => Promise<void>): void {}
+export function clearDeepResearchProgress(): void {}
 export function setDeepResearchNotifier(fn: (msg: string) => Promise<void>): void { _telegramNotifier = fn; }
 export function setOverlayResearchProgress(fn: (msg: string) => Promise<void>): void { _overlayProgress = fn; }
 export function clearOverlayResearchProgress(): void { _overlayProgress = null; }
+/** The finished answer in the chat bar and the app; false when no window is open to take it. */
+export function setOverlayResearchResult(fn: (text: string, id: string, reportFile?: string) => Promise<boolean>): void { _overlayResult = fn; }
 
 // Re-export for web-search.ts compatibility
 export { multiEngineSearch, type SearchResult };
@@ -147,21 +173,23 @@ export function sanitizePromptForFencing(s: string): string {
 
 // ── Notify Helper ────────────────────────────
 
-// Research reports where it was asked. Started on the computer (chat bar, the app's chat,
-// the extension), its progress shows there only, never on Telegram or another channel.
+// Research reports where it was asked. Progress (phases, rounds) shows on the computer only:
+// the chat bar's card and task drawer. A chat gets only what's worth a message (picked up
+// after a restart, stopped, failed, the answer), on the channel it was asked on.
 const DESKTOP_CHANNELS = new Set(["overlay", "chrome-extension", "web-widget"]);
 export const startedOnDesktop = (origin?: ChannelContext): boolean => !!origin && DESKTOP_CHANNELS.has(origin.channel);
 
+/** To the channel it was asked on; when that can't take it, every channel, so it isn't lost. */
+async function sendToOrigin(origin: ChannelContext | undefined, text: string, file?: string): Promise<void> {
+    const sender = origin && getChannelSender(startedOnDesktop(origin) ? "overlay" : origin.channel);
+    if (sender && (await sender(text, file).catch(() => false)) !== false) return;
+    if (_telegramNotifier) await _telegramNotifier(text).catch(() => {});
+}
+
 export function createNotify(origin?: ChannelContext): NotifyFn {
-    if (startedOnDesktop(origin)) {
-        return async (msg: string) => {
-            if (_overlayProgress) await _overlayProgress(msg).catch(() => {});
-        };
-    }
-    return async (msg: string) => {
-        if (_telegramNotifier) await _telegramNotifier(msg).catch(() => {});
-        if (_onProgress) await _onProgress(msg).catch(() => {});
+    return async (msg: string, important?: boolean) => {
         if (_overlayProgress) await _overlayProgress(msg).catch(() => {});
+        if (important) await sendToOrigin(origin, msg);
     };
 }
 
@@ -267,7 +295,10 @@ A research that was interrupted or failed can be continued from its last checkpo
         const id = resumeState?.research.id ?? `research_${++researchCounter}_${Date.now()}`;
 
         const originalPrompt = resumeState?.research.originalPrompt || (input._originalPrompt as string) || topic;
-        const capturedChannelContext = input._channelContext as ChannelContext | undefined;
+        const asked = input._channelContext as ChannelContext | undefined;
+        const capturedChannelContext: ChannelContext | undefined = asked
+            ? { channel: asked.channel, userId: asked.userId, userName: asked.userName, isOwner: asked.isOwner, isPrivate: asked.isPrivate }
+            : resumeState?.research.origin;
 
         const research: ActiveResearch = resumeState ? {
             ...resumeState.research,
@@ -275,6 +306,7 @@ A research that was interrupted or failed can be continued from its last checkpo
             error: undefined,
             updatedAt: new Date().toISOString(),
             abortController: new AbortController(),
+            origin: capturedChannelContext,
         } : {
             id,
             topic,
@@ -292,22 +324,23 @@ A research that was interrupted or failed can be continued from its last checkpo
             reportFile: "",
             abortController: new AbortController(),
             originalPrompt,
+            origin: capturedChannelContext,
         };
 
         activeResearches.set(id, research);
         void syncActiveToIndex(research);
 
         const capturedNotify = createNotify(capturedChannelContext);
-        // The final answer: on the computer when it was asked there, unless no chat window is
-        // open to take it; then the usual channels, so a finished report is never lost.
+        // The answer, with the report: on the computer as a card that stays until dismissed when it
+        // was asked there; otherwise on its channel with the report file attached. The header marks
+        // it as something the owner asked for, so Do Not Disturb doesn't swallow it.
         const deliverResult = async (text: string) => {
-            if (startedOnDesktop(capturedChannelContext)) {
-                const shown = await getChannelSender("overlay")?.(text)?.catch(() => false);
-                if (shown) return;
-                if (_telegramNotifier) await _telegramNotifier(text).catch(() => {});
-                return;
-            }
-            await capturedNotify(text);
+            const file = research.reportFile || undefined;
+            void import("../notifications/push.js")
+                .then(({ sendPushNotification }) => sendPushNotification("Research ready", topic.substring(0, 180)))
+                .catch(() => {});
+            if (startedOnDesktop(capturedChannelContext) && (await _overlayResult?.(text, id, file).catch(() => false))) return;
+            await sendToOrigin(capturedChannelContext, `📚 Research ready — ${topic.substring(0, 60)}\n\n${text}`, file);
         };
         const capturedLLM = _llm!;
 
@@ -352,7 +385,7 @@ Always end by sending a final user-facing message describing what you found and 
                             noOutward: true,
                         },
                     );
-                    if (result?.text) await deliverResult(result.text);
+                    await deliverResult(result?.text || "The report is ready.");
                 } catch (err) {
                     console.error(`[RESEARCH] Continuation failed in ${id}:`, err);
                     await deliverResult(`⚠️ Research completed but follow-up failed: ${(err as Error).message}`);
@@ -366,6 +399,7 @@ Always end by sending a final user-facing message describing what you found and 
                 // Await: ensures the failed status is durably written before
                 // purgeMapToCap() in .finally() can evict the entry.
                 await syncActiveToIndex(research);
+                await capturedNotify(`❌ Research on "${topic.substring(0, 50)}" failed: ${research.error}`, true);
             })
             .finally(() => {
                 purgeMapToCap();

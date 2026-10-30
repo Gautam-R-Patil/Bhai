@@ -1718,10 +1718,18 @@
 
         atlas.onChatEvent(({ chat, msg }) => {
             // Something Bhai finished in the background (a research report): into the open chat.
-            if (msg && msg.type === 'notification' && msg.text) {
+            if (msg && (msg.type === 'notification' || msg.type === 'research_complete') && msg.text) {
                 const thread = document.getElementById('chatsThread');
                 if (document.getElementById('tab-chats').classList.contains('active') && chatsOpenId) {
-                    thread.append(chatBubble('assistant', msg.text, Date.now()));
+                    const row = chatBubble('assistant', msg.text, Date.now());
+                    if (msg.reportFile) {
+                        const open = document.createElement('button');
+                        open.className = 'btn btn-secondary btn-sm';
+                        open.textContent = 'Open full report';
+                        open.onclick = () => atlas.openReport(msg.reportFile);
+                        row.append(open);
+                    }
+                    thread.append(row);
                     thread.scrollTop = thread.scrollHeight;
                 } else showToast(String(msg.text).slice(0, 140));
                 return;

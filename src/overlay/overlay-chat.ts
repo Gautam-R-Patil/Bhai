@@ -42,7 +42,7 @@ import {
     getVoiceStagePhrase,
     getWaitPhrase,
 } from "../alive-ux.js";
-import { setOverlayResearchProgress } from "../tools/index.js";
+import { setOverlayResearchProgress, setOverlayResearchResult } from "../tools/index.js";
 import { parseQuickCommand } from "../quick-commands.js";
 import { getWidgetScript, getWidgetPage, validateWidgetToken } from "../widget/widget.js";
 import {
@@ -791,17 +791,15 @@ export function initOverlayChat(llm: LLMClient): void {
     // This callback persists across agent iterations (unlike _onProgress which is cleared)
     // So background research progress + completion notifications always reach the overlay
     setOverlayResearchProgress(async (msg: string) => {
-        if (overlayClients.size === 0) return;
-        const isComplete =
-            msg.includes("Deep research complete") || msg.includes("✅") || msg.includes("Research complete");
-        for (const client of ownerClients()) {
-            sendToClient(client, { type: "progress", text: humanizeForOverlay(msg) });
-            if (isComplete) {
-                // Signal overlay to auto-show and display results prominently
-                sendToClient(client, { type: "research_complete", text: msg });
-            }
-        }
-        if (isComplete && ownerClients().length > 0) notifyDesktop("done", "Research complete", msg);
+        for (const client of ownerClients()) sendToClient(client, { type: "progress", text: humanizeForOverlay(msg) });
+    });
+    // The finished answer: a card that stays until dismissed, with the report one click away.
+    // The owner asked for it, so Do Not Disturb doesn't hold it back.
+    setOverlayResearchResult(async (text, taskId, reportFile) => {
+        const clients = ownerClients().filter((c) => c.readyState === 1);
+        for (const client of clients) sendToClient(client, { type: "research_complete", text, taskId, reportFile });
+        if (clients.length > 0) notifyDesktop("done", "Research ready", text);
+        return clients.length > 0;
     });
 
     // ── Context-Aware Placeholder ──────────────

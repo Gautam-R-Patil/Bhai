@@ -64,9 +64,9 @@ export async function executeDeepResearch(
     console.log(`[RESEARCH]   Depth: ${research.depth} rounds, max ${research.maxSources} sources`);
     console.log(`[RESEARCH]   Citation depth: ${profile.citationDepth}, Academic: ${profile.useAcademicEngines}`);
 
-    await notify(resume
-        ? `🔬 Resuming deep research: "${research.topic.substring(0, 50)}" (${allSources.length} sources so far)`
-        : `🔬 Deep research started: "${research.topic.substring(0, 50)}" (${research.profile} profile: ${research.depth} rounds, ${research.maxSources} sources)`);
+    // A fresh start was already announced by the agent's reply; a resume (often after a restart) wasn't.
+    if (resume) await notify(`🔬 Picking up the research on "${research.topic.substring(0, 50)}" where it stopped (${allSources.length} sources so far)`, true);
+    else await notify(`🔬 Deep research started: "${research.topic.substring(0, 50)}" (${research.profile} profile: ${research.depth} rounds, ${research.maxSources} sources)`);
 
     try {
         // ── Generate seed queries ──
@@ -200,7 +200,7 @@ export async function executeDeepResearch(
                         if (netStatus === "offline" || isOffline()) {
                             console.error(`[RESEARCH] ❌ Internet offline — aborting research after ${allEnginesOfflineCount} rounds with 0 results`);
                             research.status = "failed";
-                            await notify(`Research aborted — internet connection appears to be down. Will resume when connectivity returns.`);
+                            await notify(`⚠️ Research on "${research.topic.substring(0, 50)}" stopped: the internet seems to be down. Ask me to continue it once you're back online.`, true);
                             return;
                         }
                     } catch { /* network monitor not loaded */ }
@@ -457,7 +457,7 @@ export async function executeDeepResearch(
 
             const duration = Math.round((Date.now() - new Date(research.startedAt).getTime()) / 1000);
             console.log(`[RESEARCH] ⚠️ Completed with limited results: ${allSources.length} sources, ${allFindings.length} findings, ${duration}s`);
-            await notify(`⚠️ Research complete with limited results (${allSources.length} sources). Search engines may be having issues. Report saved.`);
+            await notify(`⚠️ Only ${allSources.length} source(s) found — writing up what there is…`);
             return;
         }
 
@@ -564,12 +564,8 @@ export async function executeDeepResearch(
 
         const duration = Math.round((Date.now() - new Date(research.startedAt).getTime()) / 1000);
         console.log(`[RESEARCH] ✅ Complete: ${allSources.length} sources, ${structuredFindings.length} findings, ${duration}s`);
-        // Brief status notify — the actual user-facing message is produced by the
-        // agent continuation in research/index.ts (which reads the report and
-        // either summarizes or executes follow-up actions). The "✅" + "Research
-        // complete" tokens here are what overlay-chat.ts matches to fire the
-        // research_complete UI signal.
-        await notify(`✅ Research complete — analyzing findings...`);
+        // Progress only: the answer itself comes from the follow-up run in research/index.ts.
+        await notify(`📝 Report written — reading it for you…`);
 
     } catch (err) {
         if (signal.aborted) {
@@ -580,6 +576,6 @@ export async function executeDeepResearch(
         research.error = (err as Error).message;
         research.updatedAt = new Date().toISOString();
         console.error(`[RESEARCH] ❌ Failed: ${(err as Error).message}`);
-        await notify(`❌ Deep research failed: ${(err as Error).message}`);
+        await notify(`❌ Research on "${research.topic.substring(0, 50)}" failed: ${(err as Error).message}`, true);
     }
 }

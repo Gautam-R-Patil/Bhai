@@ -3338,6 +3338,14 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           // Show the result in the overlay as a persistent notification (no auto-dismiss)
           if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
           notifText.innerHTML = renderMd(msg.text);
+          if (msg.reportFile && window.atlasOverlay && window.atlasOverlay.openReport) {
+            const open = document.createElement('button');
+            open.className = 'notif-action-btn';
+            open.style.marginTop = '8px';
+            open.textContent = 'Open full report';
+            open.onclick = () => window.atlasOverlay.openReport(msg.reportFile);
+            notifText.appendChild(open);
+          }
           notifBox.classList.remove('visible', 'dismissing');
           notifBox.offsetHeight;
           notifBox.classList.add('visible');

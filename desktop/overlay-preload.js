@@ -6,6 +6,9 @@
 const { ipcRenderer, contextBridge } = require("electron");
 
 contextBridge.exposeInMainWorld("atlasOverlay", {
+    // Open a finished research report (a .md file in the Research folder) in the default app
+    openReport: (filePath) => ipcRenderer.send("overlay:open-report", filePath),
+
     // Read the user's current theme: "light" | "dark" | "system".
     getTheme: () => ipcRenderer.invoke("overlay:getTheme"),
 

@@ -69,6 +69,7 @@ import {
     executeTool,
     getToolNames,
     initDeepResearch,
+    resumeInterruptedResearch,
     loadDynamicTools,
     registerChannelSender,
     rotateAuditLog,
@@ -592,12 +593,9 @@ async function boot() {
         for (const [channel, fn] of Object.entries(sendPrimary)) {
             if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
         }
-
-        // Push notification for background research completion
-        if (msg.includes("complete") || msg.includes("finished")) {
-            sendPushNotification("Research Complete", msg.substring(0, 180)).catch(() => {});
-        }
     });
+    // Research a restart cut off continues now that its channels are wired.
+    resumeInterruptedResearch().catch((err) => console.warn("[BOOT] Research auto-resume failed (non-fatal):", err));
 
     // Live voice mode (real-time conversation — Gemini Live / OpenAI Realtime)
     try {
