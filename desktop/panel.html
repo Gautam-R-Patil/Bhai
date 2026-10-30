@@ -216,6 +216,11 @@
                         </div>
                     </div>
 
+                    <section class="recent-chats coming-up" id="comingUp" hidden>
+                        <div class="recent-head"><span>Coming up</span></div>
+                        <div id="comingList"></div>
+                    </section>
+
                     <section class="recent-chats" id="recentChats" hidden>
                         <div class="recent-head"><span>Recent chats</span><button class="link-like" onclick="switchTab('chats')">See all</button></div>
                         <div id="recentList"></div>
@@ -1510,6 +1515,51 @@
             } catch { /* non-fatal */ }
         }
 
+        // "0 9 * * *" → "Daily 9:00"; anything unusual just says it repeats.
+        function cronWhen(expr) {
+            const f = String(expr).trim().split(/\s+/);
+            if (f.length !== 5) return 'Repeats';
+            const [m, h, dom, mon, dow] = f;
+            if (/^\*\/\d+$/.test(m) && h === '*') return `Every ${m.slice(2)} min`;
+            if (/^\d+$/.test(m) && h === '*' && dom === '*' && mon === '*' && dow === '*') return 'Hourly';
+            if (!/^\d+$/.test(m) || !/^\d+$/.test(h) || dom !== '*' || mon !== '*') return 'Repeats';
+            const t = new Date(2000, 0, 1, +h, +m).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            if (dow === '*') return `Daily ${t}`;
+            if (dow === '1-5') return `Weekdays ${t}`;
+            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            return /^\d$/.test(dow) ? `${days[+dow % 7]} ${t}` : 'Repeats';
+        }
+
+        async function loadUpcoming() {
+            try {
+                const items = ((await atlas.getUpcoming()) || [])
+                    .map(t => ({ ...t, sort: t.fireAt ?? Infinity }))
+                    .sort((a, b) => a.sort - b.sort)
+                    .slice(0, 3);
+                document.getElementById('comingUp').hidden = items.length === 0;
+                document.getElementById('comingList').replaceChildren(...items.map(t => {
+                    const row = document.createElement('div');
+                    row.className = 'recent-row static';
+                    const title = document.createElement('span');
+                    title.className = 'recent-title';
+                    title.textContent = t.description || 'Reminder';
+                    const when = document.createElement('span');
+                    when.className = 'recent-when';
+                    if (t.fireAt === undefined || t.fireAt === null) when.textContent = cronWhen(t.expression);
+                    else {
+                        const mins = Math.round((t.fireAt - Date.now()) / 60000);
+                        const d = new Date(t.fireAt);
+                        when.textContent = mins < 1 ? (lastBotStatus === 'running' ? 'now' : 'when Bhai starts')
+                            : mins < 60 ? `in ${mins}m`
+                            : d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                            : d.toLocaleDateString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+                    }
+                    row.append(title, when);
+                    return row;
+                }));
+            } catch { /* non-fatal */ }
+        }
+
         async function loadChats() {
             const list = document.getElementById('chatsList');
             const thread = document.getElementById('chatsThread');
@@ -1788,6 +1838,7 @@
                 countTo(document.getElementById('statMessages'), stats.messagesHandled);
                 countTo(document.getElementById('statMemories'), stats.memoryCount);
                 loadRecentChats();
+                loadUpcoming();
             } catch { /* stats not available yet */ }
         }
 
@@ -3881,6 +3932,7 @@
                 updateConnectionStatus();
             } catch { /* */ }
             loadRecentChats(); // local history: shown even while Bhai is stopped
+            loadUpcoming();
 
             try {
                 const info = await atlas.getAppInfo();

@@ -2565,6 +2565,13 @@ function registerIPC() {
         }
         return out;
     }
+    // Reminders and scheduled tasks the bot saved (src/tools/scheduled.ts).
+    ipcMain.handle("schedule:upcoming", () => {
+        try {
+            const saved = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "scheduled-tasks.json"), "utf-8"));
+            return Array.isArray(saved) ? saved.map(({ id, expression, description, fireAt }) => ({ id, expression, description, fireAt })) : [];
+        } catch { return []; }
+    });
     ipcMain.handle("chats:list", () => {
         const chats = new Map();
         for (const e of readChatLog()) {
