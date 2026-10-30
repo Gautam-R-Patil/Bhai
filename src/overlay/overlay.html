@@ -2401,7 +2401,12 @@
     const reduceMotion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : { matches: false };
     const live = new Set();
     let rafId = 0;
+    let timerId = 0;
     let injected = false;
+    // Only breathing and the slow sway: a 50 ms step moves Bhai under a pixel,
+    // so skip the 60/120 Hz frames until something lively happens.
+    const CALM_MS = 50;
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(() => startLoop()) : null;
 
     function inject() {
         if (injected) return;
@@ -2465,6 +2470,7 @@
     function play(m, name) {
         const def = ACTS[name];
         if (!def) return;
+        wake(m);
         // Limb-only acts fall back to something the current pose can do.
         if (def.roles && !m.limbs.some((l) => def.roles.includes(l.role))) {
             if (name === "wave") return play(m, m.limbs.some((l) => l.role === "point") ? "point" : "look");
@@ -2515,6 +2521,7 @@
         if (!animate || reduceMotion.matches || document.hidden || !m.host.offsetWidth) { buildPose(m, name); return; }
         // Anticipation: squash down, swap at the bottom, then pop up into the new pose.
         m.sqV -= 2.6;
+        wake(m);
         m.swapTimer = setTimeout(() => {
             buildPose(m, name);
             m.sqV += 3;
@@ -2556,12 +2563,13 @@
             m.lookX = clamp((e.clientX - (r.left + r.width / 2)) / reach, -1, 1);
             m.lookY = clamp((e.clientY - (r.top + r.height / 2)) / reach, -1, 1);
             m.lookT = m.t;
+            wake(m);
         }
     }
 
     // ── The frame loop: springs + actions → transforms ──────────────────
-    function step(m, now) {
-        const dt = Math.min(0.05, (now - (m.last || now)) / 1000);
+    function step(m, now, maxDt) {
+        const dt = clamp((now - (m.last || now)) / 1000, 0, maxDt);
         m.last = now;
         m.t += dt;
         const t = m.t;
@@ -2614,6 +2622,9 @@
         m.turn += (turn - m.turn) * k;
         m.sqV += (-230 * (m.sq - sb) - 9 * m.sqV) * dt;
         m.sq += m.sqV * dt;
+        // Springs close to their targets: a 50 ms step moves Bhai under a pixel.
+        m.settled = Math.abs(tilt - m.tilt) < 1 && Math.abs(turn - m.turn) < 1 && Math.abs(lean - m.lean) < 0.004 &&
+            Math.abs(m.sq - sb) < 0.006 && Math.abs(m.sqV) < 0.05;
 
         // Hops: ballistic, then a squashy landing.
         if (cfg.hover) {
@@ -2651,25 +2662,55 @@
         }
     }
 
-    function frame(now) {
-        rafId = 0;
+    // Anything beyond breathing and the slow sway: acts (the glint is pure CSS),
+    // hops, gaze, flapping, scanning, hovering, fast (working) breathing, or
+    // springs still easing back.
+    function lively(m) {
+        const c = m.cfg;
+        return m.acts.some((a) => a.name !== "glint") || m.y > 0 || m.vy > 0 || c.flap || c.scan || c.hover || c.br > 1 ||
+            (m.lookT !== undefined && m.t - m.lookT < 2.5) || !m.settled;
+    }
+
+    // maxDt: a late 50 ms tick shouldn't slow the breathing down.
+    function frame(now, maxDt = 0.05) {
+        rafId = timerId = 0;
         if (reduceMotion.matches) return;
+        let shown = false;
+        let calm = true;
         for (const m of live) {
-            if (!m.host.isConnected) { live.delete(m); continue; }
-            if (m.host.offsetWidth) step(m, now);
-            else m.last = now;
+            if (!m.host.isConnected) { live.delete(m); resize?.unobserve(m.host); continue; }
+            if (!m.host.offsetWidth) { m.last = now; continue; }
+            shown = true;
+            // A calm Bhai next to a lively one still steps only every ~50 ms.
+            if (m.calm && now - m.last < CALM_MS - 5) continue;
+            step(m, now, maxDt);
+            m.calm = !lively(m);
+            if (!m.calm) calm = false;
         }
-        if (live.size) rafId = requestAnimationFrame(frame);
+        // Every Bhai hidden: stop; the ResizeObserver restarts us when one shows.
+        if (!shown && resize) return;
+        if (calm && shown && !document.hidden) timerId = setTimeout(() => frame(performance.now(), 0.1), CALM_MS);
+        else if (live.size) rafId = requestAnimationFrame(frame);
     }
 
     function startLoop() {
-        if (!rafId && live.size && !reduceMotion.matches) rafId = requestAnimationFrame(frame);
+        if (!rafId && !timerId && live.size && !reduceMotion.matches) rafId = requestAnimationFrame(frame);
+    }
+
+    // Something lively started: back to full frame rate right away.
+    function wake(m) {
+        m.calm = false;
+        if (!timerId) return;
+        clearTimeout(timerId);
+        timerId = 0;
+        startLoop();
     }
 
     /** Render Bhai into `host`; afterwards just set `host.dataset.mood`. */
     function mount(host, mood) {
         inject();
         if (host._bm) { live.delete(host._bm); host._bm.observer.disconnect(); clearTimeout(host._bm.rotateTimer); }
+        resize?.observe(host);
         host.classList.add("bm-host");
         host.innerHTML = '<span class="bm-shadow"></span><div class="bm-rig"><div class="bm-pose"></div></div><span class="bm-fx" aria-hidden="true"></span>';
         const m = {
