@@ -32,10 +32,9 @@ async function httpError(status: number, raw: string): Promise<Error> {
     return Object.assign(new Error(sanitizeSecrets(raw).sanitized.slice(0, 500)), { status });
 }
 
-/** Read a non-framed body: a non-2xx error (encrypted or plain), or an old server's single envelope. */
-async function readWhole(response: Response): Promise<ChatCompletion> {
+/** Parse a non-framed body: a non-2xx error (encrypted or plain), or an old server's single envelope. */
+async function readWhole(response: Response, text: string): Promise<ChatCompletion> {
     const encrypted = response.headers.get("X-Encryption") === "ecdh-aes-256-gcm";
-    const text = await response.text().catch(() => "");
     if (!response.ok) {
         let data: { error?: unknown } = {};
         try {
@@ -81,18 +80,18 @@ function toDelta(f: Frame): LLMDelta {
  */
 export async function readFrames(response: Response, reqRid: string, opts: ReadOpts): Promise<ChatCompletion> {
     opts.signal?.throwIfAborted();
-    if (!response.ok || response.headers.get("X-Stream") !== "frames" || !response.body) {
-        return readWhole(response);
-    }
-    const reader = response.body.getReader();
+    const framed = response.ok && response.headers.get("X-Stream") === "frames";
+    const reader = response.body?.getReader();
     const decoder = new TextDecoder("utf-8");
     let buf = "";
     let seq = 0;
     let result: { completion: ChatCompletion } | undefined;
+    // Bounds the first frame, or the whole of a non-framed body.
     let deadline = Date.now() + opts.firstFrameMs;
 
     const next = () =>
         new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+            if (!reader) return resolve({ done: true, value: undefined });
             const onAbort = () => reject(opts.signal?.reason);
             const timer = setTimeout(
                 () => reject(Object.assign(new Error("LLM stream stalled"), { status: 504 })),
@@ -124,15 +123,24 @@ export async function readFrames(response: Response, reqRid: string, opts: ReadO
     };
 
     try {
+        if (!framed) {
+            for (;;) {
+                const { done, value } = await next();
+                buf += decoder.decode(value, { stream: !done });
+                if (done) return await readWhole(response, buf);
+            }
+        }
         for (;;) {
             const { done, value } = await next();
             buf += decoder.decode(value, { stream: !done });
             const lines = buf.split("\n");
             buf = lines.pop() ?? "";
             for (const line of lines) onLine(line);
-            if (done) break;
+            // Return at the final frame: the server still does bookkeeping before
+            // it closes, and waiting for EOF could turn a paid answer into a timeout.
+            if (done || result) break;
         }
-        onLine(buf);
+        onLine(buf); // a trailing partial line: truncation, or junk after the final frame
         if (!result) throw new Error("stream ended without its final frame");
         return result.completion;
     } catch (err) {
@@ -141,6 +149,6 @@ export async function readFrames(response: Response, reqRid: string, opts: ReadO
         if (e.status) throw e.streamError ? await httpError(e.status, e.message) : e;
         throw await httpError(502, `LLM stream broken: ${e.message}`);
     } finally {
-        reader.cancel().catch(() => {});
+        reader?.cancel().catch(() => {});
     }
 }

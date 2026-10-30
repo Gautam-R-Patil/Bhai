@@ -104,7 +104,12 @@ describe("readFrames", () => {
     it("decodes multi-byte text split across chunks", async () => {
         const text = "हाँ भाई ₹3,240 👍";
         const bytes = new TextEncoder().encode(
-            (await encode([{ kind: "text", text }, { kind: "done", completion: COMPLETION }])).join(""),
+            (
+                await encode([
+                    { kind: "text", text },
+                    { kind: "done", completion: COMPLETION },
+                ])
+            ).join(""),
         );
         for (let at = 0; at <= bytes.length; at++) {
             const deltas: LLMDelta[] = [];
@@ -186,12 +191,16 @@ describe("readFrames", () => {
         });
     });
 
-    it("rejects a frame after the final one", async () => {
+    it("rejects a frame after the final one (already buffered)", async () => {
         const lines = await encode([{ kind: "done", completion: COMPLETION }]);
-        lines.push(await encodeFrame({ kind: "text", text: "late" }, 1, false, RID, serverKey));
-        await expect(readFrames(framed(streamOf(lines)), RID, { ...OPTS, onDelta: () => {} })).rejects.toMatchObject({
-            status: 502,
-        });
+        const late = await encodeFrame({ kind: "text", text: "late" }, 1, false, RID, serverKey);
+        // Whole trailing line, and a partial one, in the same chunk as the final frame.
+        for (const tail of [late, late.slice(0, 20)]) {
+            const body = streamOf([lines[0] + tail]);
+            await expect(readFrames(framed(body), RID, { ...OPTS, onDelta: () => {} })).rejects.toMatchObject({
+                status: 502,
+            });
+        }
     });
 
     it("rejects frames sealed for another request", async () => {
@@ -210,6 +219,52 @@ describe("readFrames", () => {
             status: 502,
         });
     });
+
+    it("returns at the final frame without waiting for the body to close", async () => {
+        const lines = await encode([
+            { kind: "text", text: "a" },
+            { kind: "done", completion: COMPLETION },
+        ]);
+        let cancelled = false;
+        const enc = new TextEncoder();
+        const body = new ReadableStream<Uint8Array>({
+            start(c) {
+                for (const l of lines) c.enqueue(enc.encode(l));
+            },
+            cancel() {
+                cancelled = true;
+            },
+        });
+        vi.useFakeTimers();
+        const p = readFrames(framed(body), RID, { ...OPTS, onDelta: () => {} });
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(p).resolves.toEqual(COMPLETION);
+        expect(cancelled).toBe(true);
+    });
+
+    for (const status of [200, 500]) {
+        it(`bounds a non-framed ${status} body that never completes by firstFrameMs`, async () => {
+            let cancelled = false;
+            const body = new ReadableStream<Uint8Array>({
+                start(c) {
+                    c.enqueue(new TextEncoder().encode('{"iv":"'));
+                },
+                cancel() {
+                    cancelled = true;
+                },
+            });
+            const res = new Response(body, {
+                status,
+                headers: { "X-Encryption": "ecdh-aes-256-gcm", "Content-Type": "application/json" },
+            });
+            vi.useFakeTimers();
+            const p = readFrames(res, RID, { ...OPTS, onDelta: () => {} });
+            const check = expect(p).rejects.toMatchObject({ status: 504 });
+            await vi.advanceTimersByTimeAsync(OPTS.firstFrameMs);
+            await check;
+            expect(cancelled).toBe(true);
+        });
+    }
 
     it("rejects a 2xx plaintext body", async () => {
         const res = new Response(JSON.stringify(COMPLETION), {
@@ -276,7 +331,10 @@ describe("encryptedFetchStream", () => {
         const env = JSON.parse(sent[0].body as string) as { ts: number; rid: string };
         expect(env.rid).toBe(a.rid);
         const aad = new TextEncoder().encode(`POST|/api/llm/chat|${env.ts}|${env.rid}`);
-        expect(JSON.parse(await convexCrypto.decryptRequest(env, serverKey, aad))).toEqual({ model: "m", stream: true });
+        expect(JSON.parse(await convexCrypto.decryptRequest(env, serverKey, aad))).toEqual({
+            model: "m",
+            stream: true,
+        });
         const h = new Headers(sent[0].headers);
         expect(h.get("X-Encryption")).toBe("ecdh-aes-256-gcm");
         expect(h.get("Authorization")).toBe("Bearer t");
