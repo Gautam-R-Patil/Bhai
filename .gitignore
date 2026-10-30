@@ -481,3 +481,5 @@ brag-output/
 !src/research/finding-filter.test.ts
 !src/research/memorable-findings.test.ts
 !src/tools/autostart-confirm.test.ts
+!src/owner-delivery.ts
+!src/owner-delivery.test.ts

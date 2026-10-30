@@ -90,6 +90,7 @@ import {
     setSmartClickLLM,
     setSwarmLLM,
 } from "./tools/index.js";
+import { deliverOnFirst } from "./owner-delivery.js";
 import { restoreScheduledTasks, setTaskTriggerHandler } from "./tools/scheduled.js";
 import { initSpotify } from "./tools/spotify.js";
 import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
@@ -982,32 +983,18 @@ async function boot() {
 
     // A scheduled message for the owner: the primary channel first, the others as backup.
     const notifyOwnerEverywhere = async (message: string): Promise<void> => {
-        // Primary channel gets the message first
-        const sendPrimary: Record<string, () => Promise<unknown>> = {
+        // The desktop app always shows it (the owner asked for it: Smart DND doesn't hold it).
+        sendOverlayNotification(message, { requested: true }).catch(() => {});
+        // One chat channel, not all of them: the primary, else the first that delivers.
+        const chats: Record<string, () => Promise<unknown>> = {
             whatsapp: () => sendWhatsAppProactiveMessage(message),
             discord: () => sendDiscordProactiveMessage(message),
             slack: () => sendSlackProactiveMessage(message),
             matrix: () => sendMatrixProactiveMessage(message),
-            // The owner asked for it: Smart DND doesn't hold it back.
-            overlay: () => sendOverlayNotification(message, { requested: true }),
         };
-        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
-        console.log(`📬 Scheduled message → ${PRIMARY_CHANNEL} + ${Object.keys(sendPrimary).length - 1} other channel(s)`);
-
-        // Send to primary channel
-        const primaryFn = sendPrimary[PRIMARY_CHANNEL];
-        if (primaryFn) {
-            try {
-                await primaryFn();
-            } catch {
-                /* primary failed, will try others */
-            }
-        }
-
-        // Send to other active channels as backup (non-blocking)
-        for (const [channel, fn] of Object.entries(sendPrimary)) {
-            if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
-        }
+        if (bot) chats.telegram = () => sendProactiveMessage(bot, config, message);
+        const via = await deliverOnFirst(PRIMARY_CHANNEL, chats);
+        console.log(`📬 Scheduled message → overlay${via ? ` + ${via}` : " (no chat channel delivered)"}`);
     };
 
     // ── Scheduled Tasks ───────────────────────
