@@ -6322,7 +6322,7 @@ body.hig .pp-notes-actions { display: flex; align-items: center; justify-content
 body.hig .pp-save-status { flex: 1; font-size: 12px; color: var(--text-secondary); }
 
 /* ── Research: past and running researches with their reports ─────── */
-body.hig .research-new { margin: 0 28px 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+body.hig .research-new { width: auto; margin: 0 28px 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 body.hig .research-new-row { display: flex; gap: 8px; align-items: center; }
 body.hig .research-new-row input { flex: 1; min-width: 0; }
 body.hig .research-depth { flex: none; width: auto; }

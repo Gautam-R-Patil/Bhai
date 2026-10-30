@@ -1457,6 +1457,12 @@
 
         // ── Tab Navigation ────────────────────────────
 
+        // Research page state (declared before switchTab, which starts and stops its poll).
+        let researchPoll = null;
+        let researchOpenId = null;
+        let researchBasis = null; // a finished research the next one builds on
+        let researchShown = ''; // id + status of the report on screen, so a poll doesn't re-render it
+        const RESEARCH_STATUS = { running: 'Running', completed: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Stopped' };
         function switchTab(tabId) {
             const tabEl = document.getElementById(`tab-${tabId}`);
             // Pages without a sidebar item light up the item they're opened from.
@@ -4671,11 +4677,6 @@
         }
 
         // ── Research: past and running researches, their reports, start / stop / continue / dig deeper ──
-        let researchPoll = null;
-        let researchOpenId = null;
-        let researchBasis = null; // a finished research the next one builds on
-        let researchShown = ''; // id + status of the report on screen, so a poll doesn't re-render it
-        const RESEARCH_STATUS = { running: 'Running', completed: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Stopped' };
 
         async function loadResearch() {
             if (!document.getElementById('tab-research').classList.contains('active')) return;

@@ -647,6 +647,7 @@ const TOOL_RESULT_LIMITS: Record<string, number> = {
     grep: 4000,
     glob: 2000,
     deep_research: 6000,
+    check_deep_research: 16000, // the finished report: the follow-up answers from all of it, not its first 4K
     os_inspect: 8000, // a whole 60-element list, still under the 8KB offload line
     // failures[] + raw_tail; bigger results are offloaded with a head+tail preview. A result
     // that stayed inline is at most this many bytes, so at most this many chars: kept whole.
