@@ -46,6 +46,7 @@ import {
     planModeReminderBody,
 } from "./agents/plan-mode.js";
 import { judgeFixToIntervention, progressJudgeEnabled, runProgressJudge } from "./agents/progress-judge.js";
+import { smartTruncate } from "./agents/smart-truncate.js";
 import {
     canonicalArgsHash,
     createGuardrailState,
@@ -624,12 +625,15 @@ const TOOL_RESULT_LIMITS: Record<string, number> = {
     glob: 2000,
     deep_research: 6000,
     os_inspect: 8000, // a whole 60-element list, still under the 8KB offload line
+    test_run: 8000, // failures[] + raw_tail; bigger results are offloaded with a head+tail preview
 };
 const DEFAULT_RESULT_LIMIT = 4000;
 
 function truncateToolResult(toolName: string, result: string): string {
     const limit = TOOL_RESULT_LIMITS[toolName] ?? DEFAULT_RESULT_LIMIT;
     if (result.length <= limit) return result;
+    // Shell output keeps its tail: compilers and test runners print the errors last.
+    if (toolName.startsWith("shell_")) return smartTruncate(toolName, result, limit);
     const safe = protect(result, { credentials: !CODE_TOOLS.has(toolName) }); // mask before cutting
     if (safe.length <= limit) return safe;
     return `${safe.substring(0, limit)}\n[... truncated from ${safe.length} chars]`;

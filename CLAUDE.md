@@ -123,7 +123,7 @@ Staged pipeline with runtime gating. Read before touching `src/tools/coding/` or
 1. **Design docs** — `generate_design_docs({ task })` writes PRD/TECHNICAL/ARCHITECTURE.md under `design-docs/<slug>/` (in-tool Sonnet `json_object`, falls back to templates). **Auto-transitions plan-mode to `awaiting_approval`** — implementation runtime-blocked.
 2. **Approval gate** — `awaiting_approval` is the fourth plan-mode state. Allowlist `AWAITING_APPROVAL_ALLOWED_TOOLS`: reads, `edit`/`write` restricted to design-docs dir via `checkWritePathInApprovalMode()`, channel senders, `render_md_to_pdf`, `approve_design_docs`, `generate_design_docs`. `shell_exec`/`test_run`/arbitrary `edit` refuse at tool layer. Approval → `approve_design_docs({ user_quote })` (quote required) → `act` mode.
 3. **Implement** — standard coder loop on Pro. Worktree isolation if `ATLAS_AGENT_WORKTREE=true` AND ≥2 parallel coders.
-4. **Walkthrough** — `demo_project({ project_dir })` auto-detects stack + launches runtime; agent runs `browser_verify`/`os_screenshot`/`screen_record`, then `generate_walkthrough()` reads `git log`+`diff` → WALKTHROUGH.md. Delivery: overlay (MD + screenshot), TG/WA (PDF + media), Discord/Slack (attach MD).
+4. **Walkthrough** — `demo_project({ project_dir })` auto-detects stack + launches runtime; agent runs `browser_verify`/`os_screenshot`/`screen_record`, then `generate_walkthrough({ repo_root })` reads the uncommitted diff (or `git log` since `since_commit`) → WALKTHROUGH.md. Delivery: overlay (MD + screenshot), TG/WA (PDF + media), Discord/Slack (attach MD).
 
 **Write-path gating** (runtime): `edit.ts`/`write.ts` call `checkWritePathInApprovalMode(filePath)`; in `awaiting_approval` only `designDocsDir` paths pass.
 

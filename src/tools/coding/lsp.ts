@@ -107,7 +107,7 @@ interface Session {
     nextId: number;
     pending: Map<number, Pending>;
     buffer: Buffer;
-    openDocs: Map<string, number>; // uri → version
+    openDocs: Map<string, { version: number; mtimeMs: number }>; // uri → last synced version + mtime
     /** Latest publishDiagnostics payload per URI — server-pushed after
      * didOpen/didChange. Consumed by the getDiagnostics operation. */
     diagnostics: Map<string, LspDiagnostic[]>;
@@ -409,16 +409,23 @@ function closeOldestDocIfFull(session: Session): void {
     session.openDocs.delete(oldestUri);
 }
 
-async function ensureDocumentOpen(session: Session, filePath: string): Promise<string> {
+/** Exported for tests. */
+export async function ensureDocumentOpen(session: Session, filePath: string): Promise<string> {
     const abs = path.resolve(filePath);
     const uri = pathToFileURL(abs).toString();
-    if (session.openDocs.has(uri)) {
+    let mtimeMs = 0;
+    try {
+        mtimeMs = statSync(abs).mtimeMs;
+    } catch {
+        /* the read below reports it */
+    }
+    const doc = session.openDocs.get(uri);
+    if (doc) {
         // Refresh LRU order — re-insert to push this entry to the back of
         // the insertion-ordered Map so it's not the first eviction target.
-        const v = session.openDocs.get(uri)!;
         session.openDocs.delete(uri);
-        session.openDocs.set(uri, v);
-        return uri;
+        session.openDocs.set(uri, doc);
+        if (doc.mtimeMs === mtimeMs) return uri;
     }
 
     let text: string;
@@ -426,6 +433,18 @@ async function ensureDocumentOpen(session: Session, filePath: string): Promise<s
         text = readFileSync(abs, "utf-8");
     } catch (err) {
         throw new Error(`Failed to read ${abs}: ${(err as Error).message}`);
+    }
+    if (doc) {
+        // Changed on disk since the server saw it (an edit): send the full text
+        // and drop the stale diagnostics so getDiagnostics waits for fresh ones.
+        doc.version++;
+        doc.mtimeMs = mtimeMs;
+        session.diagnostics.delete(uri);
+        sendNotification(session, "textDocument/didChange", {
+            textDocument: { uri, version: doc.version },
+            contentChanges: [{ text }],
+        });
+        return uri;
     }
     closeOldestDocIfFull(session);
     sendNotification(session, "textDocument/didOpen", {
@@ -436,7 +455,7 @@ async function ensureDocumentOpen(session: Session, filePath: string): Promise<s
             text,
         },
     });
-    session.openDocs.set(uri, 1);
+    session.openDocs.set(uri, { version: 1, mtimeMs });
     return uri;
 }
 

@@ -37,6 +37,8 @@ describe("classifyCodingComplexity — 3-tier router", () => {
             "implement OAuth with a proper spec and design document",
             "migrate the whole backend from Postgres to MongoDB",
             "create a greenfield event-driven pipeline",
+            "write a PRD for a new billing service",
+            "build a production-ready upload service",
         ])("`%s` → complex", (msg) => {
             expect(classifyCodingComplexity(msg)).toBe("complex");
         });
@@ -84,6 +86,10 @@ that the downstream services can consume without knowing auth details. Please sc
             "optimize the database query performance",
             "integrate Stripe into the checkout flow",
             "why isn't this working",
+            "fix auth.spec.ts",
+            "the end-to-end test in checkout.e2e.ts fails, fix it",
+            "update the spec file for login",
+            "fix the failing production-ready check",
         ])("`%s` → standard", (msg) => {
             expect(classifyCodingComplexity(msg)).toBe("standard");
         });

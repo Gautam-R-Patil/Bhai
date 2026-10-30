@@ -5,7 +5,7 @@
 // ── generate_walkthrough ──────────────────────
 // After a complex coding task completes, produce a WALKTHROUGH.md
 // summarizing:
-//   • What changed (from recent git commits + touched files)
+//   • What changed (uncommitted work, or commits since since_commit)
 //   • Why each change was made (commit messages carry the reasoning)
 //   • How to try it (one-liner run commands)
 //   • Known limitations / follow-ups
@@ -62,7 +62,8 @@ export const walkthroughTool: ToolDefinition = {
                     slug: { type: "string", description: "Optional output slug; auto-derived from task if omitted." },
                     since_commit: {
                         type: "string",
-                        description: "Optional starting git SHA. If omitted, uses the last 10 commits on HEAD.",
+                        description:
+                            "Optional starting git SHA: summarize the commits since it. If omitted, summarizes the uncommitted changes in the working tree.",
                     },
                     run_commands: {
                         type: "array",
@@ -73,9 +74,9 @@ export const walkthroughTool: ToolDefinition = {
                         type: "string",
                         description: "Optional 'known limitations / follow-ups' free-text block.",
                     },
-                    repo_root: { type: "string", description: "Git repo root (default: cwd)." },
+                    repo_root: { type: "string", description: "Git repo root: the project dir you worked in." },
                 },
-                required: ["task"],
+                required: ["task", "repo_root"],
             },
         },
     },
@@ -83,16 +84,22 @@ export const walkthroughTool: ToolDefinition = {
     async handler(input) {
         const task = typeof input.task === "string" ? input.task.trim() : "";
         if (!task) return JSON.stringify({ success: false, error: "task description required" });
+        // No cwd default: the packaged bot runs from its own install dir.
+        if (typeof input.repo_root !== "string" || !input.repo_root) {
+            return JSON.stringify({ success: false, error: "repo_root required: pass the project dir you worked in" });
+        }
         const slug = typeof input.slug === "string" && input.slug ? slugify(input.slug) : slugify(task);
-        const repoRoot =
-            typeof input.repo_root === "string" && input.repo_root ? path.resolve(input.repo_root) : process.cwd();
-        const sinceRef = typeof input.since_commit === "string" && input.since_commit ? input.since_commit : "HEAD~10";
+        const repoRoot = path.resolve(input.repo_root);
+        const sinceRef = typeof input.since_commit === "string" && input.since_commit ? input.since_commit : "";
         const runCommands = Array.isArray(input.run_commands) ? (input.run_commands as string[]) : [];
         const notes = typeof input.notes === "string" ? input.notes.trim() : "";
 
-        const commits = gitLines(repoRoot, ["log", "--pretty=format:%h %s", `${sinceRef}..HEAD`]);
-        const touched = gitLines(repoRoot, ["diff", "--name-only", `${sinceRef}..HEAD`]);
-        const shortStat = gitLines(repoRoot, ["diff", "--shortstat", `${sinceRef}..HEAD`]).join("\n");
+        // Without since_commit, describe the agent's uncommitted work, not the last N unrelated commits.
+        const range = sinceRef ? `${sinceRef}..HEAD` : "HEAD";
+        const commits = sinceRef ? gitLines(repoRoot, ["log", "--pretty=format:%h %s", range]) : [];
+        const touched = gitLines(repoRoot, ["diff", "--name-only", range]);
+        if (!sinceRef) touched.push(...gitLines(repoRoot, ["ls-files", "--others", "--exclude-standard"]));
+        const shortStat = gitLines(repoRoot, ["diff", "--shortstat", range]).join("\n");
 
         const parent = path.join(getWorkspaceSubdir("Documents"), "walkthroughs");
         if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
@@ -103,15 +110,19 @@ export const walkthroughTool: ToolDefinition = {
         const lines: string[] = [];
         lines.push(`# Walkthrough — ${task.slice(0, 100)}`);
         lines.push("");
-        lines.push(`> Generated ${new Date().toISOString()} from commits ${sinceRef}..HEAD in \`${repoRoot}\``);
+        lines.push(
+            `> Generated ${new Date().toISOString()} from ${sinceRef ? `commits ${range}` : "uncommitted changes"} in \`${repoRoot}\``,
+        );
         lines.push("");
-        lines.push("## What changed");
-        if (commits.length === 0) {
-            lines.push("- _No commits found in the requested range._");
-        } else {
-            for (const c of commits) lines.push(`- \`${c}\``);
+        if (sinceRef) {
+            lines.push("## What changed");
+            if (commits.length === 0) {
+                lines.push("- _No commits found in the requested range._");
+            } else {
+                for (const c of commits) lines.push(`- \`${c}\``);
+            }
+            lines.push("");
         }
-        lines.push("");
         if (shortStat) lines.push(`> ${shortStat}\n`);
         lines.push("## Files touched");
         if (touched.length === 0) {

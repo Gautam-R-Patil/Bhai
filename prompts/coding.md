@@ -87,7 +87,7 @@ For any **complex** coding task — new feature, multi-file refactor, new module
 
 **Phase 3 — Walkthrough at the end:**
 1. If the result is something runnable (web app, API, CLI), call `demo_project({ project_dir: <root> })` first. It auto-detects the stack (vite / next / astro / cargo / go / python / static) and launches the dev command in the background. For web stacks it waits until the URL responds and returns `{ url, pid, url_ready }` — feed the URL into `browser_verify` / `os_screenshot` / `screen_record` for the walkthrough visuals. When you're done capturing, stop it with `shell_kill_process({ process_id: <pid> })`.
-2. Call `generate_walkthrough({ task, run_commands: [...], notes: "..." })`. It reads `git log` + `git diff` and writes `WALKTHROUGH.md` under `Bhai Files/Documents/walkthroughs/<slug>/`.
+2. Call `generate_walkthrough({ task, repo_root, run_commands: [...], notes: "..." })`. It reads the uncommitted `git diff` (or `git log` since `since_commit`) and writes `WALKTHROUGH.md` under `Bhai Files/Documents/walkthroughs/<slug>/`.
 3. Deliver to the user:
    - **Overlay**: show the walkthrough markdown inline AND call `os_screenshot` so the user sees the current UI state of whatever you built.
    - **Telegram / WhatsApp**: render to PDF first with `render_md_to_pdf({ md_path: <walkthrough path> })`, then `send_message_on_channel` with `filePath` for the PDF, then:

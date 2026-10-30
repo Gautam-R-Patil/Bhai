@@ -626,12 +626,14 @@ const CODING_COMPLEX_PATTERNS: RegExp[] = [
     /\b(?:design|architect|redesign)\s+(?:the|a|an|new)?\s*(?:system|service|architecture|schema|database|api)\b/i,
     /\bmicroservices?\b/i,
     /\bevent[- ]driven\b/i,
-    // Heavy scope markers
-    /\bproduction[- ]ready\b/i,
-    /\bend[- ]to[- ]end\b/i,
-    // User explicitly asking for the ceremony
-    /\b(?:prd|spec|design\s+doc|design\s+document|technical\s+doc|architecture\s+doc)\b/i,
+    // User explicitly asking for the ceremony. Not inside file names
+    // ("auth.spec.ts"), and a bare "spec" only as "write/draft a spec".
+    /(?<![.\w-])(?:prd|design\s+doc(?:ument)?|technical\s+doc|architecture\s+doc)(?![.\w-])|\b(?:write|draft)\s+(?:a|an|the)\s+spec\b/i,
 ];
+
+// Heavy scope markers — complex only with a build verb: "build a
+// production-ready X" is, "fix the failing end-to-end test" is not.
+const CODING_HEAVY_SCOPE = /\b(?:production[- ]ready|end[- ]to[- ]end)\b/i;
 
 // High-stakes domains — only complex when combined with a build verb.
 // "debug auth middleware" stays standard; "implement auth" goes complex.
@@ -667,6 +669,7 @@ export function classifyCodingComplexity(message: string): CodingComplexity {
     //    high-stakes domain + long message (>400 chars = user giving real
     //    context). "debug auth" (no build verb) stays standard.
     if (CODING_COMPLEX_PATTERNS.some((p) => p.test(message))) return "complex";
+    if (CODING_HEAVY_SCOPE.test(message) && CODING_BUILD_VERB.test(message)) return "complex";
     if (message.length > 400 && CODING_BUILD_VERB.test(message) &&
         CODING_HIGH_STAKES_DOMAINS.some((p) => p.test(message))) {
         return "complex";

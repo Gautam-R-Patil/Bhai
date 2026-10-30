@@ -138,6 +138,10 @@ desktop/hostinger-upload/
 !src/agents/sub-agent-hold.test.ts
 !src/tools/swarm-tool-gate.test.ts
 !src/stuck-reply-surface.test.ts
+!src/tools/coding/edit.test.ts
+!src/tools/coding/lsp.test.ts
+!src/tools/coding/walkthrough.test.ts
+!src/tools/coding/demo-project.test.ts
 # Session 2026-10-28: security, consent, Site Skills, computer use, proactive, memory
 !src/security/loopback.test.ts
 !src/security/tool-access.test.ts

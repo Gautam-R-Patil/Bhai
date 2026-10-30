@@ -195,6 +195,46 @@ async function execCommand(
 
 // ── Shell Command Tool ────────────────────────
 
+/**
+ * Keep the tail of each stream (compilers and test runners print the errors
+ * last) and redact well-known secret formats before the output reaches the
+ * agent, so `echo $AWS_KEY` or `env | grep TOKEN` can't leak credentials into
+ * LLM memory + cloud logs.
+ */
+function cleanOutput(command: string, stdout = "", stderr = "") {
+    const outScan = sanitizeSecrets(stdout.slice(-MAX_OUTPUT));
+    const errScan = sanitizeSecrets(stderr.slice(-MAX_OUTPUT));
+    const redacted = outScan.totalRedactions + errScan.totalRedactions;
+    if (redacted > 0) {
+        console.warn(
+            `[SHELL] redacted ${redacted} secret(s) from command="${command}": ${JSON.stringify({
+                ...outScan.redactionsByType,
+                ...errScan.redactionsByType,
+            })}`,
+        );
+    }
+    return {
+        stdout: outScan.sanitized,
+        stderr: errScan.sanitized,
+        truncated: stdout.length > MAX_OUTPUT || stderr.length > MAX_OUTPUT,
+        ...(redacted > 0 ? { redacted } : {}),
+    };
+}
+
+/** A failed command still returns what it printed: tsc and vitest write their errors to stdout. */
+function failure(command: string, err: unknown, fallback: string): string {
+    const e = err as { message?: string; code?: number; killed?: boolean; stdout?: string; stderr?: string };
+    // Node's message is "Command failed: <cmd>\n<stderr>"; stderr ships separately (sanitized).
+    const error = (e.message || fallback).split("\n")[0];
+    return JSON.stringify({
+        success: false,
+        error,
+        code: e.code,
+        killed: e.killed,
+        ...cleanOutput(command, e.stdout, e.stderr),
+    });
+}
+
 export const shellExec: ToolDefinition = {
     schema: {
         type: "function",
@@ -267,40 +307,9 @@ export const shellExec: ToolDefinition = {
 
         try {
             const { stdout, stderr } = await execCommand(command, args, { cwd, timeout });
-
-            // Truncate first so we only scan what actually ships to the
-            // agent (scanning a 10 MB buffer would be wasteful).
-            const rawOut = (stdout || "").substring(0, MAX_OUTPUT);
-            const rawErr = (stderr || "").substring(0, MAX_OUTPUT);
-
-            // Redact well-known secret formats before the output reaches
-            // the agent context. Prevents scripts like `echo $AWS_KEY`
-            // or `env | grep TOKEN` from leaking credentials into LLM
-            // memory + cloud logs.
-            const outScan = sanitizeSecrets(rawOut);
-            const errScan = sanitizeSecrets(rawErr);
-            if (outScan.totalRedactions + errScan.totalRedactions > 0) {
-                console.warn(
-                    `[SHELL] redacted ${outScan.totalRedactions + errScan.totalRedactions} secret(s) ` +
-                        `from command="${command}": ${JSON.stringify({
-                            ...outScan.redactionsByType,
-                            ...errScan.redactionsByType,
-                        })}`,
-                );
-            }
-
-            return JSON.stringify({
-                success: true,
-                stdout: outScan.sanitized,
-                stderr: errScan.sanitized,
-                truncated: (stdout || "").length > MAX_OUTPUT,
-                ...(outScan.totalRedactions + errScan.totalRedactions > 0
-                    ? { redacted: outScan.totalRedactions + errScan.totalRedactions }
-                    : {}),
-            });
+            return JSON.stringify({ success: true, ...cleanOutput(command, stdout, stderr) });
         } catch (err) {
-            const error = err as { message?: string; code?: number; killed?: boolean };
-            const errMsg = error.message || "Command failed";
+            const errMsg = (err as { message?: string }).message || "Command failed";
 
             // ── Self-heal: if command not found, try auto-installing and retry ──
             if (/ENOENT|command not found|not recognized/i.test(errMsg)) {
@@ -311,25 +320,13 @@ export const shellExec: ToolDefinition = {
                         console.log(`  🔧 Shell self-healed (${heal.action}) — retrying: ${command}`);
                         try {
                             const { stdout, stderr } = await execCommand(command, args, { cwd, timeout });
-                            const outScan = sanitizeSecrets((stdout || "").substring(0, MAX_OUTPUT));
-                            const errScan = sanitizeSecrets((stderr || "").substring(0, MAX_OUTPUT));
                             return JSON.stringify({
                                 success: true,
-                                stdout: outScan.sanitized,
-                                stderr: errScan.sanitized,
+                                ...cleanOutput(command, stdout, stderr),
                                 note: `Auto-installed missing dependency (${heal.action}) before retry`,
-                                ...(outScan.totalRedactions + errScan.totalRedactions > 0
-                                    ? { redacted: outScan.totalRedactions + errScan.totalRedactions }
-                                    : {}),
                             });
                         } catch (retryErr) {
-                            const re = retryErr as { message?: string; code?: number; killed?: boolean };
-                            return JSON.stringify({
-                                success: false,
-                                error: re.message || "Command failed after self-heal retry",
-                                code: re.code,
-                                killed: re.killed,
-                            });
+                            return failure(command, retryErr, "Command failed after self-heal retry");
                         }
                     }
                 } catch {
@@ -337,12 +334,7 @@ export const shellExec: ToolDefinition = {
                 }
             }
 
-            return JSON.stringify({
-                success: false,
-                error: errMsg,
-                code: error.code,
-                killed: error.killed,
-            });
+            return failure(command, err, errMsg);
         }
     },
 };

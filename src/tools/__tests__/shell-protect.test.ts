@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _clearProtectedPaths, registerProtectedPath } from "../../security/allowlist.js";
-import { shellWriteTargetsProtected } from "../shell.js";
+import { shellExec, shellWriteTargetsProtected } from "../shell.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-protect-"));
 const repo = path.join(root, "bot");
@@ -57,5 +57,13 @@ describe("shell_exec codebase write protection", () => {
 
     it("allows read-only commands run inside the codebase", () => {
         expect(shellWriteTargetsProtected("git status && cat src/a.ts", repo)).toBeNull();
+    });
+});
+
+describe("shell_exec failure output", () => {
+    it.skipIf(process.platform === "win32")("keeps stdout and stderr of a failing command", async () => {
+        const res = JSON.parse(String(await shellExec.handler({ command: "echo OUT; echo ERR >&2; exit 1", cwd: other })));
+        expect(res).toMatchObject({ success: false, code: 1, stdout: "OUT\n", stderr: "ERR\n" });
+        expect(res.error).toBe("Command failed: echo OUT; echo ERR >&2; exit 1");
     });
 });
