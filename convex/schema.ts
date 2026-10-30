@@ -245,6 +245,7 @@ export default defineSchema({
     title: v.optional(v.string()),
     review: v.optional(v.string()),
     helpful: v.number(),                 // Upvotes
+    helpfulBy: v.optional(v.array(v.string())), // who upvoted: one vote each
     createdAt: v.number(),
     updatedAt: v.number(),
   })

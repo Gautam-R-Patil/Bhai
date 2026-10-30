@@ -1370,14 +1370,14 @@ const ADMIN_STORE_QUERY_ALLOWLIST: Record<string, any> = {
 // route that re-derives the developerId from the developer's JWT — those
 // mutations must NOT be exposed on the generic session-proxy.
 const USER_STORE_MUTATION_ALLOWLIST: Record<string, any> = {
-  // Reviews — end-user submits + edits their own review. Convex handler
-  // binds by `args.user` (the otplessUserId) → safe.
+  // Reviews — end-user submits + edits their own review. USER_BOUND_PATHS
+  // sets `userId` to the session's otplessUserId → safe.
   "store/reviews:submit":      internal.store.reviews.submit,
   "store/reviews:remove":      internal.store.reviews.remove,
   "store/reviews:markHelpful": internal.store.reviews.markHelpful,
 
-  // Installs — end-user manages their own install state. Convex handlers
-  // bind by `args.user` → safe.
+  // Installs — end-user manages their own install state. Bound by
+  // USER_BOUND_PATHS (`userId` from the session) → safe.
   "store/installs:startInstall":      internal.store.installs.startInstall,
   "store/installs:confirmInstall":    internal.store.installs.confirmInstall,
   "store/installs:uninstall":         internal.store.installs.uninstall,
@@ -1464,6 +1464,7 @@ const USER_BOUND_PATHS: Set<string> = new Set([
   "store/installs:getUpdateDownload",
   "store/reviews:submit",
   "store/reviews:remove",
+  "store/reviews:markHelpful",
   // Queries
   "store/installs:getByUser",
   "store/installs:checkUpdates",
