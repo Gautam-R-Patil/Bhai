@@ -188,6 +188,7 @@ const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}
 const { parseOtplessVerifyResponse, isLegacyUserId, isLoopbackHost } = require("./auth-helpers");
 const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
 const { fileMemo } = require("./file-memo");
+const { pruneCompileCache } = require("./compile-cache");
 const { readVault, registerVaultIpc } = require("./vault-store");
 
 // ── Desktop Session Token Management ─────────────
@@ -6907,6 +6908,9 @@ app.whenReady().then(async () => {
     // Ghost-cursor windows exist (hidden) before any bot can drive the screen.
     initAgentCursor();
     initAmbientPause();
+    // The packaged bot runs on Electron's Node: other versions' compile caches
+    // (left by earlier app versions) are never read again. Dev runs a system Node.
+    if (!IS_DEV) pruneCompileCache(path.join(app.getPath("userData"), "v8-cache")).catch(() => {});
 
     // Configure the auto-updater feed URL once at startup. Some launch paths
     // (native menu shortcuts, scheduled checks) call autoUpdater directly
