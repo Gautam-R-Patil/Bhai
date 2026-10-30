@@ -66,6 +66,27 @@ describe("agent cursor events", () => {
         expect(lines()).toHaveLength(1);
     });
 
+    it("still warms mid-session: the app may have freed the windows of a long, quiet turn", async () => {
+        const tool = (name: string) => ({ type: "function" as const, function: { name, parameters: {} } });
+        const p = cursor.cursorClick(1, 1);
+        ackLast();
+        await p;
+        log.length = 0;
+        cursor.warmCursorForTools([tool("os_click")]);
+        expect(lines()).toEqual([{ t: "warm" }]);
+    });
+
+    it("holds the windows warm for a live voice session until released", () => {
+        vi.useFakeTimers();
+        const release = cursor.holdCursorWarm();
+        expect(lines()).toEqual([{ t: "warm" }]);
+        vi.advanceTimersByTime(10 * 60_000);
+        expect(lines()).toHaveLength(3);
+        release();
+        vi.advanceTimersByTime(30 * 60_000);
+        expect(lines()).toHaveLength(3);
+    });
+
     it("starts a session, then glides; resolves on ack", async () => {
         const p = cursor.cursorClick(100.4, 200.6, "right", 2);
         ackLast();

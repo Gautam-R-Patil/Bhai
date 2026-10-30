@@ -9,6 +9,7 @@ import { isUntrustedToolResult, wrapUntrustedToolResult } from "../../context-sc
 import type { LLMClient } from "../../llm.js";
 import { MODELS } from "../../llm.js";
 import { nativeVadAnyFrame16Khz } from "../../native/index.js";
+import { holdCursorWarm } from "../../screen/agent-cursor.js";
 import { noteOwnerMessage } from "../../security/consent.js";
 import { anySecretTyped } from "../../security/vault.js";
 import { getAck, isAckBankReady, startAckBankWarmup } from "./ack-bank.js";
@@ -263,6 +264,7 @@ export class LiveVoiceSession extends EventEmitter {
     private micMuted = false;
     private inflightToolIds = new Set<string>();
     private screenShare: import("./screen-share.js").ScreenShareHandle | null = null;
+    private releaseCursorWarm: (() => void) | null = null;
     private speaker = new TranscriptSpeaker();
     // Rate-limit reconnect attempts: at most 3 in a rolling 30s window,
     // otherwise we'd loop forever against a genuinely broken backend.
@@ -391,6 +393,8 @@ export class LiveVoiceSession extends EventEmitter {
 
             this.state = "active";
             this.startTime = Date.now();
+            // Voice tools click without a model call first: keep the ghost cursor's windows loaded.
+            this.releaseCursorWarm = holdCursorWarm();
             this.emitEvent("session_started");
             console.log("[LIVE-SESSION] Live voice session ACTIVE");
 
@@ -461,6 +465,8 @@ export class LiveVoiceSession extends EventEmitter {
             clearTimeout(this.sessionTimer);
             this.sessionTimer = null;
         }
+        this.releaseCursorWarm?.();
+        this.releaseCursorWarm = null;
 
         // Stop screen share
         if (this.screenShare) {

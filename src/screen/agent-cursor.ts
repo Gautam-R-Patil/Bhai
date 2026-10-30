@@ -114,13 +114,29 @@ const r = (n: number) => Math.round(n);
 /**
  * A model call is about to be offered these tools: if any can drive the screen
  * (os_*), have the app load its cursor windows now, a model call ahead of the
- * first click, so the ghost leads it even on a cold start.
+ * first click, so the ghost leads it even on a cold start. Sent mid-session too:
+ * the app ends an idle session after 90 s and frees its windows 10 minutes later.
  */
 export function warmCursorForTools(
     tools: ReadonlyArray<{ type?: string; function?: { name?: string } }> | undefined,
 ): void {
-    if (sessionOn || !tools?.length || !agentCursorEnabled()) return;
+    if (!tools?.length || !agentCursorEnabled()) return;
     if (tools.some((t) => t.function?.name?.startsWith("os_"))) send({ t: "warm" });
+}
+
+// Under the app's 10-minute free of unused cursor windows.
+const REWARM_MS = 5 * 60_000;
+
+/**
+ * Live voice can click any moment with no model call first: keep the cursor
+ * windows loaded until the returned release is called.
+ */
+export function holdCursorWarm(): () => void {
+    if (!agentCursorEnabled()) return () => {};
+    send({ t: "warm" });
+    const timer = setInterval(() => send({ t: "warm" }), REWARM_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
 }
 
 /** Glide the ghost cursor to (x, y) before a real move. */
