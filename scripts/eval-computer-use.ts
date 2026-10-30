@@ -27,7 +27,7 @@ import { executeTool } from "../src/tools/index.js";
 import { initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
 import { ackWithoutAction } from "../src/agent.js";
 import { runQuickCommand } from "../src/quick-commands.js";
-import { ARMS, recordOutcome } from "../src/routing/learned-router.js";
+import { ARMS, chooseArm, classifyTurn, recordOutcome } from "../src/routing/learned-router.js";
 import { getFrontmostApp } from "../src/screen/frontmost.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,6 +35,10 @@ const ex = promisify(execFile);
 const as = async (s: string) => (await ex("osascript", ["-e", s]).catch((e) => ({ stdout: `ERR ${e.message}` }))).stdout.trim();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MODEL = process.env.MODEL ?? "gpt-4.1-nano";
+// MODEL=router: the learned router (src/routing/learned-router.ts) picks each task's model from
+// the real tool-router classification, as the agent loop does.
+const ROUTER = MODEL === "router";
+let model = MODEL; // this task's model
 const OUT = process.env.OUT ?? join(ROOT, "data/eval-computer-use.jsonl");
 const REPO = basename(ROOT);
 
@@ -148,9 +152,10 @@ const PRICES: Record<string, [number, number, number]> = {
     "gpt-5-nano": [0.05, 0.005, 0.4], "gpt-4.1-nano": [0.1, 0.025, 0.4], "gpt-4o-mini": [0.15, 0.075, 0.6],
     "gpt-5-mini": [0.25, 0.025, 2], "gpt-6.1-terra": [1, 0.05, 5], "gpt-6-astra": [10, 1, 50],
     "claude-haiku-5-5": [0.1, 0.01, 0.5], // cache writes billed at 1.25x input, counted below
+    "claude-sonnet-5-5": [2, 0.2, 10],
 };
 const usage = { in: 0, cached: 0, out: 0 };
-const REASONING = process.env.REASONING_EFFORT ?? (/^gpt-6/.test(MODEL) ? "none" : undefined);
+const reasoning = () => process.env.REASONING_EFFORT ?? (/^gpt-6/.test(model) ? "none" : undefined);
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: { role: string; content: string | null; tool_calls?: ToolCall[] } }> {
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -158,7 +163,7 @@ async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: {
             method: "POST",
             headers: { "api-key": process.env.AZ_KEY ?? "", "content-type": "application/json" },
             // GPT-6 models take function tools on chat completions only with reasoning off.
-            body: JSON.stringify({ model: MODEL, messages, tools, tool_choice: "auto", ...(REASONING ? { reasoning_effort: REASONING } : {}) }),
+            body: JSON.stringify({ model, messages, tools, tool_choice: "auto", ...(reasoning() ? { reasoning_effort: reasoning() } : {}) }),
         });
         const d = (await r.json()) as { choices?: { message: never }[]; error?: { message: string }; usage?: { prompt_tokens: number; completion_tokens: number; prompt_tokens_details?: { cached_tokens?: number } } };
         if (d.choices) {
@@ -173,14 +178,14 @@ async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: {
 }
 
 // Claude, the way Bhai's proxy calls Haiku on simple desktop turns: adaptive thinking, effort low.
-const anthropic = MODEL.startsWith("claude-") ? new Anthropic() : null;
+const anthropicClient = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
 async function claudeLoop(system: string, prompt: string, tools: any[], used: string[], trace: string[]): Promise<{ reply: string; iters: number }> {
     const atools = tools.map((t) => ({ name: t.function.name, description: t.function.description ?? "", input_schema: t.function.parameters ?? { type: "object" } }));
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
     let acked = false;
     for (let i = 0; i < 10; i++) {
-        const res = await anthropic!.messages.create({
-            model: MODEL, max_tokens: 16000, system, tools: atools as Anthropic.Tool[], messages,
+        const res = await anthropicClient!.messages.create({
+            model, max_tokens: 16000, system, tools: atools as Anthropic.Tool[], messages,
             output_config: { effort: "low" }, cache_control: { type: "ephemeral" },
         } as never);
         const u = res.usage as unknown as { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
@@ -209,7 +214,21 @@ async function claudeLoop(system: string, prompt: string, tools: any[], used: st
 }
 
 await initToolRouter();
-setToolRouterLLM({ chat: () => new Promise(() => {}) } as never);
+setToolRouterLLM(
+    ROUTER
+        ? ({
+              chat: async (o: { messages: { role: string; content: string }[]; systemPrompt?: string }) => {
+                  const r = await fetch(`${process.env.AZ_ENDPOINT}/chat/completions`, {
+                      method: "POST",
+                      headers: { "api-key": process.env.AZ_KEY ?? "", "content-type": "application/json" },
+                      body: JSON.stringify({ model: "gpt-4.1-nano", messages: [{ role: "system", content: o.systemPrompt ?? "" }, ...o.messages] }),
+                  });
+                  return r.json();
+              },
+          } as never)
+        : ({ chat: () => new Promise(() => {}) } as never),
+);
+if (ROUTER) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "10000";
 const only = process.argv.slice(2);
 const results = [];
 for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
@@ -217,6 +236,13 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     await ex("open", ["-a", "Finder"]); // never leave a terminal in front
     await sleep(400);
     const sel = await selectTools({ message: task.prompt, iteration: 1 });
+    if (ROUTER) {
+        // As the agent loop: complex work keeps Sonnet; everything else goes to the learned pick.
+        const c = sel.classification;
+        const arm = c?.tier === "complex" ? undefined : chooseArm(classifyTurn(c, false), { lowRisk: false }).arm;
+        model = !arm ? "claude-sonnet-5-5" : arm.model.startsWith("azure/") ? arm.model.slice(6) : arm.id === "haiku" ? "claude-haiku-5-5" : "claude-sonnet-5-5";
+        console.log(`     → ${c?.tier ?? "?"} ${classifyTurn(c, false)} → ${model}`);
+    }
     const tools = sel.tools.filter((t) => ALLOWED.has(t.function.name));
     const messages: any[] = [{ role: "system", content: SYSTEM }, { role: "user", content: task.prompt }];
     const used: string[] = [];
@@ -236,7 +262,7 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     if (quick?.reply) {
         reply = quick.reply;
         iters = -1; // no model call
-    } else if (anthropic) {
+    } else if (model.startsWith("claude-")) {
         const r = await claudeLoop(SYSTEM, task.prompt, tools, used, trace);
         reply = r.reply;
         iters = r.iters - 1;
@@ -265,12 +291,12 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     const ms = Date.now() - t0;
     const ok = await task.check(reply).catch(() => false);
     await task.cleanup?.().catch(() => {});
-    const pr = PRICES[MODEL];
+    const pr = PRICES[model];
     const cost = pr ? (usage.in * pr[0] + usage.cached * pr[1] + usage.out * pr[2]) / 1e6 : null;
-    const row = { model: MODEL, task: task.id, ok, tokens: { ...usage }, cost, iters: iters + 1, toolCalls: used.length, used, ms, offered: tools.map((t) => t.function.name).length, reply: reply.slice(0, 160), trace, offeredNames: tools.map((t) => t.function.name) };
+    const row = { model, routed: ROUTER || undefined, task: task.id, ok, tokens: { ...usage }, cost, iters: iters + 1, toolCalls: used.length, used, ms, offered: tools.map((t) => t.function.name).length, reply: reply.slice(0, 160), trace, offeredNames: tools.map((t) => t.function.name) };
     results.push(row);
     // RECORD=1: the result is evidence for the learned router (src/routing/learned-router.ts).
-    const arm = ARMS.find((a) => a.model === `azure/${MODEL}` || (MODEL.includes("haiku") && a.id === "haiku"));
+    const arm = ARMS.find((a) => a.model === `azure/${model}` || (model.includes(a.id) && !a.model.startsWith("azure/")));
     if (process.env.RECORD === "1" && arm && iters >= 0) {
         const cls = ["chain_settings", "calc_to_textedit", "newest_pdf", "playlist_and_tell", "switch_players", "textedit_type", "calculator_multistep", "find_open_file", "camera_permissions"].includes(task.id) ? "desktop" : "quick";
         recordOutcome(cls, arm.id, { success: ok ? 1 : 0, failure: ok ? 0 : 1, calls: iters + 1, seconds: ms / 1000 });

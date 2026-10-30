@@ -169,6 +169,18 @@ function parseClause(raw: string): QuickStep | null {
             ? { tool: "music_control", args: { action: "now_playing" }, done: nowPlayingLine }
             : { tool: "spotify", args: { action: "now_playing" }, done: nowPlayingLine, pickPlayer: !m[1] };
     }
+    // "Which apps can use my camera?": the privacy page that lists them.
+    m = hit(
+        /^(?:show\s+me\s+|tell\s+me\s+)?(?:which|what)\s+apps\s+(?:are\s+allowed\s+to|can|have\s+access\s+to|use)\s+(?:use\s+)?(?:my\s+|the\s+)?(camera|microphone|mic|location|contacts|photos|screen recording|full disk access)$/,
+    );
+    if (m) {
+        const pane = m[1] === "mic" ? "microphone" : m[1];
+        return {
+            tool: "open_settings",
+            args: { pane },
+            done: (r) => `The ${r.page ?? title(pane)} page is open: it lists the apps allowed to use your ${pane}.`,
+        };
+    }
     m = hit(/^lock\s+(?:my\s+|the\s+)?(?:screen|mac|computer|laptop)$/);
     if (m) {
         return { tool: "lock_screen", args: {}, done: "Locked." };

@@ -833,7 +833,11 @@ export const findFiles: ToolDefinition = {
             .replace(/^\./, "")
             .toLowerCase();
         const args = input.content ? [query] : ["-name", query];
-        if (input.folder) args.unshift("-onlyin", resolve(resolveHomePath(String(input.folder))));
+        // A folder that isn't there ("~/Bhai" for ~/Desktop/Bhai) searches everywhere and
+        // ranks paths through a folder of that name first, instead of finding nothing.
+        const folder = input.folder ? resolve(resolveHomePath(String(input.folder))) : "";
+        const folderName = folder && !existsSync(folder) ? basename(folder).toLowerCase() : "";
+        if (folder && !folderName) args.unshift("-onlyin", folder);
         try {
             const { stdout } = await execFileAsync("mdfind", args, { timeout: 10_000, maxBuffer: 20 * 1024 * 1024 });
             const home = homedir();
@@ -848,10 +852,14 @@ export const findFiles: ToolDefinition = {
                     } catch {
                         /* gone since indexing */
                     }
-                    return { p, mtime, mine: p.startsWith(home) && !FIND_NOISE.test(p) };
+                    const inFolder = !!folderName && p.toLowerCase().split("/").slice(0, -1).includes(folderName);
+                    return { p, mtime, mine: p.startsWith(home) && !FIND_NOISE.test(p), inFolder };
                 })
                 .filter((h) => h.mtime > 0)
-                .sort((a, b) => Number(b.mine) - Number(a.mine) || b.mtime - a.mtime);
+                .sort(
+                    (a, b) =>
+                        Number(b.inFolder) - Number(a.inFolder) || Number(b.mine) - Number(a.mine) || b.mtime - a.mtime,
+                );
             return JSON.stringify({
                 success: true,
                 total: hits.length,

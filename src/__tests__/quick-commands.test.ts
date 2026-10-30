@@ -23,6 +23,7 @@ describe("parseQuickCommand", () => {
             ["spotify", { action: "now_playing" }],
         ]);
         expect(tools("what's playing?")).toEqual([["spotify", { action: "now_playing" }]]);
+        expect(tools("Show me which apps are allowed to use my camera")).toEqual([["open_settings", { pane: "camera" }]]);
         expect(tools("What song is playing on Spotify right now?")).toEqual([["spotify", { action: "now_playing" }]]);
         expect(tools("what's playing in apple music")).toEqual([["music_control", { action: "now_playing" }]]);
     });
