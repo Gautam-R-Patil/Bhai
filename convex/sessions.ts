@@ -182,10 +182,13 @@ export const createSessionInternal = internalMutation({
     clientPublicKey: v.optional(v.string()),
     serverPublicKey: v.optional(v.string()),
     sharedKey: v.optional(v.string()),
-    // A fresh OTPless-verified sign-in (validate-token): brings back a removed device.
+    // A fresh OTPless-verified sign-in (validate-token): brings back a removed device
+    // and stores deviceSecretHash as its secret.
     reactivate: v.optional(v.boolean()),
+    // Otherwise the hash of the secret the device got at sign-in, which must match.
+    deviceSecretHash: v.optional(v.string()),
   },
-  handler: async (ctx, { otplessUserId, deviceFingerprint, clientPublicKey, serverPublicKey, sharedKey, reactivate }) => {
+  handler: async (ctx, { otplessUserId, deviceFingerprint, clientPublicKey, serverPublicKey, sharedKey, reactivate, deviceSecretHash }) => {
     const account = await ctx.db
       .query("accounts")
       .withIndex("by_otpless_id", (q) => q.eq("otplessUserId", otplessUserId))
@@ -198,9 +201,13 @@ export const createSessionInternal = internalMutation({
       throw new Error(`Account is ${account.status}`);
     }
 
-    // A device the owner removed gets no session until someone signs in on it again.
-    if (deviceFingerprint && !(await noteDevice(ctx, otplessUserId, deviceFingerprint, reactivate === true))) {
-      throw new Error("device_removed");
+    // A device the owner removed, or one that can't show its sign-in secret, gets no
+    // session until someone signs in on it again.
+    if (deviceFingerprint) {
+      const status = await noteDevice(ctx, otplessUserId, deviceFingerprint, reactivate === true, deviceSecretHash);
+      if (status !== "ok") throw new Error(status);
+    } else if (reactivate !== true) {
+      throw new Error("sign_in_required");
     }
 
     // Clean up expired sessions

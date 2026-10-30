@@ -199,9 +199,10 @@ const { readVault, registerVaultIpc } = require("./vault-store");
 // kept here as breadcrumbs for legacy callers.
 let _desktopSessionToken = null;
 let _desktopSessionExpiry = 0;
-// Set when the server says the owner removed this Mac (Account → Devices on another one):
-// it gets no session until someone signs in here again.
-let _deviceRemoved = false;
+// Set when the server refuses this Mac a session until someone signs in here again:
+// "device_removed" (the owner removed it in Account → Devices on another one) or
+// "sign_in_required" (no device secret yet, e.g. signed in before secrets existed).
+let _signInNeeded = null;
 
 /** This device as the bot names it (src/session.ts getDeviceFingerprint): one Devices row per Mac. */
 function deviceFingerprint() {
@@ -226,6 +227,7 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
     const bodyStr = JSON.stringify({
         otplessUserId: userId,
         deviceFingerprint: deviceFingerprint(),
+        deviceSecret: loadAccountSession()?.deviceSecret,
     });
 
     return new Promise((resolve) => {
@@ -244,12 +246,12 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
                 try {
                     const data = JSON.parse(raw);
                     if (data.token) {
-                        _deviceRemoved = false;
+                        _signInNeeded = null;
                         _desktopSessionToken = data.token;
                         _desktopSessionExpiry = data.expiresAt || (Date.now() + 86400000);
                         resolve(data.token);
                     } else {
-                        if (data.error === "device_removed") _deviceRemoved = true;
+                        if (data.error === "device_removed" || data.error === "sign_in_required") _signInNeeded = data.error;
                         console.warn("[Session] Desktop session failed:", data.error || "unknown");
                         resolve(null);
                     }
@@ -1336,6 +1338,7 @@ async function startBot() {
     if (session && session.userId) {
         spawnEnv.ATLAS_OTPLESS_USER_ID = session.userId;
         spawnEnv.ATLAS_ACCOUNT_EMAIL = session.email || "";
+        if (session.deviceSecret) spawnEnv.ATLAS_DEVICE_SECRET = session.deviceSecret;
     }
 
     if (!IS_DEV) {
@@ -2322,17 +2325,24 @@ function registerIPC() {
 
     let authWindow = null;
 
-    function finalizeAuth({ session, userId, email, phone, name }) {
+    function finalizeAuth({ session, userId, email, phone, name, deviceSecret }) {
         saveAccountSession({
             userId,
             token: session.token,
             email: email || null,
             phone: phone || null,
             name: name || null,
+            deviceSecret: deviceSecret || null,
             created_at: new Date().toISOString(),
         });
         _desktopSessionToken = session.token;
         _desktopSessionExpiry = session.expiresAt || (Date.now() + 86400000);
+        _signInNeeded = null;
+        // A running bot still has the old identity and device secret: restart it.
+        if (isAlive(botProcess)) {
+            stopBot();
+            startBot();
+        }
         // Seed the profile name from sign-in (the Profile screen is gone): the bot
         // writes it into the identity memory on boot (src/setup/wizard-seed.ts).
         if (name) {
@@ -4977,7 +4987,7 @@ function registerIPC() {
             } catch (err) {
                 console.warn("[Account] Convex info query failed:", err.message);
             }
-            if (_deviceRemoved) return { signedIn: false, deviceRemoved: true };
+            if (_signInNeeded) return { signedIn: false, deviceRemoved: _signInNeeded === "device_removed", signInAgain: true };
 
             return {
                 signedIn: true,

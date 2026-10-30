@@ -143,6 +143,8 @@ async function createSession(otplessUserId: string): Promise<void> {
         body: JSON.stringify({
             otplessUserId,
             deviceFingerprint: getDeviceFingerprint(),
+            // Issued to this device at sign-in; the desktop app passes it in.
+            deviceSecret: process.env.ATLAS_DEVICE_SECRET,
             clientPublicKey,
             // Tell the server which KDF version the client is prepared
             // to use. Server echoes back the version it actually used

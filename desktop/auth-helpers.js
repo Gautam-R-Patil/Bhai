@@ -13,6 +13,8 @@ function parseOtplessVerifyResponse(raw) {
         email: raw.email || undefined,
         phone: raw.phone || undefined,
         name: raw.name || undefined,
+        // Proof for later sessions on this device (/api/auth/session needs it).
+        deviceSecret: typeof raw.deviceSecret === "string" ? raw.deviceSecret : undefined,
     };
 }
 

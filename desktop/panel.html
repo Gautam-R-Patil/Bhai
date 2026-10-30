@@ -1061,6 +1061,7 @@
                                 <h3 class="auth-title">Sign in to Bhai</h3>
                                 <p class="auth-subtitle">Use your phone number or Google account to sign in securely</p>
                                 <p class="auth-device-removed" id="authDeviceRemoved" style="display:none;">This Mac was removed from your account on another device. Sign in again to use Bhai here.</p>
+                                <p class="auth-device-removed" id="authSignInAgain" style="display:none;">For your account's safety, Bhai now checks each device at sign-in. Sign in once more to keep using Bhai here.</p>
                             </div>
                             <div style="margin-top:24px;">
                                 <button class="btn btn-primary auth-submit-btn" id="signInBtn" onclick="openSignIn()" style="font-size:15px;padding:14px;">
@@ -3044,6 +3045,7 @@
                     document.getElementById('accountAuthView').style.display = 'block';
                     document.getElementById('accountProfileView').style.display = 'none';
                     document.getElementById('authDeviceRemoved').style.display = info && info.deviceRemoved ? '' : 'none';
+                    document.getElementById('authSignInAgain').style.display = info && info.signInAgain && !info.deviceRemoved ? '' : 'none';
                     return;
                 }
 
