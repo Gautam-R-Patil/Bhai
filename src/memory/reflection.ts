@@ -418,8 +418,12 @@ export async function runReflection(
             }
 
             // ── 3c. Emotional signals ──
+            // Only what the owner brought up this session: asked "what do you know about me?",
+            // Bhai recited stored setbacks and this pass saved them again as new events.
+            const said = ownerWords(conversationHistory);
             for (const em of extraction.emotions || []) {
                 if (!em.emotion || !em.context) continue;
+                if (!saidByOwner(em.context, said)) continue;
                 recordEmotion(em.emotion, em.context, em.intensity || 0.5);
                 hadEmotionalSignals = true;
             }
@@ -427,6 +431,7 @@ export async function runReflection(
             // ── 3d. Episodic signals ──
             for (const ep of extraction.episodes || []) {
                 if (!ep.type || !ep.description) continue;
+                if (!saidByOwner(ep.description, said)) continue;
                 recordEpisode(ep.type, ep.description, ep.importance || 0.5);
                 hadEpisodicSignals = true;
             }
@@ -1099,6 +1104,28 @@ function signedAuditLog(action: string, details: Record<string, unknown>): void 
 }
 
 // ── Transcript Builder ────────────────────────
+
+const SIGNAL_STOP = new Set(
+    "about after again also been could does doing from have just like more much really should some than that their them then there these they this very what when where which while with would your user assistant asked".split(" "),
+);
+const signalWords = (t: string) =>
+    (t.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).filter((w) => !SIGNAL_STOP.has(w));
+
+/** Words the owner wrote this session (channel notes stripped). */
+export function ownerWords(history: ChatCompletionMessageParam[]): Set<string> {
+    const words = new Set<string>();
+    for (const m of history.slice(-40)) {
+        if (m.role !== "user" || typeof m.content !== "string") continue;
+        const own = m.content.replace(/\[(?:SOURCE|BROWSER CONTEXT|Browser context|From browser)[^\]]*\]/g, "");
+        for (const w of signalWords(own)) words.add(w);
+    }
+    return words;
+}
+
+/** An emotion/episode the owner brought up (shares a meaningful word with what they wrote), not a recap. */
+export function saidByOwner(text: string, words: Set<string>): boolean {
+    return signalWords(text).some((w) => words.has(w));
+}
 
 function buildTranscript(history: ChatCompletionMessageParam[]): string {
     return history
