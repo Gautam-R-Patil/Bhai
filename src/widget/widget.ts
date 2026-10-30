@@ -291,9 +291,9 @@ export function getWidgetScript(wsUrl: string): string {
     // Inline code
     s = s.replace(/\`([^\`\\n]+)\`/g, "<code>$1</code>");
     // Bold
-    s = s.replace(/\\*\\*(.+?)\\*\\*/g, "<strong>$1</strong>");
+    s = s.replace(/\\*\\*(?!\\s)(.+?)(?<!\\s)\\*\\*/g, "<strong>$1</strong>");
     // Italic
-    s = s.replace(/(?<!\\w)\\*([^*\\n]+?)\\*(?!\\w)/g, "<em>$1</em>");
+    s = s.replace(/(?<!\\w)\\*(?!\\s)([^*\\n]+?)(?<!\\s)\\*(?!\\w)/g, "<em>$1</em>");
     return s;
   }
 

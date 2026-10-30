@@ -3937,8 +3937,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         });
 
         h = h.replace(/^#{1,4} (.+)$/gm, '<strong>$1</strong>');
-        h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        h = h.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, '<em>$1</em>');
+        h = h.replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, '<strong>$1</strong>');
+        h = h.replace(/(?<!\w)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\w)/g, '<em>$1</em>'); // "5 * 3 * 2" stays arithmetic
         // Only http(s) links — never javascript: or other schemes.
         h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => /^https?:\/\//i.test(url) ? `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:#818cf8">${label}</a>` : label);
         h = h.replace(/^[\s]*[*\-]\s+/gm, '• ');

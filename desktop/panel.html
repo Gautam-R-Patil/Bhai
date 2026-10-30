@@ -5049,21 +5049,23 @@
         // Simple markdown to HTML converter
         function renderMarkdown(text) {
             if (!text) return '';
-            let html = escapeHtml(text);
+            // Code is set aside first: the emphasis and line-break rules mangled it (a*b*c in
+            // a report's code turned italic, its newlines into <br>).
+            const code = [];
+            const keep = (h) => `${code.push(h) - 1}`;
+            let html = escapeHtml(text.replace(//g, ''));
+            html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, c) => keep(`<pre><code>${c}</code></pre>`));
+            html = html.replace(/`([^`\n]+)`/g, (_m, c) => keep(`<code>${c}</code>`));
 
             // Headers
             html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
             html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
             html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
 
-            // Bold and italic
-            html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-            html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-            html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-            // Code blocks
-            html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-            html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+            // Bold and italic; no space just inside the stars, so "5 * 3 * 2" stays arithmetic
+            html = html.replace(/\*\*\*(?!\s)(.+?)(?<!\s)\*\*\*/g, '<strong><em>$1</em></strong>');
+            html = html.replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/(?<!\w)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\w)/g, '<em>$1</em>');
 
             // Lists
             html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
@@ -5074,11 +5076,11 @@
             html = html.replace(/\n/g, '<br>');
 
             // Wrap in paragraph if not already structured
-            if (!html.startsWith('<')) {
+            if (!html.startsWith('<') && !html.startsWith('\uE000')) {
                 html = '<p>' + html + '</p>';
             }
 
-            return html;
+            return html.replace(/(\d+)/g, (_m, i) => code[Number(i)] ?? '');
         }
     </script>
 
