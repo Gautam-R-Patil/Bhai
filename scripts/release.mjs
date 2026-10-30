@@ -260,8 +260,11 @@ const macDmg = findFirst(DIST_DIR, [
     new RegExp(`-${VERSION_RE}-[^-.]+\\.dmg$`),
     /\.dmg$/,
 ]);
-const macZip = findFirst(DIST_DIR, [new RegExp(`-${VERSION_RE}-.*mac\\.zip$`), new RegExp(`-${VERSION_RE}.*\\.zip$`)]);
+// electron-builder names the Apple Silicon zip <name>-<v>-arm64-mac.zip and the Intel one
+// <name>-<v>-mac.zip. The feed lists both; MacUpdater installs the one for its arch.
+const macZip = findFirst(DIST_DIR, [new RegExp(`-${VERSION_RE}-arm64-mac\\.zip$`), new RegExp(`-${VERSION_RE}.*\\.zip$`)]);
 const macZipBlockmap = macZip ? `${macZip}.blockmap` : null;
+const macX64Zip = findFirst(DIST_DIR, [new RegExp(`-${VERSION_RE}-(x64-)?mac\\.zip$`)]);
 const winExe = findFirst(DIST_DIR, [
     new RegExp(`A\\.T\\.L\\.A\\.S.*${VERSION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*\\.exe$`, "i"),
     /Setup.*\.exe$/i,
@@ -282,6 +285,14 @@ if (macDmg && existsSync(macDmg)) {
         artifacts.push({ platform: "mac", path: macZipBlockmap, kind: "blockmap" });
     } else {
         log(`⚠ no blockmap for ${basename(macZip)} — delta updates disabled for mac`);
+    }
+    if (macX64Zip && macX64Zip !== macZip) {
+        artifacts.push({ platform: "macX64", path: macX64Zip, kind: "update" });
+        if (existsSync(`${macX64Zip}.blockmap`)) {
+            artifacts.push({ platform: "macX64", path: `${macX64Zip}.blockmap`, kind: "blockmap" });
+        }
+    } else {
+        log("⚠ no Intel (x64) mac zip — Intel Macs are not offered this release");
     }
     if (existsSync(macYml)) {
         artifacts.push({ platform: "mac", path: macYml, kind: "yml" });
@@ -330,6 +341,10 @@ if (macDmg && existsSync(macDmg)) {
         size: fileSize(macZip),
     };
     log(`mac: ${meta.mac.size} bytes, sha512=${meta.mac.sha512.slice(0, 16)}…`);
+    if (urls.macX64Update) {
+        meta.macX64 = { url: urls.macX64Update, sha512: sha512Base64(macX64Zip), size: fileSize(macX64Zip) };
+        log(`mac x64: ${meta.macX64.size} bytes, sha512=${meta.macX64.sha512.slice(0, 16)}…`);
+    }
 }
 if (winExe && existsSync(winExe)) {
     meta.win = {
@@ -353,11 +368,18 @@ if (meta.mac) {
     envVars.push([`UPDATE_SHA512_MAC${suffix}`, meta.mac.sha512]);
     envVars.push([`UPDATE_SIZE_MAC${suffix}`, String(meta.mac.size)]);
 }
+if (meta.macX64) {
+    envVars.push([`UPDATE_URL_MAC_X64${suffix}`, meta.macX64.url]);
+    envVars.push([`UPDATE_SHA512_MAC_X64${suffix}`, meta.macX64.sha512]);
+    envVars.push([`UPDATE_SIZE_MAC_X64${suffix}`, String(meta.macX64.size)]);
+}
 if (meta.win) {
     envVars.push([`UPDATE_URL_WIN${suffix}`, meta.win.url]);
     envVars.push([`UPDATE_SHA512_WIN${suffix}`, meta.win.sha512]);
     envVars.push([`UPDATE_SIZE_WIN${suffix}`, String(meta.win.size)]);
 }
+// A Mac release without an Intel zip must not keep listing the last release's Intel zip.
+const envRemoves = meta.mac && !meta.macX64 ? [`UPDATE_URL_MAC_X64${suffix}`] : [];
 const showCmd = ([name, value]) => `npx convex env set ${name} ${value}`;
 
 if (APPLY_CONVEX) {
@@ -366,10 +388,13 @@ if (APPLY_CONVEX) {
         const r = spawnSync("npx", ["convex", "env", "set", name, value], { stdio: "inherit", cwd: REPO_ROOT });
         if (r.status !== 0) fatal(`Convex env command failed: ${showCmd([name, value])}`);
     }
+    // Fails harmlessly when the var was never set.
+    for (const name of envRemoves) spawnSync("npx", ["convex", "env", "remove", name], { stdio: "inherit", cwd: REPO_ROOT });
     log("✅ Convex env updated.");
 } else {
     console.log("\nRun these to point the updater at the new release:\n");
     for (const v of envVars) console.log(`  ${showCmd(v)}`);
+    for (const name of envRemoves) console.log(`  npx convex env remove ${name}`);
     console.log("\n(Re-run with --apply-convex to execute them automatically.)");
 }
 

@@ -70,8 +70,8 @@ function resolveChannelWithFallback(platform: "mac" | "win", requested: string):
     return requested; // nothing provisioned — the feed answers 404
 }
 
-/** The feed's yml, or null when nothing is published for this platform. */
-function buildYaml(platform: "mac" | "win", requested: string): string | null {
+/** The feed's yml, or null when nothing is published for this platform (or this Mac's arch). */
+function buildYaml(platform: "mac" | "win", requested: string, intelMac: boolean): string | null {
     const P = platform.toUpperCase(); // MAC | WIN
     const channel = resolveChannelWithFallback(platform, requested);
 
@@ -85,7 +85,26 @@ function buildYaml(platform: "mac" | "win", requested: string): string | null {
     const releaseDate = envForChannel("UPDATE_RELEASE_DATE", channel) || new Date().toISOString();
     const files = [{ url, sha512, size }];
     if (mirror) files.push({ url: mirror, sha512, size });
-    // electron-updater picks the first `files:` entry it can install.
+    if (platform === "mac") {
+        // The Intel zip comes from the same channel suffix as the main URL, never another channel's release.
+        const C =
+            channel !== "stable" && process.env[`UPDATE_URL_MAC_${channel.toUpperCase()}`]
+                ? `_${channel.toUpperCase()}`
+                : "";
+        const x64 = process.env[`UPDATE_URL_MAC_X64${C}`];
+        if (x64) {
+            files.push({
+                url: x64,
+                sha512: process.env[`UPDATE_SHA512_MAC_X64${C}`] || "",
+                size: Number(process.env[`UPDATE_SIZE_MAC_X64${C}`] || 0) || 0,
+            });
+        }
+        // MacUpdater never installs a URL with "arm64" on an Intel Mac: offering one is a banner
+        // that ends in "ZIP file not provided".
+        if (intelMac && files.every((f) => f.url.includes("arm64"))) return null;
+    }
+
+    // electron-updater picks the first `files:` entry it can install (by arch on a Mac).
     // Top-level path/sha512 kept for v5 compat.
     const lines = [`version: ${version}`, "files:"];
     for (const f of files) lines.push(`  - url: ${f.url}`, `    sha512: ${f.sha512}`, `    size: ${f.size}`);
@@ -101,7 +120,8 @@ function buildYaml(platform: "mac" | "win", requested: string): string | null {
 export function updateFeedResponse(request: Request): Response {
     const url = new URL(request.url);
     const feed = parseUpdateFeedPath(url.pathname);
-    const body = feed && buildYaml(feed.platform, feed.channel ?? pickChannel(url));
+    const body =
+        feed && buildYaml(feed.platform, feed.channel ?? pickChannel(url), url.searchParams.get("arch") === "x64");
     if (!body) return new Response("Not found", { status: 404 });
     return new Response(body, { status: 200, headers: yamlHeaders() });
 }

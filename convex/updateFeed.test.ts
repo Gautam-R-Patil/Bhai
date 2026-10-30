@@ -51,4 +51,32 @@ describe("updateFeedResponse", () => {
         expect(get("stable-mac.yml").status).toBe(404); // no Mac zip published
     });
 
+    it("lists the Intel zip next to the arm64 one, and never offers an arm64-only feed to an Intel Mac", async () => {
+        const arm = { UPDATE_VERSION: "0.2.2", UPDATE_URL_MAC: "https://dl/Bhai-0.2.2-arm64-mac.zip", UPDATE_SHA512_MAC: "a" };
+        publish(arm);
+        expect(get("stable-mac.yml").status).toBe(200);
+        expect(get("stable-mac.yml?arch=x64").status).toBe(404);
+        publish({ ...arm, UPDATE_URL_MAC_X64: "https://dl/Bhai-0.2.2-mac.zip", UPDATE_SHA512_MAC_X64: "i", UPDATE_SIZE_MAC_X64: "7" });
+        for (const f of ["stable-mac.yml", "stable-mac.yml?arch=x64"]) {
+            const r = get(f);
+            expect(r.status).toBe(200);
+            expect(await r.text()).toContain(
+                "  - url: https://dl/Bhai-0.2.2-arm64-mac.zip\n    sha512: a\n    size: 0\n  - url: https://dl/Bhai-0.2.2-mac.zip\n    sha512: i\n    size: 7\n",
+            );
+        }
+    });
+
+    it("never pairs a beta arm64 zip with the stable Intel zip", async () => {
+        publish({
+            UPDATE_VERSION_BETA: "0.3.0-beta.1",
+            UPDATE_URL_MAC_BETA: "https://dl/beta/Bhai-0.3.0-beta.1-arm64-mac.zip",
+            UPDATE_VERSION: "0.2.2",
+            UPDATE_URL_MAC: "https://dl/Bhai-0.2.2-arm64-mac.zip",
+            UPDATE_URL_MAC_X64: "https://dl/Bhai-0.2.2-mac.zip",
+        });
+        const r = get("beta-mac.yml?channel=beta");
+        expect(await r.text()).not.toContain("Bhai-0.2.2-mac.zip");
+        expect(get("beta-mac.yml?channel=beta&arch=x64").status).toBe(404);
+        expect(get("stable-mac.yml?arch=x64").status).toBe(200);
+    });
 });

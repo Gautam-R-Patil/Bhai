@@ -345,6 +345,7 @@ async function convexSiteRequest(method, urlPath, bodyObj) {
 // Channels: users on the "beta" channel get the BETA feed. Switch via
 // store.set("updateChannel", "beta" | "stable" | "canary").
 const UPDATE_FEED_BASE = `${CONVEX_SITE_URL}/api/updates`;
+const { updateFeedUrl } = require("./update-feed");
 
 function getUpdateChannel() {
     const ch = (store.get("updateChannel") || "stable").toString().toLowerCase();
@@ -353,12 +354,10 @@ function getUpdateChannel() {
 
 function configureAutoUpdater() {
     const channel = getUpdateChannel();
-    // Feed URL is the directory; electron-updater appends latest-mac.yml /
-    // latest.yml. Pass channel via query string — our Convex handler reads
-    // it from `?channel=...`.
-    const url = channel === "stable"
-        ? UPDATE_FEED_BASE
-        : `${UPDATE_FEED_BASE}?channel=${channel}`;
+    // Feed URL is the directory; with the channel set, electron-updater asks for
+    // <channel>-mac.yml / <channel>.yml under it and keeps the query
+    // (?channel=..., and arch=x64 on an Intel Mac: see update-feed.js).
+    const url = updateFeedUrl(UPDATE_FEED_BASE, channel);
     autoUpdater.setFeedURL({ provider: "generic", url });
     autoUpdater.channel = channel;
     console.log(`[Updater] Configured | channel=${channel} | url=${url}`);
@@ -1177,7 +1176,7 @@ function setupAutoUpdater() {
     autoUpdater.on("error", (err) => {
         const msg = err.message || "";
         // 404 is expected when the server hasn't published a release yet
-        // (empty YAML with version 0.0.0). Don't spam retries for those.
+        // (or none for an Intel Mac). Don't spam retries for those.
         const isMissing =
             msg.includes("404") ||
             msg.includes("Not Found") ||

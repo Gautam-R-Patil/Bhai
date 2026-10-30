@@ -22,6 +22,7 @@ endpoint at `/api/updates` serves only the YAML metadata and points
  │   stable/0.2.1/Bhai-0.2.1-arm64.dmg      (download only)  │
  │   stable/0.2.1/Bhai-0.2.1-arm64-mac.zip  (mac update)     │
  │   stable/0.2.1/Bhai-0.2.1-arm64-mac.zip.blockmap          │
+ │   stable/0.2.1/Bhai-0.2.1-mac.zip        (Intel mac update)│
  │   stable/0.2.1/Bhai Setup 0.2.1.exe                       │
  │   stable/0.2.1/Bhai Setup 0.2.1.exe.blockmap              │
  │   beta/…                                                       │
@@ -34,6 +35,16 @@ The Convex YAML surface supports:
   `?channel=alpha` to the feed URL; each channel reads suffixed env
   vars (e.g. `UPDATE_URL_MAC_ALPHA`). If a channel-specific var is
   unset, the handler falls back to the unsuffixed `stable` var.
+- **Intel Macs** — `UPDATE_URL_MAC` is the Apple Silicon zip. The Intel
+  zip (`Bhai-<v>-mac.zip`, built with `--x64`) goes in
+  `UPDATE_URL_MAC_X64` / `UPDATE_SHA512_MAC_X64` / `UPDATE_SIZE_MAC_X64`
+  and is listed as a second `files:` entry; electron-updater picks the
+  one for its arch. `scripts/release.mjs` sets them when that zip is in
+  `desktop/dist`, and removes `UPDATE_URL_MAC_X64` when it is not. Intel
+  Macs ask with `?arch=x64` and get 404 (nothing to install) until an
+  Intel zip is listed, so they never see an update they can't install.
+- **Nothing published** — a feed with no `UPDATE_VERSION` / `UPDATE_URL_*`
+  answers 404, which the app treats as "no release yet".
 - **Failover URLs** — set `UPDATE_URL_MAC_MIRROR` to add a second
   `files:` entry; electron-updater tries them in order.
 - **Delta updates** — uploading the `.blockmap` alongside the binary

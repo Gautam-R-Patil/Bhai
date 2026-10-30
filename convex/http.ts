@@ -2441,7 +2441,12 @@ http.route({
 // leave blank for the stable channel):
 //   UPDATE_VERSION[_<C>]      — e.g. "0.2.1"
 //   UPDATE_URL_MAC[_<C>]      — direct download URL for the macOS update .zip
-//                               (MacUpdater installs only from a zip)
+//                               (MacUpdater installs only from a zip; arm64)
+//   UPDATE_URL_MAC_X64[_<C>], UPDATE_SHA512_MAC_X64[_<C>], UPDATE_SIZE_MAC_X64[_<C>]
+//                             — the Intel (x64) Mac zip, a second `files:` entry;
+//                               MacUpdater picks by arch (a URL with "arm64" is
+//                               never installed on an Intel Mac). Desktop builds
+//                               on Intel send ?arch=x64 and get 404 until it is set.
 //   UPDATE_URL_WIN[_<C>]      — direct download URL for the Windows .exe
 //   UPDATE_SHA512_MAC[_<C>]   — SHA-512 (base64) of the macOS artifact
 //   UPDATE_SHA512_WIN[_<C>]   — SHA-512 (base64) of the Windows artifact
