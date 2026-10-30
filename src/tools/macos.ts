@@ -537,6 +537,10 @@ export const osType: ToolDefinition = {
         if (!input.key && !input.combo && /^(return|enter|escape|esc|tab)$/.test(keyWord)) {
             input = { ...input, key: keyWord === "esc" ? "escape" : keyWord, text: undefined };
         }
+        // key: "command+c" is a shortcut, not a key name.
+        if (typeof input.key === "string" && input.key.includes("+") && !input.combo) {
+            input = { ...input, combo: input.key, key: undefined };
+        }
         // ...and "cmd+space" / "command+n" as text means the shortcut.
         if (!input.key && !input.combo && /^((cmd|command|ctrl|control|alt|option|shift)\+)+[a-z0-9]+$/.test(keyWord)) {
             input = { ...input, combo: keyWord, text: undefined };

@@ -792,6 +792,9 @@ export function resolveHomePath(p: string): string {
     return existsSync(mine) ? mine : p;
 }
 
+// What find_files returned last: open_in_app uses it when a model retypes the path wrong.
+let lastFound: string[] = [];
+
 // Folders that are almost never what someone means by "find my file".
 const FIND_NOISE = /\/(Library|node_modules|\.git|\.Trash|\.cache|\.npm|DerivedData)\//;
 
@@ -860,6 +863,7 @@ export const findFiles: ToolDefinition = {
                     (a, b) =>
                         Number(b.inFolder) - Number(a.inFolder) || Number(b.mine) - Number(a.mine) || b.mtime - a.mtime,
                 );
+            lastFound = hits.slice(0, limit).map((h) => h.p);
             return JSON.stringify({
                 success: true,
                 total: hits.length,
@@ -902,7 +906,14 @@ export const openInApp: ToolDefinition = {
     async handler(input) {
         // Fallback: LLMs often send "path" since other file tools use that param name
         const raw = (input.target || input.path || input.url) as string | undefined;
-        const target = raw && !/^[a-z][\w+.-]+:/i.test(raw) ? resolveHomePath(raw) : raw; // URLs pass as-is
+        let target = raw && !/^[a-z][\w+.-]+:/i.test(raw) ? resolveHomePath(raw) : raw; // URLs pass as-is
+        // A path that isn't there, but exactly one file just found has that name: the model
+        // retyped it wrong (found ~/Desktop/Bhai/CLAUDE.md, opened "~/Bhai/CLAUDE.md").
+        let corrected: string | undefined;
+        if (target?.startsWith("/") && !existsSync(target)) {
+            const same = lastFound.filter((p) => basename(p) === basename(target as string));
+            if (same.length === 1) [corrected, target] = [target, same[0]];
+        }
         const app = input.app as string | undefined;
 
         if (!target) {
@@ -917,6 +928,7 @@ export const openInApp: ToolDefinition = {
             return JSON.stringify({
                 success: true,
                 opened: target,
+                ...(corrected ? { note: `${corrected} doesn't exist; opened the file you found: ${target}` } : {}),
                 app: app || "default",
             });
         } catch (err) {

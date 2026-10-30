@@ -456,7 +456,7 @@ export const browserSwitchTab: ToolDefinition = {
         function: {
             name: "browser_switch_tab",
             description:
-                "Switch to a different browser tab by index (0-based), open a new tab (with optional URL), or close the active tab. Use this to manage multiple tabs.",
+                "Switch to a different browser tab by index (0-based), open a new tab (with optional URL), or close a tab — close_active: true closes the tab you are on. This is how to close a browser tab: never a keyboard shortcut (Cmd+W hits whatever app is in front).",
             parameters: {
                 type: "object",
                 properties: {
@@ -615,7 +615,8 @@ export const browserClose: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_close",
-            description: "Close the browser completely (all tabs). The browser will restart on next use.",
+            description:
+                "Close Bhai's browser (all its tabs; it restarts on next use). In the owner's own Chrome it closes only the tab Bhai is on, never their Chrome.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -625,6 +626,11 @@ export const browserClose: ToolDefinition = {
     },
     async handler() {
         try {
+            // The owner's Chrome isn't Bhai's to close: there, "close the browser" closes
+            // Bhai's tab. (getBrowser() here launched a separate Playwright browser just to
+            // close it, or failed outright.)
+            await getActiveBackend();
+            if (getCurrentMode() === "chrome") return await switchTabInChrome({ close_active: true });
             const context = await getBrowser();
             await context.close();
             resetBrowserContext(); // null out the module-level ref so getBrowser() creates a fresh context

@@ -738,7 +738,7 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Settings, permissions and machine state ("give zoom access to my camera", "battery")
     {
         pattern:
-            /\b(disk space|free space|storage|ram|memory usage|cpu|uptime|(dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
+            /\b(clipboard|disk space|free space|storage|ram|memory usage|cpu|uptime|(dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
         category: "system_controls",
         minScore: 0.7,
     },
