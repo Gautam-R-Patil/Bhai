@@ -619,9 +619,10 @@ const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => 
     browser_save_strategy: (a) => `💾 Saving strategy: "${a.task_pattern || ""}"`,
     write: (a) => `📝 Writing file: ${a.file_path || ""}`,
     edit: (a) => `✏️  Editing: ${a.file_path || ""}`,
-    read: (a) => `📖 Reading: ${a.file_path || ""}`,
+    // A saved tool output's path is internal (data/tool-outputs/turn-…/x-toolu_….txt): say what it is.
+    read: (a) => (/[\\/]tool-outputs[\\/]/.test(String(a.file_path)) ? "📖 Reading the rest of it" : `📖 Reading: ${a.file_path || ""}`),
     append_file: (a) => `➕ Appending to: ${a.file_path || ""}`,
-    grep: (a) => `🔎 Searching: "${a.pattern || ""}"`,
+    grep: (a) => `🔎 Searching for: ${String(a.pattern || "").substring(0, 40)}`,
     glob: (a) => `📂 Finding files: "${a.pattern || ""}"`,
     memory_store: (a) => `🧠 Remembering: "${((a.content as string) || "").substring(0, 40)}"`,
     browser_parallel_tabs: (a) =>
