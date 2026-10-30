@@ -340,10 +340,14 @@ export const osClick: ToolDefinition = {
 
         const action = (input.action as string) || "click";
         const useRaw = input.raw as boolean;
-        const pctX = input.percent_x as number | undefined;
-        const pctY = input.percent_y as number | undefined;
-        const rawX = input.x as number | undefined;
-        const rawY = input.y as number | undefined;
+        // x/y both strictly between 0 and 1 are fractions put in the pixel fields (seen from
+        // gpt-4.1-nano: x=0.614 clicked pixel 1,1, the Apple menu corner). No pixel is there.
+        const inUnit = (v: unknown) => typeof v === "number" && v > 0 && v < 1;
+        const fractions = input.percent_x === undefined && inUnit(input.x) && inUnit(input.y);
+        const pctX = (fractions ? input.x : input.percent_x) as number | undefined;
+        const pctY = (fractions ? input.y : input.percent_y) as number | undefined;
+        const rawX = (fractions ? undefined : input.x) as number | undefined;
+        const rawY = (fractions ? undefined : input.y) as number | undefined;
 
         // Validate: must have either pixel coords or percentage coords
         const hasPercent = typeof pctX === "number" && typeof pctY === "number";
