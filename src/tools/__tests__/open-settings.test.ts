@@ -17,6 +17,9 @@ describe.skipIf(!existsSync("/System/Library/ExtensionKit/Extensions"))("resolve
         ["accessibility access", "PrivacySecurity.extension?Privacy_Accessibility"],
         ["camera", "PrivacySecurity.extension?Privacy_Camera"],
         ["full disk access", "PrivacySecurity.extension?Privacy_AllFiles"],
+        // gpt-4.1-nano wrote a path (model-ladder eval)
+        ["privacy/camera", "PrivacySecurity.extension?Privacy_Camera"],
+        ["Privacy & Security > Microphone", "PrivacySecurity.extension?Privacy_Microphone"],
     ])("%s", async (pane, expected) => {
         expect(await resolveSettingsUrl(pane)).toContain(expected);
     });

@@ -1109,6 +1109,17 @@ export async function listSettingsPanes(): Promise<{ id: string; key: string }[]
 
 /** Resolve a spoken pane name ("wifi", "camera access", "dark mode") to an x-apple.systempreferences URL. */
 export async function resolveSettingsUrl(pane: string): Promise<string | null> {
+    // Models also write paths: "privacy/camera", "Privacy & Security > Camera". The most
+    // specific (last) part that names a pane wins, then the whole name.
+    const parts = pane.split(/\s*(?:\/|>|→|»|,|\s-\s)\s*/).filter(Boolean);
+    for (const part of parts.length > 1 ? [...parts.reverse(), pane] : [pane]) {
+        const hit = await resolveOne(part);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+async function resolveOne(pane: string): Promise<string | null> {
     const want = norm(pane.replace(/\b(settings?|preferences?|pane|access|permissions?)\b/gi, ""));
     if (!want) return "x-apple.systempreferences:";
     const panes = await listSettingsPanes();

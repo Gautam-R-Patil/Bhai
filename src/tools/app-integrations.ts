@@ -104,14 +104,62 @@ tell application "System Events" to tell process "Music"
     return "no_row"
 end tell`);
     if (pressed !== "ok") return { error: "the song page did not load in Music" };
-    for (let i = 0; i < 15; i++) {
+    // Up to ~5s: a cold catalog stream can take that long. Music may title the track a
+    // little differently from the search API ("Starboy" vs "Starboy (feat. Daft Punk)").
+    const want = hit.trackName.toLowerCase();
+    for (let i = 0; i < 25; i++) {
         await new Promise((r) => setTimeout(r, 200));
-        const now = await runAS(
-            `tell application "Music" to if player state is playing then return name of current track`,
-        ).catch(() => "");
-        if (now.toLowerCase() === hit.trackName.toLowerCase()) return { track: hit.trackName, artist: hit.artistName };
+        const playing = `tell application "Music" to if player state is playing then return name of current track`;
+        const now = (await runAS(playing).catch(() => "")).toLowerCase();
+        if (now && (now.includes(want) || want.includes(now))) return { track: hit.trackName, artist: hit.artistName };
     }
     return { error: `opened "${hit.trackName}" but it did not start (Apple Music subscription needed?)` };
+}
+
+/**
+ * What an app shows once it's in front: its front window, or that it has none yet, and
+ * any dialog blocking input with its text and buttons. Without this, models typed into
+ * TextEdit's file picker, or into an unsaved-changes alert, and reported success.
+ * Waits up to ~2s for a just-launched app's first window.
+ */
+const WINDOW_BUTTONS = /^(close|minimize|full screen|zoom)$/i;
+async function describeWindows(pid: number): Promise<Record<string, unknown>> {
+    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+    type Node = import("../screen/ax-dump.js").AxNode;
+    for (let i = 0; i < 5; i++) {
+        const dump = await dumpAccessibilityTree({ pid, depth: 6, timeoutMs: 3000, budgetMs: 1500 }).catch(() => null);
+        if (!dump || dump.error) return {};
+        const windows = dump.root.children.filter((n) => n.role === "AXWindow");
+        if (!windows.length) {
+            await new Promise((r) => setTimeout(r, 250));
+            continue;
+        }
+        const collect = (n: Node, role: string, out: string[]) => {
+            const t = (role === "AXButton" ? n.label : n.value || n.label)?.trim();
+            if (n.role === role && t && !out.includes(t) && out.length < 6) out.push(t.slice(0, 120));
+            for (const c of n.children) collect(c, role, out);
+            return out;
+        };
+        // Alerts, sheets, and the standard file panels (TextEdit opens on its Open panel).
+        const dialog =
+            windows.find((w) => w.subrole === "AXDialog" || w.subrole === "AXSystemDialog") ??
+            windows[0].children.find((c) => c.role === "AXSheet") ??
+            (/^(open|save|save as|export|print)$/i.test(windows[0].label ?? "") ? windows[0] : undefined);
+        return {
+            window: windows[0].label || "(untitled)",
+            ...(dialog
+                ? {
+                      dialog: {
+                          title: dialog.label || undefined,
+                          text: collect(dialog, "AXStaticText", []),
+                          buttons: collect(dialog, "AXButton", []).filter((b) => !WINDOW_BUTTONS.test(b)),
+                      },
+                      note: "A dialog is in front and takes the input: handle it first (click one of its buttons, or press escape to cancel it).",
+                  }
+                : {}),
+        };
+    }
+    return { window: null, note: "The app has no window yet: open one (e.g. os_type combo='command+n')." };
 }
 
 export const musicControl: ToolDefinition = {
@@ -1177,6 +1225,7 @@ end tell`);
                             app,
                             frontmost: front.name,
                             pid: front.pid,
+                            ...(await describeWindows(front.pid)),
                         });
                     }
                     return JSON.stringify({ success: true, action: "activate", app });
