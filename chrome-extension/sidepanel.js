@@ -246,6 +246,7 @@ function renderChat(chat) {
   const rows = thread.querySelectorAll('.bhai .followups');
   rows.forEach((r, i) => { r.hidden = i !== rows.length - 1 || chat[chat.length - 1]?.role !== 'bhai'; });
   $('welcome').hidden = chat.length > 0;
+  $('btnNew').hidden = chat.length === 0;
   if (arriving && newest?.classList.contains('bhai') && newest.offsetHeight > thread.clientHeight * 0.6) {
     thread.scrollTop = newest.offsetTop - 12;
   } else {
@@ -311,18 +312,8 @@ async function refreshTab() {
   }
   activeTab = tab;
   extraTabs.delete(tab.id); // the current tab is shared as itself
-  const sharable = /^(https?|file):/.test(tab.url || '');
   renderSharing();
   renderSuggestions();
-  const title = $('welcomeTitle');
-  title.replaceChildren();
-  if (sharable && host(tab.url)) {
-    const b = document.createElement('b');
-    b.textContent = host(tab.url);
-    title.append("Hey, I'm looking at ", b, ' with you.');
-  } else {
-    title.append("Hey, I'm right here with you.");
-  }
 }
 
 function renderSelection() {
@@ -358,7 +349,16 @@ function sharedTabs() {
 function renderSharing() {
   const tabs = sharedTabs();
   const canShareActive = sharableTab(activeTab);
-  $('sharing').hidden = !tabs.length && !canShareActive;
+  // The current tab is shared by default; the row only appears when there's more to say.
+  $('sharing').hidden = !extraTabs.size && (shareTab || !canShareActive);
+  const toggle = $('tabToggle');
+  toggle.hidden = !canShareActive;
+  if (canShareActive) {
+    toggle.replaceChildren(favicon(activeTab));
+    toggle.setAttribute('aria-pressed', String(shareTab));
+    toggle.title = shareTab ? `Bhai sees ${host(activeTab.url) || 'this tab'}. Click to stop sharing it.` : `Not sharing ${host(activeTab.url) || 'this tab'}. Click to share it.`;
+    toggle.setAttribute('aria-label', toggle.title);
+  }
   $('shareLabel').textContent = !tabs.length
     ? 'Not sharing any tab'
     : tabs.length === 1 && tabs[0] === activeTab ? 'Sharing this tab' : `Sharing ${tabs.length} tab${tabs.length === 1 ? '' : 's'}`;
@@ -411,14 +411,14 @@ function suggestionsFor(tab) {
   const ask = (label, text, ic = 'ask') => ({ label, ic, run: () => sendMessage({ type: 'send_message', text }) });
   const summary = { label: 'Summarize this page', ic: 'doc', run: () => sendMessage({ type: 'send_page', question: 'Summarize this page for me.', display: 'Summarize this page' }) };
   const explain = { label: "Explain what's here", ic: 'ask', run: () => sendMessage({ type: 'send_selection', question: 'Explain this simply.' }) };
-  const draw = { label: 'Circle something and ask about it', ic: 'pen', run: startDrawing };
+  const draw = { label: 'Circle something to ask about', ic: 'pen', run: startDrawing };
   if (/youtube\.com$/.test(h) && path.startsWith('/watch')) {
     return [ask('Summarize this video', 'Summarize this video for me.', 'doc'), ask('What are the key points?', 'What are the key points of this video?'), draw];
   }
   if (h === 'github.com') {
     return [ask('Explain this repo', 'Explain what this repo is and how it is organised.', 'doc'), ask('What changed recently?', 'What changed recently here?'), draw];
   }
-  if (h === 'mail.google.com') {
+  if (h === 'mail.google.com' || /^(mail|webmail)\./.test(h) || /(^|\.)(outlook\.(live|office)\.com|mail\.yahoo\.com|proton\.me)$/.test(h)) {
     return [ask('Summarize this email', 'Summarize this email for me.', 'doc'), ask('Draft a reply', 'Draft a reply to this email. Show it to me before sending.'), draw];
   }
   if (h === 'docs.google.com') {
@@ -437,14 +437,12 @@ function renderSuggestions() {
   const list = $('suggest');
   list.replaceChildren();
   for (const [i, sgt] of suggestionsFor(activeTab).entries()) {
-    const li = document.createElement('li');
-    li.style.setProperty('--i', i);
     const b = document.createElement('button');
-    b.append(icon(sgt.ic, 17), document.createTextNode(sgt.label));
+    b.style.setProperty('--i', i);
+    b.textContent = sgt.label;
     b.disabled = !canChat;
     b.addEventListener('click', sgt.run);
-    li.append(b);
-    list.append(li);
+    list.append(b);
   }
 }
 
@@ -685,6 +683,10 @@ $('btnAt').addEventListener('click', () => {
   input.setSelectionRange(pos + pad.length + 1, pos + pad.length + 1);
   updateMenu();
 });
+$('tabToggle').addEventListener('click', () => {
+  shareTab = !shareTab;
+  renderSharing();
+});
 $('shareHead').addEventListener('click', () => {
   shareOpen = !shareOpen;
   renderSharing();
@@ -732,18 +734,6 @@ chrome.tabs.onUpdated.addListener((id, info) => { if (id === activeTab?.id && (i
 async function refresh() {
   renderStatus(await send({ type: 'get_status' }));
 }
-
-chrome.commands?.getAll?.().then((cmds) => {
-  const keys = cmds?.find((c) => c.name === '_execute_action')?.shortcut || '';
-  const hint = $('shortcutHint');
-  if (!keys) { hint.hidden = true; return; }
-  hint.replaceChildren('Open Bhai from any tab with ');
-  for (const k of keys.includes('+') ? keys.split('+') : [...keys]) {
-    const kbd = document.createElement('kbd');
-    kbd.textContent = k;
-    hint.append(kbd, ' ');
-  }
-}).catch(() => {});
 
 send({ type: 'get_chat' }).then((resp) => renderChat(resp?.chat || []));
 refreshTab();
