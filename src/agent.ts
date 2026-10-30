@@ -3002,7 +3002,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // injection (and into overnight dream-replay), defeating the
             // boundary sanitizer.
             if (ownerTurn) {
-                appendTurn("user", safeUserMessage);
+                // The owner's words only: the channel notes ([SOURCE: …], [BROWSER CONTEXT: …]
+                // with a page-written tab title) rode along into every later ACTIVE SESSION.
+                appendTurn("user", sanitizeUntrustedContent(rawUserMessage));
                 trackSessionForAnticipation();
             }
         }
