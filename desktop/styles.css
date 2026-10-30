@@ -9,8 +9,7 @@
 :root {
     /* ════════════════════════════════════════════════════════════════
        LEGACY PANEL TOKENS — warm-glass aesthetic for panel.html,
-       channels.html, pages/under-the-hood.html and any non-wizard
-       surface. DO NOT REMOVE these — the panel UI is built on them
+       channels.html and any non-wizard surface. DO NOT REMOVE these — the panel UI is built on them
        (every var(--accent-primary), var(--orb-*), var(--glass-*),
        var(--text-*) reference resolves here). Adding/changing tokens
        here is fine; deleting any is a regression.
@@ -3037,7 +3036,7 @@ body:not(.theme-dark) .copy-manifest-btn { background: rgba(0,0,0,0.06); color: 
 body:not(.theme-dark) .copy-manifest-btn:hover { background: rgba(0,0,0,0.1); }
 /* Resets/typography for the cinematic wizard pages only (those that set
    <body data-step="...">). Avoids leaking into panel.html, channels.html,
-   pages/under-the-hood.html, and any legacy page that loads this stylesheet. */
+   and any legacy page that loads this stylesheet. */
 body[data-step] * { box-sizing: border-box; }
 body[data-step], body[data-step] html { margin: 0; padding: 0; min-height: 100vh; }
 body[data-step] {

@@ -256,37 +256,44 @@ async function boot() {
         // include a display name in its identity payload, so without this
         // the admin panel renders every user as "Unnamed User".
         // upsertAccountInternal is a no-op when the value already matches,
-        // so this is safe to call on every boot.
-        try {
-            const { syncAccountNameIfPresent } = await import("./setup/account-name-sync.js");
-            const r = await syncAccountNameIfPresent({
-                userDataDir: process.env.ATLAS_USER_DATA_DIR,
-                dataDir: process.env.ATLAS_DATA_DIR,
-            });
-            if (r.ran) {
-                console.log(`👤 Account name synced to server: ${r.name}`);
-            } else if (r.reason === "push-failed") {
-                console.warn("[account-name-sync] push failed:", r.error);
-            }
-        } catch (err) {
-            console.warn("[account-name-sync] non-fatal error:", (err as Error).message);
-        }
+        // so this is safe to call on every boot. Not awaited: a slow network
+        // must not hold up boot, and nothing below reads the result.
+        void import("./setup/account-name-sync.js")
+            .then(({ syncAccountNameIfPresent }) =>
+                syncAccountNameIfPresent({
+                    userDataDir: process.env.ATLAS_USER_DATA_DIR,
+                    dataDir: process.env.ATLAS_DATA_DIR,
+                }),
+            )
+            .then((r) => {
+                if (r.ran) {
+                    console.log(`👤 Account name synced to server: ${r.name}`);
+                } else if (r.reason === "push-failed") {
+                    console.warn("[account-name-sync] push failed:", r.error);
+                }
+            })
+            .catch((err) => console.warn("[account-name-sync] non-fatal error:", (err as Error).message));
 
         // Sync user-chosen personality preset to server addendum
         // (slug: "user-personality"). Idempotent — renames source after push.
         try {
-            const { syncPersonalityIfPresent } = await import("./setup/personality-sync.js");
-            const r = await syncPersonalityIfPresent({
+            const { syncPersonalityIfPresent, watchPersonalityFile, loadActivePreset } = await import(
+                "./setup/personality-sync.js"
+            );
+            // Not awaited, like the account name above.
+            void syncPersonalityIfPresent({
                 userDataDir: process.env.ATLAS_USER_DATA_DIR,
                 dataDir: process.env.ATLAS_DATA_DIR,
-            });
-            if (r.ran) {
-                console.log(`🎨 Personality preset synced to server (v${r.version})`);
-            } else if (r.reason && r.reason !== "no-file") {
-                console.warn(`[personality-sync] ${r.reason}${r.error ? `: ${r.error}` : ""}`);
-            }
+            })
+                .then((r) => {
+                    if (r.ran) {
+                        console.log(`🎨 Personality preset synced to server (v${r.version})`);
+                    } else if (r.reason && r.reason !== "no-file") {
+                        console.warn(`[personality-sync] ${r.reason}${r.error ? `: ${r.error}` : ""}`);
+                    }
+                })
+                .catch((err) => console.warn("[personality-sync] non-fatal:", (err as Error).message));
             // Later Settings changes apply on the next message, not the next boot.
-            const { watchPersonalityFile, loadActivePreset } = await import("./setup/personality-sync.js");
             loadActivePreset({ userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR });
             watchPersonalityFile(
                 { userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR },

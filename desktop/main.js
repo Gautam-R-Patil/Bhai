@@ -141,6 +141,12 @@ const OVERLAY_MAX_HEIGHT = 600;
 const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
+// Shown while the bot boots; the ##ATLAS_READY## reload swaps in the real overlay.
+const OVERLAY_SPLASH =
+    "data:text/html," +
+    encodeURIComponent(
+        `<meta charset="utf-8"><style>:root{--bg-panel:rgba(252,251,249,.97);color:#1d1d1f}@media(prefers-color-scheme:dark){:root{--bg-panel:rgba(30,28,26,.97);color:#f5f5f7}}body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;font:500 15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif}</style>Bhai is waking up…`,
+    );
 // The overlay page embeds the owner token only for a request that proves it holds it
 // (src/overlay/overlay-chat.ts): this app's own requests add it, read from the 0600 file
 // the bot writes, so another local process or a browser tab opening the page gets none.
@@ -1241,6 +1247,22 @@ function getBotStatus() {
     return isAlive(botProcess) ? "running" : "stopped";
 }
 
+// The bot's boot probe found Accessibility or Screen Recording not working (a stale
+// grant macOS still reports as granted, or a revoked one): say so once per app run.
+let permsNotice = null; // kept referenced so its click handler survives GC
+function notifyBrokenPermission(p) {
+    const name = !p.accessibility ? "accessibility" : !p.screen ? "screen" : null;
+    const { Notification } = require("electron");
+    if (!name || permsNotice || !Notification.isSupported()) return;
+    const { prefPaneUrlFor } = require("./components/permissions-grid");
+    permsNotice = new Notification({
+        title: "Bhai",
+        body: `${name === "accessibility" ? "Accessibility" : "Screen Recording"} looks off. Click to fix.`,
+    });
+    permsNotice.on("click", () => shell.openExternal(prefPaneUrlFor(name)).catch(() => {}));
+    permsNotice.show();
+}
+
 async function startBot() {
     if (stopPromise) await stopPromise; // never run two bots at once
     if (isAlive(botProcess)) return { status: "already_running" };
@@ -1385,6 +1407,8 @@ async function startBot() {
             }
             const cvv = line.match(/^##BHAI_VAULT_CVV##(\{.*\})\s*$/);
             if (cvv) { try { askCvv(JSON.parse(cvv[1])); } catch { /* malformed line */ } continue; }
+            const perms = line.match(/^##ATLAS_PERMS##(\{.*\})\s*$/);
+            if (perms) { try { notifyBrokenPermission(JSON.parse(perms[1])); } catch { /* malformed line */ } continue; }
             const m = line.match(/^##BHAI_BUDDY##(\{.*\})\s*$/);
             if (!m) { rest.push(line); continue; }
             try { handleBuddyStatus(JSON.parse(m[1])); } catch { /* malformed line */ }
@@ -2043,6 +2067,7 @@ function createOverlayWindow() {
             // Bot server not up yet: the bot's ##ATLAS_READY## line reloads it the
             // moment it listens; this slower retry is only a fallback.
             overlayLoadFailed = true;
+            overlayWindow.loadURL(OVERLAY_SPLASH);
             setTimeout(() => {
                 if (overlayLoadFailed && overlayWindow && !overlayWindow.isDestroyed()) {
                     overlayLoadFailed = false;
@@ -2100,19 +2125,18 @@ function createOverlayWindow() {
 
 function showOverlay() {
     // The chat UI is served by the bot. If it isn't running, start it (when
-    // signed in) and say so, instead of opening a blank, endlessly retrying window.
+    // signed in) and show the overlay's splash until it listens.
     if (!botProcess) {
-        const { Notification } = require("electron");
         const signedIn = !!(loadAccountSession() || {}).userId;
-        if (signedIn) startBot().catch((err) => console.error("[OVERLAY] Auto-start failed:", err.message));
-        if (Notification.isSupported()) {
-            new Notification({
-                title: "Bhai",
-                body: signedIn ? "Bhai is starting — press the shortcut again in a few seconds." : "Open Bhai and sign in to start chatting.",
-            }).show();
+        if (!signedIn) {
+            const { Notification } = require("electron");
+            if (Notification.isSupported()) {
+                new Notification({ title: "Bhai", body: "Open Bhai and sign in to start chatting." }).show();
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+            return;
         }
-        if (!signedIn && mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
-        return;
+        startBot().catch((err) => console.error("[OVERLAY] Auto-start failed:", err.message));
     }
 
     hideBuddy(); // the overlay has its own mascot
@@ -4476,12 +4500,18 @@ function registerIPC() {
     });
 
     // Setup: request an OS permission by opening the correct Preferences pane.
+    // macOS lists the app under Microphone/Accessibility only once it has asked,
+    // so ask first: the prompt comes from the tile the user just clicked.
     // Non-darwin is a no-op returning {ok:true, skipped:true}.
     ipcMain.handle("setup:request-permission", async (_evt, name) => {
         if (process.platform !== "darwin") return { ok: true, skipped: true };
         const { prefPaneUrlFor } = require("./components/permissions-grid");
         const url = prefPaneUrlFor(name);
         if (!url) return { ok: false, error: "unknown permission: " + String(name) };
+        if (name === "microphone" && systemPreferences.getMediaAccessStatus("microphone") === "not-determined") {
+            return { ok: await systemPreferences.askForMediaAccess("microphone") };
+        }
+        if (name === "accessibility") systemPreferences.isTrustedAccessibilityClient(true);
         try { await shell.openExternal(url); return { ok: true }; }
         catch (err) { return { ok: false, error: err.message || String(err) }; }
     });
@@ -6632,28 +6662,13 @@ app.whenReady().then(async () => {
     setupAutoUpdater();
     createTray();
 
-    // Request microphone permission (macOS requires explicit ask)
-    if (process.platform === "darwin") {
-        try {
-            const micStatus = systemPreferences.getMediaAccessStatus("microphone");
-            if (micStatus !== "granted") {
-                console.log("[PERMISSIONS] Requesting microphone access...");
-                const granted = await systemPreferences.askForMediaAccess("microphone");
-                console.log(`[PERMISSIONS] Microphone: ${granted ? "granted" : "denied"}`);
-            } else {
-                console.log("[PERMISSIONS] Microphone: already granted");
-            }
-        } catch (err) {
-            console.warn("[PERMISSIONS] Microphone permission request failed:", err.message);
-        }
-    }
-
     // Clean old log files on startup (keeps only last 3 days)
     cleanOldLogs();
 
-    // Check accessibility permission on macOS (required for global shortcuts)
+    // Check accessibility permission on macOS (required for global shortcuts).
+    // Log only: the prompt comes from the wizard / Ready Hub permission tiles.
     if (process.platform === "darwin") {
-        const trusted = systemPreferences.isTrustedAccessibilityClient(true); // true = prompt if not trusted
+        const trusted = systemPreferences.isTrustedAccessibilityClient(false);
         if (!trusted) {
             console.warn("[SHORTCUT] ⚠️ Accessibility permission not granted — global shortcuts may not work. Grant permission in System Settings > Privacy & Security > Accessibility.");
         }

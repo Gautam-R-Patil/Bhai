@@ -115,6 +115,9 @@ export async function probeAndLogMacPermissions(): Promise<MacPermissionState> {
         return state;
     }
 
+    // The desktop app turns this into a "click to fix" notification: macOS can report a
+    // stale grant as granted, so the app can't see this on its own.
+    console.log(`##ATLAS_PERMS##${JSON.stringify({ accessibility: axOk, screen: srOk })}`);
     console.warn("⚠️  [permissions] One or more macOS permissions missing — vision-nav will degrade:");
     if (!axOk) {
         console.warn(`   ✗ Accessibility / Apple Events: ${state.appleScript.reason}`);

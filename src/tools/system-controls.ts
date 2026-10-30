@@ -440,19 +440,12 @@ export const systemInfo: ToolDefinition = {
                 }
                 return null;
             }),
-            // Wi-Fi
-            execFileAsync(
-                "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport",
-                ["-I"],
-                { timeout: 3000 },
-            ).then(({ stdout }) => {
-                const ssidMatch = stdout.match(/\s+SSID:\s+(.+)/);
-                const signalMatch = stdout.match(/agrCtlRSSI:\s+(-?\d+)/);
-                return {
-                    ssid: ssidMatch?.[1]?.trim() || "disconnected",
-                    signal_dbm: signalMatch ? parseInt(signalMatch[1]) : null,
-                };
-            }),
+            // Wi-Fi (the old airport -I tool is gone from current macOS)
+            macWifi().then((w) => ({
+                connected: w.connected,
+                ssid: w.ssid,
+                ...(w.nameHidden && { note: WIFI_NAME_HIDDEN_HINT }),
+            })),
             // Uptime
             execFileAsync("uptime", [], { timeout: 3000 }).then(({ stdout }) => {
                 const match = stdout.match(/up\s+(.+?),\s+\d+\s+user/);

@@ -58,6 +58,7 @@
             "!build/**",
             "!tests/**",
             "!demo/**",
+            "!onboarding-demo/**",
             "!**/*.test.js",
             "!**/*.spec.js",
             "!**/*.test.ts",
