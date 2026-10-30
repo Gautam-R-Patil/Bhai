@@ -103,7 +103,9 @@ export function mergeStoredMessages(storedJson: string, messages: unknown[]): un
 
 const REFLECTION_SUMMARY_INSTRUCTION = `You are a JSON-only summarizer. Input: a session transcript provided in the user message.
 Output: a concise factual summary (50–150 tokens) returning ONLY valid JSON:
-{"summary":"...", "highlights":["...", "..."]}
+{"summary":"...", "highlights":["...", "..."], "lasting": true}
+
+"lasting": true only when the session holds something worth recalling in a later conversation — a decision, plan, preference, project, commitment, personal fact or unfinished task. false when it was only one-off lookups or chit-chat (the time, weather, arithmetic, a quick fact, a test).
 
 Do NOT include any text outside the JSON object. Output valid JSON only, no markdown, no explanation.`;
 
@@ -199,6 +201,8 @@ export const v4Fallback = generateUUID;
 interface ReflectionSummary {
     summary: string;
     highlights: string[];
+    /** Worth recalling later; false = one-off lookups (kept in the transcript archive only). */
+    lasting?: boolean;
 }
 
 interface TraitSignal {
@@ -266,9 +270,15 @@ export async function runReflection(
         // ── 2. Summarize the session ──────────────
         const summary = await extractSummary(llm, reflectionInput);
         if (summary) {
-            remember(summary.summary, "session_summary", "reflection,session", 6, "reflection");
-            signedAuditLog("session_summary_stored", { length: summary.summary.length });
-            console.log(`[MEMORY][REFLECTION] Summary stored (${summary.summary.length} chars)`);
+            // A session of one-off lookups (time, weather, sums) isn't a memory: it went in at
+            // importance 6 and crowded recall. Its transcript and summary still go to the archive.
+            if (summary.lasting !== false) {
+                remember(summary.summary, "session_summary", "reflection,session", 6, "reflection");
+                signedAuditLog("session_summary_stored", { length: summary.summary.length });
+                console.log(`[MEMORY][REFLECTION] Summary stored (${summary.summary.length} chars)`);
+            } else {
+                console.log("[MEMORY][REFLECTION] Summary not kept as a memory: nothing lasting in this session");
+            }
 
             // ── 2b. Persist to conversations table ──
             try {
