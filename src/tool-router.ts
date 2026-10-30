@@ -24,7 +24,10 @@
 //   6. Usage patterns are tracked to improve future selections
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import { getDataDir } from "./config/paths.js";
 import { getDimensionValue } from "./harness/registry.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
@@ -40,6 +43,7 @@ import {
 } from "./tool-router-analytics.js";
 import { getDynamicToolSchemas } from "./tools/create-tool.js";
 import { getToolSchemas } from "./tools/index.js";
+import { atomicJsonWrite } from "./utils/atomic-io.js";
 import { extractJSON } from "./utils/json-extract.js";
 
 // ── Types ─────────────────────────────────────
@@ -1130,6 +1134,45 @@ const REQUEST_TOOLS_SCHEMA: ChatCompletionTool = {
 
 // ── Boot: Pre-compute Category + MCP Embeddings ─────
 
+const CATEGORY_CACHE_PROBE = "Bhai tool router category cache probe";
+
+/**
+ * The category vectors, from the disk cache when the descriptions and the model are the same
+ * as when it was written. The model check is a probe: one fixed text embedded now must give
+ * the stored vector back, so any change to the model (or its runtime) re-embeds everything.
+ */
+async function embedCategoryDescriptions(descriptions: string[]): Promise<Float32Array[]> {
+    const emb = await import("./memory/embeddings.js");
+    const file = path.join(getDataDir(), "tool-router-categories.json");
+    let fresh: { key: string; probe: Float32Array } | null = null;
+    try {
+        const model = [emb.getActiveEmbeddingModel().modelName, emb.getActiveDim(), emb.getEffectiveDimension()];
+        const key = createHash("sha256")
+            .update(JSON.stringify([model, descriptions]))
+            .digest("hex");
+        const [probe] = await emb.embedBatch([CATEGORY_CACHE_PROBE]);
+        fresh = { key, probe };
+        const cached = JSON.parse(fs.readFileSync(file, "utf8")) as {
+            key: string;
+            probe: number[];
+            vectors: number[][];
+        };
+        const sameProbe =
+            cached.probe.length === probe.length && cached.probe.every((x, i) => Math.abs(x - probe[i]) < 1e-6);
+        if (cached.key === key && sameProbe && cached.vectors.length === descriptions.length) {
+            return cached.vectors.map((v) => Float32Array.from(v));
+        }
+    } catch {
+        /* no cache yet, or unreadable: embed (fail-open) */
+    }
+    const vectors = await emb.embedBatch(descriptions);
+    if (fresh) {
+        const data = { key: fresh.key, probe: [...fresh.probe], vectors: vectors.map((v) => [...v]) };
+        atomicJsonWrite(file, data, { indent: 0 }).catch(() => {});
+    }
+    return vectors;
+}
+
 export async function initToolRouter(): Promise<void> {
     if (embeddingsReady) return;
     if (initPromise) return initPromise;
@@ -1155,7 +1198,7 @@ export async function initToolRouter(): Promise<void> {
             const descriptions = categoryNames.map((name) => CATEGORIES[name].description);
 
             console.log(`🎯 Tool Router: Embedding ${categoryNames.length} categories...`);
-            const categoryEmbeddingResults = await embedBatch(descriptions);
+            const categoryEmbeddingResults = await embedCategoryDescriptions(descriptions);
 
             for (let i = 0; i < categoryNames.length; i++) {
                 categoryEmbeddings.set(categoryNames[i], categoryEmbeddingResults[i]);
