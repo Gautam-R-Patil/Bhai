@@ -17,6 +17,9 @@ export type TurnEventSink = (e: TurnEvent) => void;
 
 type StatusEvent = Extract<TurnEvent, { type: "status" }>;
 
+/** "🔍 Searching: x" → "Searching: x": status and step text go out plain, so every surface shows the same words. */
+const plainText = (text: string) => text.replace(/^(?:\p{Extended_Pictographic}|\u200d|\ufe0f|\s)+/u, "");
+
 /** Status updates at most every `minGapMs`, but the latest one is never dropped: it goes out late or on flush. */
 export function createStatusCoalescer(
     sink: TurnEventSink,
@@ -126,7 +129,7 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
     };
     const pushStatus = (text: string, step: number, elapsedSec: number) => {
         lastStep = step;
-        status.push({ type: "status", text, step, elapsedSec });
+        status.push({ type: "status", text: plainText(text), step, elapsedSec });
     };
 
     return {
@@ -143,7 +146,7 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
         },
         step(text: string) {
             closeStep();
-            openStep = { id: ++stepId, text };
+            openStep = { id: ++stepId, text: plainText(text) };
             sink({ type: "step", ...openStep, state: "running" });
         },
         /**

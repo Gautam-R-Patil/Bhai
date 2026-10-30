@@ -133,4 +133,18 @@ describe("createTurnStream", () => {
             vi.useRealTimers();
         }
     });
+
+    it("status and step text lose a leading emoji once, at the source", () => {
+        const seen: TurnEvent[] = [];
+        const t = createTurnStream((e) => seen.push(e), { channel: "overlay", notes: false });
+        t.step("🔍 Searching: bhai news");
+        t.status("🔍 Searching: bhai news", 1, 0);
+        t.step("  ✂️ Pasting 3 items");
+        t.step("Step 2 of 3"); // plain text and leading digits stay as they are
+        expect(
+            seen.filter((e) => e.type === "step" && e.state === "running").map((e) => (e as { text: string }).text),
+        ).toEqual(["Searching: bhai news", "Pasting 3 items", "Step 2 of 3"]);
+        expect(seen.find((e) => e.type === "status")).toMatchObject({ text: "Searching: bhai news" });
+        t.end();
+    });
 });

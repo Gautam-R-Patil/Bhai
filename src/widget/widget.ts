@@ -359,7 +359,6 @@ export function getWidgetScript(wsUrl: string): string {
   }
 
   var live = null; // { state, bubble, start, statusAt, frame, tick, stepsShown, done }
-  var EMOJI_LEAD = /^[\\p{Extended_Pictographic}\\u200d\\ufe0f\\s]+/u;
 
   function liveRunning() { return !!live && !live.done; }
 
@@ -384,7 +383,7 @@ export function getWidgetScript(wsUrl: string): string {
     if (!liveRunning()) return;
     var st = live.state.status;
     var secs = Math.floor(st ? st.elapsed + (Date.now() - live.statusAt) / 1000 : (Date.now() - live.start) / 1000);
-    var text = st && st.text ? String(st.text).replace(EMOJI_LEAD, "").substring(0, 40) : "Thinking...";
+    var text = st && st.text ? String(st.text).substring(0, 40) : "Thinking...";
     statusEl.textContent = (text || "Thinking...") + " · " + (st && st.step > 0 ? "step " + st.step + " · " : "") + secs + "s";
   }
 

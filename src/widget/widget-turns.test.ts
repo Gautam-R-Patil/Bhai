@@ -219,7 +219,7 @@ describe("widget live turns", () => {
 
     it("shows the live line with its step count and the steps as text only", () => {
         send({ type: "thinking", turn: "t1" });
-        send({ type: "turn_status", turn: "t1", seq: 1, text: "💭 Searching the web", step: 2, elapsed: 7 });
+        send({ type: "turn_status", turn: "t1", seq: 1, text: "Searching the web", step: 2, elapsed: 7 });
         send({
             type: "turn_step",
             turn: "t1",
