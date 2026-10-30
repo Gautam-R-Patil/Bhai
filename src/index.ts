@@ -226,11 +226,13 @@ async function boot() {
         // Once per install: mask secrets in conversation text saved before at-rest masking.
         setImmediate(() => {
             import("./memory/at-rest-scrub.js")
-                .then(async ({ scrubSecretsAtRest }) => {
+                .then(async ({ scrubSecretsAtRest, capResearchImportance }) => {
                     const { getRawDb } = await import("./memory/sqlite.js");
                     const raw = getRawDb();
                     const n = raw ? scrubSecretsAtRest(raw) : null;
                     if (n) console.log(`🔐 Masked secrets saved before at-rest masking: ${JSON.stringify(n)}`);
+                    const capped = raw ? capResearchImportance(raw) : null;
+                    if (capped) console.log(`🧠 Research memories capped to importance 7/6: ${capped}`);
                 })
                 .catch((err) => console.warn("[memory] at-rest scrub skipped:", (err as Error).message));
             // The removed browser action cache may still hold text the model typed.

@@ -138,7 +138,11 @@ export const memoryStore: ToolDefinition = {
                         description:
                             "Comma-separated tags; person:<name> / project:<name> for the people and projects it is about",
                     },
-                    importance: { type: "number", description: "1-10 importance level (default 5)" },
+                    importance: {
+                        type: "number",
+                        description:
+                            "1-10 (default 5). 9-10 only for lasting facts about who the owner is (name, family, health, a firm rule they set); 6-8 for preferences and ongoing projects; 3-5 for a one-off task or something on hold. 8+ never fades and rides along with every reply.",
+                    },
                     supersedes: {
                         type: "number",
                         description:
