@@ -10,9 +10,12 @@ describe("fileMemo", () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "memo-"));
         const file = path.join(dir, "log.jsonl");
         let runs = 0;
-        const get = fileMemo(file, () => { runs++; return fs.existsSync(file) ? fs.readFileSync(file, "utf8").length : -1; });
+        const get = fileMemo(file, () => {
+            runs++;
+            return fs.existsSync(file) ? fs.readFileSync(file, "utf8").length : -1;
+        });
 
-        expect(get()).toBe(-1);   // missing file
+        expect(get()).toBe(-1); // missing file
         expect(get()).toBe(-1);
         expect(runs).toBe(1);
 
@@ -25,12 +28,12 @@ describe("fileMemo", () => {
         expect(get()).toBe(4);
         expect(runs).toBe(3);
 
-        fs.writeFileSync(file, "c\n");                    // same size, rewritten
+        fs.writeFileSync(file, "c\n"); // same size, rewritten
         fs.utimesSync(file, new Date(), new Date(Date.now() + 5000));
         expect(get()).toBe(2);
         expect(runs).toBe(4);
 
-        expect(get("tomorrow")).toBe(2);                   // e.g. a new day
+        expect(get("tomorrow")).toBe(2); // e.g. a new day
         expect(runs).toBe(5);
 
         fs.rmSync(file);

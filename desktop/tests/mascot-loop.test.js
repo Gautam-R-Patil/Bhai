@@ -8,7 +8,10 @@ const SRC = fs.readFileSync(path.join(__dirname, "../components/mascot.js"), "ut
 
 // A mascot page with hand-driven frames: rAF and timers are recorded, never run on their own.
 function page() {
-    const dom = new JSDOM("<!doctype html><body><div id=a></div><div id=b></div></body>", { runScripts: "outside-only", pretendToBeVisual: true });
+    const dom = new JSDOM("<!doctype html><body><div id=a></div><div id=b></div></body>", {
+        runScripts: "outside-only",
+        pretendToBeVisual: true,
+    });
     const w = dom.window;
     const raf = [];
     const timers = new Map();
@@ -16,11 +19,23 @@ function page() {
     let clock = 0;
     let widths = 100;
     let roCallback = null;
-    w.requestAnimationFrame = (cb) => { raf.push(cb); return raf.length; };
-    w.setTimeout = (cb, ms) => { timers.set(++id, { cb, ms }); return id; };
+    w.requestAnimationFrame = (cb) => {
+        raf.push(cb);
+        return raf.length;
+    };
+    w.setTimeout = (cb, ms) => {
+        timers.set(++id, { cb, ms });
+        return id;
+    };
     w.clearTimeout = (t) => timers.delete(t);
     w.performance.now = () => clock;
-    w.ResizeObserver = class { constructor(cb) { roCallback = cb; } observe() {} unobserve() {} };
+    w.ResizeObserver = class {
+        constructor(cb) {
+            roCallback = cb;
+        }
+        observe() {}
+        unobserve() {}
+    };
     Object.defineProperty(w.HTMLElement.prototype, "offsetWidth", { get: () => widths });
     Object.defineProperty(w.HTMLElement.prototype, "clientWidth", { get: () => widths });
     w.Math.random = () => 0.5;
@@ -28,22 +43,34 @@ function page() {
     const host = w.document.getElementById("a");
     const calmTimers = () => [...timers.entries()].filter(([, t]) => t.ms === 50);
     return {
-        w, host, raf, timers, calmTimers,
-        setWidth: (v) => { widths = v; },
+        w,
+        host,
+        raf,
+        timers,
+        calmTimers,
+        setWidth: (v) => {
+            widths = v;
+        },
         resized: () => roCallback?.([]),
         // Run one scheduled frame (rAF first, else the 50 ms tick), advancing the clock.
         tick(ms) {
             clock += ms;
             if (raf.length) return raf.shift()(clock);
             const [tid, t] = calmTimers()[0] || [];
-            if (t) { timers.delete(tid); t.cb(); }
+            if (t) {
+                timers.delete(tid);
+                t.cb();
+            }
         },
     };
 }
 
 describe("mascot frame loop", () => {
     let p;
-    beforeEach(() => { p = page(); p.w.BhaiMascot.mount(p.host, "idle"); });
+    beforeEach(() => {
+        p = page();
+        p.w.BhaiMascot.mount(p.host, "idle");
+    });
 
     it("drops to a 50 ms tick while only breathing, without a rAF in flight", () => {
         p.tick(16);
@@ -62,7 +89,7 @@ describe("mascot frame loop", () => {
     });
 
     it("settles back to the slow tick once the springs ease back after an act", () => {
-        p.w.BhaiMascot.react(p.host, "perk");   // 0.5 s
+        p.w.BhaiMascot.react(p.host, "perk"); // 0.5 s
         for (let i = 0; i < 120 && p.raf.length; i++) p.tick(16);
         expect(p.raf.length).toBe(0);
         expect(p.calmTimers().length).toBe(1);
@@ -85,7 +112,10 @@ describe("mascot frame loop", () => {
         let prev = rig.style.transform;
         for (let i = 0; i < 30; i++) {
             p.tick(16);
-            if (rig.style.transform !== prev) { writes++; prev = rig.style.transform; }
+            if (rig.style.transform !== prev) {
+                writes++;
+                prev = rig.style.transform;
+            }
         }
         expect(p.raf.length).toBe(1);
         expect(writes).toBeGreaterThanOrEqual(8);
