@@ -9,12 +9,13 @@ let tabs = [
 ];
 const sendBridgeCommand = vi.fn(async (cmd: string, p: { tabId?: number }) => {
     if (cmd === "close_tab") tabs = tabs.filter((t) => t.id !== p.tabId);
+    if (cmd === "get_active_tab") return { id: 12 }; // Bhai's tab
     return { success: true };
 });
 vi.mock("./chrome-bridge.js", () => ({ getExtensionTabs: async () => tabs, sendBridgeCommand }));
 vi.mock("./browser-backend.js", () => ({ getCurrentMode: () => "chrome", getActiveBackend: vi.fn() }));
 
-const { browserSwitchTab } = await import("./navigation.js");
+const { browserClose, browserSwitchTab } = await import("./navigation.js");
 
 describe("browser_switch_tab in Chrome mode", () => {
     it("lists, closes by index and switches Chrome's own tabs", async () => {
@@ -35,5 +36,17 @@ describe("browser_switch_tab in Chrome mode", () => {
         expect(closed.tabs).toHaveLength(1);
         await browserSwitchTab.handler({ tab_index: 0 });
         expect(sendBridgeCommand).toHaveBeenCalledWith("switch_tab", { tabId: 11, focus: true });
+    });
+
+    it("browser_close closes only the tab Bhai is on, never the owner's Chrome", async () => {
+        tabs = [
+            { id: 11, title: "Inbox", url: "https://mail.example/", active: false },
+            { id: 12, title: "Example Domains", url: "https://www.iana.org/help/example-domains", active: true },
+        ];
+        sendBridgeCommand.mockClear();
+        const out = JSON.parse(await browserClose.handler({}));
+        expect(out.closed.url).toBe("https://www.iana.org/help/example-domains");
+        expect(sendBridgeCommand).toHaveBeenCalledWith("close_tab", { tabId: 12 });
+        expect(tabs.map((t) => t.id)).toEqual([11]);
     });
 });
