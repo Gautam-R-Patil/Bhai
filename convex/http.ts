@@ -606,7 +606,11 @@ http.route({
       }
     } else {
       // Normal path: assemble system prompt from server DB
-      const platform = body.platform || "linux";
+      // The platform rules (rules-mac/rules-windows, ~10K chars) only say which tool drives
+      // the computer: a call that can't act (chat lane: just request_tools) doesn't need them.
+      const actsOnComputer =
+        Array.isArray(body.tools) && body.tools.some((t: any) => t?.function?.name && t.function.name !== "request_tools");
+      const platform = actsOnComputer ? body.platform || "linux" : "none";
       const skillSlugs: string[] = Array.isArray(body.skillSlugs) ? body.skillSlugs : [];
 
       try {
