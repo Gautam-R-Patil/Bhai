@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed } from "../../security/allowlist.js";
 import type { ToolDefinition } from "../get-current-time.js";
@@ -71,13 +72,21 @@ export const glob: ToolDefinition = {
     },
 
     async handler(input) {
-        const pattern = input.pattern as string;
+        let pattern = input.pattern as string;
         if (!pattern) return JSON.stringify({ error: "pattern is required" });
 
         // Models name it folder/dir too: glob({ pattern, folder: "~/Desktop" }) searched Bhai's
         // own working directory and found nothing.
-        const given = input.path ?? input.folder ?? input.dir ?? input.directory ?? input.cwd;
-        const basePath = path.resolve((given as string) || process.cwd());
+        let given = (input.path ?? input.folder ?? input.dir ?? input.directory ?? input.cwd) as string | undefined;
+        // ...or put the folder in the pattern ("~/Downloads/*.pdf"): its fixed start is the base.
+        if (!given && /^(~|\/)/.test(pattern)) {
+            const parts = pattern.replace(/^~(?=\/|$)/, os.homedir()).split("/");
+            const firstWild = parts.findIndex((p) => /[*?[{]/.test(p));
+            const cut = firstWild < 0 ? parts.length - 1 : firstWild;
+            given = parts.slice(0, cut).join("/") || "/";
+            pattern = parts.slice(cut).join("/") || "*";
+        }
+        const basePath = path.resolve(given || process.cwd());
         if (!isPathAllowed(basePath)) {
             const reason = getPathBlockedReason(basePath) ?? `Path "${basePath}" is not allowed.`;
             return JSON.stringify({ error: reason });
