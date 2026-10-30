@@ -191,8 +191,8 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 - **Ad-hoc signed, not notarized.** Gatekeeper blocks it, TCC grants go stale, and auto-update can't install. `desktop/package.json:203`. M, high (needs a Developer ID).
 - **Session fetch has no timeout**, so captive-portal Wi-Fi hangs boot forever. `session.ts:136`. S, high.
 - **Bot crashes and the "gave up restarting" state are never shown.** `main.js:1405`, `panel.html:1909`. S, high.
-- **No overlay streaming**, and an error wipes the user's typed prompt. `overlay-chat.ts:956`, `overlay.html:3178`. M, high.
-- **Overlay is a single reply box** with no scrollback, no headings and no numbered lists. M.
+- **No overlay streaming**, and an error wipes the user's typed prompt. `overlay-chat.ts:956`, `overlay.html:3178`. M, high. *Retry fixed: an error keeps the prompt, Enter resends it. Streaming is out of Phase 4.*
+- **Overlay is a single reply box** with no scrollback, no headings and no numbered lists. M. *Fixed: the last 10 turns of the session stay above the reply; headings render and code is no longer rewritten. Numbered lists read fine as plain lines.*
 - **Hotkey during boot says "press again"** instead of showing a splash. `main.js:1964`. S.
 - **Permission probe only logs**; the UI never learns that Accessibility is stale. `macos-permissions.ts:108`. S.
 - **Two optional server syncs block boot serially**, costing up to 50s. `index.ts:201-236`. S.

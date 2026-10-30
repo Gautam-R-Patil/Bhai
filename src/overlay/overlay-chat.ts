@@ -9,13 +9,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
-import { join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
+import { basename, join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir, homedir } from "node:os";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { getWorkspaceDir } from "../config/paths.js";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { getDownloadsDir, getWorkspaceDir } from "../config/paths.js";
 import { isStuckReplyPhrase, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
 import {
@@ -1166,6 +1166,24 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
 
 // ── Handle File Attachment (drag-and-drop) ────
 
+/**
+ * A dropped non-image file. Text goes inline; a binary one (PDF, zip, docx) would be
+ * mojibake, so the owner's copy is saved to Downloads for the file tools (as Telegram does).
+ */
+export function droppedFileContext(fileName: string, base64: string, mimeType: string, owner: boolean): string {
+    const buf = Buffer.from(base64, "base64");
+    const decoded = buf.toString("utf-8");
+    if (!decoded.includes("\u0000") && !decoded.includes("\ufffd")) {
+        return `\n\nFile contents of "${fileName}":\n\`\`\`\n${decoded.substring(0, 8000)}\n\`\`\``;
+    }
+    const safeName = basename(fileName).replace(/[^\w.\- ]/g, "_").slice(-120) || "document";
+    const safeMime = mimeType.replace(/[^\w.+/-]/g, "") || "unknown type";
+    if (!owner) return `\n\n[Binary file "${safeName}" (${safeMime}) can't be read here.]`;
+    const savedPath = join(getDownloadsDir(), `${randomUUID().slice(0, 8)}_${safeName}`);
+    writeFileSync(savedPath, buf, { mode: 0o600 });
+    return `\n\nDocument "${safeName}" (${safeMime}) saved at ${savedPath}. Read it with your file tools.`;
+}
+
 async function handleFileAttachment(
     ws: WebSocket,
     fileName: string,
@@ -1197,10 +1215,8 @@ async function handleFileAttachment(
     if (isImage) {
         media = [{ type: "image", base64, mimeType }];
     } else {
-        // For text/code files, decode and include as text
         try {
-            const decoded = Buffer.from(base64, "base64").toString("utf-8");
-            fileContext = `\n\nFile contents of "${fileName}":\n\`\`\`\n${decoded.substring(0, 8000)}\n\`\`\``;
+            fileContext = droppedFileContext(fileName, base64, mimeType, wsIsOwner(ws));
         } catch {
             fileContext = `\n\n[Could not decode file: ${fileName}]`;
         }

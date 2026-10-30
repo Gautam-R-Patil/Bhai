@@ -327,6 +327,9 @@
       overflow-y: auto;
     }
 
+    .past-turn { opacity: 0.6; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px; }
+    .past-q { font-weight: 600; }
+
     #reply-box.visible {
       display: block;
       animation: bubbleSpring 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.08);
@@ -2774,6 +2777,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
     <div id="reply-box" role="log" aria-live="polite" aria-label="Agent response" aria-busy="false">
       <button class="copy-response-btn" id="copy-response-btn" onclick="copyResponse()" aria-label="Copy response" tabindex="0">⧉</button>
       <div class="reply-blob" aria-hidden="true"></div>
+      <div id="reply-history"></div>
       <div id="reply-text"></div>
       <div id="widgets-container" class="widgets-container"></div>
       <div id="quick-actions" class="quick-actions"></div>
@@ -2797,6 +2801,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       const contract = document.getElementById('contract');
       const replyBox = document.getElementById('reply-box');
       const replyText = document.getElementById('reply-text');
+      const replyHistory = document.getElementById('reply-history');
       const notifBox = document.getElementById('notification-box');
       const notifText = document.getElementById('notification-text');
       const widgetsBox = document.getElementById('widgets-container');
@@ -2828,6 +2833,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (!idleAtHide) return false;
         replyBox.classList.remove('visible');
         replyText.innerHTML = '';
+        replyHistory.innerHTML = '';
         progress.classList.remove('visible');
         progress.innerHTML = '';
         contract.textContent = '';
@@ -3223,7 +3229,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           progress.classList.remove('visible');
           progress.innerHTML = '';
 
-          if (msg.newChat) chatId = newChatId(); // "/new": later messages file under a fresh chat
+          if (msg.newChat) { chatId = newChatId(); replyHistory.innerHTML = ''; } // "/new": later messages file under a fresh chat
           const rawText = msg.text || '(no response)';
           console.log('[OVERLAY] Response text length:', rawText.length, 'preview:', rawText.substring(0, 100));
           const renderedText = msg.type === 'error' ? `⚠️ ${esc(rawText)}` : renderMd(rawText);
@@ -3239,7 +3245,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           replyBox.classList.remove('visible');
           replyBox.offsetHeight;
           replyBox.classList.add('visible');
-          input.value = '';
+          replyBox.scrollTop = Math.max(0, replyText.offsetTop - 16); // the new reply, not the turns above it
+          if (msg.type !== 'error') input.value = ''; // after an error the prompt stays: Enter retries it
           input.disabled = false;
           waiting = false;
           announceToSR(msg.type === 'error' ? 'Error received from Bhai' : 'Response received from Bhai');
@@ -3432,6 +3439,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             if (!ws || ws.readyState !== 1 || waiting) return;
             waiting = true;
             input.disabled = true;
+            keepTurn(label);
             replyBox.classList.remove('visible');
             clearInteractive();
             ws.send(JSON.stringify({ type: 'quick_action', text: typeof a === 'string' ? a : a.action, chat: chatId }));
@@ -3506,12 +3514,16 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
       function renderMd(text) {
         let h = esc(text);
+        // Code is parked behind \0n\0 placeholders so the rules below never rewrite it.
+        const codes = [];
+        const park = (html) => `\u0000${codes.push(html) - 1}\u0000`;
         // Code blocks with copy button
         h = h.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, l, c) => {
           const code = c.trim();
           const id = 'cb' + Math.random().toString(36).substr(2, 6);
-          return `<div class="code-wrap"><button class="copy-btn" onclick="copyCode('${id}')">Copy</button><pre><code id="${id}">${code}</code></pre></div>`;
+          return park(`<div class="code-wrap"><button class="copy-btn" onclick="copyCode('${id}')">Copy</button><pre><code id="${id}">${code}</code></pre></div>`);
         });
+        h = h.replace(/`([^`\n]+)`/g, (_, c) => park(`<code>${c}</code>`));
         // Collapsible sections: <!--COLLAPSE:Title-->content<!--/COLLAPSE-->
         h = h.replace(/&lt;!--COLLAPSE:(.*?)--&gt;([\s\S]*?)&lt;!--\/COLLAPSE--&gt;/g, (_, title, content) => {
           const id = 'cl' + Math.random().toString(36).substr(2, 6);
@@ -3530,14 +3542,14 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           return `<div class="table-wrapper"><table class="md-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
         });
 
-        h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+        h = h.replace(/^#{1,4} (.+)$/gm, '<strong>$1</strong>');
         h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
         h = h.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, '<em>$1</em>');
         // Only http(s) links — never javascript: or other schemes.
         h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => /^https?:\/\//i.test(url) ? `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:#818cf8">${label}</a>` : label);
         h = h.replace(/^[\s]*[*\-]\s+/gm, '• ');
         h = h.replace(/\n/g, '<br>');
-        return h;
+        return h.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[i]);
       }
 
       function copyCode(id) {
@@ -4208,6 +4220,20 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         }
       });
 
+      // In-session scrollback: the reply on screen moves into #reply-history (last 10) when the next turn starts.
+      let lastAsked = '';
+      function keepTurn(asked) {
+        if (replyText.childNodes.length) {
+          const turn = document.createElement('div');
+          turn.className = 'past-turn';
+          turn.innerHTML = `<div class="past-q">${esc(lastAsked)}</div>`;
+          turn.append(...replyText.childNodes);
+          replyHistory.appendChild(turn);
+          while (replyHistory.children.length > 10) replyHistory.firstElementChild.remove();
+        }
+        lastAsked = asked;
+      }
+
       // Override send to include chip context
       function send() {
         const text = buildFullMessage();
@@ -4219,6 +4245,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         announceToSR('Message sent, waiting for response');
         // Clear chips
         inputWrapper.querySelectorAll('.mention-chip').forEach(c => c.remove());
+        keepTurn(input.value.trim());
         replyBox.classList.remove('visible');
         progress.classList.remove('visible');
         progress.innerHTML = '';
@@ -4284,6 +4311,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const mimeType = file.type || 'application/octet-stream';
           waiting = true;
           input.disabled = true;
+          keepTurn(file.name);
           replyBox.classList.remove('visible');
           clearInteractive();
           ws.send(JSON.stringify({
