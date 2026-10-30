@@ -83,14 +83,134 @@ export const listDirectory: ToolDefinition = {
             }));
             // The count first: a long listing gets cut short in the model's context, and a
             // total at the end was lost ("how many PDFs?" answered 32 of 131).
+            // Per kind: asked to count the .txt files, gpt-4.1-nano counted every file.
+            const kinds: Record<string, number> = {};
+            if (!ext)
+                for (const { e } of all) {
+                    const k = e.isDirectory() ? "folders" : path.extname(e.name).slice(1).toLowerCase() || "no extension";
+                    kinds[k] = (kinds[k] ?? 0) + 1;
+                }
+            // by_kind first: given count 4 and by_kind {txt: 3}, nano still answered 4.
             return JSON.stringify({
                 success: true,
+                ...(Object.keys(kinds).length > 1 ? { by_kind: kinds } : {}),
                 count: all.length,
                 ...(all.length > MAX_LIST ? { shown: MAX_LIST, note: `Newest ${MAX_LIST} shown.` } : {}),
                 items,
             });
         } catch (err) {
             return JSON.stringify({ error: (err as Error).message });
+        }
+    },
+};
+
+// ── Move / Copy / Rename / New Folder ─────────
+// Without it "move the PDF into Invoices" meant Finder drags or shell mv. Never
+// overwrites: an existing destination is refused, so nothing is lost.
+
+/** Why a path may not be moved/copied/created, or undefined. */
+function manageRefusal(p: string, source: boolean): string | undefined {
+    if (!isPathAllowed(p)) return getPathBlockedReason(p) ?? `Path not allowed: ${p}`;
+    if (isProtectedPath(p)) return `"${p}" is part of Bhai's own code and is write-protected.`;
+    const sensitive = source ? isSensitivePath(p) : { denied: false, reason: "" };
+    return sensitive.denied ? `Refused: ${sensitive.reason}` : undefined;
+}
+
+export const fileManage: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "file_manage",
+            description:
+                "Move, copy or rename files and folders, or make a new folder. Use this (not Finder or shell) for 'move X into Y', 'rename X to Y', 'copy X to Y', 'make a folder called Z'. Never overwrites.",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: { type: "string", enum: ["move", "copy", "rename", "new_folder"] },
+                    paths: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Files/folders to move, copy or rename (rename: one). new_folder: the folder to create.",
+                    },
+                    destination: {
+                        type: "string",
+                        description:
+                            "move/copy: the folder to put them in (or a full new path for one item). rename: the new name.",
+                    },
+                },
+                required: ["action", "paths"],
+            },
+        },
+    },
+    async handler(input) {
+        const action = String(input.action ?? "");
+        const raw = input.paths ?? (input as { path?: unknown }).path;
+        const paths = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => path.resolve(String(p)));
+        if (!paths.length) return JSON.stringify({ success: false, error: "Provide 'paths'." });
+        auditLog("file_manage", { action, paths, destination: input.destination });
+
+        if (action === "new_folder") {
+            // Models put the new folder in destination and its parent in paths.
+            const made = input.destination ? [path.resolve(String(input.destination))] : paths;
+            const refused = made.map((p) => manageRefusal(p, false)).find(Boolean);
+            if (refused) return JSON.stringify({ success: false, error: refused });
+            for (const p of made) fs.mkdirSync(p, { recursive: true });
+            return JSON.stringify({ success: true, action, created: made });
+        }
+        if (!["move", "copy", "rename"].includes(action))
+            return JSON.stringify({ success: false, error: "action must be move, copy, rename or new_folder." });
+
+        const dest = String(input.destination ?? "").trim();
+        if (!dest) return JSON.stringify({ success: false, error: "Provide 'destination'." });
+        if (action === "rename" && paths.length !== 1)
+            return JSON.stringify({ success: false, error: "rename takes one path." });
+
+        // Where each item ends up: rename keeps the folder; an existing folder receives the items.
+        // "a.pdf" moved to ".../PDFs" (not there yet, no extension) means into a new folder
+        // PDFs: taken as a new name, gpt-4.1-nano's move turned the PDF into a file named PDFs.
+        const d = path.resolve(dest);
+        const newFolder =
+            action !== "rename" &&
+            !fs.existsSync(d) &&
+            !path.extname(d) &&
+            (paths.length > 1 || !!path.extname(paths[0]));
+        const targets = paths.map((src) => {
+            if (action === "rename") return path.join(path.dirname(src), path.basename(dest));
+            const isDir = newFolder || (fs.existsSync(d) && fs.statSync(d).isDirectory());
+            return isDir || paths.length > 1 ? path.join(d, path.basename(src)) : d;
+        });
+        // Everything is checked before anything moves.
+        for (const [i, src] of paths.entries()) {
+            const to = targets[i];
+            if (!fs.existsSync(src)) return JSON.stringify({ success: false, error: `Not found: ${src}` });
+            const refused = manageRefusal(src, true) ?? manageRefusal(to, false);
+            if (refused) return JSON.stringify({ success: false, error: refused });
+            if (fs.existsSync(to)) return JSON.stringify({ success: false, error: `Already exists, not replaced: ${to}` });
+            if (to.startsWith(src + path.sep)) return JSON.stringify({ success: false, error: `Can't put ${src} inside itself.` });
+            if (!fs.existsSync(path.dirname(to)) && !(newFolder && path.dirname(to) === d && fs.existsSync(path.dirname(d))))
+                return JSON.stringify({ success: false, error: `No such folder: ${path.dirname(to)} (make it with new_folder first)` });
+        }
+        const done: { from: string; to: string }[] = [];
+        try {
+            if (newFolder) fs.mkdirSync(d);
+            for (const [i, src] of paths.entries()) {
+                if (action === "copy") fs.cpSync(src, targets[i], { recursive: true, errorOnExist: true, force: false });
+                else {
+                    try {
+                        fs.renameSync(src, targets[i]);
+                    } catch (err) {
+                        if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+                        // Another disk: copy, then remove the original.
+                        fs.cpSync(src, targets[i], { recursive: true, errorOnExist: true, force: false });
+                        fs.rmSync(src, { recursive: true });
+                    }
+                    forgetRead(src);
+                }
+                done.push({ from: src, to: targets[i] });
+            }
+            return JSON.stringify({ success: true, action, ...(newFolder ? { made_folder: d } : {}), done });
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message, ...(done.length ? { done } : {}) });
         }
     },
 };

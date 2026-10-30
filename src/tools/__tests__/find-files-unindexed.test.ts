@@ -28,4 +28,16 @@ describe("find_files before Spotlight has indexed", () => {
         const notes = JSON.parse(await findFiles.handler({ query: "notes", folder: dir }));
         expect(notes.files[0].path).toBe(join(dir, "BhaiEval", "notes.txt"));
     });
+
+    // From the harder eval: the query forms models send for "the PDFs in that folder".
+    it("reads globs and a folder named as the query", async () => {
+        writeFileSync(join(dir, "BhaiEval", "a.pdf"), "a");
+        writeFileSync(join(dir, "BhaiEval", "b.txt"), "b");
+        const names = async (args: Record<string, unknown>) =>
+            JSON.parse(await findFiles.handler(args)).files.map((f: { path: string }) => f.path.split("/").pop());
+        expect(await names({ query: "*.pdf", folder: join(dir, "BhaiEval") })).toEqual(["a.pdf"]);
+        expect(await names({ query: ".txt files", folder: join(dir, "BhaiEval") }).then((n: string[]) => n.sort())).toEqual(["b.txt", "notes.txt"]);
+        expect(await names({ query: "BhaiEval", folder: dir, ext: "pdf" })).toEqual(["a.pdf"]);
+        expect(await names({ query: "BhaiEval/*.pdf", folder: dir })).toEqual(["a.pdf"]);
+    });
 });

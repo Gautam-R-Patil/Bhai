@@ -556,6 +556,20 @@ export const osType: ToolDefinition = {
             });
         }
 
+        // Calculator keeps its last entry, even across a relaunch: "42*3" typed after "75 + 2"
+        // made 75 + 242 × 3 = 801. A whole new expression starts from a cleared display.
+        if (
+            typeof input.text === "string" &&
+            /\d\s*[-+*/×÷x]\s*\d/.test(input.text) &&
+            /^[\d\s.,+\-*/×÷x()%=]+$/.test(input.text) &&
+            /^calculator$/i.test((await getFrontmostApp())?.name ?? "")
+        ) {
+            await execFileAsync("osascript", [
+                "-e",
+                'tell application "System Events" to repeat 2 times\nkey code 53\ndelay 0.05\nend repeat',
+            ]).catch(() => {});
+        }
+
         // text plus key/combo in one call ("45*12" then return): type, then press.
         // Taking only the key dropped the text while reporting success.
         let typedFirst = 0;

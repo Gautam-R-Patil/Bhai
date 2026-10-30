@@ -792,7 +792,10 @@ export function resolveHomePath(p: string): string {
     // A home that doesn't exist at all (/Users/YourUsername) is a placeholder: it means the
     // real one even for a file not written yet (a new zip's path).
     const theirHome = p.slice(0, p.length - m[2].length);
-    return existsSync(mine) || !existsSync(theirHome) ? mine : p;
+    // ...and so is one whose folder is only in the real home (gpt-4.1-nano wrote
+    // "/Users/Shared/Desktop/BhaiEval/count.txt" for ~/Desktop/BhaiEval).
+    const newInMine = existsSync(dirname(mine)) && !existsSync(dirname(p));
+    return existsSync(mine) || newInMine || !existsSync(theirHome) ? mine : p;
 }
 
 // What find_files returned last: open_in_app uses it when a model retypes the path wrong.
@@ -853,25 +856,44 @@ export const findFiles: ToolDefinition = {
                 error: "find_files uses Spotlight (macOS). Use glob with a pattern like '**/*resume*' instead.",
             });
         }
-        const query = String(input.query ?? "").trim();
-        if (!query) return JSON.stringify({ success: false, error: "Provide 'query'." });
         const limit = Math.min(Math.max(Number(input.limit) || 20, 1), 100);
-        const ext = String(input.ext ?? "")
+        let ext = String(input.ext ?? "")
             .replace(/^\./, "")
             .toLowerCase();
-        const args = input.content ? [query] : ["-name", query];
+        let q = String(input.query ?? "").trim();
+        let folderIn = input.folder ? String(input.folder) : "";
+        // A path in the query ("BhaiEval/*.txt", folder ~/Desktop): its folder part is the folder.
+        const slash = input.content ? -1 : q.lastIndexOf("/");
+        if (slash > 0) {
+            const sub = q.slice(0, slash);
+            const dir = resolve(resolveHomePath(/^[~/]/.test(sub) ? sub : join(folderIn || homedir(), sub)));
+            if (statSync(dir, { throwIfNoEntry: false })?.isDirectory()) [folderIn, q] = [dir, q.slice(slash + 1)];
+        }
+        // Globs and phrases models send, which Spotlight matches literally: "*.pdf", ".txt files".
+        const glob = /^\*?\.([a-z0-9]{1,6})(\s+files?)?$/i.exec(q);
+        if (glob) [ext, q] = [ext || glob[1].toLowerCase(), ""];
+        q = q.replace(/\*/g, "").trim();
         // A folder that isn't there ("~/Bhai" for ~/Desktop/Bhai) searches everywhere and
         // ranks paths through a folder of that name first, instead of finding nothing.
-        const folder = input.folder ? resolve(resolveHomePath(String(input.folder))) : "";
+        let folder = folderIn ? resolve(resolveHomePath(folderIn)) : "";
         const folderName = folder && !existsSync(folder) ? basename(folder).toLowerCase() : "";
+        // query "BhaiEval", folder ~/Desktop, ext txt: the .txt files in ~/Desktop/BhaiEval.
+        if (folder && !folderName && ext && q && statSync(join(folder, q), { throwIfNoEntry: false })?.isDirectory())
+            [folder, q] = [join(folder, q), ""];
+        // "every PDF in this folder" comes as an empty query with ext.
+        const query = q || (ext ? `.${ext}` : "");
+        if (!query) return JSON.stringify({ success: false, error: "Provide 'query'." });
+        const args = input.content ? [query] : ["-name", query];
         if (folder && !folderName) args.unshift("-onlyin", folder);
         try {
             const { stdout } = await execFileAsync("mdfind", args, { timeout: 10_000, maxBuffer: 20 * 1024 * 1024 });
             const home = homedir();
-            let paths = stdout.split("\n");
-            // A folder made seconds ago isn't indexed yet: "find BhaiEval on the Desktop" found nothing.
-            if (!paths.some(Boolean) && folder && !folderName && !input.content)
-                paths = scanFolder(folder, query.toLowerCase());
+            // Inside a given folder, also read the folder itself: Spotlight indexes new files
+            // seconds late ("the PDFs in BhaiEval" found none right after they were made).
+            const paths =
+                folder && !folderName && !input.content
+                    ? [...new Set([...stdout.split("\n"), ...scanFolder(folder, query.toLowerCase())])]
+                    : stdout.split("\n");
             const hits = paths
                 .filter((p) => p && (!ext || extname(p).toLowerCase() === `.${ext}`))
                 .slice(0, 2000)

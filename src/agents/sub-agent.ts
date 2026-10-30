@@ -384,6 +384,7 @@ export interface SubAgentResult {
 // Tools whose successful run changed the world outside the conversation.
 // UI clicks/typing come from verify-before-done's isMutator.
 const SIDE_EFFECT_TOOLS = new Set([
+    "file_manage",
     "email_send",
     "send_message_on_channel",
     "send_file",

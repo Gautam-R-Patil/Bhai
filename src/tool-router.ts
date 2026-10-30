@@ -134,6 +134,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "read",
             "find_files",
             "open_in_app",
+            "file_manage",
             "edit",
             "write",
             "append_file",
@@ -691,6 +692,13 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
         category: "file_system",
     },
     { pattern: /\b(empty|clear)\b.{0,12}\b(the |my )?(trash|bin)\b/i, tool: "trash_manager", category: "file_system" },
+    // "copy its name to my clipboard" is the clipboard's.
+    {
+        pattern:
+            /^(?!.*\bclipboard\b).*\b(move|rename|copy)\b.*\b(files?|folders?|documents?|pdfs?|photos?|images?|\w+\.[a-z0-9]{2,4})\b|\b(make|create|new)\b.{0,10}\bfolder\b/i,
+        tool: "file_manage",
+        category: "file_system",
+    },
 ];
 
 const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
@@ -1555,6 +1563,26 @@ export function assembleToolNames(
         }
     }
 
+    // Then one tool per category per round, each category's best-ranked first: draining the
+    // first category's tail (system_controls' lock_screen, sleep_display…) left os_control,
+    // tied with it, without os_type for "work out 42×3 in Calculator, copy the result".
+    const queues = selectedCategories
+        .filter((c) => CATEGORIES[c] && !CATEGORIES[c].alwaysInclude)
+        .map((c) => candidateTools.filter((t) => CATEGORIES[c].tools.includes(t)));
+    for (let progress = true; progress && selected.size < maxTotal; ) {
+        progress = false;
+        for (const q of queues) {
+            while (q.length && selected.size < maxTotal) {
+                const t = q.shift() as string;
+                if (selected.has(t) || (catToolCounts.get(catOf(t)) ?? 0) >= MAX_TOOLS_PER_CATEGORY) continue;
+                take(t);
+                progress = true;
+                break;
+            }
+        }
+    }
+
+    // Anything ranked outside the selected categories (learned follow-ups).
     for (const tool of candidateTools) {
         if (selected.size >= maxTotal) break;
         if (selected.has(tool) || (catToolCounts.get(catOf(tool)) ?? 0) >= MAX_TOOLS_PER_CATEGORY) continue;

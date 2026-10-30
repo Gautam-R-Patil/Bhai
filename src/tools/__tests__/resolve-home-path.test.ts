@@ -24,6 +24,12 @@ describe("resolveHomePath", () => {
         if (existsSync("/Users/Shared"))
             expect(resolveHomePath("/Users/Shared/definitely-not-here-xyz")).toBe("/Users/Shared/definitely-not-here-xyz");
     });
+
+    it("maps a new file into a folder only the real home has", () => {
+        // From the harder eval: "/Users/Shared/Desktop/BhaiEval/count.txt" for ~/Desktop/BhaiEval.
+        if (existsSync("/Users/Shared"))
+            expect(resolveHomePath(`/Users/Shared/${name}/count.txt`)).toBe(join(real, "count.txt"));
+    });
 });
 
 // From the complex-task eval: list_directory("~/Downloads") read "<cwd>/~/Downloads".

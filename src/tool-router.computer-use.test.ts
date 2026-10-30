@@ -59,6 +59,7 @@ vi.mock("./tools/index.js", () => ({
             "list_directory",
             "compress_files",
             "trash_manager",
+            "file_manage",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -95,6 +96,10 @@ const CASES: [string, string][] = [
     // From the all-nano run: zipping was filed under os_control and compress_files wasn't offered.
     ["zip the bhaieval folder on my desktop and save the zip inside that folder", "compress_files"],
     ["empty my trash", "trash_manager"],
+    // No tool moved or renamed files at all.
+    ["move invoice.pdf into the Invoices folder", "file_manage"],
+    ["rename the report file to final report", "file_manage"],
+    ["make a new folder called Reports on my desktop", "file_manage"],
 ];
 
 describe("computer-use routing without the classifier", () => {
