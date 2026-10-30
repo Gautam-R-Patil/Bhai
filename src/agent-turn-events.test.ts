@@ -3,6 +3,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const gate = vi.hoisted(() => ({ fireOnce: false }));
+const research = vi.hoisted(() => ({ args: undefined as Record<string, unknown> | undefined }));
+vi.mock("./tools/index.js", async (orig) => {
+    const mod = await orig<typeof import("./tools/index.js")>();
+    return {
+        ...mod,
+        executeTool: async (name: string, input: Record<string, unknown>) => {
+            if (name !== "deep_research") return mod.executeTool(name, input);
+            research.args = input;
+            return JSON.stringify({ status: "started" });
+        },
+    };
+});
 vi.mock("./account-guard.js", async (orig) => ({
     ...(await orig<typeof import("./account-guard.js")>()),
     checkAccountStatus: async () => ({ allowed: true }),
@@ -176,6 +188,57 @@ describe("turn events", () => {
         const { llm, calls } = fakeLLM([]);
         await run(llm, "what is the capital of france", { channel: "overlay", userId: "owner", isOwner: true });
         expect(calls.length).toBeGreaterThan(0);
-        expect(calls.every((c) => !("onDelta" in c))).toBe(true);
+        expect(calls.every((c) => !("onDelta" in c) && !("signal" in c))).toBe(true);
+    }, 60_000);
+
+    it("a main-loop call that throws after streaming is reset", async () => {
+        const events: TurnEvent[] = [];
+        const { llm } = fakeLLM([
+            {
+                deltas: [text("Half an ans")],
+                content: "",
+                after: () => {
+                    throw Object.assign(new Error("stream cut"), { status: 502 });
+                },
+            },
+            { deltas: [text("The full answer.")], content: "The full answer." },
+        ]);
+        const res = await run(llm, "tell me the answer please", owner(events));
+        expect(res.text).toBe("The full answer.");
+        expect(answers(events)).toBe("Half an ans|reset|The full answer.");
+    }, 60_000);
+
+    it("a sink that throws never breaks the turn", async () => {
+        gate.fireOnce = true; // a send-back adds turn nudges that must still be stripped
+        const { llm } = fakeLLM([
+            { deltas: [text("Sent it.")], content: "Sent it." },
+            { deltas: [text("Sent and checked.")], content: "Sent and checked." },
+        ]);
+        const res = await run(llm, "send the note to priya", {
+            channel: "overlay",
+            userId: "owner",
+            isOwner: true,
+            isPrivate: true,
+            onTurnEvent: () => {
+                throw new Error("socket gone");
+            },
+        });
+        expect(res.text).toBe("Sent and checked.");
+        const nudges = getConversationHistory().filter((m) => String(m.content).startsWith("[Automatic check"));
+        expect(nudges).toEqual([]);
+    }, 60_000);
+
+    it("the research continuation's context has no onTurnEvent", async () => {
+        const events: TurnEvent[] = [];
+        research.args = undefined;
+        const { llm } = fakeLLM([
+            { deltas: [], content: "", tools: ["deep_research"] },
+            { deltas: [text("Research started.")], content: "Research started." },
+        ]);
+        await run(llm, "research the best laptops of 2026 for me", owner(events));
+        const args = research.args as Record<string, unknown> | undefined;
+        const ctx = args?._channelContext as ChannelContext | undefined;
+        expect(ctx).toMatchObject({ channel: "overlay", isOwner: true });
+        expect(ctx?.onTurnEvent).toBeUndefined();
     }, 60_000);
 });

@@ -57,7 +57,15 @@ export function createStatusCoalescer(
  * `withdraw` takes back a streamed answer (a check sent it back, the call failed, it was
  * narration before tools). Filters are per attempt: fresh after every withdraw and call.
  */
-export function createTurnStream(sink: TurnEventSink, opts: { channel: string; notes: boolean }) {
+export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: string; notes: boolean }) {
+    // Fail-open: a surface that throws never breaks the turn (like sendProgress).
+    const sink: TurnEventSink = (e) => {
+        try {
+            unsafeSink(e);
+        } catch (err) {
+            console.warn(`[turn-events] sink failed on ${e.type}: ${(err as Error).message}`);
+        }
+    };
     const status = createStatusCoalescer(sink);
     let attempt = 0;
     let answer = new AnswerStreamFilter({ channel: opts.channel });

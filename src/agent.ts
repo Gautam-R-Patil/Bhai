@@ -1033,7 +1033,8 @@ async function executeAndProcessToolCall(
     // and tools that gate on owner identity would refuse.
     if (fnName === "deep_research" && userMessage) {
         fnArgs._originalPrompt = userMessage;
-        if (channelContext) fnArgs._channelContext = channelContext;
+        // The continuation runs after this turn ended: it must not stream into its events.
+        if (channelContext) fnArgs._channelContext = { ...channelContext, onTurnEvent: undefined };
     }
 
     // ── Handle request_tools meta-tool (bidirectional router communication) ──
