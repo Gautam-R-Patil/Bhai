@@ -232,7 +232,11 @@ export const setReminder: ToolDefinition = {
                         type: "number",
                         description: "Number of minutes from now to trigger the reminder (e.g., 5 for 5 minutes).",
                     },
-                    description: { type: "string", description: "Human-readable description of the reminder." },
+                    description: {
+                        type: "string",
+                        description:
+                            "What to remind the owner of, as they'll read it after '⏰ Reminder:' (e.g. 'Check the oven', not 'Oven reminder').",
+                    },
                     action: {
                         type: "string",
                         description:
