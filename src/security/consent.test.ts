@@ -55,3 +55,23 @@ describe("consent for irreversible actions", () => {
         expect(ownerApproved("yes", askedAt)).toBe(true); // a plain yes is enough
     });
 });
+
+describe("stale and half-hearted yeses", () => {
+    it("an ask expires after 10 minutes, and 'not sure' / 'later' are not a yes", async () => {
+        const { vi } = await import("vitest");
+        _resetConsent();
+        noteOwnerMessage("delete the old folder");
+        expect(checkConsent("delete_file:{}", false)).toBe("needs_consent");
+        noteOwnerMessage("hmm not sure, ok maybe later");
+        expect(checkConsent("delete_file:{}", true)).toBe("needs_consent");
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            expect(checkConsent("pay:{}", false)).toBe("needs_consent");
+            vi.setSystemTime(Date.now() + 11 * 60_000);
+            noteOwnerMessage("ok thanks");
+            expect(checkConsent("pay:{}", true)).toBe("needs_consent"); // an hour-old ask, an unrelated ok
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});

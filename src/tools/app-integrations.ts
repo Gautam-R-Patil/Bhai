@@ -374,6 +374,8 @@ export const calendarTool: ToolDefinition = {
                         action === "today"
                             ? new Date().toISOString().split("T")[0]
                             : (input.date as string) || new Date().toISOString().split("T")[0];
+                    // Goes into the JXA script as code: a date and nothing else.
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return JSON.stringify({ error: "date must be YYYY-MM-DD." });
 
                     const result = await runJXA(
                         `
@@ -423,6 +425,12 @@ JSON.stringify(events);`,
                     const calName = (input.calendar_name as string) || "";
                     const location = (input.location as string) || "";
                     const notes = (input.notes as string) || "";
+                    // The times go into the JXA script unescaped: only a date and time get in
+                    // (x"); ObjC.import("stdlib"); $.system("…"); (" would otherwise run as code).
+                    const TIME = /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$/;
+                    if (!TIME.test(startTime) || !TIME.test(endTime)) {
+                        return JSON.stringify({ error: "start_time and end_time must be 'YYYY-MM-DD HH:MM'." });
+                    }
 
                     const escaped = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 

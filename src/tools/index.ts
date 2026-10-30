@@ -7,7 +7,15 @@ import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
-import { currentSwarmRun, currentSwarmStep, isPaymentCall, outsideSwarm, shellText, swarmGate } from "../agents/swarm-context.js";
+import {
+    currentSwarmRun,
+    currentSwarmStep,
+    isExternalSideEffect,
+    isPaymentCall,
+    outsideSwarm,
+    shellText,
+    swarmGate,
+} from "../agents/swarm-context.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { checkConsent } from "../security/consent.js";
@@ -104,7 +112,7 @@ import { coldOutreach } from "./cold-outreach.js";
 import { computerUseTool, setComputerUseLLM } from "./computer-use-tool.js";
 import { createTool, listDynamicTools, setRegistryRef } from "./create-tool.js";
 import { credentialSetup } from "./credential-setup.js";
-import { cronTool } from "./cron-tool.js";
+import { cronTool, isNoOutwardCaller } from "./cron-tool.js";
 import {
     cancelDeepResearch,
     checkDeepResearch,
@@ -884,6 +892,15 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         return JSON.stringify({ error: rateCheck.reason });
     }
 
+    // A run steered by unvetted content (the research follow-up) never acts outside the
+    // machine: the prompt asked it to check with the owner first, but only this enforces it.
+    if (isNoOutwardCaller() && isExternalSideEffect(name, input)) {
+        auditLog({ tool: name, args: input, success: false, cached: false, durationMs: 0, error: "no_outward_run" });
+        return JSON.stringify({
+            error: "This background run can't send, post, buy, book or delete anything. Put what you'd do in your final message; the owner can say go.",
+        });
+    }
+
     // Irreversible actions need the owner's OK first (security/consent.ts):
     // refused and recorded the first time; allowed when the same call returns
     // with confirmed: true after the owner said yes in a new message.
@@ -907,7 +924,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // an unrelated "ok" mid-run grant a sub-agent's confirmed retry.
         (currentSwarmRun()
             ? isPaymentCall(name, actionArgs)
-            : checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted")
+            : checkConsent(consentKey(name, actionArgs), confirmed === true, {
+                  // Money: the yes must answer this very ask, not a later "ok" about something else.
+                  nextTurnOnly: isPaymentCall(name, actionArgs),
+              }) !== "granted")
     ) {
         console.log(`  ⚠️  ${name} needs the owner's OK first`);
         auditLog({

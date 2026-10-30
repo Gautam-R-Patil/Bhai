@@ -127,6 +127,16 @@ function createOAuth2Client(): OAuth2Client | null {
 /**
  * Load all previously authenticated accounts from disk.
  */
+
+/**
+ * One header value: a line break in to/subject (model-written, or quoted from a page or
+ * an email) started a new header — "x\r\nBcc: someone@else" added a recipient nobody saw.
+ * Non-ASCII text (a Hindi subject) is RFC 2047-encoded so it arrives readable.
+ */
+export function header(value: string, encode = false): string {
+    const v = String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+    return encode && /[^\x20-\x7e]/.test(v) ? `=?UTF-8?B?${Buffer.from(v, "utf8").toString("base64")}?=` : v;
+}
 export function loadSavedAccounts(): void {
     ensureDataDir();
     try {
@@ -935,8 +945,8 @@ export const gmailTool: ToolDefinition = {
                 const raw = Buffer.from(
                     [
                         `From: ${acc.email}`,
-                        `To: ${to}`,
-                        `Subject: ${subject}`,
+                        `To: ${header(to)}`,
+                        `Subject: ${header(subject, true)}`,
                         `Content-Type: text/plain; charset=utf-8`,
                         "",
                         body,
@@ -977,10 +987,10 @@ export const gmailTool: ToolDefinition = {
                         const raw = Buffer.from(
                             [
                                 `From: ${acc.email}`,
-                                `To: ${replyTo}`,
-                                `Subject: ${reSubject}`,
-                                `In-Reply-To: ${msgIdHeader}`,
-                                `References: ${msgIdHeader}`,
+                                `To: ${header(replyTo)}`,
+                                `Subject: ${header(reSubject, true)}`,
+                                `In-Reply-To: ${header(msgIdHeader)}`,
+                                `References: ${header(msgIdHeader)}`,
                                 `Content-Type: text/plain; charset=utf-8`,
                                 "",
                                 body,

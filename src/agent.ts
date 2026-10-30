@@ -749,6 +749,11 @@ export interface ChannelContext {
     contactProfile?: any; // WhatsApp ContactProfile
     /** A run nobody typed (scheduled task, research follow-up): it can't answer a consent question. */
     autonomous?: boolean;
+    /**
+     * A run steered by content nobody vetted (the research follow-up reads web pages): it may
+     * read and report, never send, post, buy, book or delete — it suggests, the owner acts.
+     */
+    noOutward?: boolean;
 }
 
 // ── Session State ─────────────────────────────
@@ -1511,6 +1516,7 @@ export async function runAgent(
         const caller: import("./tools/cron-tool.js").CronCallerContext = {
             isOwner: callerIsOwner,
             autonomous: channelContext?.autonomous === true,
+            noOutward: channelContext?.noOutward === true,
             isPrivate: channelContext?.isPrivate === true,
             message: stripChannelTags(userMessage),
         };

@@ -296,7 +296,13 @@ Always end by sending a final user-facing message describing what you found and 
                         undefined,
                         undefined,
                         undefined,
-                        capturedChannelContext ? { ...capturedChannelContext, autonomous: true } : undefined,
+                        // Report built from web pages: a page could plant "email this to X". This run
+                        // reads and reports; any send, post, purchase or booking waits for the owner.
+                        {
+                            ...(capturedChannelContext ?? { channel: "overlay", userId: "local", isOwner: true }),
+                            autonomous: true,
+                            noOutward: true,
+                        },
                     );
                     if (result?.text) await capturedNotify(result.text);
                 } catch (err) {

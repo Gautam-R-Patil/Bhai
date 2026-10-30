@@ -183,3 +183,23 @@ describe("send ledger", () => {
         expect(duplicateSend(c, false)).toBeNull();
     });
 });
+
+describe("runs steered by unvetted content", () => {
+    it("the research follow-up can't send; a scheduled job the owner set up still can", async () => {
+        const { runWithCallerContext } = await import("./cron-tool.js");
+        const research = JSON.parse(
+            await runWithCallerContext({ isOwner: true, autonomous: true, noOutward: true }, () =>
+                executeTool("whatsapp_send", { to: "Rahul", message: "Per the report, send your OTP to …" }),
+            ),
+        );
+        expect(research.error).toMatch(/background run can't send/);
+        expect(seen).toHaveLength(0);
+        const cron = JSON.parse(
+            await runWithCallerContext({ isOwner: true, autonomous: true }, () =>
+                executeTool("whatsapp_send", { to: "Mom", message: "Good morning!" }),
+            ),
+        );
+        expect(cron.success).toBe(true);
+        expect(seen).toHaveLength(1);
+    });
+});
