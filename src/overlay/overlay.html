@@ -330,6 +330,61 @@
     .past-turn { opacity: 0.6; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px; }
     .past-q { font-weight: 600; }
 
+    /* ── Live turn: one line while Bhai works; Notes and Steps one click away ── */
+    .turn-view { margin-bottom: 8px; }
+    .turn-live {
+      display: flex; align-items: center; gap: 10px; width: calc(100% + 12px); margin: 0 -6px; padding: 4px 6px;
+      border: 0; border-radius: 10px; background: none; font: inherit; font-size: 13.5px; line-height: 1.5;
+      color: var(--text-secondary); text-align: left; cursor: pointer; user-select: none;
+    }
+    .turn-live:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+    .turn-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .turn-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--accent); animation: turnPulse 1.2s ease-in-out infinite; }
+    .turn-now {
+      flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      background: linear-gradient(90deg, var(--text-secondary) 0 40%, var(--accent) 50%, var(--text-secondary) 60% 100%);
+      background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+      animation: turnShimmer 2.2s linear infinite;
+    }
+    .turn-meta { flex: none; display: flex; align-items: center; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .turn-chev { display: inline-block; margin-left: 4px; font-size: 14px; line-height: 1; transition: transform 0.25s var(--ease); }
+    .turn-view.open .turn-chev { transform: rotate(180deg); }
+    .turn-bar { height: 3px; margin-top: 6px; border-radius: 2px; background: var(--border); overflow: hidden; }
+    .turn-bar i { display: block; width: 40%; height: 100%; border-radius: 2px; background: var(--accent); animation: turnSlide 1.6s ease-in-out infinite; }
+    .turn-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.3s var(--ease), margin 0.3s var(--ease); }
+    .turn-panel > div { overflow: hidden; }
+    .turn-view.open .turn-panel { grid-template-rows: 1fr; margin-top: 8px; }
+    .turn-inner { padding: 4px 10px 8px; border-radius: 10px; background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+    .turn-lbl { margin: 6px 0 2px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+    .turn-notes { max-height: 96px; overflow-y: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--text-secondary); }
+    .turn-step { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+    .turn-step::before { content: ""; flex: none; width: 14px; text-align: center; }
+    .turn-step.done::before { content: "✓"; color: var(--success); }
+    .turn-step.failed::before { content: "✕"; color: var(--danger); }
+    .turn-step.running { font-weight: 500; color: var(--text-primary); }
+    .turn-step.running::before { width: 8px; height: 8px; margin: 0 3px; border-radius: 50%; background: var(--accent); animation: turnPulse 1.2s ease-in-out infinite; }
+    .turn-caret { display: inline-block; width: 2px; height: 1em; margin-left: 1px; vertical-align: -2px; background: var(--accent); animation: turnBlink 1s steps(2) infinite; }
+    .turn-view.done .turn-dot, .turn-view.done .turn-bar { display: none; }
+    .turn-view.done .turn-live { font-size: 12.5px; }
+    .turn-view.done .turn-now { animation: none; background: none; color: var(--text-muted); }
+    /* Bhai busy: a soft ripple around the mascot */
+    .icon.thinking::after {
+      content: ""; position: absolute; inset: 4px; border-radius: 50%; border: 1.5px solid var(--accent-strong);
+      pointer-events: none; animation: turnRipple 1.6s ease-out infinite;
+    }
+    @keyframes turnPulse { 0%, 100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.15); } }
+    @keyframes turnShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+    @keyframes turnSlide { from { margin-left: -40%; } to { margin-left: 100%; } }
+    @keyframes turnBlink { 50% { opacity: 0; } }
+    @keyframes turnRipple { from { opacity: 0.9; transform: scale(0.85); } to { opacity: 0; transform: scale(1.3); } }
+    @media (prefers-reduced-motion: reduce) {
+      .turn-dot, .turn-step.running::before, .turn-caret { animation: none; }
+      .turn-now { animation: none; background: none; color: var(--text-secondary); }
+      .turn-bar i { width: 100%; opacity: 0.4; animation: none; }
+      .turn-panel, .turn-chev { transition: none; }
+      .icon.thinking::after { display: none; }
+    }
+
     #reply-box.visible {
       display: block;
       animation: bubbleSpring 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.08);
@@ -2850,7 +2905,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       const MOOD_LABELS = {
         idle: 'Bhai is idle', listening: 'Bhai is listening', thinking: 'Bhai is thinking',
         looking: 'Bhai is looking at your screen', working: 'Bhai is working on it',
-        happy: 'Bhai is done', oops: 'Bhai hit a problem',
+        happy: 'Bhai is done', oops: 'Bhai hit a problem', typing: 'Bhai is writing the answer',
       };
       let moodTimer = null;
       function restingMood() {
@@ -2868,6 +2923,53 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (/📸|screen|screenshot|look|see|vision|brows|🌐|🔍|search|web|page|read/.test(t)) return 'looking';
         return 'working';
       }
+
+      // One turn's live view as plain data, from the bot's turn_* messages (pure; turn-view.test.ts):
+      // {turn, seq, status, steps, notes, answer, attempt, open}. A message whose seq isn't newer
+      // changes nothing; another turn's message starts a fresh view. attempt null = unknown (a
+      // snapshot doesn't say which attempt its answer is), so the next delta just carries on.
+      function turnView(state, msg) {
+        if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('turn_')) return state;
+        const same = !!state && state.turn === msg.turn;
+        if (same && typeof msg.seq === 'number' && msg.seq <= state.seq) return state;
+        const s = same ? { ...state }
+          : { turn: msg.turn, seq: 0, status: null, steps: [], notes: [], answer: '', attempt: 0, open: !!(state && state.open) };
+        if (typeof msg.seq === 'number') s.seq = msg.seq;
+        switch (msg.type) {
+          case 'turn_snapshot':
+            s.status = msg.status || null;
+            s.steps = Array.isArray(msg.steps) ? msg.steps.map((x) => ({ id: x.id, text: x.text, state: x.state })) : [];
+            s.notes = Array.isArray(msg.notes) ? msg.notes.slice() : [];
+            s.answer = typeof msg.answer === 'string' ? msg.answer : '';
+            s.attempt = null;
+            break;
+          case 'turn_status':
+            s.status = { text: msg.text || '', step: msg.step || 0, elapsed: msg.elapsed || 0 };
+            break;
+          case 'turn_step': {
+            const step = { id: msg.id, text: msg.text || '', state: msg.state };
+            const i = s.steps.findIndex((x) => x.id === msg.id);
+            s.steps = i < 0 ? [...s.steps, step] : s.steps.map((x, j) => (j === i ? step : x));
+            break;
+          }
+          case 'turn_note':
+            s.notes = [...s.notes, msg.text || ''];
+            break;
+          case 'turn_answer':
+            if (s.attempt === null) s.attempt = msg.attempt;
+            if (msg.attempt < s.attempt) return state; // a withdrawn attempt's late text
+            if (msg.attempt > s.attempt) { s.attempt = msg.attempt; s.answer = ''; }
+            s.answer += msg.text || '';
+            break;
+          case 'turn_answer_reset':
+            s.answer = '';
+            s.attempt = Math.max(s.attempt || 0, (msg.attempt || 0) + 1);
+            break;
+          default:
+            return state;
+        }
+        return s;
+      }
       let activeTasks = new Map(); // taskId -> { name, type, progress, phase }
       let inboxItems = new Map();  // intentId -> wire item (status "pending" only)
 
@@ -2883,6 +2985,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (!waiting || !ws || ws.readyState !== 1) return;
         ws.send(JSON.stringify({ type: 'stop', chat: chatId }));
         progress.textContent = 'Stopping…';
+        if (live && !live.done) { live.stopping = true; renderLive(); }
       }
       stopBtn.addEventListener('click', stopTask);
       document.addEventListener('keydown', (e) => {
@@ -2894,6 +2997,131 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         replyText.setAttribute('aria-busy', busy ? 'true' : 'false');
         if (busy) announceToSR('Bhai is processing your request');
       }
+
+      // ── Live turn (turn_* from the bot): the live line, its Notes/Steps panel, the typed answer ──
+      // Old bots send no turn_*, and then none of this runs. The view lives in #reply-text, so
+      // keepTurn() files it with its turn in #reply-history ("Worked for…" still opens the panel).
+      const PANEL_KEY = 'bhai.turnPanelOpen';
+      function panelPref() { try { return localStorage.getItem(PANEL_KEY) === '1'; } catch { return false; } }
+      function savePanelPref(open) { try { localStorage.setItem(PANEL_KEY, open ? '1' : '0'); } catch { /* storage off */ } }
+      const plainStatus = (t) => String(t || '').replace(/^[\p{Extended_Pictographic}\u200d\ufe0f\s]+/u, '');
+      // { state (turnView), el, start, statusAt, fallback, shown, frame, tick, stopping, done }
+      let live = null;
+
+      function liveStart(turn, text) {
+        if (live) { cancelAnimationFrame(live.frame); clearInterval(live.tick); }
+        replyArriving('Message from Bhai'); // once per turn; the final response won't call it again
+        const root = document.createElement('div');
+        const open = panelPref();
+        root.className = open ? 'turn-view open' : 'turn-view';
+        root.innerHTML = '<button type="button" class="turn-live" aria-expanded="false" title="Show what Bhai is doing">'
+          + '<span class="turn-dot" aria-hidden="true"></span><span class="turn-now"></span>'
+          + '<span class="turn-meta"><span class="turn-count"></span><span class="turn-chev" aria-hidden="true">▾</span></span></button>'
+          + '<div class="turn-bar" aria-hidden="true"><i></i></div>'
+          + '<div class="turn-panel"><div><div class="turn-inner">'
+          + '<div class="turn-notes-wrap" hidden><div class="turn-lbl">Notes</div><div class="turn-notes"></div></div>'
+          + '<div class="turn-steps-wrap" hidden><div class="turn-lbl">Steps</div><div class="turn-steps"></div></div>'
+          + '</div></div></div>';
+        const answer = document.createElement('div');
+        answer.className = 'turn-answer';
+        replyText.replaceChildren(root, answer);
+        const q = (sel) => root.querySelector(sel);
+        live = {
+          state: { turn, seq: 0, status: null, steps: [], notes: [], answer: '', attempt: 0, open },
+          el: { root, answer, now: q('.turn-now'), count: q('.turn-count'), notes: q('.turn-notes'), steps: q('.turn-steps') },
+          start: Date.now(), statusAt: 0, fallback: plainStatus(text) || 'Thinking…', shown: '', frame: 0, tick: 0, stopping: false, done: false,
+        };
+        setPanelOpen(root, open);
+        live.tick = setInterval(liveCount, 1000);
+        icon.classList.add('thinking');
+        setAgentBusy(true);
+        waiting = true;
+        input.disabled = true;
+        progress.classList.remove('visible');
+        progress.innerHTML = '';
+        replyBox.classList.add('visible');
+        replyBox.scrollTop = Math.max(0, replyText.offsetTop - 16);
+        renderLive();
+      }
+
+      function setPanelOpen(root, open) {
+        root.classList.toggle('open', open);
+        root.querySelector('.turn-live').setAttribute('aria-expanded', open ? 'true' : 'false');
+        root.querySelector('.turn-panel').setAttribute('aria-hidden', open ? 'false' : 'true');
+      }
+      // One handler for the live view and every finished one kept in the history.
+      replyBox.addEventListener('click', (e) => {
+        const btn = e.target.closest('.turn-live');
+        if (!btn) return;
+        const root = btn.parentElement;
+        const open = !root.classList.contains('open');
+        setPanelOpen(root, open);
+        savePanelPref(open);
+        if (live && root === live.el.root) live.state = { ...live.state, open };
+      });
+
+      function liveCount() {
+        if (!live || live.done) return;
+        const s = live.state.status;
+        const secs = Math.floor(s ? s.elapsed + (Date.now() - live.statusAt) / 1000 : (Date.now() - live.start) / 1000);
+        live.el.count.textContent = (s && s.step > 0 ? `step ${s.step} · ` : '') + `${secs}s`;
+      }
+
+      function renderLive() {
+        if (!live) return;
+        cancelAnimationFrame(live.frame);
+        live.frame = 0;
+        const s = live.state, el = live.el;
+        if (!live.done) {
+          el.now.textContent = live.stopping ? 'Stopping…' : (s.status && plainStatus(s.status.text)) || live.fallback;
+          liveCount();
+        }
+        const notes = s.notes.join('');
+        el.notes.parentElement.hidden = !notes.trim();
+        if (el.notes.textContent !== notes) { el.notes.textContent = notes; el.notes.scrollTop = el.notes.scrollHeight; }
+        el.steps.parentElement.hidden = !s.steps.length;
+        el.steps.innerHTML = s.steps.map((x) => `<div class="turn-step ${esc(String(x.state))}">${esc(String(x.text))}</div>`).join('');
+        if (!live.done && s.answer !== live.shown) {
+          live.shown = s.answer;
+          el.answer.innerHTML = s.answer ? `${renderStreamingMd(s.answer)}<span class="turn-caret" aria-hidden="true"></span>` : '';
+        }
+      }
+
+      function onTurnEvent(msg) {
+        if (!live || live.state.turn !== msg.turn) liveStart(msg.turn);
+        if (live.done) return; // the turn already ended here
+        const prev = live.state;
+        live.state = turnView(prev, msg);
+        if (live.state === prev) return;
+        if (msg.type === 'turn_status' || (msg.type === 'turn_snapshot' && msg.status)) live.statusAt = Date.now();
+        // Bhai's face follows the work: thinking on notes, looking/working on steps, typing on the answer.
+        const running = live.state.steps.filter((x) => x.state === 'running').pop();
+        if (msg.type === 'turn_note') setMood('thinking');
+        else if (msg.type === 'turn_answer') setMood('typing');
+        else if (msg.type === 'turn_step' && msg.state === 'running') setMood(moodFromProgress(msg.text));
+        else if (msg.type === 'turn_step' && msg.state === 'done' && window.BhaiMascot) window.BhaiMascot.react(icon, 'nod');
+        else if (msg.type === 'turn_snapshot') setMood(live.state.answer ? 'typing' : running ? moodFromProgress(running.text) : 'thinking');
+        // At most one render per frame, however fast the deltas come.
+        if (!live.frame) live.frame = requestAnimationFrame(renderLive);
+      }
+
+      // The turn ended: the live line becomes "Worked for {N}s · {K} steps ▾" (or goes, when
+      // there's nothing behind it). Returns the element the final reply goes into.
+      function liveFinish(worked) {
+        renderLive();
+        clearInterval(live.tick);
+        live.done = true;
+        const { root, now, count, answer } = live.el;
+        if (!live.state.steps.length && !live.state.notes.join('').trim()) root.remove();
+        const w = worked || { secs: Math.round((Date.now() - live.start) / 1000), steps: live.state.steps.length };
+        root.classList.add('done');
+        setPanelOpen(root, false);
+        now.textContent = `Worked for ${w.secs}s · ${w.steps} step${w.steps === 1 ? '' : 's'}`;
+        count.textContent = '';
+        answer.querySelectorAll('.turn-caret').forEach((c) => c.remove());
+        return answer;
+      }
+      const liveRunning = () => !!live && !live.done;
 
       // ── Task Drawer ──
       taskDrawerToggle.addEventListener('click', () => {
@@ -3201,6 +3429,10 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           progress.innerHTML = '';
           contract.textContent = ''; // a new turn: the last turn's contract no longer applies
           clearInteractive();
+          if (msg.turn) liveStart(msg.turn, msg.text); // a bot that streams: the live line shows at once
+        }
+        else if (typeof msg.type === 'string' && msg.type.startsWith('turn_')) {
+          onTurnEvent(msg);
         }
         else if (msg.type === 'thinking_content') {
           // Live thinking display — show model reasoning as it arrives
@@ -3216,6 +3448,12 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           contract.textContent = msg.text || '';
         }
         else if (msg.type === 'progress') {
+          // During a live turn its line says what's happening; a progress line only fills in
+          // before the first status, and background research never takes it over.
+          if (liveRunning()) {
+            if (!msg.background) { live.fallback = plainStatus(msg.text) || live.fallback; renderLive(); }
+            return;
+          }
           if (waiting || icon.classList.contains('thinking')) setMood(moodFromProgress(msg.text));
           // Render as enhanced progress card
           const progressIcon = extractProgressIcon(msg.text);
@@ -3231,12 +3469,14 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           progress.innerHTML = '';
 
           if (msg.newChat) { chatId = newChatId(); replyHistory.innerHTML = ''; } // "/new": later messages file under a fresh chat
-          replyArriving('Message from Bhai');
+          // The live turn's reply (errors carry no turn): it lands under its "Worked for…" line.
+          const streamed = liveRunning() && (msg.type === 'error' || !msg.turn || msg.turn === live.state.turn);
+          if (!streamed) replyArriving('Message from Bhai');
           const rawText = msg.text || '(no response)';
           console.log('[OVERLAY] Response text length:', rawText.length, 'preview:', rawText.substring(0, 100));
           const renderedText = msg.type === 'error' ? `⚠️ ${esc(rawText)}` : renderMd(rawText);
           console.log('[OVERLAY] Rendered HTML length:', renderedText.length);
-          replyText.innerHTML = renderedText;
+          (streamed ? liveFinish(msg.worked) : replyText).innerHTML = renderedText;
           // Only the data:image receipt overlay-chat builds; never a navigable URL.
           if (typeof msg.receipt === 'string' && msg.receipt.startsWith('data:image/')) {
             const receiptImg = document.createElement('img');
@@ -3244,8 +3484,10 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             receiptImg.alt = 'Screen after the task';
             replyText.appendChild(receiptImg);
           }
-          replyBox.classList.remove('visible');
-          replyBox.offsetHeight;
+          if (!streamed) { // a streamed reply's box is already up: no second spring
+            replyBox.classList.remove('visible');
+            replyBox.offsetHeight;
+          }
           replyBox.classList.add('visible');
           replyBox.scrollTop = Math.max(0, replyText.offsetTop - 16); // the new reply, not the turns above it
           if (msg.type !== 'error') input.value = ''; // after an error the prompt stays: Enter retries it
@@ -3271,6 +3513,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           // Reconnected while waiting, and no turn is running any more: its reply was lost.
           // Unlock instead of showing "thinking" forever.
           if (waiting && !msg.busy) {
+            if (liveRunning()) liveFinish(null);
             icon.classList.remove('thinking');
             setMood('idle');
             setAgentBusy(false);
@@ -3284,6 +3527,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           }
         }
         else if (msg.type === 'silent') {
+          if (liveRunning()) { liveFinish(null); replyText.innerHTML = ''; } // no reply: nothing to keep
           icon.classList.remove('thinking');
           setMood('idle');
           setAgentBusy(false);
@@ -3569,6 +3813,12 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         return h.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[i]);
       }
 
+      // renderMd for an answer still streaming in: an unclosed ``` fence stays a code block
+      // instead of flashing as plain text until its closing fence arrives.
+      function renderStreamingMd(text) {
+        return renderMd((text.match(/```/g) || []).length % 2 ? `${text}\n\`\`\`` : text);
+      }
+
       function copyCode(id) {
         const el = document.getElementById(id);
         if (el) {
@@ -3580,7 +3830,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
       // ── Copy Response ──
       function copyResponse() {
-        const text = replyText.textContent || replyText.innerText || '';
+        const answer = replyText.querySelector('.turn-answer') || replyText; // not the "Worked for…" line
+        const text = answer.textContent || answer.innerText || '';
         navigator.clipboard.writeText(text);
         const btn = document.getElementById('copy-response-btn');
         if (btn) { btn.textContent = '✓'; setTimeout(() => btn.textContent = '⧉', 1500); }
