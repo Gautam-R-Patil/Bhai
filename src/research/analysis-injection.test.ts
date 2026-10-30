@@ -8,7 +8,7 @@ vi.mock("../model-router.js", () => ({
     selectForSynthesis: () => ({ modelId: "test-model" }),
 }));
 
-const { analyzeAndExtract, detectContradictions } = await import("./analysis.js");
+const { analyzeAndExtract, detectContradictions, synthesizeResearch } = await import("./analysis.js");
 
 describe("analyzeAndExtract prompt injection hardening", () => {
     it("wraps and neutralizes untrusted page content", async () => {
@@ -54,5 +54,33 @@ describe("model output that isn't the expected shape", () => {
             ["A says 5", "B says 7", "C", "D", "E"], // it only looks with 5+ findings
         );
         expect(contradictions).toHaveLength(1);
+    });
+});
+
+describe("synthesized report sources", () => {
+    it("numbers each page once and appends the real URLs", async () => {
+        let prompt = "";
+        const llm = {
+            chat: async (req: { messages: Array<{ content: string }> }) => {
+                prompt = req.messages[0].content;
+                return { choices: [{ message: { content: "# Research Report: t\n\nA claim [1]." } }] };
+            },
+        };
+        const finding = (text: string, sourceUrl: string, sourceTitle: string) =>
+            ({ text, sourceUrl, sourceTitle, confidence: "weak" as const, supportingSources: [], contradictedBy: [], category: "c" });
+        const report = await synthesizeResearch(
+            llm as never, "t",
+            [
+                finding("one", "https://www.a.example/post", "A post"),
+                finding("two", "https://a.example/post/", "A post again"),
+                finding("three", "https://b.example/x", "B page"),
+            ],
+            2, 1, {}, [], [], {} as never,
+        );
+        expect(prompt).toContain("one [1]");
+        expect(prompt).toContain("two [1]");
+        expect(prompt).toContain("three [2]");
+        const sources = report.split("## Sources\n")[1].trim().split("\n");
+        expect(sources).toEqual(["[1] A post — https://www.a.example/post", "[2] B page — https://b.example/x"]);
     });
 });

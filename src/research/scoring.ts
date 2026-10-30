@@ -1,7 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Deep Research v2 — Source ranking, finding dedup, cross-referencing
 
-import type { RankedSource, StructuredFinding } from "./types.js";
+import type { RankedSource, RawFinding, StructuredFinding } from "./types.js";
 import { scoreDomainQuality, getDomain } from "./fetcher.js";
 import { getCredibility } from "./credibility-model.js";
 
@@ -142,7 +142,7 @@ export function deduplicateFindings(findings: string[]): string[] {
 // ── Cross-Reference Findings ─────────────────
 
 export function crossReferenceFindings(
-    findings: Array<{ text: string; sourceUrl: string; sourceTitle: string; categories: string[] }>,
+    findings: RawFinding[],
     allSources: RankedSource[],
 ): StructuredFinding[] {
     const structured: StructuredFinding[] = [];

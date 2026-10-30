@@ -5,6 +5,7 @@ import type { LLMClient, ChatCompletionMessageParam } from "../llm.js";
 import { selectForResearch, selectForSynthesis } from "../model-router.js";
 import type { StructuredFinding, Contradiction, ResearchProfile } from "./types.js";
 import { extractJSON } from "../utils/json-extract.js";
+import { normalizeUrl } from "./scoring.js";
 
 // Neutralize triple-quote sequences in user-controlled strings so they can't
 // close a fenced block in our prompts and inject downstream instructions.
@@ -392,6 +393,24 @@ export async function synthesizeResearch(
 
     const categories = [...new Set(findings.map(f => f.category))];
 
+    // Number the pages behind the listed findings (one page, one number) so the model
+    // cites [n] and the Sources list is built from data rather than written by the model.
+    const verifiedShown = verifiedFindings.slice(0, 50);
+    const corroboratedShown = corroboratedFindings.slice(0, 30);
+    const singleShown = singleSourceFindings.slice(0, 30);
+    const sourceNumbers = new Map<string, { n: number; title: string; url: string }>();
+    const cite = (f: StructuredFinding): string => {
+        const key = normalizeUrl(f.sourceUrl);
+        if (!sourceNumbers.has(key)) sourceNumbers.set(key, { n: sourceNumbers.size + 1, title: f.sourceTitle, url: f.sourceUrl });
+        return `[${sourceNumbers.get(key)?.n}]`;
+    };
+    const verifiedLines = verifiedShown.map((f, i) => `V${i + 1}. ${f.text} ${cite(f)} [+${f.supportingSources.length} other sources]`);
+    const corroboratedLines = corroboratedShown.map((f, i) => `C${i + 1}. ${f.text} ${cite(f)}`);
+    const singleLines = singleShown.map((f, i) => `S${i + 1}. ${f.text} ${cite(f)}`);
+    // Plain URLs, no markdown link syntax: page titles are untrusted and must not shape links.
+    const sourceLines = [...sourceNumbers.values()].map(e => `[${e.n}] ${sanitizeFenced(e.title).replace(/\s+/g, " ")} — ${e.url}`);
+    const sourcesSection = sourceLines.length ? `\n\n## Sources\n${sourceLines.join("\n")}\n` : "";
+
     const enginesStr = Object.entries(engineBreakdown).map(([e, c]) => `${e}: ${c}`).join(", ");
     const contStr = contradictions.length > 0
         ? contradictions.map(c => `- "${c.finding1}" vs "${c.finding2}" — ${c.explanation}`).join("\n")
@@ -424,13 +443,16 @@ RESEARCH STATISTICS:
 - Themes discovered: ${categories.join(", ")}
 
 VERIFIED FINDINGS (independently supported by 3+ sources):
-${verifiedFindings.slice(0, 50).map((f, i) => `V${i + 1}. ${f.text} [Source: ${f.sourceTitle}] [+${f.supportingSources.length} other sources]`).join("\n")}
+${verifiedLines.join("\n")}
 
 CORROBORATED FINDINGS (2 sources):
-${corroboratedFindings.slice(0, 30).map((f, i) => `C${i + 1}. ${f.text} [Source: ${f.sourceTitle}]`).join("\n")}
+${corroboratedLines.join("\n")}
 
 SINGLE-SOURCE FINDINGS (uncorroborated, treat with caution):
-${singleSourceFindings.slice(0, 30).map((f, i) => `S${i + 1}. ${f.text} [Source: ${f.sourceTitle}]`).join("\n")}
+${singleLines.join("\n")}
+
+SOURCES (cite these by number):
+${sourceLines.join("\n")}
 
 CONTRADICTIONS DETECTED:
 ${contStr}
@@ -440,7 +462,7 @@ ${gapsStr}
 
 CRITICAL WRITING RULES:
 1. ONLY discuss findings that appear in the lists above. NEVER invent findings, source titles, company names, valuations, dates, or numbers.
-2. NEVER reference findings by a number that does not appear above (e.g., do NOT write "Finding 21" or "Finding 60" if those IDs aren't listed). When you need to cite a finding, quote a short phrase from its text instead of using an ID.
+2. Cite sources with the [n] numbers listed under SOURCES; never invent one. NEVER reference findings by an ID (e.g., do NOT write "Finding 21" or "V3").
 3. If two findings (even from the same listed source) produce mathematically inconsistent numbers (e.g., a single-year figure exceeding a multi-year aggregate), call out the source as unreliable and DROP both numbers from your conclusions — do not present them as equivalent contradictions.
 4. Use the labels "Verified" / "Corroborated" / "Single-source" — do NOT use "Strong" / "Moderate" / "Weak".
 5. If the user's original request asked for specific entities (people, emails, contacts, products) that the findings do NOT contain, state this explicitly in the "Limitations & What Was Not Found" section. Do not paper over missing data.
@@ -453,7 +475,7 @@ Write the report with this EXACT structure:
 (2-3 sentences. If the user's original request asked for specific actions or entities, lead with whether the report enables them.)
 
 ## Key Findings
-(Bullets organized by theme. Each bullet ends with a confidence tag in parentheses: "(Verified, N sources)", "(Corroborated, 2 sources)", or "(Single-source: <publication name>)".)
+(Bullets organized by theme. Each bullet cites its source with the [n] numbers listed and ends with a confidence tag in parentheses: "(Verified, N sources)", "(Corroborated, 2 sources)", or "(Single-source)".)
 
 ## Detailed Analysis
 (Connective prose tying findings together — interpretation, what it means, how the themes relate. Do not restate the bullets above.)
@@ -468,8 +490,7 @@ ${nextStepsSection}
 ## Methodology
 (Search engines used, queries executed, sources read, citation depth, research profile.)
 
-## Sources
-(Bibliography. Distinguish primary sources from aggregators.)
+Do not write a Sources section; the numbered list is appended to your report.
 
 Be thorough, specific, and analytical. Include numbers, dates, and technical details — but only those that appear in the listed findings.`;
 
@@ -479,7 +500,7 @@ Be thorough, specific, and analytical. Include numbers, dates, and technical det
             systemPrompt: "You are an expert research analyst writing a comprehensive, publication-quality report. You ONLY write claims supported by the listed findings. You NEVER invent finding IDs, company names, or numbers not in the source data. Be thorough and detailed within those constraints.",
             modelOverride: selectForSynthesis(topic).modelId,
         });
-        return response.choices?.[0]?.message?.content || "(synthesis failed)";
+        return (response.choices?.[0]?.message?.content || "(synthesis failed)") + sourcesSection;
     } catch {
         // Fallback: concatenate findings using the new confidence labels so the
         // user doesn't see the raw "strong/moderate/weak" terminology when the
@@ -487,6 +508,6 @@ Be thorough, specific, and analytical. Include numbers, dates, and technical det
         // happened.
         const confLabel = (c: StructuredFinding["confidence"]): string =>
             c === "strong" ? "Verified" : c === "moderate" ? "Corroborated" : "Single-source";
-        return `# Research Report: ${topic}\n\n## Executive Summary\nFull synthesis was unavailable. Below is a flat list of findings collected during research; deeper analysis was not produced.\n\n## Key Findings\n${findings.slice(0, 100).map(f => `- [${confLabel(f.confidence)}] ${f.text}`).join("\n")}\n\n## Limitations\nThe synthesis step failed; treat all findings here as raw extractions, not cross-validated conclusions.`;
+        return `# Research Report: ${topic}\n\n## Executive Summary\nFull synthesis was unavailable. Below is a flat list of findings collected during research; deeper analysis was not produced.\n\n## Key Findings\n${[...verifiedShown, ...corroboratedShown, ...singleShown].map(f => `- [${confLabel(f.confidence)}] ${f.text} ${cite(f)}`).join("\n")}\n\n## Limitations\nThe synthesis step failed; treat all findings here as raw extractions, not cross-validated conclusions.${sourcesSection}`;
     }
 }

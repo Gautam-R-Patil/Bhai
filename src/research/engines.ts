@@ -4,6 +4,7 @@
 import { decodeBingUrl } from "../tools/web-search.js";
 import { baseUrlHostMatches } from "../utils/atomic-io.js";
 import type { SearchResult } from "./types.js";
+import { UrlSet } from "./scoring.js";
 import { randomUA, sleep, ENGINE_COOLDOWN_MS, ENGINE_MAX_CONSECUTIVE_FAILURES, SEARCH_BROWSER_IDLE_MS } from "./profiles.js";
 import { getSessionToken } from "../session.js";
 import { getConvexSiteUrl } from "../config/keys.js";
@@ -787,7 +788,7 @@ export async function multiEngineSearch(
 
     const settled = await Promise.allSettled(searches);
 
-    const seenUrls = new Set<string>();
+    const seenUrls = new UrlSet(); // one page from two engines under two spellings is one result
     const merged: SearchResult[] = [];
     const enginesUsed: string[] = [];
 

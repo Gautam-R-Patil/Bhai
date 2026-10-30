@@ -15,6 +15,14 @@ export interface SearchResult {
 
 // ── Findings ─────────────────────────────────
 
+/** A finding as extracted from one page, before cross-referencing. */
+export interface RawFinding {
+    text: string;
+    sourceUrl: string;
+    sourceTitle: string;
+    categories: string[];
+}
+
 export interface StructuredFinding {
     text: string;
     sourceUrl: string;
@@ -124,8 +132,7 @@ export interface ResearchProfile {
 
 export interface ResearchState {
     research: Omit<ActiveResearch, "abortController">;
-    allFindings: string[];
-    structuredFindings: StructuredFinding[];
+    allFindings: RawFinding[];
     allSources: RankedSource[];
     visitedUrls: string[];
     usedQueries: string[];

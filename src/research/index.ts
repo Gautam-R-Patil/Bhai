@@ -15,6 +15,8 @@ import {
     getIndexEntry,
     listIndex,
     recoverInterruptedResearches,
+    loadResearchState,
+    deleteResearchState,
 } from "./persistence.js";
 
 // ── State ────────────────────────────────────
@@ -177,7 +179,9 @@ CRITICAL — what to do AFTER this returns:
 3. END THE TURN.
 4. Do NOT call web_search, browser_*, or any other research tool for the same topic. The background process will read sources, synthesize findings, and deliver a final answer to the user automatically. You do not need to poll, check_deep_research, or do any parallel searching — that creates noise and confuses the user.
 
-Findings are stored in memory — you can answer follow-up questions about the research in future turns. Use check_deep_research only when the user explicitly asks for status or the report.`,
+Findings are stored in memory — you can answer follow-up questions about the research in future turns. Use check_deep_research only when the user explicitly asks for status or the report.
+
+A research that was interrupted or failed can be continued from its last checkpoint with deep_research({ resume_id }) (topic is then ignored).`,
             parameters: {
                 type: "object",
                 properties: {
@@ -198,6 +202,10 @@ Findings are stored in memory — you can answer follow-up questions about the r
                         type: "number",
                         description: "Override: max pages to read (5-500). Leave blank to use profile default.",
                     },
+                    resume_id: {
+                        type: "string",
+                        description: "ID of an interrupted or failed research to continue from its checkpoint.",
+                    },
                 },
                 required: ["topic"],
             },
@@ -207,7 +215,12 @@ Findings are stored in memory — you can answer follow-up questions about the r
     async handler(input) {
         if (!_llm) return JSON.stringify({ error: "Deep research not initialized — LLM client not set" });
 
-        const topic = input.topic as string;
+        const resumeId = input.resume_id as string | undefined;
+        const resumeState = resumeId ? await loadResearchState(resumeId) : null;
+        if (resumeId && !resumeState) return JSON.stringify({ error: `No checkpoint for research "${resumeId}" — it can't be resumed. Start a new deep_research instead.` });
+        if (resumeId && activeResearches.get(resumeId)?.status === "running") return JSON.stringify({ error: `Research "${resumeId}" is already running.` });
+
+        const topic = resumeState?.research.topic ?? (input.topic as string);
         if (!topic) return JSON.stringify({ error: "Missing 'topic' parameter" });
 
         // Cap concurrent running research jobs. The agent has a tendency to
@@ -229,18 +242,24 @@ Findings are stored in memory — you can answer follow-up questions about the r
             });
         }
 
-        const profileName = (input.profile as string) || "standard";
+        const profileName = resumeState?.research.profile ?? ((input.profile as string) || "standard");
         const profile = PROFILES[profileName] || PROFILES.standard;
 
-        const depth = Math.min(Math.max((input.depth as number) || profile.depth, 1), 50);
-        const maxSources = Math.min(Math.max((input.max_sources as number) || profile.maxSources, 5), 500);
+        const depth = resumeState?.research.depth ?? Math.min(Math.max((input.depth as number) || profile.depth, 1), 50);
+        const maxSources = resumeState?.research.maxSources ?? Math.min(Math.max((input.max_sources as number) || profile.maxSources, 5), 500);
 
-        const id = `research_${++researchCounter}_${Date.now()}`;
+        const id = resumeState?.research.id ?? `research_${++researchCounter}_${Date.now()}`;
 
-        const originalPrompt = (input._originalPrompt as string) || topic;
+        const originalPrompt = resumeState?.research.originalPrompt || (input._originalPrompt as string) || topic;
         const capturedChannelContext = input._channelContext as ChannelContext | undefined;
 
-        const research: ActiveResearch = {
+        const research: ActiveResearch = resumeState ? {
+            ...resumeState.research,
+            status: "running",
+            error: undefined,
+            updatedAt: new Date().toISOString(),
+            abortController: new AbortController(),
+        } : {
             id,
             topic,
             profile: profileName,
@@ -266,9 +285,11 @@ Findings are stored in memory — you can answer follow-up questions about the r
         const capturedLLM = _llm!;
 
         // Fire and forget — runs in background
-        executeDeepResearch(research, { ...profile, depth, maxSources }, capturedLLM, capturedNotify).then(async () => {
+        executeDeepResearch(research, { ...profile, depth, maxSources }, capturedLLM, capturedNotify, resumeState ?? undefined).then(async () => {
             // Always reflect terminal state to the index (completed | failed | cancelled).
             await syncActiveToIndex(research);
+            // A failed run keeps its checkpoint so deep_research({resume_id}) can continue it.
+            if (research.status === "completed" || research.status === "cancelled") await deleteResearchState(id);
             if (research.status !== "completed") return;
 
             const continuationPrompt = `Background deep research on "${topic}" is now complete (${research.sourcesProcessed} sources, ${research.findingsCount} findings, report saved at ${research.reportFile}).
@@ -516,7 +537,7 @@ export async function getResearchStatusSnippet(): Promise<string | null> {
         const parts: string[] = [];
         if (completed.length) parts.push(`${completed.length} completed`);
         if (failed.length) parts.push(`${failed.length} failed`);
-        if (interrupted.length) parts.push(`${interrupted.length} interrupted (process restart)`);
+        if (interrupted.length) parts.push(`${interrupted.length} interrupted (process restart) — deep_research({resume_id}) continues it`);
         if (cancelled.length) parts.push(`${cancelled.length} cancelled`);
         lines.push(`Recent (24h): ${parts.join(", ")}.`);
         for (const r of recent24h.slice(0, 3)) {

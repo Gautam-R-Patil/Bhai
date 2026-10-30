@@ -10,16 +10,16 @@ import type {
     ResearchIndexEntry,
     ResearchStatus,
 } from "./types.js";
-import { RESEARCH_DIR } from "./profiles.js";
 import { getDataDir } from "../config/paths.js";
 
 // ── Research Index ───────────────────────────
 // Survives process restarts. Lives under data/ (internal state, not user-facing).
-// The per-research *.state.json files in RESEARCH_DIR are checkpoint blobs used
+// The per-research *.state.json files in STATE_DIR are checkpoint blobs used
 // to resume mid-flight; this index is the persistent ledger of every research
 // the system has ever started, regardless of completion.
 
 const INDEX_FILE = join(getDataDir(), "research-index.json");
+const STATE_DIR = join(getDataDir(), "research");
 const MAX_INDEX_ENTRIES = 500;
 const INTERRUPTED_THRESHOLD_MS = 10 * 60 * 1000; // running but no update for 10 min → interrupted on boot
 let _indexWriteSerializer: Promise<void> = Promise.resolve();
@@ -112,7 +112,7 @@ export async function listIndex(filter?: {
 
 // Boot recovery: any entry still marked "running" whose updatedAt is older than
 // INTERRUPTED_THRESHOLD_MS was killed mid-flight by a process restart. Mark it
-// "interrupted" and clean its checkpoint state so it doesn't linger.
+// "interrupted"; its checkpoint stays so deep_research({resume_id}) can continue it.
 export async function recoverInterruptedResearches(): Promise<{
     interrupted: ResearchIndexEntry[];
 }> {
@@ -128,11 +128,6 @@ export async function recoverInterruptedResearches(): Promise<{
             entry.updatedAt = new Date().toISOString();
             entry.error = entry.error ?? "Process restarted while research was running";
             interrupted.push(entry);
-            try {
-                await deleteResearchState(entry.id);
-            } catch {
-                /* state file may not exist */
-            }
         }
         if (interrupted.length > 0) {
             await saveIndexInner(index);
@@ -146,8 +141,8 @@ export async function recoverInterruptedResearches(): Promise<{
 
 export async function saveResearchState(state: ResearchState): Promise<void> {
     try {
-        await fs.mkdir(RESEARCH_DIR, { recursive: true });
-        const filePath = join(RESEARCH_DIR, `${state.research.id}.state.json`);
+        await fs.mkdir(STATE_DIR, { recursive: true });
+        const filePath = join(STATE_DIR, `${state.research.id}.state.json`);
         await fs.writeFile(filePath, JSON.stringify(state, null, 2));
     } catch (err) {
         console.warn(`[RESEARCH] Failed to save state:`, (err as Error).message);
@@ -156,7 +151,7 @@ export async function saveResearchState(state: ResearchState): Promise<void> {
 
 export async function loadResearchState(researchId: string): Promise<ResearchState | null> {
     try {
-        const filePath = join(RESEARCH_DIR, `${researchId}.state.json`);
+        const filePath = join(STATE_DIR, `${researchId}.state.json`);
         const data = await fs.readFile(filePath, "utf-8");
         return JSON.parse(data);
     } catch { return null; }
@@ -164,7 +159,7 @@ export async function loadResearchState(researchId: string): Promise<ResearchSta
 
 export async function deleteResearchState(researchId: string): Promise<void> {
     try {
-        const filePath = join(RESEARCH_DIR, `${researchId}.state.json`);
+        const filePath = join(STATE_DIR, `${researchId}.state.json`);
         await fs.unlink(filePath);
     } catch {}
 }

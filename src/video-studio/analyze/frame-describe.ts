@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { analyzeImage } from "../../models/local-vision.js";
+import { pLimit } from "../../utils/concurrency.js";
 import { ffmpegPath } from "../util/ffmpeg-bin.js";
 import type { Scene } from "./scene-detect.js";
 
@@ -59,20 +60,6 @@ async function extractFrame(videoPath: string, timestamp: number, outPath: strin
         ["-ss", String(timestamp), "-i", videoPath, "-frames:v", "1", "-q:v", "2", "-y", outPath],
         { timeout: 30_000 },
     );
-}
-
-async function pLimit<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
-    const results: T[] = [];
-    let index = 0;
-    async function worker(): Promise<void> {
-        while (index < tasks.length) {
-            const i = index++;
-            results[i] = await tasks[i]();
-        }
-    }
-    const workers = Array.from({ length: Math.min(limit, tasks.length) }, worker);
-    await Promise.all(workers);
-    return results;
 }
 
 function round4(n: number): number {
