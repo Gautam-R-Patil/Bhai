@@ -997,18 +997,11 @@ function startHeartbeat(ws: WebSocket): void {
         // A socket that stopped answering (laptop slept, extension worker killed) stays
         // "open" until the OS notices, minutes later: until then every call waits out its
         // timeout and the extension's reconnect is refused as a second connection.
+        // No ping from here: the extension sends a pong every 20 s on its own (its MV3
+        // keep-alive), and it still answers a ping if one comes.
         if (Date.now() - lastPong > HEARTBEAT_INTERVAL_MS * 2.5) {
             dropExtension(ws, "Extension stopped answering");
             ws.terminate();
-            return;
-        }
-        if (ws.readyState === 1) {
-            try {
-                ws.send(JSON.stringify({ type: "ping" }));
-            } catch {
-                // Connection dead
-                stopHeartbeat();
-            }
         }
     }, HEARTBEAT_INTERVAL_MS);
 }
