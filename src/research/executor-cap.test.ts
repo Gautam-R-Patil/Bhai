@@ -26,11 +26,13 @@ vi.mock("./engines.js", () => {
     return {
         resetEngineHealth: () => {},
         multiEngineSearch: async (q: string) => ({
-            results: ctl.search?.(q) ?? Array.from({ length: EXTRA.test(q) ? 8 : 2 }, () => ({
-                url: `https://u${uid++}.example/p`,
-                title: "T",
-                snippet: "s",
-            })),
+            results:
+                ctl.search?.(q) ??
+                Array.from({ length: EXTRA.test(q) ? 8 : 2 }, () => ({
+                    url: `https://u${uid++}.example/p`,
+                    title: "T",
+                    snippet: "s",
+                })),
             engines: ["mock"],
         }),
     };
@@ -154,13 +156,28 @@ describe("executeDeepResearch source cap", () => {
 
     it("resumes a Phase 2 checkpoint without re-seeding", async () => {
         const source = (url: string) => ({
-            url, title: "T", content: "", domain: "u.example", domainScore: 0.5, contentDepth: 0.5,
-            findingDensity: 0.5, recencyScore: 0.5, citationCount: 0, finalScore: 0.5, findings: ["f"], outboundLinks: [],
+            url,
+            title: "T",
+            content: "",
+            domain: "u.example",
+            domainScore: 0.5,
+            contentDepth: 0.5,
+            findingDensity: 0.5,
+            recencyScore: 0.5,
+            citationCount: 0,
+            finalScore: 0.5,
+            findings: ["f"],
+            outboundLinks: [],
         });
         const { abortController: _, ...saved } = { ...newResearch(), currentPhase: 2, sourcesProcessed: 3 };
         const state: ResearchState = {
             research: saved,
-            allFindings: ["r1", "r2", "r3"].map((u) => ({ text: u, sourceUrl: `https://${u}.example/`, sourceTitle: "T", categories: [] })),
+            allFindings: ["r1", "r2", "r3"].map((u) => ({
+                text: u,
+                sourceUrl: `https://${u}.example/`,
+                sourceTitle: "T",
+                categories: [],
+            })),
             allSources: ["r1", "r2", "r3"].map((u) => source(`https://${u}.example/`)),
             visitedUrls: ["r1.example", "r2.example", "r3.example"],
             usedQueries: ["s1"],
