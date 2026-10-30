@@ -1006,6 +1006,27 @@ async function boot() {
         console.log(`📬 Scheduled message → overlay${via ? ` + ${via}` : " (no chat channel delivered)"}`);
     };
 
+    // A scheduled job sent to one channel: while the owner is at the computer it also shows on
+    // the desktop (a desktop job also reaches their chat channel). Same rule as proactive dispatch.
+    const mirrorScheduledResult = async (channel: string, message: string): Promise<void> => {
+        try {
+            const { isUserActive } = await import("./proactive/activity.js");
+            if (!(await isUserActive())) return;
+            if (channel !== "overlay") {
+                const { notifyDesktop } = await import("./desktop-notify.js");
+                notifyDesktop("reminder", "Bhai", message);
+                return;
+            }
+            const { mirrorChatChannel } = await import("./proactive/dispatch.js");
+            const { getChannelSender } = await import("./tools/channel-send.js");
+            const chat = mirrorChatChannel();
+            const send = chat ? getChannelSender(chat) : undefined;
+            if (send) await send(message);
+        } catch {
+            /* the job's own delivery already happened */
+        }
+    };
+
     // ── Scheduled Tasks ───────────────────────
     setTaskTriggerHandler(async (taskId, action, description, opts) => {
         // ── Marketing scheduled post detection ──────────────────────────────
@@ -1170,6 +1191,8 @@ async function boot() {
                     await notifyOwnerEverywhere(response);
                     return true;
                 }
+                // At the computer: the result also reaches the other side (desktop ↔ chat app).
+                void mirrorScheduledResult(channel, response);
                 if (channel === "telegram") {
                     const {
                         getTelegramBot,
