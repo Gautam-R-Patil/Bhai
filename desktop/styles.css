@@ -6075,9 +6075,46 @@ body.hig .chats-pane .chats-thread { flex: 1 1 0; min-height: 0; overflow-y: aut
 body.hig .chats-composer { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
 body.hig .chats-composer input { flex: 1; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); color: var(--text-primary); font: inherit; font-size: 13px; outline: none; }
 body.hig .chats-composer input:focus { border-color: var(--accent-text, var(--text-secondary)); }
-body.hig .chats-working { align-self: flex-start; font-size: 12.5px; color: var(--text-secondary); padding: 2px 4px; animation: chatsPulse 1.6s ease-in-out infinite; }
-@keyframes chatsPulse { 50% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { body.hig .chats-working { animation: none; } }
+/* Live turn: one line while Bhai works (Notes and Steps one click away), then the answer typing in */
+body.hig .chats-turn { align-self: stretch; display: flex; flex-direction: column; }
+body.hig .turn-live { display: flex; align-items: center; gap: 10px; width: min(100%, 480px); padding: 4px 8px; margin-left: -8px; border: 0; border-radius: 10px; background: none; font: inherit; font-size: 13px; color: var(--text-secondary); text-align: left; cursor: pointer; user-select: none; transition: background .15s; }
+body.hig .turn-live:hover { background: var(--fill-quaternary); }
+body.hig .turn-live:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+body.hig .turn-face { flex: none; width: 26px; height: 26px; }
+body.hig .turn-now { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; background: linear-gradient(90deg, var(--text-secondary) 0 40%, var(--accent-text, var(--accent-primary)) 50%, var(--text-secondary) 60% 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: turnShimmer 2.2s linear infinite; }
+body.hig .turn-meta { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+body.hig .turn-chev { transform: rotate(-90deg); transition: transform .25s; }
+body.hig .chats-turn.open .turn-chev { transform: none; }
+body.hig .turn-bar { width: min(100%, 480px); height: 3px; margin-top: 4px; border-radius: 2px; background: var(--fill-quaternary); overflow: hidden; }
+body.hig .turn-bar i { display: block; width: 40%; height: 100%; border-radius: 2px; background: var(--accent-primary); animation: turnSlide 1.6s ease-in-out infinite; }
+body.hig .turn-panel { display: grid; grid-template-rows: 0fr; width: min(100%, 480px); transition: grid-template-rows .3s ease, margin .3s ease; }
+body.hig .turn-panel > div { overflow: hidden; }
+body.hig .chats-turn.open .turn-panel { grid-template-rows: 1fr; margin-top: 8px; }
+body.hig .turn-inner { padding: 4px 12px 8px; border-radius: 12px; background: var(--fill-quaternary); }
+body.hig .turn-lbl { margin: 6px 0 2px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+body.hig .turn-notes { max-height: 110px; overflow-y: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--text-secondary); }
+body.hig .turn-step { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+body.hig .turn-step i { flex: none; width: 12px; font-style: normal; font-size: 11px; text-align: center; }
+body.hig .turn-step span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.hig .turn-step.done i { color: var(--accent-success); }
+body.hig .turn-step.failed i { color: var(--accent-danger); }
+body.hig .turn-step.running { font-weight: 500; color: var(--text-primary); }
+body.hig .turn-step.running i { width: 8px; height: 8px; margin: 0 2px; border-radius: 50%; background: var(--accent-primary); animation: turnPulse 1.2s ease-in-out infinite; }
+body.hig .chats-turn .turn-answer { margin-top: 10px; }
+body.hig .turn-caret { display: inline-block; width: 2px; height: 1em; margin-left: 1px; vertical-align: -2px; background: var(--accent-primary); animation: turnBlink 1s steps(2) infinite; }
+body.hig .chats-turn.done .turn-bar { display: none; }
+body.hig .chats-turn.done .turn-live { font-size: 12.5px; }
+body.hig .chats-turn.done .turn-now { animation: none; background: none; color: var(--text-muted); }
+@keyframes turnPulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+@keyframes turnShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes turnSlide { from { margin-left: -40%; } to { margin-left: 100%; } }
+@keyframes turnBlink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+    body.hig .turn-now { animation: none; background: none; color: var(--text-secondary); }
+    body.hig .turn-bar i { width: 100%; opacity: .4; animation: none; }
+    body.hig .turn-step.running i, body.hig .turn-caret { animation: none; }
+    body.hig .turn-panel, body.hig .turn-chev, body.hig .turn-live { transition: none; }
+}
 body.hig .is-error .chats-bubble { color: var(--accent-danger, #b42318); }
 body.hig .chats-bubble code { font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; padding: 1px 4px; border-radius: 4px; background: var(--surface-2); }
 body.hig .chats-list { display: flex; flex-direction: column; gap: 2px; padding: 8px; }

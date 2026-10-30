@@ -1581,7 +1581,7 @@
             if (chatsOpenId !== id) return; // another chat was picked meanwhile
             const thread = document.getElementById('chatsThread');
             thread.replaceChildren(...msgs.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => chatBubble(m.role, m.text, m.ts)));
-            if (liveChat && liveChat.id === id) thread.append(liveChat.working);
+            if (liveChat && liveChat.id === id) { thread.append(liveChat.working); mountTurnFace(liveChat.el.face); }
             thread.scrollTop = thread.scrollHeight;
         }
 
@@ -1599,15 +1599,16 @@
             bubble.className = 'chats-bubble';
             if (!text) bubble.hidden = true;
             if (role === 'user') bubble.textContent = text;
-            else {
-                const esc = String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-                bubble.innerHTML = esc.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>').replace(/`([^`\n]+)`/g, '<code>$1</code>');
-            }
+            else bubble.innerHTML = chatHtml(text);
             const when = document.createElement('div');
             when.className = 'chats-when';
             when.textContent = new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
             row.append(bubble, when);
             return row;
+        }
+        function chatHtml(text) {
+            const esc = String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+            return esc.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>').replace(/`([^`\n]+)`/g, '<code>$1</code>');
         }
 
         // ── Attachment: one file or image per message (+ button, paste, or drop) ──
@@ -1651,7 +1652,7 @@
         }
 
         // ── In-app chat: talk to Bhai right here (main relays the chat bar's socket) ──
-        let liveChat = null;   // { id, working } while a reply is on its way
+        let liveChat = null;   // while a reply is on its way: { id, working, turn, state, el, start, ... }
         let chatsFresh = false; // a new chat that isn't in the history yet
         const newChatId = () => `app-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -1668,7 +1669,158 @@
             const btn = document.getElementById('chatsSendBtn');
             btn.textContent = busy ? 'Stop' : 'Send';
             btn.type = busy ? 'button' : 'submit';
-            btn.onclick = busy ? () => atlas.chatStop() : null;
+            btn.onclick = busy ? stopChat : null;
+        }
+        function stopChat() {
+            atlas.chatStop();
+            if (liveChat) { liveChat.stopping = true; renderLiveChat(); } // the stopped reply ends the turn
+        }
+
+        // One turn's live view as plain data, from the bot's turn_* messages. The same contract as
+        // the overlay's turnView/turnRoute (src/overlay/overlay.html) and chrome-extension/turn-view.js;
+        // tested by desktop/tests/chat-turn-view.test.js.
+        // {turn, seq, status, steps, notes, answer, attempt, open}. A message whose seq isn't newer
+        // changes nothing; another turn's message starts a fresh view. attempt null = unknown (a
+        // snapshot doesn't say which attempt its answer is), so the next delta just carries on.
+        function turnView(state, msg) {
+            if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('turn_')) return state;
+            const same = !!state && state.turn === msg.turn;
+            if (same && typeof msg.seq === 'number' && msg.seq <= state.seq) return state;
+            const s = same ? { ...state }
+                : { turn: msg.turn, seq: 0, status: null, steps: [], notes: [], answer: '', attempt: 0, open: !!state?.open };
+            if (typeof msg.seq === 'number') s.seq = msg.seq;
+            switch (msg.type) {
+                case 'turn_snapshot':
+                    s.status = msg.status || null;
+                    s.steps = Array.isArray(msg.steps) ? msg.steps.map((x) => ({ id: x.id, text: x.text, state: x.state })) : [];
+                    s.notes = Array.isArray(msg.notes) ? msg.notes.slice() : [];
+                    s.answer = typeof msg.answer === 'string' ? msg.answer : '';
+                    s.attempt = null;
+                    break;
+                case 'turn_status':
+                    s.status = { text: msg.text || '', step: msg.step || 0, elapsed: msg.elapsed || 0 };
+                    break;
+                case 'turn_step': {
+                    const step = { id: msg.id, text: msg.text || '', state: msg.state };
+                    const i = s.steps.findIndex((x) => x.id === msg.id);
+                    s.steps = i < 0 ? [...s.steps, step] : s.steps.map((x, j) => (j === i ? step : x));
+                    break;
+                }
+                case 'turn_note':
+                    s.notes = [...s.notes, msg.text || ''];
+                    break;
+                case 'turn_answer':
+                    if (s.attempt === null) s.attempt = msg.attempt;
+                    if (msg.attempt < s.attempt) return state; // a withdrawn attempt's late text
+                    if (msg.attempt > s.attempt) { s.attempt = msg.attempt; s.answer = ''; }
+                    s.answer += msg.text || '';
+                    break;
+                case 'turn_answer_reset':
+                    s.answer = '';
+                    s.attempt = Math.max(s.attempt || 0, (msg.attempt || 0) + 1);
+                    break;
+                default:
+                    return state;
+            }
+            return s;
+        }
+
+        // Where a message goes while a live view may be on screen. liveTurn = the view's turn or null,
+        // running = it hasn't finished. Returns 'apply' (to the view), 'start' (a new view first),
+        // 'finish' (the view's reply), 'plain' (no live view involved) or 'ignore'.
+        function turnRoute(liveTurn, running, msg) {
+            if (msg.type === 'response' || msg.type === 'error') {
+                if (!running) return 'plain';
+                return msg.type === 'error' || !msg.turn || msg.turn === liveTurn ? 'finish' : 'ignore';
+            }
+            if (liveTurn !== null && msg.turn === liveTurn) return 'apply';
+            return running && msg.type !== 'turn_snapshot' ? 'ignore' : 'start';
+        }
+
+        // The live turn in the open thread: one line (Bhai, what he's doing now, step and seconds),
+        // a Notes/Steps panel one click away, and the answer typing itself in. Only the final reply
+        // is saved with the chat; this view lives in the page.
+        const TURN_PANEL_KEY = 'bhai.turnPanelOpen';
+        const turnPanelPref = () => { try { return localStorage.getItem(TURN_PANEL_KEY) === '1'; } catch { return false; } };
+        const cleanStatus = (t) => String(t || '').replace(/^[^\p{L}\p{N}]+/u, '');
+        const CHEVRON = '<svg class="turn-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+
+        function liveChatView() {
+            const root = document.createElement('div');
+            root.className = 'chats-turn';
+            root.setAttribute('aria-busy', 'true');
+            root.innerHTML = '<button type="button" class="turn-live" aria-expanded="false" title="Show what Bhai is doing">'
+                + '<span class="turn-face" aria-hidden="true"></span><span class="turn-now"></span>'
+                + `<span class="turn-meta"><span class="turn-count"></span>${CHEVRON}</span></button>`
+                + '<div class="turn-bar" aria-hidden="true"><i></i></div>'
+                + '<div class="turn-panel" aria-hidden="true"><div><div class="turn-inner">'
+                + '<div class="turn-notes-wrap" hidden><div class="turn-lbl">Notes</div><div class="turn-notes"></div></div>'
+                + '<div class="turn-steps-wrap" hidden><div class="turn-lbl">Steps</div><div class="turn-steps"></div></div>'
+                + '</div></div></div>'
+                + '<div class="chats-msg from-bhai turn-answer" hidden><div class="chats-bubble"></div></div>';
+            const q = (sel) => root.querySelector(sel);
+            const el = { face: q('.turn-face'), now: q('.turn-now'), count: q('.turn-count'), notes: q('.turn-notes'), steps: q('.turn-steps'), answerRow: q('.turn-answer'), answer: q('.turn-answer .chats-bubble') };
+            el.face.dataset.mood = 'thinking';
+            setTurnPanel(root, turnPanelPref());
+            return { root, el };
+        }
+        function setTurnPanel(root, open) {
+            root.classList.toggle('open', open);
+            root.querySelector('.turn-live').setAttribute('aria-expanded', String(open));
+            root.querySelector('.turn-panel').setAttribute('aria-hidden', String(!open));
+        }
+        // Bhai himself on the line; re-mounted when the thread is rebuilt (a detached mascot stops).
+        function mountTurnFace(face) {
+            if (window.BhaiMascot && face.isConnected) window.BhaiMascot.mount(face, face.dataset.mood);
+        }
+        function faceMood(mood) {
+            const face = liveChat?.el.face;
+            if (face && face.dataset.mood !== mood) face.dataset.mood = mood;
+        }
+
+        function liveChatCount() {
+            const lc = liveChat;
+            if (!lc) return;
+            const step = lc.state?.status?.step || 0;
+            lc.el.count.textContent = `${step > 0 ? `step ${step} · ` : ''}${Math.max(0, Math.floor((Date.now() - lc.start) / 1000))}s`;
+        }
+
+        function renderLiveChat() {
+            const lc = liveChat;
+            if (!lc) return;
+            cancelAnimationFrame(lc.frame);
+            lc.frame = 0;
+            const s = lc.state || { status: null, steps: [], notes: [], answer: '' };
+            const el = lc.el;
+            const thread = document.getElementById('chatsThread');
+            const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+            el.now.textContent = lc.stopping ? 'Stopping…' : cleanStatus(s.status?.text) || lc.fallback;
+            liveChatCount();
+            const notes = s.notes.join('');
+            el.notes.parentElement.hidden = !notes.trim();
+            if (el.notes.textContent !== notes) { el.notes.textContent = notes; el.notes.scrollTop = el.notes.scrollHeight; }
+            if (s.steps !== lc.stepsShown) { // only on change: a rebuild restarts the running step's pulse
+                lc.stepsShown = s.steps;
+                el.steps.parentElement.hidden = !s.steps.length;
+                el.steps.replaceChildren(...s.steps.map((x) => {
+                    const row = document.createElement('div');
+                    const state = ['done', 'failed', 'running'].includes(x.state) ? x.state : 'running';
+                    row.className = `turn-step ${state}`;
+                    const mark = document.createElement('i');
+                    mark.setAttribute('aria-hidden', 'true');
+                    mark.textContent = state === 'done' ? '✓' : state === 'failed' ? '✕' : '';
+                    const text = document.createElement('span');
+                    text.textContent = x.text;
+                    row.append(mark, text);
+                    return row;
+                }));
+            }
+            if (s.answer !== lc.shown) {
+                lc.shown = s.answer;
+                el.answerRow.hidden = !s.answer;
+                el.answer.innerHTML = s.answer ? `${chatHtml(s.answer)}<span class="turn-caret" aria-hidden="true"></span>` : '';
+            }
+            if (atBottom) thread.scrollTop = thread.scrollHeight;
         }
 
         async function sendChat(text, chatId, file) {
@@ -1684,23 +1836,39 @@
             chatsFresh = false;
             thread.querySelector('.chats-empty')?.remove();
             thread.append(chatBubble('user', text, Date.now(), false, file));
-            const working = document.createElement('div');
-            working.className = 'chats-working';
-            working.textContent = 'Thinking…';
-            thread.append(working);
+            const { root, el } = liveChatView();
+            thread.append(root);
+            mountTurnFace(el.face);
+            liveChat = { id, working: root, el, turn: null, state: null, start: Date.now(), fallback: 'Thinking…', shown: '', stepsShown: null, frame: 0, stopping: false, tick: setInterval(liveChatCount, 1000) };
+            renderLiveChat();
             thread.scrollTop = thread.scrollHeight;
-            liveChat = { id, working };
             setComposerBusy(true);
             const r = await atlas.chatSend(id, text, file ? { name: file.name, base64: file.base64, mimeType: file.mimeType } : undefined).catch((e) => ({ ok: false, error: e.message }));
             if (!r || !r.ok) finishLiveChat(r?.error ? `Couldn't send: ${r.error}.` : "Couldn't reach Bhai.", true);
             return true;
         }
 
-        function finishLiveChat(text, isError) {
-            if (!liveChat) return;
-            const { id, working } = liveChat;
+        // The turn ended: the live line becomes "Worked for {N}s · {K} steps" (still opens the panel),
+        // or goes when there's nothing behind it; the reply lands under it as a normal message.
+        function finishLiveChat(text, isError, worked) {
+            const lc = liveChat;
+            if (!lc) return;
+            renderLiveChat();
             liveChat = null;
-            working.remove();
+            clearInterval(lc.tick);
+            const { id, working, el } = lc;
+            const s = lc.state || { steps: [], notes: [] };
+            el.answerRow.remove();
+            el.face.remove();
+            working.removeAttribute('aria-busy');
+            if (!s.steps.length && !s.notes.join('').trim()) working.remove();
+            else {
+                const w = worked || { secs: Math.round((Date.now() - lc.start) / 1000), steps: s.steps.length };
+                working.classList.add('done');
+                setTurnPanel(working, false);
+                el.now.textContent = `Worked for ${w.secs}s · ${w.steps} step${w.steps === 1 ? '' : 's'}`;
+                el.count.textContent = '';
+            }
             setComposerBusy(false);
             const thread = document.getElementById('chatsThread');
             if (chatsOpenId === id && text) {
@@ -1711,11 +1879,39 @@
             loadRecentChats();
         }
 
+        document.getElementById('chatsThread').addEventListener('click', (e) => {
+            const btn = e.target.closest('.turn-live');
+            if (!btn) return;
+            const open = !btn.parentElement.classList.contains('open');
+            setTurnPanel(btn.parentElement, open);
+            try { localStorage.setItem(TURN_PANEL_KEY, open ? '1' : '0'); } catch { /* private storage off */ }
+        });
+
         atlas.onChatEvent(({ chat, msg }) => {
-            if (!liveChat || chat !== liveChat.id || !msg) return;
-            if (msg.type === 'progress' && msg.text) liveChat.working.textContent = String(msg.text).replace(/^[^\p{L}\p{N}]+/u, '');
-            else if (msg.type === 'response') finishLiveChat(msg.text || (msg.stopped ? 'Stopped.' : ''));
-            else if (msg.type === 'error') finishLiveChat(msg.text || 'Something went wrong.', true);
+            const lc = liveChat;
+            if (!lc || chat !== lc.id || !msg || typeof msg.type !== 'string') return;
+            if (msg.type === 'thinking') { if (msg.turn && !lc.turn) lc.turn = msg.turn; return; } // our turn's id
+            if (msg.type === 'progress') { // research progress (background) never touches the line
+                if (msg.text && !msg.background) { lc.fallback = cleanStatus(msg.text); if (!lc.frame) lc.frame = requestAnimationFrame(renderLiveChat); }
+                return;
+            }
+            if (msg.type.startsWith('turn_')) {
+                if (!lc.turn) lc.turn = msg.turn; // turn_* only reach this socket for its own chat
+                if (turnRoute(lc.turn, true, msg) !== 'apply') return;
+                const prev = lc.state;
+                lc.state = turnView(prev, msg);
+                if (lc.state === prev) return;
+                if (msg.type === 'turn_note') faceMood('thinking');
+                else if (msg.type === 'turn_answer') faceMood('typing');
+                else if (msg.type === 'turn_step' && msg.state === 'running') faceMood(/screen|look|see|vision|brows|search|web|page|read/i.test(msg.text || '') ? 'looking' : 'working');
+                else if (msg.type === 'turn_step' && msg.state === 'done') window.BhaiMascot?.react(lc.el.face, 'nod');
+                if (!lc.frame) lc.frame = requestAnimationFrame(renderLiveChat);
+                return;
+            }
+            if (msg.type !== 'response' && msg.type !== 'error') return;
+            if (lc.turn && turnRoute(lc.turn, true, msg) === 'ignore') return; // another surface's turn
+            if (msg.type === 'response') finishLiveChat(msg.text || (msg.stopped ? 'Stopped.' : ''), false, msg.worked);
+            else finishLiveChat(msg.text || 'Something went wrong.', true);
         });
 
         function sendFromComposer() {

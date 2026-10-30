@@ -2484,7 +2484,12 @@ function registerIPC() {
         const ws = new WebSocket(`ws://127.0.0.1:18792/?localToken=${encodeURIComponent(tok)}`);
         ws.onopen = () => { appChatWs = ws; resolve(ws); };
         ws.onerror = () => reject(new Error("Couldn't reach Bhai"));
-        ws.onclose = () => { if (appChatWs === ws) appChatWs = null; };
+        ws.onclose = () => {
+            if (appChatWs !== ws) return;
+            appChatWs = null;
+            // A reply on its way is gone with the socket: the page ends its live turn (idle: ignored).
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("chat:event", { chat: appChatId, msg: { type: "error", text: "Lost the connection mid-answer. Ask me again." } });
+        };
         ws.onmessage = (e) => {
             let msg;
             try { msg = JSON.parse(e.data); } catch { return; }
