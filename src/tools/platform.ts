@@ -451,8 +451,7 @@ export async function clipboardWrite(text: string): Promise<void> {
             const { default: clipboardy } = await import("clipboardy");
             await clipboardy.write(text);
         } catch {
-            const escaped = text.replace(/'/g, "''");
-            await runPowerShellInline(`Set-Clipboard -Value '${escaped}'`, 3000);
+            await runPowerShellInline(`Set-Clipboard -Value ${psQuote(text)}`, 3000);
         }
     } else {
         // Linux — try multiple tools in order
