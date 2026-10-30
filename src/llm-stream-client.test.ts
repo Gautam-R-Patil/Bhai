@@ -13,6 +13,8 @@ let scripts: Array<(onDelta: (d: LLMDelta) => void, signal?: AbortSignal) => Pro
 let streamStatus: number[] = [];
 let failover: Record<string, string> = {};
 let hangHeaders = 0;
+let gaps: number[] = [];
+const netErrors: number[] = [];
 const completion = (content: string) => ({
     id: "c1",
     object: "chat.completion",
@@ -43,6 +45,7 @@ vi.mock("./llm-stream.js", () => ({
         _rid: string,
         o: { signal?: AbortSignal; onDelta: (d: LLMDelta) => void; firstFrameMs: number; gapMs: number },
     ) => {
+        gaps.push(o.gapMs);
         if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
         const run = scripts.shift();
         if (!run) throw new Error("no script");
@@ -71,7 +74,10 @@ vi.mock("./model-router.js", () => ({
 }));
 vi.mock("./network-health.js", () => ({
     isOffline: () => false,
-    reportNetworkError: async () => "online",
+    reportNetworkError: async () => {
+        netErrors.push(1);
+        return "online";
+    },
     reportNetworkSuccess: () => {},
 }));
 vi.mock("./llm-middleware.js", () => ({
@@ -91,6 +97,8 @@ beforeEach(() => {
     streamStatus = [];
     failover = {};
     hangHeaders = 0;
+    gaps = [];
+    netErrors.length = 0;
     delete process.env.ATLAS_NO_STREAMING;
 });
 
@@ -225,5 +233,33 @@ describe("chat({ onDelta })", () => {
         expect(Date.now() - t0).toBeLessThan(2000);
         expect(r.choices[0].message.content).toBe("from B");
         expect(streams.map(bodyModel)).toEqual(["A", "B"]);
+    });
+
+    it("the gap between frames is never shorter than the attempt budget", async () => {
+        scripts = [async () => completion("a"), async () => completion("b")];
+        await llm.chat({ messages: msgs, timeoutMs: 120_000, onDelta: () => {} });
+        await llm.chat({ messages: msgs, timeoutMs: 5_000, onDelta: () => {} });
+        expect(gaps).toEqual([120_000, 30_000]);
+    });
+
+    it("a stalled stream is logged like a failed attempt and counts toward network health", async () => {
+        failover = { A: "B" };
+        scripts = [
+            async () => {
+                throw Object.assign(new Error("LLM stream stalled"), { status: 504 });
+            },
+            async () => completion("from B"),
+        ];
+        const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            const r = await llm.chat({ messages: msgs, modelOverride: "A", onDelta: () => {} });
+            expect(r.choices[0].message.content).toBe("from B");
+            expect(errSpy.mock.calls.map((c) => String(c[0]))).toContainEqual(
+                expect.stringMatching(/❌ A failed \(504\): LLM stream stalled/),
+            );
+            expect(netErrors.length).toBe(1);
+        } finally {
+            errSpy.mockRestore();
+        }
     });
 });

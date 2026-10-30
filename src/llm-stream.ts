@@ -4,7 +4,8 @@
 import type { ChatCompletion } from "openai/resources/chat/completions.js";
 import { decryptFrame, openEnvelope } from "./crypto-transport.js";
 
-export type FrameKind = "text" | "note" | "tool" | "void_tools" | "reset" | "error" | "done";
+// `ping` is a keepalive: the server sends it after a silent stretch; it carries nothing.
+export type FrameKind = "text" | "note" | "tool" | "void_tools" | "reset" | "ping" | "error" | "done";
 
 export type Frame = {
     kind: FrameKind;
@@ -74,8 +75,8 @@ function toDelta(f: Frame): LLMDelta {
  * `onDelta`, return the final `done` frame's completion. Throws `{status,
  * message}` on an `error` frame, a stream that ends without its final frame,
  * a frame after the final one, a bad/reordered frame, or a timeout (first frame
- * within `firstFrameMs`, then at most `gapMs` between frames; no total
- * deadline). A 2xx without `X-Stream: frames` is accepted only as an old
+ * within `firstFrameMs`, then at most `gapMs` between frames, a `ping` counting
+ * as a frame; no total deadline). A 2xx without `X-Stream: frames` is accepted only as an old
  * server's single encrypted envelope.
  */
 export async function readFrames(response: Response, reqRid: string, opts: ReadOpts): Promise<ChatCompletion> {
@@ -112,6 +113,7 @@ export async function readFrames(response: Response, reqRid: string, opts: ReadO
         if (result) throw new Error("frame after the final one");
         const { frame, final } = decryptFrame(line, reqRid, seq++);
         deadline = Date.now() + opts.gapMs;
+        if (!final && frame.kind === "ping") return; // heartbeat: it only moved the deadline
         if (!final) return opts.onDelta(toDelta(frame));
         if (frame.kind === "done") result = { completion: frame.completion as ChatCompletion };
         else if (frame.kind === "error") {

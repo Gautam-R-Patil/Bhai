@@ -177,7 +177,8 @@ export function attemptTimeoutMs(effort?: ThinkingLevel): number {
     return (effort && ATTEMPT_TIMEOUT_BY_EFFORT[effort]) || 25_000;
 }
 
-// A streamed attempt fails when the server goes quiet this long between frames.
+// A streamed attempt fails when the server goes quiet this long between frames (at least;
+// never less than the attempt budget). The server pings every 10 s while a stream is open.
 const STREAM_GAP_MS = 30_000;
 const OUT_OF_CREDITS = "You've run out of AI credits. Reach the XAGI Labs team at xagilab.com for more.";
 
@@ -401,7 +402,8 @@ export function createLLMClient(config: Config): LLMClient {
                     }
                     return readFrames(opened.response, opened.rid, {
                         firstFrameMs: Math.max(1, attemptMs - (Date.now() - started)),
-                        gapMs: STREAM_GAP_MS,
+                        // A slow-thinking model may be quiet as long as a plain call may take.
+                        gapMs: Math.max(STREAM_GAP_MS, attemptMs),
                         signal,
                         onDelta: deliver,
                     });
@@ -600,7 +602,14 @@ export function createLLMClient(config: Config): LLMClient {
 
                         // Report network errors to health monitor so it can detect offline state
                         const errMsg = (err as Error).message || "";
+                        // A streamed attempt's failure gets the line the plain path writes for a bad status.
+                        if (stream && status) {
+                            console.error(
+                                `  ❌ ${MODEL_DISPLAY[currentModel] || currentModel} failed (${status}): ${errMsg.slice(0, 200)}`,
+                            );
+                        }
                         const isNetworkError =
+                            errMsg.includes("stream stalled") || // a streamed attempt's timeout (504)
                             errMsg.includes("fetch failed") ||
                             errMsg.includes("ENOTFOUND") ||
                             errMsg.includes("ETIMEDOUT") ||

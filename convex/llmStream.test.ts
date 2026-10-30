@@ -314,4 +314,52 @@ describe("streamCompletion", () => {
         expect(res.ok).toBe(true);
         expect(lines.map((l) => l.f.kind)).toEqual(["done"]);
     });
+
+    it("a silent stretch gets a ping every 10 s, and nothing after the final frame", async () => {
+        vi.useFakeTimers();
+        try {
+            const { lines, write } = collect();
+            const msg = await message();
+            let finish!: () => void;
+            let emitter!: (f: Frame) => void;
+            const p = streamCompletion(
+                write,
+                (emit) => {
+                    emitter = emit;
+                    return new Promise<Awaited<ReturnType<typeof message>>>((r) => {
+                        finish = () => r(msg);
+                    });
+                },
+                encode,
+            );
+            await vi.advanceTimersByTimeAsync(9_000);
+            expect(lines).toEqual([]);
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(lines.map((l) => [l.f.kind, l.final])).toEqual([["ping", false]]);
+            await vi.advanceTimersByTimeAsync(5_000);
+            emitter({ kind: "text", text: "a" }); // a real frame restarts the 10 s
+            await vi.advanceTimersByTimeAsync(9_000);
+            expect(lines.map((l) => l.f.kind)).toEqual(["ping", "text"]);
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(lines.map((l) => l.f.kind)).toEqual(["ping", "text", "ping"]);
+            finish();
+            await p;
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(lines.map((l) => l.f.kind)).toEqual(["ping", "text", "ping", "done"]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("no ping after a final error frame either", async () => {
+        vi.useFakeTimers();
+        try {
+            const { lines, write } = collect();
+            await streamCompletion(write, async () => Promise.reject(new Error("boom")), encode);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(lines.map((l) => l.f.kind)).toEqual(["error"]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

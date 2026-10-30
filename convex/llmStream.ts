@@ -53,6 +53,8 @@ export async function pipeClaudeStream(
     return stream.finalMessage();
 }
 
+const PING_MS = 10_000;
+
 /**
  * Writes one response as frames: the deltas `run` emits, then a final `done` with the
  * completion the non-streaming path would return, or a final `error {status, error}` if
@@ -70,7 +72,13 @@ export async function streamCompletion(
 ): Promise<{ ok: boolean; message?: Beta.BetaMessage }> {
     let broken = false;
     let chain = Promise.resolve();
+    // Frames come only with deltas, so long silent reasoning would look like a stall to
+    // the client: after PING_MS with no frame, send a `ping`. Stopped at the final frame.
+    const keepalive = () => void send({ kind: "ping" }, false);
+    let ping = setTimeout(keepalive, PING_MS);
     const send = (f: Frame, final: boolean) => {
+        clearTimeout(ping);
+        if (!final) ping = setTimeout(keepalive, PING_MS);
         chain = chain
             .then(async () => {
                 if (!broken) await write(await encode(f, final));

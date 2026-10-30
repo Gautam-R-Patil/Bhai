@@ -164,6 +164,23 @@ describe("readFrames", () => {
         expect(sent).toBe(1); // the done frame due at 31 s never arrived
     });
 
+    it("a ping is a heartbeat: never a delta, but it keeps a silent stream alive", async () => {
+        // Frames 20 s apart (gap limit 30 s): text, ping, ping, ping, done at 100 s.
+        const lines = await encode([
+            { kind: "text", text: "a" },
+            { kind: "ping" },
+            { kind: "ping" },
+            { kind: "ping" },
+            { kind: "done", completion: COMPLETION },
+        ]);
+        vi.useFakeTimers();
+        const deltas: LLMDelta[] = [];
+        const p = readFrames(framed(timedStream(lines, 20_000)), RID, { ...OPTS, onDelta: (d) => deltas.push(d) });
+        await vi.advanceTimersByTimeAsync(101_000);
+        await expect(p).resolves.toEqual(COMPLETION);
+        expect(deltas).toEqual([{ kind: "text", text: "a" }]);
+    });
+
     it("times out when the first frame is late", async () => {
         const lines = await encode([{ kind: "done", completion: COMPLETION }]);
         vi.useFakeTimers();

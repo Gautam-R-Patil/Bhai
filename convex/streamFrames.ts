@@ -4,7 +4,8 @@
 
 import { encryptResponse } from "./crypto";
 
-export type FrameKind = "text" | "note" | "tool" | "void_tools" | "reset" | "error" | "done";
+// `ping` is a keepalive: the server sends it after a silent stretch; it carries nothing.
+export type FrameKind = "text" | "note" | "tool" | "void_tools" | "reset" | "ping" | "error" | "done";
 
 export type Frame = {
     kind: FrameKind;
