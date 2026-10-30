@@ -6307,3 +6307,8 @@ body.hig #needsList .recent-row { cursor: pointer; }
 body.hig #needsList .recent-when { color: var(--accent-text, var(--text-primary)); }
 @media (prefers-reduced-motion: reduce) { body.hig .dash-ask { transition: none; } }
 body.hig .dash-ask .chat-kbd { margin: 0; background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }
+
+/* Settings: plain rows, no emoji icons; footer carries the legal links. */
+body.hig small.workspace-path { display: block; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; padding: 0; border: none; font: inherit; font-size: 11px; }
+body.hig .settings-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; }
+body.hig .settings-foot .about-links { color: var(--text-secondary); }
