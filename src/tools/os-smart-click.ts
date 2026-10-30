@@ -102,6 +102,44 @@ export const SLOW_UI_MS = 1200;
  *   poll until it is frontmost (fast on a warm app, patient on a cold launch).
  *   Windows: PowerShell AppActivate by process/window title. Linux: wmctrl if available.
  */
+/** The pid of a running app by name ("Calculator"), cheaply; 0 when it isn't running. */
+async function pidOfApp(appName: string): Promise<number> {
+    if (process.platform !== "darwin") return 0;
+    try {
+        const { stdout: asn } = await execFileAsync("lsappinfo", ["find", `name=${appName}`], { timeout: 1500 });
+        const first = asn.trim().split(/\s+/)[0];
+        if (!first) return 0;
+        const { stdout } = await execFileAsync("lsappinfo", ["info", "-only", "pid", first], { timeout: 1500 });
+        return Number(/pid\s*=\s*(\d+)/.exec(stdout)?.[1] ?? 0);
+    } catch {
+        return 0;
+    }
+}
+
+const TEXT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXSecureTextField"]);
+
+/** AXPress an element of a background app without raising it; null when that can't be done. */
+async function pressInBackground(appName: string, instruction: string): Promise<Record<string, unknown> | null> {
+    const pid = await pidOfApp(appName);
+    if (!pid) return null;
+    const dump = await dumpAccessibilityTree({ pid, depth: 20 }).catch(() => null);
+    if (!dump || dump.error) return null;
+    const target = await findClickTarget(instruction, {
+        axDumpHint: dump,
+        skipTiers: ["memory", "omniparser", "ui_tars", "cloud_grounding"],
+    }).catch(() => null);
+    if (!target?.ax || TEXT_ROLES.has(target.ax.role ?? "")) return null;
+    const pressed = await axPerformAction(pid, target.ax, "press");
+    if (!pressed.ok) return null;
+    return {
+        source: target.source,
+        confidence: target.confidence,
+        background: true,
+        clicked_element: target.matchedLabel,
+        note: `Pressed "${target.matchedLabel}" in ${appName} without bringing it to the front. To type into ${appName}, bring it forward with app_manager first.`,
+    };
+}
+
 async function activateApp(appName: string): Promise<"already" | "raised" | "failed"> {
     if (!appName || appName === "unknown") return "already";
     try {
@@ -258,6 +296,21 @@ export const osSmartClick: ToolDefinition = {
         if (!windowTitle) windowTitle = appName;
         if (!appName) appName = "unknown";
         if (!windowTitle) windowTitle = "default";
+
+        // In the background first (from trycua/cua's driver): a button, checkbox or menu item
+        // of an app that isn't in front is pressed through accessibility on that app's
+        // process, so the owner's front window keeps the focus. Text fields still come to
+        // the front (typing follows), and a miss falls through to the path below.
+        if (
+            !appIsFrontmost &&
+            action === "click" &&
+            appName &&
+            !/^dock$/i.test(appName.trim()) && // the Dock has its own search (dockFirst) and is never in front
+            process.env.ATLAS_NO_BACKGROUND_PRESS !== "true"
+        ) {
+            const done = await pressInBackground(appName, instruction);
+            if (done) return JSON.stringify({ success: true, instruction, ...done });
+        }
 
         // The AX dump, the screenshot and any remembered spot all belong to the
         // target app's window: bring it to the front first (a no-op when it is).
