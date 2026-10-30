@@ -52,13 +52,16 @@ const TimeMatcher = createRequire(import.meta.url)("node-cron/src/time-matcher.j
     pattern: string,
 ) => { expressions: string[]; match(date: Date): boolean };
 
-/** The next minute after `from` a 5-field cron expression fires on (local time); null if not within a year. */
+/**
+ * The next minute after `from` a 5-field cron expression fires on (local time); null if it never
+ * does. The scan covers 8 years: Feb 29 can be 8 years apart (2096 → 2104), Friday the 13th 14 months.
+ */
 export function nextCronMinute(expression: string, from: number): number | null {
     const matcher = new TimeMatcher(expression);
     // node-cron's converted fields: [second, minute, hour, day, month, weekday], each a list of numbers.
     const [, , , dom, month, dow] = matcher.expressions.map((f) => new Set(f.split(",")));
     const base = new Date(from);
-    for (let i = 0; i <= 366; i++) {
+    for (let i = 0; i <= 8 * 366; i++) {
         const noon = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i, 12);
         if (
             !dom.has(String(noon.getDate())) ||
@@ -80,7 +83,7 @@ export function nextCronMinute(expression: string, from: number): number | null 
  * A recurring 5-field job on one timer instead of node-cron's check every second. Waits go in
  * steps of at most a minute (a sleeping Mac's timers run late), and a run fires only inside its
  * own second, as node-cron's does, or late when it fell after a wake: a run the machine slept
- * through is skipped. Null when the expression doesn't fire within a year (node-cron keeps those).
+ * through is skipped. Null when the expression never fires (node-cron keeps those).
  */
 function armCronTimer(expression: string, run: () => void): { stop: () => void } | null {
     let next = nextCronMinute(expression, Date.now());

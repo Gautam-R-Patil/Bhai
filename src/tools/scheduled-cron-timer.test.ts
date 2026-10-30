@@ -64,3 +64,15 @@ it("still runs a job due just after the Mac wakes, though the pending step fires
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(fired.map((t) => new Date(t).getHours())).toEqual([12]);
 });
+
+it("keeps a job whose runs are more than a year apart (Friday the 13th, Feb 29)", async () => {
+    const at = (...a: [number, number, number, number, number]) => new Date(...a).getTime();
+    vi.setSystemTime(new Date(2027, 7, 12, 12, 0)); // Thu 12 Aug 2027
+    const { scheduleTask, fired, nextCronMinute } = await load();
+    expect(nextCronMinute("0 9 13 * 5", at(2027, 7, 13, 9, 0))).toBe(at(2028, 9, 13, 9, 0));
+    expect(nextCronMinute("0 9 29 2 *", at(2096, 1, 29, 9, 0))).toBe(at(2104, 1, 29, 9, 0));
+    await scheduleTask.handler({ expression: "0 9 13 * 5", description: "d", action: "a" });
+    await vi.advanceTimersByTimeAsync(2 * 24 * 60 * 60_000);
+    expect(fired.map((t) => new Date(t).toDateString())).toEqual(["Fri Aug 13 2027"]);
+    expect(vi.getTimerCount()).toBeGreaterThan(0); // still armed for Oct 2028
+});
