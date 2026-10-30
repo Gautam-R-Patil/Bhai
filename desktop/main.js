@@ -1712,10 +1712,20 @@ function startLocalServer() {
 // remote loads (e.g. the OTPless-hosted auth page on tryatlasagi.com).
 const TRUSTED_LOCAL_ORIGINS = new Set([new URL(OVERLAY_URL).origin]);
 
+// target=_blank links in the panel/wizard: allowed sites open in the default browser.
+function openPanelLink(url) {
+    const target = require("./panel-links").panelLinkTarget(url);
+    if (target) shell.openExternal(target).catch(() => {});
+    else console.warn(`[Window] Blocked link to ${url}`);
+}
+
 function hardenBrowserWindow(win, opts = {}) {
     const allowed = Array.isArray(opts.allowedNavigateOrigins) ? opts.allowedNavigateOrigins : [];
     const allowLocal = opts.allowLocal !== false; // file:// + http://127.0.0.1 by default
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        if (opts.externalLinks) openPanelLink(url);
+        return { action: "deny" };
+    });
     // Local means our own files and our own servers (the bot's page, the panel's server),
     // not any service on a localhost port: a window keeps its preload wherever it navigates.
     const guard = (e, url) => {
@@ -1755,7 +1765,7 @@ function createWizardWindow() {
         title: "Bhai Setup — © XAGI Labs",
     });
 
-    hardenBrowserWindow(mainWindow);
+    hardenBrowserWindow(mainWindow, { externalLinks: true });
     mainWindow.loadFile(path.join(__dirname, "wizard.html"));
     if (IS_DEV) mainWindow.webContents.openDevTools({ mode: "detach" });
 }
@@ -1798,7 +1808,7 @@ async function createPanelWindow() {
         title: "Bhai — © XAGI Labs",
     });
 
-    hardenBrowserWindow(mainWindow);
+    hardenBrowserWindow(mainWindow, { externalLinks: true });
     // The native close button hides to the menu bar, like the app's own close
     // control; Quit (⌘Q / tray) still quits.
     mainWindow.on("close", (e) => {
