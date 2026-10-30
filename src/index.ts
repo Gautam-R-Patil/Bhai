@@ -222,6 +222,14 @@ async function boot() {
                     if (n) console.log(`🔐 Masked secrets saved before at-rest masking: ${JSON.stringify(n)}`);
                 })
                 .catch((err) => console.warn("[memory] at-rest scrub skipped:", (err as Error).message));
+            // The removed browser action cache may still hold text the model typed.
+            void import("node:fs")
+                .then(({ promises }) =>
+                    promises.rm(join(process.env.ATLAS_DATA_DIR || "data", "browser-action-cache.json"), {
+                        force: true,
+                    }),
+                )
+                .catch(() => {});
         });
         initKnowledgeGraph(memDb);
         initCredibilityModel(memDb);
