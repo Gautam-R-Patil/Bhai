@@ -37,6 +37,9 @@ const BACKUP_PATH = join(STORE_BASE_PATH, ".backup");
 // ── Get path for item type ────────────────────────
 
 function getItemPath(type: StoreItemType, slug: string): string {
+  // The slug comes from the store server: "../../x" made install, backup and uninstall
+  // (rm -rf) act outside ~/.atlas/store.
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(slug)) throw new Error(`Invalid store item slug: ${JSON.stringify(slug).slice(0, 80)}`);
   switch (type) {
     case "skill":
       return join(SKILLS_PATH, slug);
@@ -286,6 +289,7 @@ export async function installItem(
 
     // 1. Start install in Convex and get download URL
     const { contentUrl, slug, type, version } = await startInstall(item._id, item.version);
+    getItemPath(type, slug); // validates the server's slug before it names any file
 
     notify("downloading", 10, "Downloading content...");
 

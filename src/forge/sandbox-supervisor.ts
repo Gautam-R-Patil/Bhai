@@ -20,6 +20,15 @@ import { asJSON, type Capabilities } from "./capabilities.js";
 import { manifestDir, readManifest, writeManifest } from "./manifest.js";
 import type { PersistedToolManifest } from "./types.js";
 
+/**
+ * The exact bytes written to handler.js. The manifest's handlerHash is taken over these:
+ * it was taken over the raw code, so every approved tool failed its own tamper check
+ * (and boot-scan archived it).
+ */
+export function wrapHandler(handlerCode: string): string {
+    return `module.exports = async function(input) {\n${handlerCode}\n};\n`;
+}
+
 export interface SandboxError {
     kind:
         | "handler_error"
@@ -207,7 +216,7 @@ export async function installPersistedTool(
         mkdirSync(dir, { recursive: true });
     }
     // Write handler.js. Wrapped in the synthesizer's canonical form.
-    const wrappedHandler = `module.exports = async function(input) {\n${handlerCode}\n};\n`;
+    const wrappedHandler = wrapHandler(handlerCode);
     const handlerPath = path.join(dir, "handler.js");
     let handlerWritten = false;
     try {

@@ -4,7 +4,7 @@
 import { approveDynamicTool, revokeDynamicTool } from "../forge/orchestrator.js";
 import { isForgeReady } from "../forge/orchestrator.js";
 import { getPlanModeState } from "../agents/plan-mode.js";
-import { ownerSaid } from "../security/consent.js";
+import { ownerApproved } from "../security/consent.js";
 
 // Verbatim-quote audit-log gate. Matches the design-docs flow's banned set
 // so agents can't shortcut by replaying "ok" or "approved" as user_quote.
@@ -76,7 +76,7 @@ export const approveDynamicToolTool = {
         }
         // The quote must be something the owner actually typed after the
         // approval was requested — not text the model wrote.
-        if (!ownerSaid(userQuote, approvalRequestedAt())) {
+        if (!ownerApproved(userQuote, approvalRequestedAt())) {
             return JSON.stringify({
                 ok: false,
                 error: "user_quote must be the user's own words from a message sent after you asked for approval. Ask them first.",

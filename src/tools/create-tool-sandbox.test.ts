@@ -55,3 +55,13 @@ describe("dynamic tool sandbox", () => {
         expect(await buildHandler('return require("child_process")')({})).toMatch(/not available/);
     });
 });
+
+describe("timer callbacks", () => {
+    it("a busy-looping setTimeout callback is cut off instead of freezing the bot", async () => {
+        const out = await buildHandler(`setTimeout(() => { for (;;) {} }, 0); return "started";`)({});
+        expect(out).toContain("started");
+        const t0 = Date.now();
+        await new Promise((r) => setTimeout(r, 50)); // the host loop must come back
+        expect(Date.now() - t0).toBeLessThan(8000); // ≤ the 5 s re-entry timeout, not forever
+    }, 15_000);
+});

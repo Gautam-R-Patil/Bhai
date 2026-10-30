@@ -12,7 +12,7 @@ import {
     getAwaitingDynamicToolSlug,
     getPlanModeState,
 } from "../agents/plan-mode.js";
-import { getRegistryRef } from "../tools/create-tool.js";
+import { getRegistryRef, isBuiltinToolName, markDynamicTool } from "../tools/create-tool.js";
 import { parseCapabilities, type Capabilities } from "./capabilities.js";
 import {
     closeLibrary,
@@ -32,6 +32,7 @@ import {
     invokePersistedTool,
     reinstallPersistedTool,
     uninstallPersistedTool,
+    wrapHandler,
 } from "./sandbox-supervisor.js";
 import { emitForgeEvent, initForgeTelemetry } from "./telemetry.js";
 import type {
@@ -307,7 +308,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
 
     if (!_embedFn) throw new Error("embedFn not set");
     const embedding = await _embedFn(req.description);
-    const handlerHash = hashSync(result.envelope.handler_code);
+    const handlerHash = hashSync(wrapHandler(result.envelope.handler_code)); // what handler.js holds
     try {
         insertTool({
             slug: req.name,
@@ -512,11 +513,15 @@ export async function approveDynamicTool(
     }
 
     const registry = getRegistryRef();
+    if (registry && isBuiltinToolName(slug)) {
+        return { ok: false, error: `"${slug}" is a built-in tool's name; a dynamic tool can't replace it.` };
+    }
     if (registry) {
         const handler = async (input: Record<string, unknown>) => {
             const res = await invokePersistedTool(slug, input);
             return JSON.stringify(res);
         };
+        markDynamicTool(slug);
         registry.set(slug, {
             schema: {
                 type: "function",
@@ -644,11 +649,16 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
             }
             continue;
         }
+        if (registry && isBuiltinToolName(slug)) {
+            console.warn(`[forge] boot-scan: ${slug} shadows a built-in tool; not registering it`);
+            continue;
+        }
         if (registry) {
             const handler = async (input: Record<string, unknown>) => {
                 const res = await invokePersistedTool(slug, input);
                 return JSON.stringify(res);
             };
+            markDynamicTool(slug);
             registry.set(slug, {
                 schema: {
                     type: "function",

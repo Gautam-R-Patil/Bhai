@@ -32,7 +32,18 @@ export function getRegistryRef(): Map<string, ToolDefinition> | null {
 }
 
 // ── Tracked dynamic tool names for listing ───────────────
+const FIRE_TIMER = new vm.Script("__timerCb()");
 const dynamicToolNames = new Set<string>();
+
+/** A name already taken by a built-in tool (a dynamic tool may never replace one). */
+export function isBuiltinToolName(name: string): boolean {
+    return !!registryRef?.has(name) && !dynamicToolNames.has(name);
+}
+
+/** Record a name the forge registered as a dynamic tool. */
+export function markDynamicTool(name: string): void {
+    dynamicToolNames.add(name);
+}
 
 // ── Persisted-handler integrity key (F8) ──────────────────
 //
@@ -294,9 +305,15 @@ function buildHandler(code: string): (input: Record<string, unknown>) => Promise
                     () => {
                         if (closed) return;
                         try {
-                            cb();
+                            // Re-enter the sandbox under a timeout: a callback called straight
+                            // from the host could spin forever (setTimeout(() => { for (;;) {} }))
+                            // and freeze the whole bot.
+                            (context as Record<string, unknown>).__timerCb = cb;
+                            FIRE_TIMER.runInContext(context, { timeout: 5000 });
                         } catch {
-                            /* sandbox callback errors stay in the sandbox */
+                            /* sandbox callback errors (and timeouts) stay in the sandbox */
+                        } finally {
+                            delete (context as Record<string, unknown>).__timerCb;
                         }
                     },
                     Math.min(Math.max(Number(ms) || 0, 0), 60_000),
@@ -386,6 +403,13 @@ export const createTool: ToolDefinition = {
             return JSON.stringify({
                 error: "Invalid tool name — must be snake_case (lowercase letters, digits, underscores)",
             });
+        }
+
+        // Never a built-in's name, on any route: a forge tool named shell_exec or
+        // send_message replaced the real one after approval (the check used to sit after
+        // the forge routes had already returned).
+        if (registryRef.has(name) && !dynamicToolNames.has(name)) {
+            return JSON.stringify({ error: `Cannot override built-in tool "${name}". Choose a different name.` });
         }
 
         // ── FORGE Phase 2: lookup short-circuit ──
@@ -480,10 +504,6 @@ export const createTool: ToolDefinition = {
             }
         }
 
-        // Check for conflicts with built-in tools
-        if (registryRef.has(name) && !dynamicToolNames.has(name)) {
-            return JSON.stringify({ error: `Cannot override built-in tool "${name}". Choose a different name.` });
-        }
 
         // Static-only validation: confirm the handler syntactically parses.
         // We do NOT execute the handler here — LLM-supplied code is untrusted and
