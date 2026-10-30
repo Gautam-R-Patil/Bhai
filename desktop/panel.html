@@ -1953,14 +1953,14 @@
                 if (info && info.signedIn) {
                     const status = (info.status || 'active').toLowerCase();
                     if (status === 'blocked') {
-                        showToast('Account blocked. Contact support@codingdesk.info');
+                        showToast('Account blocked. Contact hello@xagilab.com');
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('startBtn').textContent = 'Start Bhai';
                         startFailed();
                         return;
                     }
                     if (status === 'suspended') {
-                        showToast('Account suspended. Contact support@codingdesk.info');
+                        showToast('Account suspended. Contact hello@xagilab.com');
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('startBtn').textContent = 'Start Bhai';
                         startFailed();
@@ -3236,10 +3236,10 @@
                 const banner = document.getElementById('accountWarningBanner');
                 if (status === 'suspended') {
                     banner.style.display = 'flex';
-                    document.getElementById('accountWarningText').textContent = 'Your account has been suspended. Please contact support@codingdesk.info';
+                    document.getElementById('accountWarningText').textContent = 'Your account has been suspended. Please contact hello@xagilab.com';
                 } else if (status === 'blocked') {
                     banner.style.display = 'flex';
-                    document.getElementById('accountWarningText').textContent = 'Your account has been blocked. Contact support@codingdesk.info for assistance.';
+                    document.getElementById('accountWarningText').textContent = 'Your account has been blocked. Contact hello@xagilab.com for assistance.';
                 } else {
                     banner.style.display = 'none';
                 }

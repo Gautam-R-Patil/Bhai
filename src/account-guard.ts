@@ -121,7 +121,7 @@ export async function checkAccountStatus(): Promise<{ allowed: boolean; reason?:
 
         if (data.status !== "active") {
             console.log(`[AccountGuard] Account status: ${data.status} — blocking`);
-            return { allowed: false, reason: `Account is ${data.status}. Contact support.` };
+            return { allowed: false, reason: `Account is ${data.status}. Contact the XAGI Labs team at hello@xagilab.com.` };
         }
 
         if (data.ai_credits <= 0) {
