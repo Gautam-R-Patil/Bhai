@@ -110,7 +110,7 @@ contextBridge.exposeInMainWorld("atlas", {
     listChats: () => ipcRenderer.invoke("chats:list"),
     getUpcoming: () => ipcRenderer.invoke("schedule:upcoming"),
     getActivity: () => ipcRenderer.invoke("dash:activity"),
-    chatSend: (chat, text) => ipcRenderer.invoke("chat:send", { chat, text }),
+    chatSend: (chat, text, file) => ipcRenderer.invoke("chat:send", { chat, text, file }),
     chatStop: () => ipcRenderer.send("chat:stop"),
     onChatEvent: (callback) => { ipcRenderer.on("chat:event", (_, data) => callback(data)); },
     getChat: (id) => ipcRenderer.invoke("chats:get", id),

@@ -205,12 +205,23 @@
                     </div>
                 </div>
                 <div class="chats-layout">
-                    <div class="chats-list surface-card" id="chatsList" aria-label="Past chats"></div>
+                    <div class="chats-list" id="chatsList" aria-label="Past chats"></div>
                     <div class="chats-pane surface-card">
                         <div class="chats-thread" id="chatsThread" aria-live="polite"></div>
                         <form class="chats-composer" id="chatsComposer" onsubmit="event.preventDefault(); sendFromComposer();">
-                            <input id="chatsInput" type="text" placeholder="Message Bhai…" autocomplete="off" aria-label="Message Bhai">
-                            <button type="submit" class="btn btn-primary btn-sm" id="chatsSendBtn">Send</button>
+                            <div class="chats-attachment" id="chatsAttachment" hidden>
+                                <img id="chatsAttachThumb" alt="" hidden>
+                                <span id="chatsAttachName"></span>
+                                <button type="button" onclick="clearAttachment()" aria-label="Remove attachment" title="Remove">&times;</button>
+                            </div>
+                            <div class="chats-compose-row">
+                                <button type="button" class="chats-add" onclick="document.getElementById('chatsFile').click()" title="Add a file or image" aria-label="Add a file or image">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                                </button>
+                                <input type="file" id="chatsFile" hidden onchange="pickAttachment(this.files[0]); this.value = '';">
+                                <input id="chatsInput" type="text" placeholder="Message Bhai…" autocomplete="off" aria-label="Message Bhai">
+                                <button type="submit" class="btn btn-primary btn-sm" id="chatsSendBtn">Send</button>
+                            </div>
                         </form>
                     </div>
                 </div>
@@ -1596,11 +1607,18 @@
         }
 
         // A message row. Bhai's replies get **bold** and `code`; everything else is plain text.
-        function chatBubble(role, text, ts, isError) {
+        function chatBubble(role, text, ts, isError, file) {
             const row = document.createElement('div');
             row.className = `chats-msg ${role === 'user' ? 'from-user' : 'from-bhai'}${isError ? ' is-error' : ''}`;
+            if (file) {
+                const att = document.createElement(file.url ? 'img' : 'div');
+                att.className = 'chats-sent-file';
+                if (file.url) { att.src = file.url; att.alt = file.name; } else att.textContent = file.name;
+                row.append(att);
+            }
             const bubble = document.createElement('div');
             bubble.className = 'chats-bubble';
+            if (!text) bubble.hidden = true;
             if (role === 'user') bubble.textContent = text;
             else {
                 const esc = String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1611,6 +1629,46 @@
             when.textContent = new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
             row.append(bubble, when);
             return row;
+        }
+
+        // ── Attachment: one file or image per message (+ button, paste, or drop) ──
+        let chatAttachment = null; // { name, base64, mimeType, url }
+        const MAX_ATTACH_BYTES = 20 * 1024 * 1024;
+        function pickAttachment(file) {
+            if (!file) return;
+            if (file.size > MAX_ATTACH_BYTES) { showToast('That file is over 20 MB. Try a smaller one.', true); return; }
+            const reader = new FileReader();
+            reader.onload = () => {
+                clearAttachment();
+                const isImage = (file.type || '').startsWith('image/');
+                chatAttachment = { name: file.name || (isImage ? 'Pasted image.png' : 'File'), base64: String(reader.result).split(',')[1] || '', mimeType: file.type || 'application/octet-stream', url: isImage ? URL.createObjectURL(file) : '' };
+                const thumb = document.getElementById('chatsAttachThumb');
+                thumb.hidden = !isImage;
+                if (isImage) thumb.src = chatAttachment.url;
+                document.getElementById('chatsAttachName').textContent = chatAttachment.name;
+                document.getElementById('chatsAttachment').hidden = false;
+                document.getElementById('chatsInput').focus();
+            };
+            reader.readAsDataURL(file);
+        }
+        function clearAttachment() {
+            chatAttachment = null;
+            document.getElementById('chatsAttachment').hidden = true;
+        }
+        {
+            const input = document.getElementById('chatsInput');
+            input.addEventListener('paste', (e) => {
+                const f = [...(e.clipboardData?.files || [])][0];
+                if (f) { e.preventDefault(); pickAttachment(f); }
+            });
+            const pane = document.querySelector('.chats-pane');
+            pane.addEventListener('dragover', (e) => { e.preventDefault(); pane.classList.add('dropping'); });
+            pane.addEventListener('dragleave', (e) => { if (!pane.contains(e.relatedTarget)) pane.classList.remove('dropping'); });
+            pane.addEventListener('drop', (e) => {
+                e.preventDefault();
+                pane.classList.remove('dropping');
+                pickAttachment(e.dataTransfer?.files?.[0]);
+            });
         }
 
         // ── In-app chat: talk to Bhai right here (main relays the chat bar's socket) ──
@@ -1634,9 +1692,9 @@
             btn.onclick = busy ? () => atlas.chatStop() : null;
         }
 
-        async function sendChat(text, chatId) {
+        async function sendChat(text, chatId, file) {
             text = String(text || '').trim();
-            if (!text || liveChat) return false;
+            if ((!text && !file) || liveChat) return false;
             const id = chatId || newChatId();
             const thread = document.getElementById('chatsThread');
             if (chatsOpenId !== id || chatsFresh) {
@@ -1646,7 +1704,7 @@
             chatsOpenId = id;
             chatsFresh = false;
             thread.querySelector('.chats-empty')?.remove();
-            thread.append(chatBubble('user', text, Date.now()));
+            thread.append(chatBubble('user', text, Date.now(), false, file));
             const working = document.createElement('div');
             working.className = 'chats-working';
             working.textContent = 'Thinking…';
@@ -1654,7 +1712,7 @@
             thread.scrollTop = thread.scrollHeight;
             liveChat = { id, working };
             setComposerBusy(true);
-            const r = await atlas.chatSend(id, text).catch((e) => ({ ok: false, error: e.message }));
+            const r = await atlas.chatSend(id, text, file ? { name: file.name, base64: file.base64, mimeType: file.mimeType } : undefined).catch((e) => ({ ok: false, error: e.message }));
             if (!r || !r.ok) finishLiveChat(r?.error ? `Couldn't send: ${r.error}.` : "Couldn't reach Bhai.", true);
             return true;
         }
@@ -1683,7 +1741,10 @@
 
         function sendFromComposer() {
             const input = document.getElementById('chatsInput');
-            sendChat(input.value, chatsOpenId || undefined).then((sent) => { if (sent) input.value = ''; });
+            const file = chatAttachment;
+            sendChat(input.value, chatsOpenId || undefined, file).then((sent) => {
+                if (sent) { input.value = ''; if (file) { chatAttachment = null; document.getElementById('chatsAttachment').hidden = true; } }
+            });
         }
         async function clearChatHistory() {
             if (!confirm('Delete all saved chats? Bhai keeps what it has learned in its memory.')) return;

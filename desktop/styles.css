@@ -6054,10 +6054,25 @@ body.hig .chats-layout {
     gap: 14px;
     padding: 0 28px 24px;
 }
-body.hig .chats-list { min-height: 0; overflow-y: auto; border-radius: var(--r-group) !important; }
+body.hig .chats-list { min-height: 0; overflow-y: auto; border-radius: var(--r-group) !important; padding-left: 0 !important; }
+/* Chats is a focused page: the sidebar steps aside (← Dashboard brings it back). */
+body.hig:has(#tab-chats.active) .panel-sidebar { display: none; }
+html.platform-darwin body.hig #tab-chats .tab-header { padding-left: 92px; padding-top: 14px; }
+body.hig #tab-chats .chats-layout { grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); }
+body.hig .chats-compose-row { display: flex; gap: 8px; align-items: center; }
+body.hig .chats-add { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: none; color: var(--text-secondary); cursor: pointer; transition: color .15s, border-color .15s; }
+body.hig .chats-add:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+body.hig .chats-attachment { display: flex; align-items: center; gap: 8px; align-self: flex-start; max-width: 100%; padding: 4px 6px 4px 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; color: var(--text-secondary); }
+body.hig .chats-attachment[hidden] { display: none; }
+body.hig .chats-attachment img { width: 32px; height: 32px; object-fit: cover; border-radius: 6px; }
+body.hig .chats-attachment span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+body.hig .chats-attachment button { border: none; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; }
+body.hig .chats-pane.dropping { box-shadow: inset 0 0 0 2px var(--accent-text, var(--text-secondary)); }
+body.hig .chats-sent-file { max-width: 220px; max-height: 180px; border-radius: 12px; object-fit: cover; }
+body.hig div.chats-sent-file { padding: 8px 12px; border: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); }
 body.hig .chats-pane { min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-group) !important; }
 body.hig .chats-pane .chats-thread { flex: 1 1 0; min-height: 0; overflow-y: auto; }
-body.hig .chats-composer { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--border); }
+body.hig .chats-composer { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
 body.hig .chats-composer input { flex: 1; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); color: var(--text-primary); font: inherit; font-size: 13px; outline: none; }
 body.hig .chats-composer input:focus { border-color: var(--accent-text, var(--text-secondary)); }
 body.hig .chats-working { align-self: flex-start; font-size: 12.5px; color: var(--text-secondary); padding: 2px 4px; animation: chatsPulse 1.6s ease-in-out infinite; }

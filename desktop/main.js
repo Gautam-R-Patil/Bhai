@@ -2487,13 +2487,17 @@ function registerIPC() {
             if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("chat:event", { chat: appChatId, msg });
         };
     });
-    ipcMain.handle("chat:send", async (_, { chat, text } = {}) => {
+    ipcMain.handle("chat:send", async (_, { chat, text, file } = {}) => {
         const t = String(text || "").trim().slice(0, 8000);
-        if (!t || typeof chat !== "string") return { ok: false, error: "Nothing to send" };
+        const hasFile = file && typeof file.name === "string" && typeof file.base64 === "string" && file.base64.length < 28_000_000;
+        if ((!t && !hasFile) || typeof chat !== "string") return { ok: false, error: "Nothing to send" };
         try {
             const ws = await appChatSocket();
             appChatId = chat.slice(0, 64);
-            ws.send(JSON.stringify({ type: "chat", chat: appChatId, text: t }));
+            // One file or image per message, the way the chat bar sends a dropped file.
+            ws.send(JSON.stringify(hasFile
+                ? { type: "file_attach", chat: appChatId, name: file.name.slice(0, 200), base64: file.base64, mimeType: String(file.mimeType || "application/octet-stream"), text: t }
+                : { type: "chat", chat: appChatId, text: t }));
             return { ok: true };
         } catch (err) {
             return { ok: false, error: err.message };
