@@ -2774,11 +2774,12 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         <button class="notif-action-btn dismiss" onclick="dismissNotification()" aria-label="Dismiss notification" tabindex="0">Dismiss</button>
       </div>
     </div>
-    <div id="reply-box" role="log" aria-live="polite" aria-label="Agent response" aria-busy="false">
+    <div id="reply-box">
       <button class="copy-response-btn" id="copy-response-btn" onclick="copyResponse()" aria-label="Copy response" tabindex="0">⧉</button>
       <div class="reply-blob" aria-hidden="true"></div>
       <div id="reply-history"></div>
-      <div id="reply-text"></div>
+      <!-- The live region is the reply alone: a past turn moving into the history above isn't re-read. -->
+      <div id="reply-text" role="log" aria-live="polite" aria-label="Agent response" aria-busy="false"></div>
       <div id="widgets-container" class="widgets-container"></div>
       <div id="quick-actions" class="quick-actions"></div>
       <div id="interactive-cards" class="interactive-cards"></div>
@@ -2890,7 +2891,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
       function setAgentBusy(busy) {
         stopBtn.hidden = !busy;
-        replyBox.setAttribute('aria-busy', busy ? 'true' : 'false');
+        replyText.setAttribute('aria-busy', busy ? 'true' : 'false');
         if (busy) announceToSR('Bhai is processing your request');
       }
 
@@ -3230,6 +3231,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           progress.innerHTML = '';
 
           if (msg.newChat) { chatId = newChatId(); replyHistory.innerHTML = ''; } // "/new": later messages file under a fresh chat
+          replyArriving('Message from Bhai');
           const rawText = msg.text || '(no response)';
           console.log('[OVERLAY] Response text length:', rawText.length, 'preview:', rawText.substring(0, 100));
           const renderedText = msg.type === 'error' ? `⚠️ ${esc(rawText)}` : renderMd(rawText);
@@ -3292,6 +3294,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           input.value = '';
           input.disabled = false;
           waiting = false;
+          turnKept = false; // no reply came; the next one starts its own turn
           grabFocus();
         }
         else if (msg.type === 'image') {
@@ -3301,6 +3304,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           progress.innerHTML = '';
           let imgHtml = `<img src="${esc(msg.url)}" alt="Generated image" />`;
           if (msg.caption) imgHtml += `<div class="img-caption">${esc(msg.caption)}</div>`;
+          replyArriving('Image from Bhai');
           replyText.innerHTML = imgHtml;
           replyBox.classList.remove('visible');
           replyBox.offsetHeight;
@@ -3356,6 +3360,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           } else {
             input.placeholder = 'Analyzing audio…';
             icon.classList.add('thinking');
+            keepTurn('🎤 Voice message');
             waiting = true;
             input.disabled = true;
           }
@@ -3462,9 +3467,13 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           card.innerHTML = `<span class="card-icon">${icon}</span><span class="card-label" title="${esc(filePath)}">${esc(basename)}</span>`;
           card.onclick = (e) => {
             e.preventDefault();
-            if (ws && ws.readyState === 1) {
-              ws.send(JSON.stringify({ type: 'chat', text: `open ${filePath}`, chat: chatId }));
-            }
+            if (!ws || ws.readyState !== 1 || waiting) return;
+            waiting = true;
+            input.disabled = true;
+            keepTurn(`open ${basename}`);
+            replyBox.classList.remove('visible');
+            clearInteractive();
+            ws.send(JSON.stringify({ type: 'chat', text: `open ${filePath}`, chat: chatId }));
           };
           cardsBox.appendChild(card);
         });
@@ -4221,7 +4230,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       });
 
       // In-session scrollback: the reply on screen moves into #reply-history (last 10) when the next turn starts.
-      let lastAsked = '';
+      let lastAsked = '', turnKept = false;
       function keepTurn(asked) {
         if (replyText.childNodes.length) {
           const turn = document.createElement('div');
@@ -4232,6 +4241,13 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           while (replyHistory.children.length > 10) replyHistory.firstElementChild.remove();
         }
         lastAsked = asked;
+        turnKept = true;
+      }
+      // A reply whose turn didn't start here (a pushed image, a voice turn) files the one on
+      // screen under its own question first, so the next keepTurn doesn't mislabel it.
+      function replyArriving(fallback) {
+        if (!turnKept) keepTurn(fallback);
+        turnKept = false;
       }
 
       // Override send to include chip context

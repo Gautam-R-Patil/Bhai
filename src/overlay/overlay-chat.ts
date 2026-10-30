@@ -1173,7 +1173,14 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
 export function droppedFileContext(fileName: string, base64: string, mimeType: string, owner: boolean): string {
     const buf = Buffer.from(base64, "base64");
     const decoded = buf.toString("utf-8");
-    if (!decoded.includes("\u0000") && !decoded.includes("\ufffd")) {
+    // Binary: a NUL byte, or a lot that isn't text (bad UTF-8, control codes). A Latin-1 /
+    // Windows-1252 file only has the odd U+FFFD (its accents) and stays inline.
+    let odd = 0;
+    for (const ch of decoded) {
+        const c = ch.charCodeAt(0);
+        if (c === 0xfffd || (c < 0x20 && c !== 9 && c !== 10 && c !== 13 && c !== 12)) odd++;
+    }
+    if (!buf.includes(0) && odd <= decoded.length * 0.3) {
         return `\n\nFile contents of "${fileName}":\n\`\`\`\n${decoded.substring(0, 8000)}\n\`\`\``;
     }
     const safeName = basename(fileName).replace(/[^\w.\- ]/g, "_").slice(-120) || "document";

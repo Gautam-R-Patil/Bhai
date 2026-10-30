@@ -71,4 +71,13 @@ describe("a file dropped on the chat bar", () => {
 
         expect(droppedFileContext("r.pdf", b64(pdf), "application/pdf", false)).toContain("can't be read here");
     });
+
+    it("keeps a Latin-1 text file inline, refuses a binary without NULs", async () => {
+        const { droppedFileContext } = await import("./overlay-chat.js");
+        const latin1 = Buffer.from("Café au lait, crème brûlée, naïve résumé.\n", "latin1").toString("base64");
+        expect(droppedFileContext("menu.txt", latin1, "text/plain", false)).toContain("File contents of");
+
+        const blob = Buffer.from(Array.from({ length: 256 }, (_, i) => ((i * 37 + 11) % 255) + 1)).toString("base64"); // no 0x00
+        expect(droppedFileContext("x.bin", blob, "application/octet-stream", false)).toContain("can't be read here");
+    });
 });
