@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createStatusCoalescer, type TurnEvent } from "./turn-events.js";
+import { createStatusCoalescer, createTurnStream, type TurnEvent } from "./turn-events.js";
 
 const status = (text: string) => ({ type: "status" as const, text, step: 1, elapsedSec: 0 });
 
@@ -45,5 +45,30 @@ describe("createStatusCoalescer", () => {
         c.stop();
         vi.advanceTimersByTime(10_000);
         expect(seen).toEqual([status("a")]);
+    });
+});
+
+describe("createTurnStream", () => {
+    it("void_tools (a refusal fallback) keeps the answer shown and ends the notes", () => {
+        const seen: TurnEvent[] = [];
+        const t = createTurnStream((e) => seen.push(e), { channel: "overlay", notes: true });
+        const onDelta = t.live();
+        onDelta({ kind: "note", text: "Weighing it up. " });
+        onDelta({ kind: "text", text: "Here is the plan " });
+        onDelta({ kind: "void_tools" });
+        onDelta({ kind: "text", text: "in detail." });
+        expect(seen.some((e) => e.type === "answer_reset")).toBe(false);
+        expect(seen.filter((e) => e.type === "note").length).toBeGreaterThan(0);
+        expect(t.partial()).toBe("Here is the plan in detail.");
+    });
+
+    it("reset still withdraws the answer", () => {
+        const seen: TurnEvent[] = [];
+        const t = createTurnStream((e) => seen.push(e), { channel: "overlay", notes: true });
+        const onDelta = t.live();
+        onDelta({ kind: "text", text: "Here is the plan " });
+        onDelta({ kind: "reset" });
+        expect(seen.filter((e) => e.type === "answer_reset")).toEqual([{ type: "answer_reset", attempt: 0 }]);
+        expect(t.partial()).toBe("");
     });
 });

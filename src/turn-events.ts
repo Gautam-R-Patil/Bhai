@@ -111,7 +111,9 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
                 return;
             case "tool":
                 return withdraw(true);
-            default: // void_tools, reset: that attempt's text is void
+            case "void_tools": // a refusal fallback continues the text shown; only the thinking before it ends
+                return endNotes();
+            default: // reset: that attempt's text is void
                 return withdraw();
         }
     };
