@@ -54,7 +54,7 @@ import {
     createGuardrailState,
     recordToolCall as recordGuardrailCall,
 } from "./agents/tool-call-guardrail.js";
-import { OFFLOAD_THRESHOLD_BYTES, offloadIfLarge } from "./agents/tool-output-offload.js";
+import { OFFLOAD_THRESHOLD_BYTES, keepRestReadable, offloadIfLarge } from "./agents/tool-output-offload.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
 import { withoutGrid } from "./screen/grid-overlay.js";
 import { anySecretTyped, hasVaultToken, resetVaultTask, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
@@ -1245,14 +1245,17 @@ async function executeAndProcessToolCall(
     // save the full content to disk and replace it with a preview + file path.
     // The `read` tool can fetch the full file later if the model needs it.
     let workingResult = rawResult;
+    let savedAt: string | undefined;
     try {
         const offloaded = offloadIfLarge(fnName, toolCall.id, currentTurnId(), rawResult, TOOL_RESULT_LIMITS[fnName]);
         workingResult = offloaded.content;
+        savedAt = offloaded.savedAt;
     } catch {
         /* offload failure leaves workingResult = rawResult */
     }
 
     let result = truncateToolResult(fnName, workingResult);
+    if (!savedAt) result = keepRestReadable(fnName, toolCall.id, currentTurnId(), rawResult, result);
     console.log(`  ✅ Tool result: ${ownerMemoryTool(fnName) ? `(${result.length} chars)` : result.substring(0, 500)}`);
 
     // Fence attacker-influenceable tool output (web/browser/MCP/research) so the

@@ -25,4 +25,15 @@ describe("offloadIfLarge", () => {
         expect(readFileSync(r.savedAt as string, "utf-8")).toContain("finding. ".repeat(3000));
         vi.unstubAllEnvs();
     });
+
+    it("a result cut below the offload line still leaves a path to the rest", async () => {
+        vi.stubEnv("ATLAS_DATA_DIR", mkdtempSync(join(tmpdir(), "offload-")));
+        const { keepRestReadable } = await import("./tool-output-offload.js");
+        const article = "para. ".repeat(1000); // 6K: over the 4K default cut, under the 8K offload line
+        const out = keepRestReadable("browser_extract_article", "t3", "turn-3", article, article.slice(0, 4000));
+        const path = /file_path="([^"]+)"/.exec(out)?.[1] as string;
+        expect(readFileSync(path, "utf-8")).toBe(article);
+        expect(keepRestReadable("x", "t4", "turn-4", "short", "short")).toBe("short"); // nothing cut, nothing saved
+        vi.unstubAllEnvs();
+    });
 });

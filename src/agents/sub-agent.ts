@@ -16,6 +16,7 @@ import { executeTool, getToolSchemasByNames } from "../tools/index.js";
 import { extractPrimaryPath, logToolAction, summarizeToolCall } from "../utils/debug-log.js";
 import { isToolError } from "./error-types.js";
 import { smartTruncate } from "./smart-truncate.js";
+import { keepRestReadable } from "./tool-output-offload.js";
 import { stepBlockCount } from "./swarm-context.js";
 import { isMutator } from "./verify-before-done.js";
 
@@ -693,7 +694,10 @@ export async function runSubAgent(
                 fullHistory.push({
                     role: "tool",
                     tool_call_id: tc.id,
-                    content: fenceToolResult(fnName, smartTruncate(fnName, result)), // Smart truncation (#3)
+                    content: fenceToolResult(
+                        fnName,
+                        keepRestReadable(fnName, tc.id, `sub-${task.id}`, result, smartTruncate(fnName, result)),
+                    ), // Smart truncation (#3)
                 } as ChatCompletionMessageParam);
                 // The swarm gate held this call back (its own record, not the result text).
                 if (stepBlockCount() > heldBefore) {

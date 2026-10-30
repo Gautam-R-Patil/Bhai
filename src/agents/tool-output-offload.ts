@@ -113,24 +113,10 @@ export function offloadIfLarge(
         return { content: result, offloaded: false };
     }
 
-    // What goes to disk is what the model may read back: masked the same way
-    // (a typed secret, a dashboard showing an API key), never the raw values.
-    result = protect(result, { credentials: !CODE_TOOLS.has(toolName) });
     try {
-        ensureRoot();
-        const turnDir = path.join(OFFLOAD_ROOT, slug(turnId));
-        if (!existsSync(turnDir)) mkdirSync(turnDir, { recursive: true });
-        const name = `${slug(toolName)}-${slug(toolCallId || String(Date.now()))}.txt`;
-        const abs = path.join(turnDir, name);
-        writeFileSync(abs, result, "utf-8");
-
-        // Preview: prefer parse-aware compaction. If result is JSON, keep
-        // the top-level keys; otherwise take a head+tail slice.
-        const preview = buildPreview(result);
-
-        // Best-effort GC so the dir doesn't grow unbounded across sessions.
-        gcOldTurnDirs();
-
+        const abs = saveToolOutput(toolName, toolCallId, turnId, result);
+        // Preview: a head+tail slice of what was saved (masked).
+        const preview = buildPreview(protect(result, { credentials: !CODE_TOOLS.has(toolName) }));
         return {
             content:
                 `${preview}\n\n` +
@@ -143,6 +129,37 @@ export function offloadIfLarge(
         // truncate layer in agent.ts will clip it to fit the context.
         console.warn(`[OFFLOAD] Failed for ${toolName}: ${(err as Error).message}`);
         return { content: result, offloaded: false };
+    }
+}
+
+/**
+ * Save a tool's full output where the model can `read` it back; returns the path.
+ * What goes to disk is what the model may read back: masked the same way
+ * (a typed secret, a dashboard showing an API key), never the raw values. Throws on fs errors.
+ */
+export function saveToolOutput(toolName: string, toolCallId: string, turnId: string, result: string): string {
+    ensureRoot();
+    const turnDir = path.join(OFFLOAD_ROOT, slug(turnId));
+    if (!existsSync(turnDir)) mkdirSync(turnDir, { recursive: true });
+    const abs = path.join(turnDir, `${slug(toolName)}-${slug(toolCallId || String(Date.now()))}.txt`);
+    writeFileSync(abs, protect(result, { credentials: !CODE_TOOLS.has(toolName) }), "utf-8");
+    // Best-effort GC so the dir doesn't grow unbounded across sessions.
+    gcOldTurnDirs();
+    return abs;
+}
+
+/**
+ * `cut` is what's left of `full` after truncation. When something was cut, save
+ * the whole output and say where, or the rest is gone for good (results under
+ * the offload line are cut, not offloaded).
+ */
+export function keepRestReadable(toolName: string, toolCallId: string, turnId: string, full: string, cut: string): string {
+    if (cut.length >= full.length) return cut;
+    try {
+        const abs = saveToolOutput(toolName, toolCallId, turnId, full);
+        return `${cut}\n[Full output saved to ${abs}. Call \`read\` with file_path="${abs}" if you need the rest.]`;
+    } catch {
+        return cut;
     }
 }
 
