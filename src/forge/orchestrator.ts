@@ -12,6 +12,7 @@ import {
     getAwaitingDynamicToolSlug,
     getPlanModeState,
 } from "../agents/plan-mode.js";
+import { ownerApproved } from "../security/consent.js";
 import { getRegistryRef } from "../tools/create-tool.js";
 import { parseCapabilities, type Capabilities } from "./capabilities.js";
 import {
@@ -445,23 +446,6 @@ async function synthesizeWithStubLLM(req: SynthesisRequest): Promise<SynthesisRe
     return { kind: "synthesized", slug: req.name, attempts: 1, testsPassed: 1, testsTotal: 1 };
 }
 
-// Server-side banned-word list — mirrors src/tools/forge-approval.ts so the
-// agent-side check can't be bypassed by manipulating the wrapper.
-const SERVER_BANNED_USER_QUOTE_WORDS = new Set([
-    "ok",
-    "yes",
-    "sure",
-    "approved",
-    "approve",
-    "lgtm",
-    "ship it",
-    "looks good",
-    "go ahead",
-    "do it",
-    "good",
-    "fine",
-]);
-
 export async function approveDynamicTool(
     slug: string,
     userQuote: string,
@@ -480,18 +464,10 @@ export async function approveDynamicTool(
                 `current mode='${planState.mode}', awaiting_slug='${awaitingSlug ?? "(none)"}'`,
         };
     }
-    if (!userQuote || userQuote.trim().length < 10) {
-        return { ok: false, error: "user_quote too short or empty (must be ≥10 non-whitespace chars)" };
-    }
-    // Server-side banned-word recheck (defence in depth — TS-side gate in
-    // forge-approval.ts can be bypassed if anyone calls approveDynamicTool
-    // directly).
-    const trimmed = userQuote.trim().toLowerCase();
-    if (SERVER_BANNED_USER_QUOTE_WORDS.has(trimmed)) {
-        return {
-            ok: false,
-            error: `user_quote "${userQuote}" is too generic — paste the user's actual verbatim approval text`,
-        };
+    // Defence in depth: forge-approval.ts checks the same, but anything that
+    // calls approveDynamicTool directly must still carry the owner's own yes.
+    if (!ownerApproved(userQuote, planState.enteredAt)) {
+        return { ok: false, error: "user_quote must be the owner's own yes from their latest message" };
     }
     const manifest = readManifest(slug);
     if (!manifest) {

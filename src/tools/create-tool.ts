@@ -465,7 +465,7 @@ export const createTool: ToolDefinition = {
                             awaiting_approval: true,
                             tool_name: result.slug,
                             capabilities_requested: result.capabilitiesRequested,
-                            message: `Tool "${result.slug}" synthesized. Awaiting user approval — call approve_dynamic_tool({slug, user_quote}) to activate.`,
+                            message: `Tool "${result.slug}" synthesized. Ask the owner in plain words whether to turn on ${result.slug} and what it can access (capabilities_requested); when they say yes, call approve_dynamic_tool with their words.`,
                         });
                     }
                     if (result.kind === "failed") {
