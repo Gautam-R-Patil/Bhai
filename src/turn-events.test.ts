@@ -81,8 +81,8 @@ describe("createTurnStream", () => {
             t.step("Searching the web");
             t.status("Searching the web", 1, 2);
             vi.advanceTimersByTime(4000);
-            t.stepEnd("done", 6);
-            expect(seen.at(-1)).toEqual({ type: "status", text: "Reading what I found", step: 1, elapsedSec: 6 });
+            t.stepEnd("done", 9); // the caller's clock, not the last status's 2s plus the 4s waited
+            expect(seen.at(-1)).toEqual({ type: "status", text: "Reading what I found", step: 1, elapsedSec: 9 });
             t.step("Opening the page");
             t.stepEnd("failed", 6);
             t.status("Opening the page", 2, 6); // inside the 3s gap: waits, but still goes out
@@ -103,6 +103,29 @@ describe("createTurnStream", () => {
             t.step("Last look");
             t.end();
             expect(statuses().length).toBe(before);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("fast steps: each step's own status reaches the live line at once, in order", () => {
+        vi.useFakeTimers();
+        try {
+            const seen: TurnEvent[] = [];
+            const t = createTurnStream((e) => seen.push(e), { channel: "overlay", notes: false });
+            const names = ["Opening Spotify", "Clicking Play", "Taking a screenshot", "Checking volume"];
+            names.forEach((name, i) => {
+                t.step(name);
+                t.status(name, i + 1, i * 2); // as agent.ts starts a step; then 1s tool, 1s model call
+                vi.advanceTimersByTime(1000);
+                t.stepEnd("done", i * 2 + 1);
+                vi.advanceTimersByTime(1000);
+            });
+            t.end();
+            const own = seen
+                .filter((e) => e.type === "status" && e.text !== "Reading what I found")
+                .map((e) => `${(e as { step: number }).step}:${(e as { text: string }).text}`);
+            expect(own).toEqual(names.map((n, i) => `${i + 1}:${n}`));
         } finally {
             vi.useRealTimers();
         }

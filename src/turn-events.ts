@@ -127,9 +127,15 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
         openStep = null;
         return true;
     };
+    // A step boundary isn't churn: a new step's own status goes out at once, or a fast step's
+    // stepEnd would replace it while it waited on the throttle. Milestones within a step still wait.
+    let stepStarted = false;
     const pushStatus = (text: string, step: number, elapsedSec: number) => {
         lastStep = step;
         status.push({ type: "status", text: plainText(text), step, elapsedSec });
+        if (!stepStarted) return;
+        stepStarted = false;
+        status.flush();
     };
 
     return {
@@ -144,10 +150,12 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
             withdraw();
             this.step(stepText);
         },
+        /** A step starts; the first status after it goes out at once (see pushStatus). */
         step(text: string) {
             closeStep();
             openStep = { id: ++stepId, text: plainText(text) };
             sink({ type: "step", ...openStep, state: "running" });
+            stepStarted = true;
         },
         /**
          * A tool step finished: the live line moves on from its "Searching…" to its results, at once
