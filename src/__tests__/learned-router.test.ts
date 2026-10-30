@@ -70,6 +70,14 @@ describe("learned router", () => {
         expect(r.chooseArm("quick", { lowRisk: true, rand: always }).explored).toBe(true);
     });
 
+    // scripts/eval-grounding.ts: nano and 4o-mini found 1 of 32 UI targets in a screenshot.
+    it("a turn with an image never goes to a model that can't work from one", () => {
+        for (let i = 0; i < 40; i++) {
+            const arm = r.chooseArm("quick", { lowRisk: true, vision: true, rand: () => (i % 7) / 7 }).arm;
+            expect(["gpt-4.1-nano", "gpt-4o-mini", "gpt-5-mini"]).not.toContain(arm.id);
+        }
+    });
+
     it("classifies a turn from the tool router's classification", () => {
         expect(r.classifyTurn({ tier: "chat", categories: [] }, false)).toBe("chat");
         expect(r.classifyTurn({ tier: "simple", categories: ["system_controls", "core"] }, false)).toBe("quick");
