@@ -448,4 +448,18 @@ describe("readFrames hardening", () => {
         });
         await expect(p).rejects.toThrow("stopped by owner");
     });
+
+    it("a Stop fired inside the last delta is honoured when the done frame shares its chunk", async () => {
+        const lines = await encode([
+            { kind: "text", text: "a" },
+            { kind: "done", completion: COMPLETION },
+        ]);
+        const ac = new AbortController();
+        const p = readFrames(framed(streamOf([lines.join("")])), RID, {
+            ...OPTS,
+            signal: ac.signal,
+            onDelta: () => ac.abort(new Error("stopped by owner")),
+        });
+        await expect(p).rejects.toThrow("stopped by owner");
+    });
 });

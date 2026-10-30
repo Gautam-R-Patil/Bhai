@@ -77,6 +77,15 @@ export function isAwaiting(since, now) {
     return since > 0 && now - since < AWAIT_TURN_MS;
 }
 
+// The server sends a turn's events only to the socket that started it (or the owner's socket
+// back in the same chat), so a view restored after a worker restart may never hear from its
+// turn again. One that stays silent this long is dropped instead of showing busy for good.
+export const RESTORED_SILENT_MS = 60_000;
+
+export function restoredSilent(restoredAt, now) {
+    return restoredAt > 0 && now - restoredAt >= RESTORED_SILENT_MS;
+}
+
 export function emptyView(turn) {
     return { turn, seq: 0, status: null, steps: [], notes: [], answer: "", attempt: 0, open: false };
 }
@@ -92,5 +101,7 @@ export function restorePanelTurn(saved, now) {
         ownTurn,
         draft: ownTurn ? emptyView(ownTurn) : null,
         draftStart: ownTurn ? (typeof s.draftStart === "number" ? s.draftStart : now) : 0,
+        // A second restart keeps the first one's clock, so restarts can't keep a silent view alive.
+        restoredAt: ownTurn ? (typeof s.restoredAt === "number" && s.restoredAt > 0 ? s.restoredAt : now) : 0,
     };
 }

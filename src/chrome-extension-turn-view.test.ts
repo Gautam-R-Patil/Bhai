@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 
 // A variable specifier: the extension's plain JS stays outside the TS project.
 const modUrl = new URL("../chrome-extension/turn-view.js", import.meta.url).href;
-const { turnView, turnRoute, isAwaiting, restorePanelTurn, AWAIT_TURN_MS } = await import(modUrl);
+const { turnView, turnRoute, isAwaiting, restorePanelTurn, restoredSilent, AWAIT_TURN_MS, RESTORED_SILENT_MS } =
+    await import(modUrl);
 // The side panel's own render helpers (a classic script), pulled out the way the overlay's are.
 const sidepanel = fs.readFileSync(new URL("../chrome-extension/sidepanel.js", import.meta.url), "utf8");
 const panelFn = (name: string) =>
@@ -189,6 +190,7 @@ describe("the panel's own turn across a worker restart", () => {
             awaitingSince: 0,
             ownTurn: "t1",
             draftStart: now - 9_000,
+            restoredAt: now,
             draft: { turn: "t1", seq: 0, status: null, steps: [], notes: [], answer: "", attempt: 0, open: false },
         });
         expect(restorePanelTurn({ awaitingSince: now - 5_000, ownTurn: null, draftStart: 0 }, now)).toMatchObject({
@@ -199,9 +201,24 @@ describe("the panel's own turn across a worker restart", () => {
     });
 
     it("drops a stale wait and anything malformed", () => {
-        const empty = { awaitingSince: 0, ownTurn: null, draft: null, draftStart: 0 };
+        const empty = { awaitingSince: 0, ownTurn: null, draft: null, draftStart: 0, restoredAt: 0 };
         expect(restorePanelTurn({ awaitingSince: now - 61_000, ownTurn: null }, now)).toEqual(empty);
         for (const bad of [undefined, null, "x", { ownTurn: 5, awaitingSince: "1" }])
             expect(restorePanelTurn(bad, now)).toEqual(empty);
+    });
+
+    // The server sends a turn's events only to the socket that started it, so a view restored
+    // after a worker restart may never hear from its turn again: it must not stay busy for good.
+    it("a restored view that hears nothing from its turn is dropped after a while", () => {
+        expect(RESTORED_SILENT_MS).toBe(60_000);
+        expect(restoredSilent(0, now)).toBe(false); // not restored, or its turn spoke since
+        expect(restoredSilent(now - 5_000, now)).toBe(false);
+        expect(restoredSilent(now - 61_000, now)).toBe(true);
+    });
+
+    it("a second restart keeps the first restore's clock", () => {
+        const saved = { awaitingSince: 0, ownTurn: "t1", draftStart: now - 90_000, restoredAt: now - 50_000 };
+        expect(restorePanelTurn(saved, now).restoredAt).toBe(now - 50_000);
+        expect(restorePanelTurn({ ...saved, restoredAt: 0 }, now).restoredAt).toBe(now);
     });
 });

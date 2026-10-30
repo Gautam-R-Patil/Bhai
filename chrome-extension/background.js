@@ -5,7 +5,7 @@
 // Also provides overlay bridge: context menus, page capture, and
 // forwarding user messages/selections/page context to the Bhai overlay chat.
 
-import { emptyView, isAwaiting, restorePanelTurn, turnRoute, turnView } from "./turn-view.js";
+import { emptyView, isAwaiting, RESTORED_SILENT_MS, restoredSilent, restorePanelTurn, turnRoute, turnView } from "./turn-view.js";
 
 // ── State ────────────────────────────────────
 
@@ -53,14 +53,32 @@ let awaitingSince = 0; // when we sent something whose turn hasn't started yet (
 let ownTurn = null;
 let draft = null; // turnView state while ownTurn runs
 let draftStart = 0;
+// When the draft was rebuilt after a worker restart (0 = live, or its turn has spoken since).
+// The reconnected socket may never get that turn's events, so a silent one is dropped.
+let restoredAt = 0;
 const awaitingTurn = () => isAwaiting(awaitingSince, Date.now());
 function savePanelTurn() {
-  chrome.storage.session?.set({ panelTurn: { awaitingSince, ownTurn, draftStart } }).catch(() => {});
+  chrome.storage.session?.set({ panelTurn: { awaitingSince, ownTurn, draftStart, restoredAt } }).catch(() => {});
 }
+// Drop a restored view: the panel stops showing busy. ownTurn stays, so the turn's reply still
+// lands if the server's one-owner fallback delivers it.
+function dropRestored(note) {
+  if (!draft || !restoredAt) return;
+  broadcastTurn({ done: { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length } });
+  draft = null;
+  restoredAt = 0;
+  savePanelTurn();
+  if (note) addChat("error", "Lost track of that answer after a restart. Ask me again if it doesn't show up.");
+}
+const dropIfSilent = () => { if (restoredSilent(restoredAt, Date.now())) dropRestored(true); };
 const turnReady = (chrome.storage.session?.get("panelTurn") ?? Promise.resolve({}))
   .then((r) => {
     if (awaitingSince || ownTurn) return; // something newer already happened in this worker
-    ({ awaitingSince, ownTurn, draft, draftStart } = restorePanelTurn(r.panelTurn, Date.now()));
+    ({ awaitingSince, ownTurn, draft, draftStart, restoredAt } = restorePanelTurn(r.panelTurn, Date.now()));
+    if (restoredAt) {
+      savePanelTurn(); // the first restore's clock, for a second restart
+      setTimeout(dropIfSilent, Math.max(0, restoredAt + RESTORED_SILENT_MS - Date.now()));
+    }
   })
   .catch(() => {});
 function broadcastTurn(extra = {}) {
@@ -228,7 +246,7 @@ function connectOverlay() {
       return;
     }
     // After the saved turn is back, in arrival order.
-    turnReady.then(() => handleOverlayMessage(msg));
+    turnReady.then(() => handleOverlayMessage(msg)).catch((err) => console.error("[ATLAS Bridge] Overlay message failed:", err));
   };
 
   overlayWs.onclose = (event) => {
@@ -240,6 +258,7 @@ function connectOverlay() {
       draft = null;
       ownTurn = null;
       awaitingSince = 0;
+      restoredAt = 0;
       savePanelTurn();
       addChat("error", "Lost the connection mid-answer. Ask me again.");
     });
@@ -548,6 +567,7 @@ function handleOverlayMessage(msg) {
     ownTurn = msg.turn;
     draft = emptyView(msg.turn);
     draftStart = Date.now();
+    restoredAt = 0;
     savePanelTurn();
     broadcastTurn({ text: msg.text || "" });
     return;
@@ -555,6 +575,7 @@ function handleOverlayMessage(msg) {
 
   if (typeof msg.type === "string" && msg.type.startsWith("turn_")) {
     if (!draft || turnRoute(ownTurn, true, msg) !== "apply") return;
+    if (restoredAt) { restoredAt = 0; savePanelTurn(); } // its turn is still talking to us
     const next = turnView(draft, msg);
     if (next !== draft) { draft = next; broadcastTurn(); }
     return;
@@ -567,9 +588,10 @@ function handleOverlayMessage(msg) {
       const worked = msg.worked || { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length };
       broadcastTurn({ done: worked });
       draft = null;
-      ownTurn = null; // a late duplicate reply can't land twice
     }
+    ownTurn = null; // a late duplicate reply can't land twice (also after a restored view was dropped)
     awaitingSince = 0;
+    restoredAt = 0;
     savePanelTurn();
   }
 
@@ -2331,7 +2353,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === "get_chat") {
-    Promise.all([chatReady, turnReady]).then(() =>
+    Promise.all([chatReady, turnReady]).then(() => dropIfSilent()).then(() =>
       sendResponse({ chat: _chat, turn: draft && { state: draft, start: draftStart }, waiting: awaitingTurn() }),
     );
     return true;
@@ -2386,6 +2408,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "stop") {
     const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
     if (ok) overlayWs.send(JSON.stringify({ type: "stop" }));
+    // A restored view whose turn never spoke to this socket can't get a stopped reply here either.
+    dropRestored(false);
     sendResponse({ ok, running: !!draft });
     return true;
   }

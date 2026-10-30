@@ -122,10 +122,8 @@ export async function readFrames(response: Response, reqRid: string, opts: ReadO
         deadline = Date.now() + opts.gapMs;
         if (ping) return; // heartbeat: it only moved the deadline
         seenReal = true;
-        if (!final) {
-            opts.signal?.throwIfAborted(); // a Stop fired inside the previous onDelta
-            return opts.onDelta(toDelta(frame));
-        }
+        opts.signal?.throwIfAborted(); // a Stop fired inside the previous onDelta, even the last one
+        if (!final) return opts.onDelta(toDelta(frame));
         if (frame.kind === "done") {
             if (!frame.completion || typeof frame.completion !== "object")
                 throw new Error("final frame without a completion");
