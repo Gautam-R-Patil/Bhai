@@ -475,3 +475,4 @@ brag-output/
 !src/tools/scheduled-persist.test.ts
 !src/cron/store.test.ts
 !src/overlay/notify-requested.test.ts
+!src/tools/web-search-grace.test.ts
