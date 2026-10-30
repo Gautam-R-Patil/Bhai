@@ -3226,8 +3226,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             }
         }
 
-        // Skill slugs are sent to the server for server-side injection
-        const iterSkillSlugs = iterations === 1 ? toolSelection.skillSlugs : [];
+        // Skill slugs are sent to the server for server-side injection — on every iteration
+        // of the turn, not just the first. The server builds the system prompt from them
+        // (skills, plus the browsing/coding prompts they bring), and the prompt cache keys on
+        // tools → system: dropping them after iteration 1 changed the system prompt, so every
+        // later call missed the cache (26K tokens at full price instead of ~47K at a tenth)
+        // and the model lost its browsing instructions mid-task.
+        const iterSkillSlugs = toolSelection.skillSlugs;
 
         // Fence the memory/context block with <memory-context>…</memory-context>
         // markers so the LLM treats it as recalled context, not new user input.
