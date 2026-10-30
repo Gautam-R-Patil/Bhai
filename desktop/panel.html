@@ -1653,9 +1653,9 @@
                 ]
             },
             "offline": [
-                "Bhai is napping 💤",
+                "Bhai is napping",
                 "Shades folded. Napping",
-                "Bhai's recharging 🔋"
+                "Bhai's recharging"
             ],
             "starting": [
                 "Waking Bhai up…",
@@ -2956,6 +2956,7 @@
 
         function friendlyError(raw) {
             const m = raw.toLowerCase();
+            if (m.includes('sign in again')) return 'This Mac needs to sign in again. Open Account to sign in.';
             if (m.includes('session') && (m.includes('401') || m.includes('not_validated') || m.includes('auth'))) return 'Bhai couldn\'t sign in. Open Account and sign in again.';
             if (m.includes('credit') || m.includes('402')) return 'You\'re out of AI credits. Reach the XAGI Labs team at xagilab.com for more.';
             if (m.includes('enotfound') || m.includes('econnrefused') || m.includes('network') || m.includes('timed out')) return 'Bhai can\'t reach the internet right now. It will retry.';
