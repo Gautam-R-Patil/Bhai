@@ -1956,6 +1956,10 @@ let buddyReady = false;
 let buddyState = null;
 let buddyHideTimer = null;
 let buddyWatchdog = null;
+// A hidden buddy is destroyed after a while (its renderer is ~25 MB);
+// ensureBuddyWindow() makes it again and replays the state.
+const BUDDY_DESTROY_MS = 5 * 60_000;
+let buddyDestroyTimer = null;
 
 function ensureBuddyWindow() {
     if (buddyWindow && !buddyWindow.isDestroyed()) return buddyWindow;
@@ -2005,6 +2009,10 @@ function hideBuddy() {
     renderBuddy();
     buddyHideTimer = setTimeout(() => {
         if (buddyWindow && !buddyWindow.isDestroyed()) buddyWindow.hide();
+        clearTimeout(buddyDestroyTimer);
+        buddyDestroyTimer = setTimeout(() => {
+            if (buddyWindow && !buddyWindow.isDestroyed() && !buddyWindow.isVisible()) buddyWindow.destroy();
+        }, BUDDY_DESTROY_MS);
     }, 450);
 }
 
@@ -2020,6 +2028,7 @@ function showBuddy(mood, text, hideAfterMs, force = false) {
         if (buddyState?.visible) hideBuddy();
         return;
     }
+    clearTimeout(buddyDestroyTimer);
     const win = ensureBuddyWindow();
     clearTimeout(buddyHideTimer);
     clearTimeout(buddyWatchdog);
