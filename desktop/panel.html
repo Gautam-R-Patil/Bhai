@@ -160,7 +160,6 @@
                     <div class="status-card surface-card" id="heroCard" data-phase="stopped">
                         <div class="hero-mascot" id="heroMascot" aria-hidden="true"></div>
                         <div class="hero-body">
-                        <span class="status-chip"><span class="status-dot"></span><span id="statusChipText">Offline</span></span>
                         <div id="statusOnline" style="display: none;">
                             <div class="status-title" id="statusOnlineTitle">Bhai is awake</div>
                             <div class="status-subtitle" id="statusOnlineSub">
@@ -1491,6 +1490,18 @@
             return `${d.toLocaleDateString([], { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' })}, ${time}`;
         }
         // Dashboard: the last three chats, one click to open.
+        // "Just now", "12 min ago", "6:51 AM", "Yesterday", "Oct 28".
+        function spokenTime(ts) {
+            const mins = Math.round((Date.now() - ts) / 60000);
+            const d = new Date(ts);
+            const yesterday = new Date(Date.now() - 86400000).toDateString();
+            if (mins < 1) return 'Just now';
+            if (mins < 60) return `${mins} min ago`;
+            if (d.toDateString() === new Date().toDateString()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            if (d.toDateString() === yesterday) return 'Yesterday';
+            return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        }
+
         async function loadRecentChats() {
             try {
                 const chats = (await atlas.listChats()) || [];
@@ -1506,8 +1517,7 @@
                     title.textContent = c.title || 'Untitled chat';
                     const when = document.createElement('span');
                     when.className = 'recent-when';
-                    const mins = Math.round((Date.now() - c.end) / 60000);
-                    when.textContent = mins < 1 ? 'now' : mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : new Date(c.end).toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    when.textContent = spokenTime(c.end);
                     row.append(title, when);
                     row.addEventListener('click', () => { switchTab('chats'); openChat(c.id); });
                     list.append(row);
@@ -1550,7 +1560,7 @@
                         const mins = Math.round((t.fireAt - Date.now()) / 60000);
                         const d = new Date(t.fireAt);
                         when.textContent = mins < 1 ? (lastBotStatus === 'running' ? 'now' : 'when Bhai starts')
-                            : mins < 60 ? `in ${mins}m`
+                            : mins < 60 ? `in ${mins} min`
                             : d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
                             : d.toLocaleDateString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
                     }
@@ -1652,7 +1662,6 @@
             if (heroMascot) heroMascot.dataset.mood = mood || restingMood();
             const phase = botStarting ? 'starting' : lastBotStatus === 'running' ? 'running' : 'stopped';
             heroCard.dataset.phase = phase;
-            document.getElementById('statusChipText').textContent = { starting: 'Starting', running: 'Online', stopped: 'Offline' }[phase];
             const lines = phase === 'running' ? ALIVE_LINES.online[dayPart()] : phase === 'starting' ? ALIVE_LINES.starting : ALIVE_LINES.offline;
             document.getElementById(phase === 'running' ? 'statusOnlineTitle' : 'statusOfflineTitle').textContent = pickLine(lines);
             if (holdMs) moodHold = setTimeout(() => setMood(), holdMs);
@@ -1829,12 +1838,6 @@
             try {
                 const stats = await atlas.getStats();
                 if (!stats) return;
-                // Uptime
-                const mins = Math.floor(stats.uptimeMs / 60000);
-                const hrs = Math.floor(mins / 60);
-                const rem = mins % 60;
-                const chip = document.getElementById('statusChipText');
-                if (chip.textContent.startsWith('Online')) chip.textContent = `Online · ${hrs > 0 ? `${hrs}h ${rem}m` : `${rem}m`}`;
                 countTo(document.getElementById('statMessages'), stats.messagesHandled);
                 countTo(document.getElementById('statMemories'), stats.memoryCount);
                 loadRecentChats();
@@ -3908,14 +3911,15 @@
         function renderDashChannels(statuses, label) {
             const box = document.getElementById('connectionStatus');
             const shown = Object.keys(DASH_CHANNELS).filter(k => ['connected', 'connecting', 'disconnected'].includes(statuses?.[k]));
-            box.replaceChildren(...shown.map(k => {
+            const trouble = shown.filter(k => statuses[k] !== 'connected');
+            box.replaceChildren(...trouble.map(k => {
                 const chip = document.createElement('div');
-                chip.className = 'connection-item' + (statuses[k] === 'connected' ? ' connected' : '');
+                chip.className = 'connection-item';
                 chip.innerHTML = '<span class="connection-dot"></span><span class="connection-label"></span>';
-                chip.lastChild.textContent = DASH_CHANNELS[k];
+                chip.lastChild.textContent = `${DASH_CHANNELS[k]} ${statuses[k] === 'connecting' ? 'is connecting…' : 'is disconnected'}`;
                 return chip;
             }));
-            box.style.display = shown.length ? 'flex' : 'none';
+            box.style.display = trouble.length ? 'flex' : 'none';
             label = label || document.getElementById('chatShortcut').textContent;
             const live = shown.filter(k => statuses[k] === 'connected').map(k => k === 'email' ? 'email' : DASH_CHANNELS[k]);
             const list = live.length > 1 ? `${live.slice(0, -1).join(', ')} and ${live.at(-1)}` : live[0];
