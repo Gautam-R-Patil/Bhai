@@ -92,7 +92,7 @@ import {
     setSmartClickLLM,
     setSwarmLLM,
 } from "./tools/index.js";
-import { deliverOnFirst } from "./owner-delivery.js";
+import { deliverOnFirst, telegramStopReason } from "./owner-delivery.js";
 import { restoreScheduledTasks, setTaskTriggerHandler } from "./tools/scheduled.js";
 import { initSpotify } from "./tools/spotify.js";
 import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
@@ -1264,6 +1264,13 @@ async function boot() {
                 console.log(`   Mode    : long-polling (no HTTP server)`);
                 console.log(`   Send me a message on Telegram to get started!\n`);
             },
+        }).catch(async (err: unknown) => {
+            // Polling stops for good on these (a 401 after the token was replaced did, as an
+            // unhandled rejection): say so, so the Channels tab shows it and the owner knows.
+            const why = telegramStopReason((err as Error)?.message ?? String(err));
+            console.error(`[TELEGRAM] Stopped: ${why}`);
+            const { notifyDesktop } = await import("./desktop-notify.js");
+            notifyDesktop("stuck", "Telegram stopped", `Bhai isn't answering on Telegram: ${why}.`, { tag: "telegram-stopped" });
         });
     } else {
         console.log(`✅ Bhai online (Telegram disabled)`);
