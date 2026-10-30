@@ -107,8 +107,9 @@ export function offloadIfLarge(
 ): OffloadResult {
     const size = Buffer.byteLength(result, "utf-8");
     // A tool whose own cap is above this line (a finished research report) stays
-    // inline and the caller cuts it to that cap: a 2KB preview would hide most of it.
-    if (size <= OFFLOAD_THRESHOLD_BYTES || ownLimit > OFFLOAD_THRESHOLD_BYTES) {
+    // inline while it fits that cap: a 2KB preview would hide most of it. Past the
+    // cap it is offloaded, so the model still gets the saved path to the rest.
+    if (size <= Math.max(OFFLOAD_THRESHOLD_BYTES, ownLimit)) {
         return { content: result, offloaded: false };
     }
 

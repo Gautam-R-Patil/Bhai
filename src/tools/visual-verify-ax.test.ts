@@ -18,6 +18,14 @@ describe("os_visual_verify accessibility fallback", () => {
         expect(await frontAppHasText("Research")).toBe(false);
         expect(await frontAppHasText("hello there")).toBe(false);
 
+        // Web/Electron: a button's name and a text area's draft sit in child AXStaticText nodes.
+        panel.children.push(
+            node("AXButton", null, null, [node("AXStaticText", null, "Research")]),
+            node("AXTextArea", null, null, [node("AXStaticText", null, "hello there")]),
+        );
+        expect(await frontAppHasText("Research")).toBe(false);
+        expect(await frontAppHasText("hello there")).toBe(false);
+
         panel.children.push(node("AXHeading", "Research"), node("AXStaticText", null, "1,234"));
         expect(await frontAppHasText("research")).toBe(true);
         expect(await frontAppHasText("1,234")).toBe(true); // Calculator's display

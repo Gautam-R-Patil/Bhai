@@ -1732,6 +1732,11 @@ async function frontWindowText(): Promise<string[]> {
     return out;
 }
 
+const AX_CONTROL_ROLES = new Set<string | null>([
+    "AXButton", "AXLink", "AXTab", "AXRadioButton", "AXMenuItem", "AXMenuButton",
+    "AXCheckBox", "AXPopUpButton", "AXComboBox", "AXTextField", "AXTextArea",
+]);
+
 /**
  * Whether the front window shows `text` as static text or a heading (case and spacing ignored).
  * Not other windows (Bhai's overlay holds the owner's request) and not control labels or typed
@@ -1747,6 +1752,9 @@ export async function frontAppHasText(text: string): Promise<boolean> {
     const win = dump.root.children.find((n) => n.role === "AXWindow");
     const stack = win ? [win] : [];
     for (let n = stack.pop(); n; n = stack.pop()) {
+        // Web/Electron controls keep their name in a child AXStaticText, and a text area's
+        // draft is AXStaticText too: neither proves the action happened, so skip their subtrees.
+        if (AX_CONTROL_ROLES.has(n.role)) continue;
         const t = n.role === "AXStaticText" || n.role === "AXHeading" ? n.value || n.label : "";
         if (t && t !== "[secure]" && flat(t).includes(want)) return true;
         stack.push(...n.children);
