@@ -103,6 +103,17 @@ export function redactChatLog(hit: (text: unknown) => boolean, with_: string): v
  * /new), as agent context. Web-widget visitors aren't the owner, and restored
  * text goes through the same sanitizer as any incoming message.
  */
+/**
+ * The owner's last message when it got no reply because Bhai stopped mid-turn (a restart,
+ * an update), if it is recent: the next reply would otherwise answer it blind.
+ */
+export function unansweredAsk(maxAgeMs: number, now = Date.now()): string | null {
+    const last = readLines().at(-1); // a /new after it means it isn't pending any more
+    if (!last || !isMessage(last) || last.role !== "user" || now - last.ts > maxAgeMs || last.source === "web-widget")
+        return null;
+    return last.text;
+}
+
 export function recentChatContext(maxAgeMs: number, limit: number, now = Date.now()): ChatCompletionMessageParam[] {
     const lines = readLines();
     let start = 0; // after the last /new marker (append-only, so file order is time order)

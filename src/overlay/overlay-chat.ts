@@ -31,7 +31,7 @@ import { formatStepStatus, parseStepLine } from "../step-status.js";
 import { closeDesktopNotification, notifyDesktop, notifyTurnEnd } from "../desktop-notify.js";
 import { getPlanModeState } from "../agents/plan-mode.js";
 import { consentAskedSince } from "../security/consent.js";
-import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
+import { logChatMessage, markChatReset, recentChatContext, unansweredAsk } from "./chat-log.js";
 import { classifyQuery } from "../memory/classifier.js";
 import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
 import { captureScreenshot } from "../tools/platform.js";
@@ -229,11 +229,19 @@ async function pushTaskDrawer(): Promise<void> {
     }
 }
 
+// The owner's message a restart left unanswered: told once, on the chat bar's next connect.
+let interruptedAsk: string | null = null;
+
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
     // Pick up where the conversation left off before a restart.
     if (getConversationHistory().length === 0) {
         const recent = recentChatContext(12 * 60 * 60 * 1000, 20);
+        // A message that got no reply (Bhai restarted mid-turn) leaves the history: the
+        // next, unrelated reply answered it blind ("Battery: I can't read… Paris.").
+        // The owner hears about it once instead (below, on connect).
+        if (recent.at(-1)?.role === "user") recent.pop();
+        interruptedAsk = unansweredAsk(10 * 60_000);
         if (recent.length) setConversationHistory(recent);
     }
     // Ensure the local bootstrap token exists on disk so the native Swift
@@ -581,6 +589,16 @@ export function initOverlayChat(llm: LLMClient): void {
         // `busy`: an owner turn is still running (a reconnecting chat bar keeps waiting for it;
         // if none is, its reply was lost and it unlocks).
         ws.send(JSON.stringify({ type: "ready", busy: connKind === "native-overlay" && ownerTurnRunning() }));
+        if (connKind === "native-overlay" && interruptedAsk) {
+            const ask = interruptedAsk.length > 120 ? `${interruptedAsk.slice(0, 117)}…` : interruptedAsk;
+            interruptedAsk = null;
+            ws.send(
+                JSON.stringify({
+                    type: "notification",
+                    text: `I restarted before I could answer “${ask}”. Ask me again if you still need it.`,
+                }),
+            );
+        }
 
         // Send current inbox state on connect (so a fresh overlay sees pending items).
         // Owner only: the inbox holds the owner's pending drafts and actions.
