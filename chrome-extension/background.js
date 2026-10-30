@@ -5,6 +5,8 @@
 // Also provides overlay bridge: context menus, page capture, and
 // forwarding user messages/selections/page context to the Bhai overlay chat.
 
+import { turnRoute, turnView } from "./turn-view.js";
+
 // ── State ────────────────────────────────────
 
 // Bridge socket (port 18800): command/response channel that lets Bhai drive
@@ -41,6 +43,17 @@ function addChat(role, text, meta = null) {
   if (_chat.length > MAX_CHAT) _chat = _chat.slice(-MAX_CHAT);
   chrome.storage.local.set({ chat: _chat }).catch(() => {});
   chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
+}
+
+// The side panel's running turn, in memory only (thinking and steps never reach storage).
+// Only a turn this extension started shows here: after a send, the bot's `thinking` names the
+// turn. The server's one-owner fallback can deliver another surface's turn to this socket.
+let awaitingTurn = false; // sent something; its turn (or its reply) hasn't come yet
+let ownTurn = null;
+let draft = null; // turnView state while ownTurn runs
+let draftStart = 0;
+function broadcastTurn(extra = {}) {
+  chrome.runtime.sendMessage({ type: "turn_update", state: draft, start: draftStart, ...extra }).catch(() => { /* panel closed */ });
 }
 
 // Clicking the toolbar icon opens Bhai in the side panel.
@@ -343,6 +356,7 @@ function sendToAtlas(text, meta = {}, image = null) {
   if (image) payload.image = image;
 
   overlayWs.send(JSON.stringify(payload));
+  awaitingTurn = true;
   console.log(`[ATLAS Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
   return true;
 }
@@ -501,6 +515,35 @@ function handleOverlayMessage(msg) {
     return;
   }
 
+  // A turn started: ours only if we just sent something.
+  if (msg.type === "thinking" && msg.turn) {
+    if (!awaitingTurn) return;
+    awaitingTurn = false;
+    ownTurn = msg.turn;
+    draft = { turn: msg.turn, seq: 0, status: null, steps: [], notes: [], answer: "", attempt: 0, open: false };
+    draftStart = Date.now();
+    broadcastTurn({ text: msg.text || "" });
+    return;
+  }
+
+  if (typeof msg.type === "string" && msg.type.startsWith("turn_")) {
+    if (!draft || turnRoute(ownTurn, true, msg) !== "apply") return;
+    const next = turnView(draft, msg);
+    if (next !== draft) { draft = next; broadcastTurn(); }
+    return;
+  }
+
+  if (msg.type === "response" || msg.type === "error") {
+    // Not ours: the reply to another surface's turn, or anything we never asked for.
+    if (msg.turn ? msg.turn !== ownTurn : !draft && !awaitingTurn) return;
+    if (turnRoute(ownTurn, !!draft, msg) === "finish") {
+      const worked = msg.worked || { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length };
+      broadcastTurn({ done: worked });
+      draft = null;
+    }
+    awaitingTurn = false;
+  }
+
   if (msg.type === "response") {
     lastAtlasResponse = msg.text || "";
     // Follow-ups, feedback and "Forget that" ride with the reply; the panel shows them as buttons.
@@ -523,6 +566,8 @@ function handleOverlayMessage(msg) {
   }
 
   if (msg.type === "progress" || msg.type === "contract" || msg.type === "thinking" || msg.type === "thinking_content") {
+    // Research running in the background, or another surface's turn: not this panel's work.
+    if (msg.background || (!draft && !awaitingTurn)) return;
     chrome.runtime.sendMessage({
       type: "atlas_progress",
       text: msg.text || "",
@@ -2257,7 +2302,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === "get_chat") {
-    chatReady.then(() => sendResponse({ chat: _chat }));
+    chatReady.then(() => sendResponse({ chat: _chat, turn: draft && { state: draft, start: draftStart }, waiting: awaitingTurn }));
     return true;
   }
   if (msg.type === "clear_chat") {
@@ -2299,13 +2344,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
     if (ok) {
       overlayWs.send(JSON.stringify({ type: "quick_action", text: msg.action }));
+      awaitingTurn = true;
       if (!msg.action.startsWith("feedback:")) addChat("you", msg.label || msg.action);
     }
     sendResponse({ ok });
     return true;
   }
-  if (msg.type === "send_message" && msg.text === "stop") {
-    sendResponse({ ok: sendToAtlas("stop", { action: "send_message" }) });
+  // Stop the running turn. Never a chat message: that started a paid turn saying "stop".
+  if (msg.type === "stop") {
+    const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
+    if (ok) overlayWs.send(JSON.stringify({ type: "stop" }));
+    sendResponse({ ok });
     return true;
   }
   if (msg.type === "send_page" || msg.type === "send_selection" || msg.type === "send_message") {

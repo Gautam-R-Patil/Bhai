@@ -137,6 +137,53 @@
     .dots i:nth-child(3) { animation-delay: .3s; }
     @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 
+    /* ── Live turn: one line while Bhai works; Notes and Steps one click away ── */
+    .turn-live { display: flex; align-items: center; gap: 10px; width: calc(100% + 12px); margin: 0 -6px; padding: 4px 6px; border-radius: var(--r-md); font-size: 13px; color: var(--ink-2); text-align: left; user-select: none; transition: background .15s; }
+    .turn-live:hover { background: var(--sunk); }
+    .turn-now { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; background: linear-gradient(90deg, var(--ink-2) 0 40%, var(--accent) 50%, var(--ink-2) 60% 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: turnShimmer 2.2s linear infinite; }
+    .turn-meta { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .turn-meta .chev { transform: rotate(180deg); transition: transform .25s; }
+    .turn.open .turn-meta .chev { transform: none; }
+    .turn-bar { height: 3px; margin-top: 6px; border-radius: 2px; background: var(--line); overflow: hidden; }
+    .turn-bar i { display: block; width: 40%; height: 100%; border-radius: 2px; background: var(--accent); animation: turnSlide 1.6s ease-in-out infinite; }
+    .turn-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s ease, margin .3s ease; }
+    .turn-panel > div { overflow: hidden; }
+    .turn.open .turn-panel { grid-template-rows: 1fr; margin-top: 8px; }
+    .turn-inner { padding: 4px 10px 8px; border-radius: var(--r-md); background: var(--sunk); }
+    .turn-lbl { margin: 6px 0 2px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+    .turn-notes { max-height: 96px; overflow-y: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--ink-2); }
+    .turn-step { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); }
+    .turn-step > :first-child { flex: none; width: 12px; }
+    .turn-step span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .turn-step.done svg { color: var(--ok); }
+    .turn-step.failed svg { color: var(--bad); }
+    .turn-step.running { font-weight: 500; color: var(--ink); }
+    .turn-step.running i { height: 8px; width: 8px; margin: 0 2px; border-radius: 50%; background: var(--accent); animation: turnPulse 1.2s ease-in-out infinite; }
+    .turn-answer { margin-top: 12px; }
+    .turn-answer .caret { display: inline-block; width: 2px; height: 1em; margin-left: 1px; vertical-align: -2px; background: var(--accent); animation: turnBlink 1s steps(2) infinite; }
+    .turn.done .face, .turn.done .turn-bar { display: none; }
+    .turn.done .turn-live { font-size: 12.5px; }
+    .turn.done .turn-now { animation: none; background: none; color: var(--ink-3); }
+    /* Bhai's face, alive: bobs, blinks, glances, with a soft ripple while he works */
+    .face { position: relative; flex: none; width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #f5b16b, #c2570f); animation: faceBob 1.6s ease-in-out infinite; }
+    .face::before, .face::after { content: ""; position: absolute; top: 8px; width: 3px; height: 4px; border-radius: 2px; background: #fff; animation: faceBlink 3.2s infinite, faceLook 2.4s ease-in-out infinite; }
+    .face::before { left: 6px; }
+    .face::after { right: 6px; }
+    .face i { position: absolute; inset: -4px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); animation: faceRipple 1.6s ease-out infinite; }
+    @keyframes faceBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+    @keyframes faceBlink { 0%, 92%, 100% { height: 4px; } 95% { height: 1px; } }
+    @keyframes faceLook { 0%, 100% { margin-left: 0; } 50% { margin-left: 2px; } }
+    @keyframes faceRipple { from { transform: scale(.8); opacity: 1; } to { transform: scale(1.6); opacity: 0; } }
+    @keyframes turnPulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+    @keyframes turnShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+    @keyframes turnSlide { from { margin-left: -40%; } to { margin-left: 100%; } }
+    @keyframes turnBlink { 50% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .turn-now { background: none; color: var(--ink-2); }
+      .turn-bar i { width: 100%; opacity: .4; }
+      .face i { display: none; }
+    }
+
     /* ── Welcome ────────────────────────────── */
     .welcome { flex: 1; display: flex; flex-direction: column; }
     .hello { margin: auto 0; text-align: center; animation: rise .3s ease-out both; }

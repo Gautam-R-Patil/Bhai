@@ -309,12 +309,14 @@ function renderChat(chat) {
   chat = chat || [];
   lastChat = chat;
   if (chat.length < rendered) { thread.querySelectorAll('.msg').forEach((el) => el.remove()); rendered = 0; }
-  const working = $('workingRow');
+  const working = $('workingRow') || $('liveTurn');
   const arriving = rendered > 0 && chat.length - rendered === 1; // one new message, not the first load
+  const reveal = arriving && !typedIn; // an answer already typed in doesn't animate in again
+  typedIn = false;
   const wasAtBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
   let newest = null;
   for (const m of chat.slice(rendered)) {
-    newest = messageEl(m, arriving && m.role === 'bhai');
+    newest = messageEl(m, reveal && m.role === 'bhai');
     thread.insertBefore(newest, working || null);
   }
   rendered = chat.length;
@@ -347,7 +349,7 @@ function setBusy(on, text) {
   sendBtn.title = on ? 'Stop' : 'Send';
   sendBtn.setAttribute('aria-label', sendBtn.title);
   let row = $('workingRow');
-  if (!on) { row?.remove(); updateSendState(); return; }
+  if (!on || liveRunning()) { row?.remove(); updateSendState(); return; } // a live turn has its own line
   if (!row) {
     row = document.createElement('div');
     row.id = 'workingRow';
@@ -359,6 +361,137 @@ function setBusy(on, text) {
   thread.scrollTop = thread.scrollHeight;
   updateSendState();
 }
+
+// ── Live turn ────────────────────────────────
+// The bot's turn_* events, folded by the background worker (turn-view.js) and sent here as
+// turn_update {state, start, text?, done?}: one live line (Bhai's face, what he's doing now,
+// step and seconds), a Notes/Steps panel one click away, and the answer typing itself in.
+// The stored chat only gets the final reply; this view lives in the page for the session.
+
+const PANEL_KEY = 'bhai.turnPanelOpen';
+let panelOpen = false;
+chrome.storage.local.get(PANEL_KEY).then((r) => { panelOpen = r[PANEL_KEY] === true; }).catch(() => {});
+let live = null; // { state, root, el, start, fallback, shown, stepsKey, frame, tick, stopping, done }
+let typedIn = false; // the reply about to land was already typed in by its live turn
+const liveRunning = () => !!live && !live.done;
+const closeFence = (t) => ((t.match(/```/g) || []).length % 2 ? `${t}\n\`\`\`` : t); // an unclosed fence stays code
+
+function setPanelOpen(root, open) {
+  root.classList.toggle('open', open);
+  root.querySelector('.turn-live').setAttribute('aria-expanded', String(open));
+  root.querySelector('.turn-panel').setAttribute('aria-hidden', String(!open));
+}
+
+function liveStart(state, start, text) {
+  if (live && !live.done) { cancelAnimationFrame(live.frame); clearInterval(live.tick); live.root.remove(); }
+  $('workingRow')?.remove();
+  const root = document.createElement('div');
+  root.className = 'msg turn';
+  root.id = 'liveTurn';
+  root.setAttribute('aria-busy', 'true');
+  root.innerHTML = '<button type="button" class="turn-live" aria-expanded="false" title="Show what Bhai is doing">'
+    + '<span class="face" aria-hidden="true"><i></i></span><span class="turn-now"></span>'
+    + '<span class="turn-meta"><span class="turn-count"></span><svg class="chev" width="14" height="14"><use href="#i-chev"/></svg></span></button>'
+    + '<div class="turn-bar" aria-hidden="true"><i></i></div>'
+    + '<div class="turn-panel"><div><div class="turn-inner">'
+    + '<div class="turn-notes-wrap" hidden><div class="turn-lbl">Notes</div><div class="turn-notes"></div></div>'
+    + '<div class="turn-steps-wrap" hidden><div class="turn-lbl">Steps</div><div class="turn-steps"></div></div>'
+    + '</div></div></div>'
+    + '<div class="bhai turn-answer"><div></div></div>';
+  thread.append(root);
+  const q = (sel) => root.querySelector(sel);
+  live = {
+    state, root, start: start || Date.now(), fallback: cleanProgress(text) || 'Thinking…', shown: '', stepsKey: '', frame: 0, stopping: false, done: false,
+    el: { now: q('.turn-now'), count: q('.turn-count'), notes: q('.turn-notes'), steps: q('.turn-steps'), answer: q('.turn-answer > div') },
+    tick: setInterval(liveCount, 1000),
+  };
+  setPanelOpen(root, panelOpen);
+  setBusy(true);
+  renderLive();
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function liveCount() {
+  if (!liveRunning()) return;
+  const step = live.state.status?.step || 0;
+  live.el.count.textContent = `${step > 0 ? `step ${step} · ` : ''}${Math.max(0, Math.floor((Date.now() - live.start) / 1000))}s`;
+}
+
+function renderLive() {
+  if (!live) return;
+  cancelAnimationFrame(live.frame);
+  live.frame = 0;
+  const s = live.state, el = live.el;
+  const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+  if (!live.done) {
+    el.now.textContent = live.stopping ? 'Stopping…' : cleanProgress(s.status?.text) || live.fallback;
+    liveCount();
+  }
+  const notes = s.notes.join('');
+  el.notes.parentElement.hidden = !notes.trim();
+  if (el.notes.textContent !== notes) { el.notes.textContent = notes; el.notes.scrollTop = el.notes.scrollHeight; }
+  const stepsKey = JSON.stringify(s.steps);
+  if (stepsKey !== live.stepsKey) { // only on change: a rebuild restarts the running step's pulse
+    live.stepsKey = stepsKey;
+    el.steps.parentElement.hidden = !s.steps.length;
+    el.steps.replaceChildren(...s.steps.map((x) => {
+      const row = document.createElement('div');
+      const state = ['done', 'failed', 'running'].includes(x.state) ? x.state : 'running';
+      row.className = `turn-step ${state}`;
+      const text = document.createElement('span');
+      text.textContent = x.text;
+      row.append(state === 'done' ? icon('check', 12) : state === 'failed' ? icon('x', 12) : document.createElement('i'), text);
+      return row;
+    }));
+  }
+  if (!live.done && s.answer !== live.shown) {
+    live.shown = s.answer;
+    // The caret goes inside the last block, so it sits after the last word.
+    el.answer.innerHTML = s.answer ? renderMarkdown(closeFence(s.answer)).replace(/((?:<\/[a-z0-9]+>)*)$/, '<span class="caret" aria-hidden="true"></span>$1') : '';
+  }
+  if (atBottom) thread.scrollTop = thread.scrollHeight;
+}
+
+function onTurnUpdate(m) {
+  if (!m.state) return;
+  if (!live || live.state.turn !== m.state.turn || (!live.done && !live.root.isConnected)) {
+    if (m.done) return; // ended before this page saw it: the reply shows as usual
+    liveStart(m.state, m.start, m.text);
+  }
+  if (live.done) return;
+  live.state = m.state;
+  if (m.done) return liveFinish(m.done);
+  if (!live.frame) live.frame = requestAnimationFrame(renderLive);
+}
+
+// The turn ended: the live line becomes "Worked for {N}s · {K} steps" (which still opens the
+// panel), or goes when there's nothing behind it. The reply lands under it as a normal message.
+function liveFinish(worked) {
+  if (!liveRunning()) return;
+  renderLive();
+  clearInterval(live.tick);
+  live.done = true;
+  const { root, el, state } = live;
+  root.removeAttribute('id');
+  root.removeAttribute('aria-busy');
+  root.querySelector('.turn-answer').remove();
+  typedIn = !!state.answer;
+  if (!state.steps.length && !state.notes.join('').trim()) { root.remove(); return; }
+  const w = worked || { secs: Math.round((Date.now() - live.start) / 1000), steps: state.steps.length };
+  root.classList.add('done');
+  setPanelOpen(root, false);
+  el.now.textContent = `Worked for ${w.secs}s · ${w.steps} step${w.steps === 1 ? '' : 's'}`;
+  el.count.textContent = '';
+}
+
+thread.addEventListener('click', (e) => {
+  const btn = e.target.closest('.turn-live');
+  if (!btn) return;
+  const open = !btn.parentElement.classList.contains('open');
+  setPanelOpen(btn.parentElement, open);
+  panelOpen = open;
+  chrome.storage.local.set({ [PANEL_KEY]: open }).catch(() => {});
+});
 
 // ── Status, tab, selection ───────────────────
 
@@ -581,7 +714,7 @@ async function sendMessage(message) {
   }
   if (resp.drawing) $('drawChip').hidden = true;
   if (message.type === 'send_message') clearImage();
-  if (resp.drawing) $('workingRow').lastElementChild.textContent = 'Looking at your drawing…';
+  if (resp.drawing && $('workingRow')) $('workingRow').lastElementChild.textContent = 'Looking at your drawing…';
   return true;
 }
 
@@ -598,9 +731,12 @@ async function sendText() {
   }
 }
 
+// Stop the running turn; it stays busy until the stopped reply (with what was already typed) lands.
 function stop() {
-  send({ type: 'send_message', text: 'stop' });
-  setBusy(false);
+  send({ type: 'stop' });
+  if (!liveRunning()) return setBusy(false);
+  live.stopping = true;
+  renderLive();
 }
 
 function autosize() {
@@ -807,11 +943,14 @@ $('btnRetry').addEventListener('click', async () => {
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type === 'chat_update') {
-    renderChat(msg.chat);
     const last = msg.chat[msg.chat.length - 1];
+    if (last && last.role !== 'you') liveFinish(); // before rendering: the reply goes under it
+    renderChat(msg.chat);
     if (last && last.role !== 'you') setBusy(false);
+  } else if (msg.type === 'turn_update') {
+    onTurnUpdate(msg);
   } else if (msg.type === 'atlas_progress') {
-    setBusy(true, msg.text || 'Working…');
+    if (!liveRunning()) setBusy(true, msg.text || 'Working…');
   } else if (msg.type === 'atlas_action') {
     setBusy(true, msg.entry?.detail || 'Working…');
   } else if (msg.type === 'page_selection' && sender.tab?.id === activeTab?.id) {
@@ -827,7 +966,11 @@ async function refresh() {
   renderStatus(await send({ type: 'get_status' }));
 }
 
-send({ type: 'get_chat' }).then((resp) => renderChat(resp?.chat || []));
+send({ type: 'get_chat' }).then((resp) => {
+  renderChat(resp?.chat || []);
+  if (resp?.turn) onTurnUpdate(resp.turn); // reopened mid-turn
+  else if (resp?.waiting) setBusy(true);
+});
 refreshTab();
 refresh();
 setInterval(refresh, 3000);
