@@ -60,6 +60,7 @@ vi.mock("./tools/index.js", () => ({
             "compress_files",
             "trash_manager",
             "file_manage",
+            "apple_notes",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -100,6 +101,7 @@ const CASES: [string, string][] = [
     ["move invoice.pdf into the Invoices folder", "file_manage"],
     ["rename the report file to final report", "file_manage"],
     ["make a new folder called Reports on my desktop", "file_manage"],
+    ["Create a note in Apple Notes titled 'Bhai eval note' with the text 'it works'", "apple_notes"],
 ];
 
 describe("computer-use routing without the classifier", () => {

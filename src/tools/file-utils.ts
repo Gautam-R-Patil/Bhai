@@ -451,7 +451,7 @@ export const compressFiles: ToolDefinition = {
                     },
                     output_dir: {
                         type: "string",
-                        description: "Output directory for extraction (for 'unzip', default: same dir as archive)",
+                        description: "unzip: where to extract (default: next to the archive). zip: the folder to save the zip in.",
                     },
                 },
                 required: ["action"],
@@ -475,8 +475,15 @@ export const compressFiles: ToolDefinition = {
                     if (refused) return JSON.stringify({ error: refused });
                 }
 
-                const archivePath =
-                    (input.archive_path as string) || join(getExportsDir(), `archive_${Date.now()}.zip`);
+                // Named after what it holds, in output_dir when that's given (gpt-4.1-nano passed
+                // output_dir for "save the zip inside that folder"; it went to Exports).
+                const named = paths.length === 1 ? `${basename(paths[0])}.zip` : `archive_${Date.now()}.zip`;
+                const dir = (input.output_dir as string) || getExportsDir();
+                const wanted = (input.archive_path as string) || join(dir, named);
+                // Never over an existing file: ditto replaced ~/Desktop/BhaiEval.zip without a word.
+                let archivePath = wanted;
+                for (let n = 2; existsSync(archivePath); n++)
+                    archivePath = wanted.replace(/(\.zip)?$/i, ` ${n}$1`);
 
                 if (IS_MAC) {
                     await execFileAsync("ditto", ["-c", "-k", "--sequesterRsrc", ...paths, archivePath], {
@@ -502,6 +509,7 @@ export const compressFiles: ToolDefinition = {
                     archive: archivePath,
                     size_mb: Math.round((stats.size / 1048576) * 100) / 100,
                     files: paths.map((p: string) => basename(p)),
+                    ...(archivePath !== wanted ? { note: `${wanted} already existed, so this is a new file.` } : {}),
                 });
             }
 

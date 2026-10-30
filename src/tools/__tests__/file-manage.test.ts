@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { compressFiles } from "../file-utils.js";
 import { fileManage, listDirectory } from "../files.js";
 
 const run = async (args: Record<string, unknown>) => JSON.parse(await fileManage.handler(args));
@@ -64,6 +65,26 @@ describe("file_manage", () => {
         // An extension in the destination is still a new name.
         await run({ action: "move", paths: [join(base, "b.pdf")], destination: join(base, "c.pdf") });
         expect(existsSync(join(base, "c.pdf"))).toBe(true);
+    });
+
+    // From the 35-task nano run: action "write" seven times, told only "Provide 'paths'".
+    it("points other jobs at their tool", async () => {
+        expect((await run({ action: "write", file_path: join(dir, "t.txt") })).error).toMatch(/use write/);
+        expect((await run({ action: "zip", paths: [dir] })).error).toMatch(/compress_files/);
+    });
+
+    // From the 35-task nano run: ditto replaced an existing BhaiEval.zip without a word.
+    it.skipIf(process.platform !== "darwin")("compress_files never replaces an archive", async () => {
+        const src = join(dir, "zipme");
+        mkdirSync(src);
+        writeFileSync(join(src, "f.txt"), "f");
+        writeFileSync(join(dir, "zipme.zip"), "precious");
+        const r = JSON.parse(await compressFiles.handler({ action: "zip", paths: [src], archive_path: join(dir, "zipme.zip") }));
+        expect(r.archive).toBe(join(dir, "zipme 2.zip"));
+        expect(readFileSync(join(dir, "zipme.zip"), "utf8")).toBe("precious");
+        // Named after the folder, in output_dir.
+        const r2 = JSON.parse(await compressFiles.handler({ action: "zip", paths: [src], output_dir: src }));
+        expect(r2.archive).toBe(join(src, "zipme.zip"));
     });
 
     // From the harder eval: asked to count the .txt files, gpt-4.1-nano counted every file.

@@ -144,8 +144,21 @@ export const fileManage: ToolDefinition = {
     },
     async handler(input) {
         const action = String(input.action ?? "");
+        // gpt-4.1-nano sent action "write" seven times, each told only "Provide 'paths'".
+        const elsewhere: Record<string, string> = {
+            write: "write (a new file) or append_file",
+            create_file: "write",
+            append: "append_file",
+            zip: "compress_files",
+            unzip: "compress_files",
+            delete: "trash_manager (recoverable) or delete_file",
+        };
+        if (elsewhere[action])
+            return JSON.stringify({ success: false, error: `file_manage doesn't ${action}: use ${elsewhere[action]}.` });
+        if (!["move", "copy", "rename", "new_folder"].includes(action))
+            return JSON.stringify({ success: false, error: "action must be move, copy, rename or new_folder." });
         const raw = input.paths ?? (input as { path?: unknown }).path;
-        const paths = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => path.resolve(String(p)));
+        const paths = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => path.resolve(String(p).trim()));
         if (!paths.length) return JSON.stringify({ success: false, error: "Provide 'paths'." });
         auditLog("file_manage", { action, paths, destination: input.destination });
 
@@ -154,12 +167,11 @@ export const fileManage: ToolDefinition = {
             const made = input.destination ? [path.resolve(String(input.destination))] : paths;
             const refused = made.map((p) => manageRefusal(p, false)).find(Boolean);
             if (refused) return JSON.stringify({ success: false, error: refused });
+            const file = made.find((p) => fs.statSync(p, { throwIfNoEntry: false })?.isFile());
+            if (file) return JSON.stringify({ success: false, error: `A file already has that name: ${file}` });
             for (const p of made) fs.mkdirSync(p, { recursive: true });
             return JSON.stringify({ success: true, action, created: made });
         }
-        if (!["move", "copy", "rename"].includes(action))
-            return JSON.stringify({ success: false, error: "action must be move, copy, rename or new_folder." });
-
         const dest = String(input.destination ?? "").trim();
         if (!dest) return JSON.stringify({ success: false, error: "Provide 'destination'." });
         if (action === "rename" && paths.length !== 1)

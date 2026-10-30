@@ -692,6 +692,7 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
         category: "file_system",
     },
     { pattern: /\b(empty|clear)\b.{0,12}\b(the |my )?(trash|bin)\b/i, tool: "trash_manager", category: "file_system" },
+    { pattern: /\bapple notes\b|\bnotes app\b|\b(a|new) note\b/i, tool: "apple_notes", category: "scheduling" },
     // "copy its name to my clipboard" is the clipboard's.
     {
         pattern:
