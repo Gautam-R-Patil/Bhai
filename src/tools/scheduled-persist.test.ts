@@ -80,7 +80,9 @@ describe("scheduled tasks across restarts", () => {
         expect(fired).toEqual(["Renew passport"]);
 
         for (const minutes of ["soon", Number.NaN, 0, -5]) {
-            expect(JSON.parse(await setReminder.handler({ minutes, description: "x", action: "x" })).error).toBeTruthy();
+            expect(
+                JSON.parse(await setReminder.handler({ minutes, description: "x", action: "x" })).error,
+            ).toBeTruthy();
         }
     });
 });

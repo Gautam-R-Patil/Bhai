@@ -982,6 +982,37 @@ async function boot() {
         }
     }
 
+    // A scheduled message for the owner: the primary channel first, the others as backup.
+    const notifyOwnerEverywhere = async (message: string): Promise<void> => {
+        // Primary channel gets the message first
+        const sendPrimary: Record<string, () => Promise<unknown>> = {
+            whatsapp: () => sendWhatsAppProactiveMessage(message),
+            discord: () => sendDiscordProactiveMessage(message),
+            slack: () => sendSlackProactiveMessage(message),
+            matrix: () => sendMatrixProactiveMessage(message),
+            overlay: () => {
+                sendOverlayNotification(message);
+                return Promise.resolve();
+            },
+        };
+        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
+
+        // Send to primary channel
+        const primaryFn = sendPrimary[PRIMARY_CHANNEL];
+        if (primaryFn) {
+            try {
+                await primaryFn();
+            } catch {
+                /* primary failed, will try others */
+            }
+        }
+
+        // Send to other active channels as backup (non-blocking)
+        for (const [channel, fn] of Object.entries(sendPrimary)) {
+            if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
+        }
+    };
+
     // ── Scheduled Tasks ───────────────────────
     setTaskTriggerHandler(async (taskId: string, action: string, description?: string) => {
         // ── Marketing scheduled post detection ──────────────────────────────
@@ -1026,36 +1057,13 @@ async function boot() {
         const isReminder = taskId.startsWith("reminder_") && !!description;
         const message = isReminder ? `⏰ Reminder: ${description}` : `🔔 **Task Triggered**\n\n${action}`;
 
-        // Primary channel gets the message first
-        const sendPrimary: Record<string, () => Promise<unknown>> = {
-            whatsapp: () => sendWhatsAppProactiveMessage(message),
-            discord: () => sendDiscordProactiveMessage(message),
-            slack: () => sendSlackProactiveMessage(message),
-            matrix: () => sendMatrixProactiveMessage(message),
-            overlay: () => {
-                sendOverlayNotification(message);
-                return Promise.resolve();
-            },
-        };
-        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
-
-        // Send to primary channel
-        const primaryFn = sendPrimary[PRIMARY_CHANNEL];
-        if (primaryFn) {
-            try {
-                await primaryFn();
-            } catch {
-                /* primary failed, will try others */
-            }
-        }
-
-        // Send to other active channels as backup (non-blocking)
-        for (const [channel, fn] of Object.entries(sendPrimary)) {
-            if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
-        }
+        await notifyOwnerEverywhere(message);
 
         // Always send push notification for task triggers
-        sendPushNotification(isReminder ? "Reminder" : "Task Triggered", (isReminder ? description : action).substring(0, 180)).catch(() => {});
+        sendPushNotification(
+            isReminder ? "Reminder" : "Task Triggered",
+            (isReminder ? description : action).substring(0, 180),
+        ).catch(() => {});
     });
     const restored = restoreScheduledTasks();
     if (restored) console.log(`   Tasks   : ${restored} scheduled task(s) restored`);
@@ -1141,7 +1149,12 @@ async function boot() {
             },
             deliver: async (job, response) => {
                 const channel = job.deliverTo;
-                if (!channel || !response) return true;
+                if (!response) return true;
+                // No channel named: the owner's channels, as reminders do (it used to go nowhere).
+                if (!channel) {
+                    await notifyOwnerEverywhere(response);
+                    return true;
+                }
                 if (channel === "telegram") {
                     const {
                         getTelegramBot,

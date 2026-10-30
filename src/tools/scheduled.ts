@@ -44,14 +44,16 @@ export function setTaskTriggerHandler(
 const storePath = () => path.join(getDataDir(), "scheduled-tasks.json");
 
 function save(): void {
-    const saved: SavedTask[] = [...tasks.values()].map(({ id, expression, description, action, created_at, fireAt }) => ({
-        id,
-        expression,
-        description,
-        action,
-        created_at,
-        fireAt,
-    }));
+    const saved: SavedTask[] = [...tasks.values()].map(
+        ({ id, expression, description, action, created_at, fireAt }) => ({
+            id,
+            expression,
+            description,
+            action,
+            created_at,
+            fireAt,
+        }),
+    );
     try {
         fs.mkdirSync(path.dirname(storePath()), { recursive: true });
         const tmp = `${storePath()}.tmp`;
@@ -258,7 +260,14 @@ export const setReminder: ToolDefinition = {
 
         const id = `reminder_${++taskCounter}`;
         const fireAt = Date.now() + minutes * 60 * 1000;
-        arm({ id, expression: `In ${minutes} minutes`, description, action, created_at: new Date().toISOString(), fireAt });
+        arm({
+            id,
+            expression: `In ${minutes} minutes`,
+            description,
+            action,
+            created_at: new Date().toISOString(),
+            fireAt,
+        });
         save();
 
         const triggerTime = new Date(fireAt).toLocaleString();
