@@ -44,4 +44,9 @@ describe("assembleToolNames", () => {
         const got = assembleToolNames(["os_control", "communication"], [...OS, ...COMM], ALL, 8);
         expect(got.size).toBe(8);
     });
+
+    it("a browser turn also gets web_read: reading a page needs no tab", () => {
+        const all = new Set(["browser_navigate", "browser_click", "web_read", "memory_store", "memory_search"]);
+        expect(assembleToolNames(["browser"], ["browser_click"], all, 36).has("web_read")).toBe(true);
+    });
 });

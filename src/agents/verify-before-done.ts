@@ -303,6 +303,7 @@ export function buildVerifyReminder(state: VerifyGateState): string {
         `STOP — you ran ${mutator} but never verified the result. Don't claim "done"/"sent"/"opened" on faith. ` +
         `Check it with ${check} BEFORE giving your final answer. ` +
         `If you can't confirm the action succeeded, say so — don't confabulate success from a screenshot. ` +
-        `(This gate fires once per run; if the check legitimately can't be performed, say what you did confirm, without naming tools.)`
+        `(This gate fires once per run; if the check legitimately can't be performed, say what you did confirm, without naming tools.) ` +
+        `Your next message goes to the owner as your answer to what they asked: don't reply to this reminder or mention it.`
     );
 }

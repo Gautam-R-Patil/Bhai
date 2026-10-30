@@ -1708,6 +1708,8 @@ const MAX_TOOLS_PER_CATEGORY = 12;
 const CATEGORY_FLOOR = 4;
 /** Memory tools offered every turn; the rest of `memory` comes with its category or request_tools. */
 const ALWAYS_ON_TOOLS = ["memory_store", "memory_search"];
+/** Offered whenever the category is: "check the page" turns route to browser, and reading one needs no tab. */
+const CATEGORY_COMPANIONS: Record<string, string[]> = { browser: ["web_read"] };
 function getMaxToolsTotal(): number {
     return getDimensionValue<number>("toolRouter.maxToolsTotal") ?? MAX_TOOLS_TOTAL_DEFAULT;
 }
@@ -1747,6 +1749,7 @@ export function assembleToolNames(
         // preference reordering ranks a brand-new tool low.
         const primary = catDef.tools.find((t) => allToolNames.has(t) && !selected.has(t));
         if (primary) take(primary);
+        for (const t of CATEGORY_COMPANIONS[catName] ?? []) if (allToolNames.has(t) && !selected.has(t)) take(t);
         let have = catDef.tools.filter((t) => selected.has(t)).length;
         for (const t of candidateTools) {
             if (have >= CATEGORY_FLOOR || selected.size >= maxTotal) break;
