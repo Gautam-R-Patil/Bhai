@@ -80,14 +80,25 @@ export function ffprobePath(): string {
 }
 
 /**
- * The ffprobe to run, or null on a Mac without Homebrew's. No ffprobe ships on Mac
- * (ffprobe-static's darwin "arm64" build is x86_64 and needs Rosetta), so callers
- * then read the same values from ffmpeg with probeWithFfmpeg().
+ * The ffprobe to run (on a Mac Homebrew's when there is one, else the shipped one), or null
+ * when none is installed. ffprobe-static's darwin build is x86_64: without Rosetta it can't
+ * start, so callers fall back to probeWithFfmpeg() when ffprobeCouldNotStart(err).
  */
 export function ffprobePathIfAny(): string | null {
-    if (process.platform !== "darwin") return resolveFFprobe();
-    const brew = process.arch === "arm64" ? "/opt/homebrew/bin/ffprobe" : "/usr/local/bin/ffprobe";
-    return existsSync(brew) ? brew : null;
+    if (process.platform === "darwin") {
+        const brew = process.arch === "arm64" ? "/opt/homebrew/bin/ffprobe" : "/usr/local/bin/ffprobe";
+        if (existsSync(brew)) return brew;
+    }
+    try {
+        return resolveFFprobe();
+    } catch {
+        return null;
+    }
+}
+
+/** The ffprobe process never ran (missing, or an x86_64 binary with no Rosetta: errno -86). */
+export function ffprobeCouldNotStart(err: unknown): boolean {
+    return typeof (err as { code?: unknown } | null)?.code === "string";
 }
 
 export interface MediaProbe {

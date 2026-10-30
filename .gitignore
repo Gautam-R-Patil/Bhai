@@ -119,6 +119,7 @@ desktop/hostinger-upload/
 !src/security/pii-memo-idle.test.ts
 !src/memory/codebase-app-bundle.test.ts
 !src/__tests__/location-gps-backoff.test.ts
+!src/video-studio/util/ffprobe-pick.test.ts
 # Session 2026-10-29: desktop RAM/CPU runtime track
 !desktop/tests/mascot-loop.test.js
 !desktop/tests/file-memo.test.js

@@ -24,14 +24,6 @@ function prodLockKeys(lock) {
 // (dist/transformers.node.mjs: "onnxruntime-web (ignored)").
 const NODE_IGNORED_PACKAGES = new Set(["node_modules/@huggingface/transformers/node_modules/onnxruntime-web"]);
 
-// On a Mac the video tools read media facts from ffmpeg (or Homebrew's ffprobe)
-// and never require ffprobe-static, whose darwin binary is x86_64 and is not shipped.
-function ignoredPackages(platform) {
-    return platform === "darwin"
-        ? new Set([...NODE_IGNORED_PACKAGES, "node_modules/ffprobe-static"])
-        : NODE_IGNORED_PACKAGES;
-}
-
 const ALWAYS_DROP = [
     // C/C++ sources and headers: the runtime loads the built .node files.
     /\.(c|cc|cpp|h|hpp)$/,
@@ -91,7 +83,7 @@ function sizeOf(p) {
  */
 function pruneBotModules(botDir, lock, { platform, arch }) {
     const keep = prodLockKeys(lock);
-    const ignored = ignoredPackages(platform);
+    const ignored = NODE_IGNORED_PACKAGES;
     const result = { removedPackages: 0, removedFiles: 0, bytes: 0, missing: [] };
 
     const remove = (p) => {

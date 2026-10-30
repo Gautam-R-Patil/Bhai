@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { ffprobePathIfAny, probeWithFfmpeg } from "../util/ffmpeg-bin.js";
+import { ffprobeCouldNotStart, ffprobePathIfAny, probeWithFfmpeg } from "../util/ffmpeg-bin.js";
 import { ensurePythonEnv, runPython } from "../util/python-sidecar.js";
 import { getVSPythonScript } from "../util/resolve-paths.js";
 
@@ -52,17 +52,20 @@ function execFileP(bin: string, args: string[], timeoutMs: number): Promise<{ st
 
 async function fallbackFixedIntervals(videoPath: string): Promise<Scene[]> {
     const ffprobe = ffprobePathIfAny();
-    let duration: number;
+    let duration: number | null = null;
     if (ffprobe) {
-        const { stdout } = await execFileP(
-            ffprobe,
-            ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", videoPath],
-            30_000,
-        );
-        duration = Number.parseFloat(stdout.trim());
-    } else {
-        duration = (await probeWithFfmpeg(videoPath)).duration;
+        try {
+            const { stdout } = await execFileP(
+                ffprobe,
+                ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", videoPath],
+                30_000,
+            );
+            duration = Number.parseFloat(stdout.trim());
+        } catch (err) {
+            if (!ffprobeCouldNotStart(err)) throw err;
+        }
     }
+    if (duration === null) duration = (await probeWithFfmpeg(videoPath)).duration;
     if (!Number.isFinite(duration) || duration <= 0) {
         throw new Error(`[scene-detect] ffprobe returned invalid duration for ${videoPath}`);
     }

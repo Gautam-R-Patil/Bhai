@@ -224,6 +224,10 @@
             },
             "extraResources": [
                 {
+                    "from": "../node_modules/ffprobe-static/bin/darwin/${arch}",
+                    "to": "bot/node_modules/ffprobe-static/bin/darwin/${arch}"
+                },
+                {
                     "from": "../node_modules/onnxruntime-node/bin/napi-v3/darwin/${arch}",
                     "to": "bot/node_modules/onnxruntime-node/bin/napi-v3/darwin/${arch}"
                 },

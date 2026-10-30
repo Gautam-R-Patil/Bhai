@@ -189,10 +189,11 @@ describe("pruneBotModules", () => {
         fs.rmSync(botDir, { recursive: true, force: true });
     });
 
-    it("drops ffprobe-static on a Mac only (the video tools use ffmpeg there)", () => {
+    // On a Mac ffprobe gives the video tools exact durations (ffmpeg's banner is 10 ms).
+    it("keeps ffprobe-static on every platform", () => {
         const lock = { packages: { "": {}, "node_modules/ffprobe-static": {} } };
         for (const [platform, kept] of [
-            ["darwin", false],
+            ["darwin", true],
             ["win32", true],
             ["linux", true],
         ]) {

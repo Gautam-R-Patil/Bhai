@@ -5,7 +5,7 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { ffprobePathIfAny, probeWithFfmpeg } from "../util/ffmpeg-bin.js";
+import { ffprobeCouldNotStart, ffprobePathIfAny, probeWithFfmpeg } from "../util/ffmpeg-bin.js";
 import type { KeyframeCaption } from "./frame-describe.js";
 import { describeKeyframes } from "./frame-describe.js";
 import type { Scene } from "./scene-detect.js";
@@ -50,26 +50,33 @@ export interface Timeline {
 export type TimelineMap = Record<string, Timeline>;
 
 export async function probeVideoMetadata(videoPath: string): Promise<VideoMetadata> {
-    const ffprobe = ffprobePathIfAny();
-    if (!ffprobe) {
+    const fromFfmpeg = async (): Promise<VideoMetadata> => {
         const { duration, fps, width, height } = await probeWithFfmpeg(videoPath);
         return { duration, fps, resolution: width && height ? `${width}x${height}` : "unknown", width, height };
+    };
+    const ffprobe = ffprobePathIfAny();
+    if (!ffprobe) return fromFfmpeg();
+    let stdout: string;
+    try {
+        ({ stdout } = await execFileP(
+            ffprobe,
+            [
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,r_frame_rate:format=duration",
+                "-of",
+                "json",
+                videoPath,
+            ],
+            { timeout: 30_000 },
+        ));
+    } catch (err) {
+        if (ffprobeCouldNotStart(err)) return fromFfmpeg();
+        throw err;
     }
-    const { stdout } = await execFileP(
-        ffprobe,
-        [
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,r_frame_rate:format=duration",
-            "-of",
-            "json",
-            videoPath,
-        ],
-        { timeout: 30_000 },
-    );
 
     const data = JSON.parse(stdout) as {
         streams?: Array<{ width?: number; height?: number; r_frame_rate?: string }>;
