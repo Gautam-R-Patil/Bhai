@@ -13,12 +13,15 @@ import { baseUrlHostMatches } from "../utils/atomic-io.js";
 // Tavily/Exa had no API key, so every search quietly ran on Bing scraping.
 const reportedFailures = new Set<string>();
 // Engines the server says aren't configured (no API key there): every search used to ask
-// again and get the same 500. Skip them for an hour.
-const unconfiguredUntil = new Map<string, number>();
-const engineOff = (engine: string) => (unconfiguredUntil.get(engine) ?? 0) > Date.now();
+// again and get the same 500. Skip them for an hour. A scraped engine that refuses us
+// (Brave's 429, DuckDuckGo's bot check) is skipped for half an hour: it refused every
+// search, and each one still sent it a request from the owner's IP.
+const offUntil = new Map<string, number>();
+const engineOff = (engine: string) => (offUntil.get(engine) ?? 0) > Date.now();
+const REFUSED_BACKOFF_MS = 30 * 60_000;
 
-function engineFailed(engine: string, why: string): void {
-    if (/not configured/i.test(why)) unconfiguredUntil.set(engine, Date.now() + 60 * 60_000);
+function engineFailed(engine: string, why: string, offForMs = /not configured/i.test(why) ? 60 * 60_000 : 0): void {
+    if (offForMs) offUntil.set(engine, Date.now() + offForMs);
     const key = `${engine}:${why.slice(0, 60)}`;
     if (reportedFailures.has(key)) return;
     reportedFailures.add(key);
@@ -145,6 +148,7 @@ export function htmlText(html: string): string {
 // ── DuckDuckGo Lite (fastest, lightest) ───────
 
 async function searchDDGLite(query: string): Promise<SearchResult[]> {
+    if (engineOff("duckduckgo")) return [];
     try {
         const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
         const response = await fetch(url, {
@@ -156,7 +160,8 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
 
         const html = await response.text();
 
-        if (response.status === 202 || html.includes("Refresh this page")) {
+        if (response.status === 202 || response.status === 403 || response.status === 429 || html.includes("Refresh this page")) {
+            engineFailed("duckduckgo", `HTTP ${response.status} (bot check)`, REFUSED_BACKOFF_MS);
             return [];
         }
 
@@ -222,6 +227,7 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
 // ── Brave Search (fetch-only fallback) ────────
 
 async function searchBraveLite(query: string): Promise<SearchResult[]> {
+    if (engineOff("brave")) return [];
     try {
         const url = `https://search.brave.com/search?q=${encodeURIComponent(query)}&source=web`;
         const response = await fetch(url, {
@@ -235,6 +241,10 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
             signal: AbortSignal.timeout(8000),
         });
 
+        if (response.status === 403 || response.status === 429) {
+            engineFailed("brave", `HTTP ${response.status} (refused)`, REFUSED_BACKOFF_MS);
+            return [];
+        }
         if (response.status !== 200) return [];
 
         // No "page mentions captcha" check: Brave's normal results page carries the string
