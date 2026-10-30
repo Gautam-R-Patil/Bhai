@@ -2369,7 +2369,7 @@ export function getCoreMemory(limit = 10): MemoryRecord[] {
     // Skip archived/consolidated originals, smart-write "deleted" (decay 0) rows,
     // session/task-scoped rows and audit/JSON blobs — this is injected every turn.
     const live = `consolidated_into IS NULL AND scope = 'global' AND ${recallableSql()}
-       AND category NOT IN ('session_summary', 'bhai_did')`; // injected as ACTIVE SESSION / PAST CONVERSATIONS; what Bhai did isn't a fact about the user
+       AND category NOT IN ('session_summary', 'bhai_did', 'research')`; // injected as ACTIVE SESSION / PAST CONVERSATIONS; what Bhai did isn't a fact about the user; research is recalled by topic (three runs filled 9 of the 10 core slots with metro timelines)
     const cols = "id, content, category, tags, importance, created_at, access_count";
     // Pinned rows keep their own slots, so a busy week can't push "it matters" out.
     const pinned = db.exec(

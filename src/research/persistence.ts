@@ -234,7 +234,8 @@ export async function storeResearchInMemory(
                 `Deep research completed on "${topic}": ${summaryMatch[1].trim().substring(0, 500)}`,
                 "research",
                 `research,${topic.substring(0, 50)}`,
-                9,
+                7, // below 8: an unused research summary can fade (8+ never weakens)
+                "tool", // not "user": the owner's-words boost lifted these to 10
             );
         }
 
@@ -246,7 +247,8 @@ export async function storeResearchInMemory(
                 `[Research: ${topic}] ${f.text}${f.confidence === "strong" ? ` (Source: ${f.sourceTitle})` : ""}`,
                 "research",
                 `research,${topic.substring(0, 30)},${f.category}`,
-                f.confidence === "strong" ? 7 : 5,
+                f.confidence === "strong" ? 6 : 5,
+                "tool",
             );
         }
 
@@ -255,7 +257,8 @@ export async function storeResearchInMemory(
             `Research report on "${topic}" saved to ~/Documents/Research/. Use check_deep_research to read.`,
             "research",
             `research,${topic.substring(0, 50)},report`,
-            8,
+            6,
+            "tool",
         );
 
         console.log(`[RESEARCH] Stored ${picked.length + 2} research memories for follow-up queries`);
