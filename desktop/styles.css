@@ -6318,3 +6318,5 @@ body.hig .pref-more { margin-left: 8px; padding: 0; font-size: 12px; color: var(
 body.hig .pref-more:hover { text-decoration: underline; }
 .pref-items:has(#prefNotifications:not(:checked)) .pref-more { display: none; }
 .pref-subs[hidden] { display: none; }
+body.hig .pp-notes-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+body.hig .pp-save-status { flex: 1; font-size: 12px; color: var(--text-secondary); }

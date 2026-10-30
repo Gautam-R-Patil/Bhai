@@ -362,11 +362,15 @@
                             </div>
                             <div id="ppDescShown" class="pp-desc-shown"></div>
                             <button type="button" class="link-like pp-notes-toggle" id="ppNotesToggle" onclick="showPersonalityNotes(true)">Add your own instructions</button>
-                            <label id="ppNotesBox" style="display:none;flex-direction:column;gap:6px;margin-top:4px;">
-                                <span style="font-size:0.9em;color:var(--text-secondary);">Your instructions for Bhai</span>
+                            <div id="ppNotesBox" style="display:none;flex-direction:column;gap:6px;margin-top:4px;">
+                                <label for="personalityNotes" style="font-size:0.9em;color:var(--text-secondary);">Your instructions for Bhai</label>
                                 <textarea id="personalityNotes" oninput="onPersonalityNotesInput()" rows="2" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
-                            </label>
-                            <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);min-height:0;"></div>
+                                <div class="pp-notes-actions">
+                                    <span id="personalitySaveStatus" class="pp-save-status"></span>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="clearPersonalityNotes()">Clear</button>
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="closePersonalityNotes()">Done</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -395,6 +399,10 @@
                                 <a class="wizard-link" target="_blank" href="https://github.com/settings/tokens/new?description=Bhai&scopes=repo,workflow,read:org">Create a GitHub token</a>
                                 <div class="input-group" style="margin-top:12px;">
                                     <input class="clean-input" type="password" id="settingGithubToken" placeholder="ghp_… or github_pat_…" autocomplete="off" oninput="onGithubTokenInput()">
+                                </div>
+                                <div class="pp-notes-actions" style="margin-top:10px;">
+                                    <span class="pp-save-status">Paste the token and Bhai checks it by itself.</span>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="closeGithubSetup()">Cancel</button>
                                 </div>
                             </div>
                             <div class="channel-test-result" id="ghStatus"></div>
@@ -2131,6 +2139,12 @@
             document.getElementById('ghConnectBtn').style.display = 'none';
             document.getElementById('settingGithubToken').focus();
         }
+        function closeGithubSetup() {
+            ghSetupOpen = false;
+            clearTimeout(ghTimer);
+            document.getElementById('settingGithubToken').value = '';
+            showGithub(null, '');
+        }
         function showGithub(user, problem) {
             const state = document.getElementById('ghState');
             if (problem) ghSetupOpen = true;
@@ -3659,9 +3673,22 @@
 
         // The instructions box stays tucked away until asked for (open when there are some).
         function showPersonalityNotes(open, focus = true) {
+            const has = !!document.getElementById('personalityNotes').value.trim();
             document.getElementById('ppNotesBox').style.display = open ? 'flex' : 'none';
-            document.getElementById('ppNotesToggle').style.display = open ? 'none' : '';
+            const toggle = document.getElementById('ppNotesToggle');
+            toggle.style.display = open ? 'none' : '';
+            toggle.textContent = has ? 'Edit your instructions' : 'Add your own instructions';
             if (open && focus) document.getElementById('personalityNotes').focus();
+        }
+        // Done saves now (typing already autosaves) and folds the box away.
+        function closePersonalityNotes() {
+            clearTimeout(notesTimer);
+            savePersonality();
+            showPersonalityNotes(false);
+        }
+        function clearPersonalityNotes() {
+            document.getElementById('personalityNotes').value = '';
+            closePersonalityNotes();
         }
 
         let notesTimer = null;
