@@ -617,6 +617,7 @@ const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => 
     shell_check_process: () => "⏳ Checking on it",
     app_manager: (a) => (a.action === "list" ? "🪟 Checking which apps are open" : `🪟 ${a.action || "Managing"} ${a.app || "an app"}`),
     system_info: () => "💻 Checking the Mac's status",
+    os_inspect: (a) => `🔎 Reading ${a.app ? `${a.app}'s` : "the"} window`,
     web_read: (a) => `📖 Reading ${String(a.url || "").replace(/^https?:\/\/(www\.)?/, "").substring(0, 60)}`,
     shell_exec: (a) => `⚙️ Running command: ${((a.command as string) || "").substring(0, 50)}`,
     browser_scan: () => `🔍 Scanning the active browser page DOM...`,

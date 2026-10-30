@@ -20,7 +20,7 @@ import {
     isAxPermissionError,
     matchElementByLabel,
 } from "../screen/ax-dump.js";
-import { getFrontmostApp } from "../screen/frontmost.js";
+import { getFrontmostApp, pidOfApp } from "../screen/frontmost.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 /** Ids older than this are re-resolved by label before clicking: the UI may have moved. */
@@ -85,10 +85,14 @@ export const osInspect: ToolDefinition = {
         function: {
             name: "os_inspect",
             description:
-                "FAST cross-OS accessibility tree dump. Returns a numbered list of interactive elements (buttons, links, text fields, etc.) for the focused app. ~100-300ms typical. After this, use os_click_id with the label number to click. PREFERRED over screenshot+grid for native apps — no vision call needed.",
+                "FAST cross-OS accessibility tree dump. Returns a numbered list of interactive elements (buttons, links, text fields, etc.) for the focused app, or for `app` without bringing it forward (read a background window: Finder's sidebar, a dialog). ~100-300ms typical. After this, use os_click_id with the label number to click. PREFERRED over screenshot+grid and over AppleScript 'entire contents' for native apps — no vision call needed.",
             parameters: {
                 type: "object",
                 properties: {
+                    app: {
+                        type: "string",
+                        description: "Name of a running app to inspect without switching to it (e.g. 'Finder'). macOS. Default: frontmost app.",
+                    },
                     pid: {
                         type: "number",
                         description: "Optional process ID to inspect. Default: frontmost app.",
@@ -114,7 +118,14 @@ export const osInspect: ToolDefinition = {
     },
 
     async handler(input) {
-        const pid = typeof input.pid === "number" ? input.pid : 0;
+        let pid = typeof input.pid === "number" ? input.pid : 0;
+        // Asked to read Finder's sidebar in the background, the model had no pid and fell back to
+        // AppleScript 'entire contents' (slow, came back empty). A name is what it has.
+        const app = typeof input.app === "string" ? input.app.trim() : "";
+        if (!pid && app && process.platform === "darwin") {
+            pid = await pidOfApp(app);
+            if (!pid) return JSON.stringify({ success: false, error: `${app} isn't running.`, hint: "Open it with app_manager first." });
+        }
         const depth = typeof input.depth === "number" ? Math.max(1, Math.min(30, input.depth)) : DEFAULT_INSPECT_DEPTH;
         const maxElements =
             typeof input.max_elements === "number" ? Math.max(5, Math.min(500, input.max_elements)) : 60;
