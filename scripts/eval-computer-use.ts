@@ -25,6 +25,7 @@ import { promisify } from "node:util";
 import { executeTool } from "../src/tools/index.js";
 import { initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
 import { ackWithoutAction } from "../src/agent.js";
+import { runQuickCommand } from "../src/quick-commands.js";
 import { getFrontmostApp } from "../src/screen/frontmost.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -223,7 +224,17 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     let reply = "";
     let acked = false;
     let iters = 0;
-    if (anthropic) {
+    // As the agent loop does: a message made only of everyday commands runs without a model.
+    const quick = process.env.NO_QUICK === "1" ? null : await runQuickCommand(task.prompt, async (tool, args) => {
+        used.push(tool);
+        const out = await guardedExec(tool, args);
+        trace.push(`${tool}(${JSON.stringify(args).slice(0, 140)}) → ${out.slice(0, 220)}`);
+        return out;
+    });
+    if (quick?.reply) {
+        reply = quick.reply;
+        iters = -1; // no model call
+    } else if (anthropic) {
         const r = await claudeLoop(SYSTEM, task.prompt, tools, used, trace);
         reply = r.reply;
         iters = r.iters - 1;

@@ -18,6 +18,13 @@ describe("parseQuickCommand", () => {
         expect(tools("mute")).toEqual([["set_volume", { mute: true }]]);
         expect(tools("next song")).toEqual([["spotify", { action: "next" }]]);
         expect(tools("please lock my screen")).toEqual([["lock_screen", {}]]);
+        expect(tools("Play my Favourite Songs playlist in Apple Music and tell me which song is playing")).toEqual([
+            ["music_control", { action: "search_play", query: "my favourite songs playlist" }],
+            ["spotify", { action: "now_playing" }],
+        ]);
+        expect(tools("what's playing?")).toEqual([["spotify", { action: "now_playing" }]]);
+        expect(tools("What song is playing on Spotify right now?")).toEqual([["spotify", { action: "now_playing" }]]);
+        expect(tools("what's playing in apple music")).toEqual([["music_control", { action: "now_playing" }]]);
     });
 
     it("keeps a song title with 'and' in one piece", () => {
@@ -45,6 +52,13 @@ describe("runQuickCommand", () => {
         });
         expect(ran).toEqual(["set_volume", "dark_mode"]);
         expect(r?.reply).toBe("Volume is at 20%. Dark mode is on.");
+    });
+
+    it("answers what's playing from the player's own report", async () => {
+        const r = await runQuickCommand("what song is playing", async () =>
+            JSON.stringify({ success: true, mode: "local_app", playing: true, track: "Levitating", artist: "Dua Lipa" }),
+        );
+        expect(r?.reply).toBe("Now playing: Levitating – Dua Lipa.");
     });
 
     it("hands a failure to the model with what already ran", async () => {

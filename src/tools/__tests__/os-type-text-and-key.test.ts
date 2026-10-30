@@ -48,4 +48,11 @@ describe("os_type with text and key together", () => {
         expect(events).toEqual(["osascript:key"]);
         expect(r).toMatchObject({ success: true, pressed: "return" });
     });
+
+    it("text that is just a shortcut presses it", async () => {
+        events.length = 0;
+        const r = JSON.parse(await osType.handler({ text: "cmd+space", delay_ms: 1 }));
+        expect(events).toEqual(["osascript:key"]);
+        expect(r).toMatchObject({ success: true, pressed: "cmd+space" });
+    });
 });

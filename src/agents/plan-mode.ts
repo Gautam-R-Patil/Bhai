@@ -186,9 +186,9 @@ export const PLAN_MODE_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
     "linux_os_context",
     "linux_os_screenshot",
     "file_metadata",
-    // GitHub reads are nuanced — list_webhooks/list_tasks/google_accounts are reads
+    // GitHub reads are nuanced — list_webhooks/list_scheduled_tasks/google_accounts are reads
     "list_webhooks",
-    "list_tasks",
+    "list_scheduled_tasks",
     "google_accounts",
     // The plan-exit tool itself must be available in plan mode
     "exit_plan_mode",

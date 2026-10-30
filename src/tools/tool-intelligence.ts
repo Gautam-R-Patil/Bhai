@@ -40,7 +40,6 @@ const CACHEABLE_TOOLS = new Set([
     "list_directory", // read-only directory listing
     "read", // read-only file contents
     "get_current_time", // current time (short TTL)
-    "list_tasks", // scheduled tasks list
     "list_webhooks", // webhooks list
     "identity_view", // identity info
     "trait_list", // traits listing

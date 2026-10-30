@@ -59,6 +59,17 @@ const appleMusicPlaying = () =>
               () => false,
           );
 
+/** "Now playing: …" from either player's now_playing result (Spotify local or spogo, Apple Music). */
+function nowPlayingLine(r: Record<string, unknown>): string {
+    const state = r.state as
+        | { is_playing?: boolean; item?: { name?: string; artists?: { name?: string }[] } }
+        | undefined;
+    const track = (r.track as string) || state?.item?.name;
+    const artist = (r.artist as string) || state?.item?.artists?.map((a) => a.name).join(", ");
+    const playing = r.playing ?? state?.is_playing ?? !!track;
+    return playing && track ? `Now playing: ${track}${artist ? ` – ${artist}` : ""}.` : "Nothing is playing right now.";
+}
+
 const title = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 
 /** One clause → its step, or null when it isn't a quick command. */
@@ -147,6 +158,16 @@ function parseClause(raw: string): QuickStep | null {
         return m[2] && m[2] !== "spotify"
             ? { tool: "music_control", args: { action: action === "resume" ? "play" : action }, done }
             : { tool: "spotify", args: { action }, done, pickPlayer: !m[2] };
+    }
+    m = hit(
+        /^(?:(?:and\s+)?tell\s+me\s+)?(?:what|which)(?:'s|\s+is)?\s+(?:song|track|music)?\s*(?:is\s+|'s\s+)?(?:playing|on)(?:\s+(?:on|in)\s+(spotify|apple\s+music))?(?:\s+(?:now|right\s+now))?$/,
+        /^now\s+playing(?:\s+(?:on|in)\s+(spotify|apple\s+music))?$/,
+    );
+    if (m) {
+        // A named player is asked directly; otherwise whichever one is playing here.
+        return m[1] && m[1] !== "spotify"
+            ? { tool: "music_control", args: { action: "now_playing" }, done: nowPlayingLine }
+            : { tool: "spotify", args: { action: "now_playing" }, done: nowPlayingLine, pickPlayer: !m[1] };
     }
     m = hit(/^lock\s+(?:my\s+|the\s+)?(?:screen|mac|computer|laptop)$/);
     if (m) {
