@@ -611,6 +611,7 @@ const OUT_OF_CREDITS_REPLY =
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
     browser_navigate: (a) => `🌐 Opening ${((a.url as string) || "").substring(0, 60)}...`,
     web_search: (a) => `🔍 Searching: "${a.query || ""}"`,
+    web_read: (a) => `📖 Reading ${String(a.url || "").replace(/^https?:\/\/(www\.)?/, "").substring(0, 60)}`,
     shell_exec: (a) => `⚙️ Running command: ${((a.command as string) || "").substring(0, 50)}`,
     browser_scan: () => `🔍 Scanning the active browser page DOM...`,
     browser_analyze: () => `🔎 Analyzing page elements...`,
@@ -635,6 +636,7 @@ const TOOL_RESULT_LIMITS: Record<string, number> = {
     browser_extract: 3000,
     browser_analyze: 2500,
     browser_run_js: 3000,
+    web_read: 13_000, // its default 12K of page text plus the JSON around it; more is offloaded to a file
     shell_exec: 4000,
     read: 5000,
     grep: 4000,
