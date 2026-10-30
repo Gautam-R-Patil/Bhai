@@ -169,6 +169,21 @@ export function shellWriteTargetsProtected(line: string, cwd: string): string | 
     return null;
 }
 
+// ── Child environment ────────────────────────
+
+/**
+ * Bhai's own credentials (its channel bot tokens, email password, account ids, the
+ * runtime key) are its, not the commands it runs: every shell_exec child inherited them,
+ * so \`env\` (or a prompt-injected curl …$TELEGRAM_BOT_TOKEN) handed them out. Tokens the
+ * owner set for tools (GITHUB_TOKEN, HF_TOKEN…) stay for gh, git and the like.
+ */
+const BHAI_SECRET_ENV =
+    /^(ATLAS_RUNTIME_KEY|ATLAS_OTPLESS_USER_ID|ATLAS_ACCOUNT_EMAIL|OWNER_[A-Z_]+_IDS|CONVEX_[A-Z_]+|WIDGET_TOKEN)$|_BOT_TOKEN$|_APP_TOKEN$|_SIGNING_SECRET$|_ACCESS_TOKEN$|^EMAIL_PASS(WORD)?$|^SMTP_PASS(WORD)?$|^IMAP_PASS(WORD)?$|_SESSION_TOKEN$/;
+
+export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    return Object.fromEntries(Object.entries(env).filter(([k]) => !BHAI_SECRET_ENV.test(k)));
+}
+
 // ── Cross-Platform Command Executor ──────────
 
 async function execCommand(
@@ -180,6 +195,7 @@ async function execCommand(
         const shell = await resolveWindowsShell();
         const wrapped = wrapForShell(shell, command, args);
         return execFileAsync(wrapped.command, wrapped.args, {
+            env: childEnv(),
             cwd: options.cwd,
             timeout: options.timeout,
             maxBuffer: 1024 * 1024,
@@ -192,6 +208,7 @@ async function execCommand(
     const q = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
     const line = args.length ? `${command} ${args.map(q).join(" ")}` : command;
     return execFileAsync(line, [], {
+        env: childEnv(),
         cwd: options.cwd,
         timeout: options.timeout,
         maxBuffer: 1024 * 1024,
