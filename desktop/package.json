@@ -62,7 +62,17 @@
             "!**/*.test.ts",
             "!**/*.spec.ts",
             "!vitest.config.js",
-            "!vitest.config.ts"
+            "!vitest.config.ts",
+            "!**/*.map",
+            "!**/*.d.ts",
+            "!**/*.d.mts",
+            "!**/*.d.cts",
+            "!**/_smoke.html",
+            "!assets/mascot/bhai-ai-rigged.glb",
+            "!assets/mascot/bhai.glb",
+            "!assets/mascot/bhai-glb-preview.png",
+            "!node_modules/better-sqlite3/deps/**",
+            "!node_modules/better-sqlite3/src/**"
         ],
         "extraResources": [
             {
