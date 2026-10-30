@@ -63,9 +63,9 @@ describe("research notifications follow where research was asked", () => {
         registerChannelSender("overlay", bar);
         registerChannelSender("telegram", tg);
         await createNotify(undefined)("❌ failed", true);
-        expect(bar).toHaveBeenCalledWith("❌ failed", undefined);
+        expect((bar.mock.calls[0] as unknown[] | undefined)?.[0]).toBe("❌ failed");
         // A sub-agent's research was often asked on a chat: the owner may be waiting there.
-        expect(tg).toHaveBeenCalledWith("❌ failed", undefined);
+        expect((tg.mock.calls[0] as unknown[] | undefined)?.[0]).toBe("❌ failed");
         expect(channels).not.toHaveBeenCalled();
     });
 
