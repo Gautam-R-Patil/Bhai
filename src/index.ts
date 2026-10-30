@@ -3,6 +3,8 @@
 // See LICENSE.md for details.
 
 import "./security/log-redaction.js"; // first: redacts secrets/PII from every log line
+import { chmodSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { checkAccountStatus, initAccountGuard } from "./account-guard.js";
 import { runAgent } from "./agent.js";
@@ -163,6 +165,13 @@ async function boot() {
     }
 
     // Saved secrets from the desktop app's vault arrive on stdin (security/vault.ts).
+    // ~/.atlas holds the owner's past requests (strategy library), tool analytics and
+    // tokens; the home folder lets every account in "staff" in, so it's owner-only.
+    try {
+        chmodSync(join(homedir(), ".atlas"), 0o700);
+    } catch {
+        /* not created yet, or not ours to change */
+    }
     const { initVault } = await import("./security/vault.js");
     initVault();
 
