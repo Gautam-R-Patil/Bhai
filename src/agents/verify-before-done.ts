@@ -96,6 +96,8 @@ export function isMutator(fnName: string, fnArgs: Record<string, unknown>): bool
     if (MUTATOR_TOOLS.has(fnName)) return true;
     // os_computer_action also looks (screenshot/zoom) and waits; only these act.
     if (fnName === "os_computer_action") return ACTING_COMPUTER_ACTIONS.has(String(fnArgs?.action ?? ""));
+    // An iMessage send only queues it in Messages; "sent" needs a look ("Not Delivered" shows later).
+    if (fnName === "messages_tool") return String(fnArgs?.action ?? "") === "send";
     if (fnName === "apple_script" || fnName === "powershell_script") {
         const script = String(fnArgs?.script ?? fnArgs?.code ?? "");
         return KEYSTROKE_OR_CLICK_RE.test(script);

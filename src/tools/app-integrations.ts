@@ -877,7 +877,16 @@ tell application "Messages"
 end tell`,
                         15000,
                     );
-                    return JSON.stringify({ success: true, action: "send", to, preview: text.substring(0, 50) });
+                    // Messages' send only queues it: a number not on iMessage, or no network,
+                    // fails later ("Not Delivered"), and chat.db needs Full Disk Access to check.
+                    return JSON.stringify({
+                        success: true,
+                        action: "send",
+                        to,
+                        preview: text.substring(0, 50),
+                        delivered: "unconfirmed",
+                        note: "Handed to Messages. Delivery isn't confirmed: check the conversation in Messages (no red 'Not Delivered') before telling the owner it was sent.",
+                    });
                 }
 
                 case "read_recent": {
