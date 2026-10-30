@@ -5,6 +5,7 @@
 
 import crypto from "node:crypto";
 import { deriveE2EKey, KDF_VERSION_LATEST, type KdfVersion } from "./crypto-kdf.js";
+import type { Frame } from "./llm-stream.js";
 
 // ── State ─────────────────────────────────────
 let _ecdh: crypto.ECDH | null = null;
@@ -176,6 +177,27 @@ export function decrypt(envelope: EncryptedEnvelope, bindAad?: Buffer): string {
     } catch (err) {
         throw new Error(`E2E decryption failed: ${(err as Error).message}`);
     }
+}
+
+/**
+ * Decrypt one streamed NDJSON frame. The AAD binds the request id, the frame's
+ * position and the end flag, so a reordered, replayed, cross-request or
+ * truncated-then-forged frame fails the GCM tag.
+ */
+export function decryptFrame(line: string, reqRid: string, expectSeq: number): { frame: Frame; final: boolean } {
+    const env = JSON.parse(line) as EncryptedEnvelope;
+    for (const final of [false, true]) {
+        const aad = Buffer.from(`POST|/api/llm/chat|${env.ts}|${env.rid}|${reqRid}|${expectSeq}|${final ? 1 : 0}`);
+        let text: string;
+        try {
+            text = decrypt(env, aad);
+        } catch {
+            continue;
+        }
+        const { pad: _pad, ...frame } = JSON.parse(text) as Frame & { pad?: string };
+        return { frame, final };
+    }
+    throw new Error(`stream frame ${expectSeq} rejected (bad tag, order or request)`);
 }
 
 // ── Encrypted Fetch ───────────────────────────
