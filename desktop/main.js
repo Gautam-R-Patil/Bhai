@@ -190,6 +190,7 @@ const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
 const { fileMemo } = require("./file-memo");
 const { pruneCompileCache } = require("./compile-cache");
 const { readVault, registerVaultIpc } = require("./vault-store");
+const { readMasterKey } = require("./settings-key");
 
 // ── Desktop Session Token Management ─────────────
 // Authenticates the Electron main process with the Convex backend via
@@ -657,50 +658,39 @@ function initProtection() {
 // ── Encryption Layer ──────────────────────────
 
 /**
- * Get or create the master encryption key using Windows DPAPI.
- * The key is protected by the user's Windows login — it can only
- * be decrypted by the same Windows user account.
+ * The master encryption key, kept by the OS keychain (Keychain / DPAPI). A refusal is
+ * remembered until relaunch, so one denied prompt isn't asked again on every read.
  */
+let masterKey = null;
+let masterKeyError = null;
 function getMasterKey() {
-    const keyPath = path.join(app.getPath("userData"), ".keystore");
+    if (masterKey) return masterKey;
+    if (masterKeyError) throw masterKeyError;
+    try {
+        masterKey = readMasterKey(path.join(app.getPath("userData"), ".keystore"), safeStorage);
+        return masterKey;
+    } catch (err) {
+        masterKeyError = err;
+        throw err;
+    }
+}
 
-    if (fs.existsSync(keyPath)) {
+/** Settings saved while the keychain was refused (older builds used this key then): still read them. */
+function decryptStored(buf) {
+    try {
+        return decrypt(buf, getMasterKey());
+    } catch (err) {
         try {
-            const encryptedKey = fs.readFileSync(keyPath);
-            if (safeStorage.isEncryptionAvailable()) {
-                return safeStorage.decryptString(encryptedKey);
-            }
-            // Fallback: derive from machine identity
-            return deriveMachineKey();
+            return decrypt(buf, deriveMachineKey());
         } catch {
-            return deriveMachineKey();
+            throw err;
         }
     }
-
-    // Generate new 256-bit key
-    const key = crypto.randomBytes(32).toString("hex");
-
-    if (safeStorage.isEncryptionAvailable()) {
-        const encrypted = safeStorage.encryptString(key);
-        fs.writeFileSync(keyPath, encrypted);
-    } else {
-        // Store with machine-derived encryption as fallback
-        const machineKey = deriveMachineKey();
-        const cipher = crypto.createCipheriv(
-            "aes-256-gcm",
-            Buffer.from(machineKey, "hex").subarray(0, 32),
-            crypto.randomBytes(12)
-        );
-        // For simplicity in fallback, use machineKey to just derive
-        fs.writeFileSync(keyPath, key); // Less secure fallback
-    }
-
-    return key;
 }
 
 /**
- * Derive a machine-unique key from hardware identifiers.
- * Not as secure as DPAPI but works as a fallback.
+ * Derive a machine-unique key from hardware identifiers. Only read now: older builds
+ * encrypted with it when the keychain refused.
  */
 function deriveMachineKey() {
     const os = require("os");
@@ -748,10 +738,10 @@ function decrypt(encryptedBuffer, masterKey) {
  */
 function saveEnvEncrypted(envContent) {
     if (ENV_PATH.endsWith(".enc")) {
-        // Production: encrypt before writing
-        const masterKey = getMasterKey();
-        const encryptedData = encrypt(envContent, masterKey);
-        fs.writeFileSync(ENV_PATH, encryptedData);
+        // Production: encrypt before writing (throws, writing nothing, when the keychain refused the key).
+        // Atomic: a crash mid-write must not leave half a settings file.
+        fs.writeFileSync(`${ENV_PATH}.tmp`, encrypt(envContent, getMasterKey()));
+        fs.renameSync(`${ENV_PATH}.tmp`, ENV_PATH);
     } else {
         // Dev mode: write plain text to .env
         fs.writeFileSync(ENV_PATH, envContent, "utf-8");
@@ -909,11 +899,7 @@ function requireInstaller() {
 function loadEnvDecrypted() {
     if (!fs.existsSync(ENV_PATH)) return "";
     try {
-        if (ENV_PATH.endsWith(".enc")) {
-            const masterKey = getMasterKey();
-            const encryptedData = fs.readFileSync(ENV_PATH);
-            return decrypt(encryptedData, masterKey);
-        }
+        if (ENV_PATH.endsWith(".enc")) return decryptStored(fs.readFileSync(ENV_PATH));
         // Dev mode: plain .env
         return fs.readFileSync(ENV_PATH, "utf-8");
     } catch {
@@ -1075,9 +1061,7 @@ function saveAccountSession(session) {
 function loadAccountSession() {
     try {
         if (!fs.existsSync(ACCOUNT_SESSION_PATH)) return null;
-        const masterKey = getMasterKey();
-        const encrypted = fs.readFileSync(ACCOUNT_SESSION_PATH);
-        const json = decrypt(encrypted, masterKey);
+        const json = decryptStored(fs.readFileSync(ACCOUNT_SESSION_PATH));
         const session = JSON.parse(json);
         if (session && isLegacyUserId(session.userId)) {
             console.log("[Auth] Purging legacy session:", session.userId);
