@@ -295,10 +295,14 @@ export function shouldForceVerify(state: VerifyGateState): boolean {
 /** The reminder text the loop appends as a user message to force one more iteration. */
 export function buildVerifyReminder(state: VerifyGateState): string {
     const mutator = state.lastMutator || "an OS action";
+    // Name a check the turn actually has: a browser turn isn't offered os_visual_verify.
+    const check = mutator.startsWith("browser_")
+        ? "browser_form_state (what the fields hold) or browser_get_text (what the page now says)"
+        : `${mutator.startsWith("win_") ? "win_os_visual_verify" : "os_visual_verify"} with a specific expect_text (or expect_gone)`;
     return (
         `STOP — you ran ${mutator} but never verified the result. Don't claim "done"/"sent"/"opened" on faith. ` +
-        `Call os_visual_verify with a specific expect_text (or expect_gone) BEFORE giving your final answer. ` +
-        `If you can't visually confirm the action succeeded, say so — don't confabulate success from a screenshot. ` +
-        `(This gate fires once per run; if the verify legitimately can't be performed, explain why in your next message.)`
+        `Check it with ${check} BEFORE giving your final answer. ` +
+        `If you can't confirm the action succeeded, say so — don't confabulate success from a screenshot. ` +
+        `(This gate fires once per run; if the check legitimately can't be performed, say what you did confirm, without naming tools.)`
     );
 }
