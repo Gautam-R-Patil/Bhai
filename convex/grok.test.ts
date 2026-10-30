@@ -87,7 +87,8 @@ describe("grok passthrough (unhinged mode)", () => {
     });
 
     it("the router's cheap Azure arms bill like Haiku, GPT-6 like Sonnet", () => {
-        for (const m of ["azure/gpt-4.1-nano", "azure/gpt-4o-mini", "azure/gpt-5-mini"]) expect(getCreditCost(m)).toBe(0.25);
+        for (const m of ["azure/gpt-4.1-nano", "azure/gpt-4o-mini", "azure/gpt-5-mini"])
+            expect(getCreditCost(m)).toBe(0.25);
         expect(getCreditCost("azure/gpt-6.1-terra")).toBe(1);
     });
 });

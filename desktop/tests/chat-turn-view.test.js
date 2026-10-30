@@ -37,14 +37,34 @@ describe("turnView", () => {
             notes: ["Price matters most.\n"],
             answer: "Cheapest is",
         };
-        const s = view([snap, { type: "turn_answer", turn: "t", seq: 8, attempt: 0, text: " stale" }], { ...before, open: true });
-        expect(s).toEqual({ ...before, seq: 9, status: snap.status, steps: snap.steps, notes: snap.notes, answer: "Cheapest is", open: true, attempt: null });
-        expect(view([{ type: "turn_answer", turn: "t", seq: 10, attempt: 2, text: " IndiGo" }], s).answer).toBe("Cheapest is IndiGo");
+        const s = view([snap, { type: "turn_answer", turn: "t", seq: 8, attempt: 0, text: " stale" }], {
+            ...before,
+            open: true,
+        });
+        expect(s).toEqual({
+            ...before,
+            seq: 9,
+            status: snap.status,
+            steps: snap.steps,
+            notes: snap.notes,
+            answer: "Cheapest is",
+            open: true,
+            attempt: null,
+        });
+        expect(view([{ type: "turn_answer", turn: "t", seq: 10, attempt: 2, text: " IndiGo" }], s).answer).toBe(
+            "Cheapest is IndiGo",
+        );
     });
 
     it("a step done after running keeps its order", () => {
         const step = (seq, id, state) => ({ type: "turn_step", turn: "t", seq, id, text: `step ${id}`, state });
-        const s = view([step(1, 1, "running"), step(2, 1, "done"), step(3, 2, "running"), step(4, 2, "failed"), step(5, 3, "running")]);
+        const s = view([
+            step(1, 1, "running"),
+            step(2, 1, "done"),
+            step(3, 2, "running"),
+            step(4, 2, "failed"),
+            step(5, 3, "running"),
+        ]);
         expect(s.steps).toEqual([
             { id: 1, text: "step 1", state: "done" },
             { id: 2, text: "step 2", state: "failed" },

@@ -29,7 +29,9 @@ vi.mock("./crypto-transport.js", () => ({
         streams.push(opts);
         if (hangHeaders > 0) {
             hangHeaders--;
-            return new Promise((_, reject) => opts.signal?.addEventListener("abort", () => reject(opts.signal?.reason)));
+            return new Promise((_, reject) =>
+                opts.signal?.addEventListener("abort", () => reject(opts.signal?.reason)),
+            );
         }
         const status = streamStatus.shift() ?? 200;
         return { response: new Response("", { status }), rid: `rid${streams.length}` };

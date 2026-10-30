@@ -139,7 +139,9 @@ export const osInspect: ToolDefinition = {
             // A query returns only the matching elements (ids unchanged, so os_click_id works):
             // a few hundred characters instead of the whole window.
             const query = typeof input.query === "string" ? input.query.trim() : "";
-            const elements = query ? matchElements(all, query).slice(0, Math.min(maxElements, 15)) : all.slice(0, maxElements);
+            const elements = query
+                ? matchElements(all, query).slice(0, Math.min(maxElements, 15))
+                : all.slice(0, maxElements);
 
             _lastInspect = {
                 elements: all, // os_click_id text= can match past the listed cap

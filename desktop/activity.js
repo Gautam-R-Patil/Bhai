@@ -2,13 +2,22 @@
 // "Bhai did today" on the dashboard: what Bhai actually got done, in plain
 // words, from its tool audit log (<data>/audit.jsonl). Looking around
 // (screenshots, clicks, searches) isn't listed; outcomes are.
-const fs = require("fs");
+const fs = require("node:fs");
 
 const short = (v, n = 60) => {
-    const t = String(v ?? "").replace(/\s+/g, " ").trim();
+    const t = String(v ?? "")
+        .replace(/\s+/g, " ")
+        .trim();
     return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
-const base = (p) => short(String(p || "").split("/").filter(Boolean).pop(), 50);
+const base = (p) =>
+    short(
+        String(p || "")
+            .split("/")
+            .filter(Boolean)
+            .pop(),
+        50,
+    );
 
 const PHRASES = {
     set_reminder: (a) => a.description && `Set a reminder: ${short(a.description)}`,
@@ -22,9 +31,14 @@ const PHRASES = {
     app_manager: (a) => {
         const app = short(a.app || a.app_name, 30);
         if (!app) return null;
-        return a.action === "quit" || a.action === "force_quit" ? `Quit ${app}` : a.action === "activate" ? `Switched to ${app}` : null;
+        return a.action === "quit" || a.action === "force_quit"
+            ? `Quit ${app}`
+            : a.action === "activate"
+              ? `Switched to ${app}`
+              : null;
     },
-    open_in_app: (a) => a.target && `Opened ${base(a.target) || short(a.target, 40)}${a.app ? ` in ${short(a.app, 20)}` : ""}`,
+    open_in_app: (a) =>
+        a.target && `Opened ${base(a.target) || short(a.target, 40)}${a.app ? ` in ${short(a.app, 20)}` : ""}`,
     open_settings: (a) => a.pane && `Opened ${short(a.pane, 30)} settings`,
     calendar_tool: (a) => a.action === "create" && a.title && `Added to your calendar: ${short(a.title, 50)}`,
     write: (a) => a.file_path && `Saved ${base(a.file_path)}`,
@@ -35,7 +49,7 @@ const PHRASES = {
 
 /** One audit entry in plain words, or null when it isn't worth listing. */
 function describe(entry) {
-    if (!entry || !entry.success || !PHRASES[entry.tool]) return null;
+    if (!entry?.success || !PHRASES[entry.tool]) return null;
     const args = entry.args && typeof entry.args === "object" && !Array.isArray(entry.args) ? entry.args : {};
     return PHRASES[entry.tool](args) || null;
 }
@@ -51,13 +65,21 @@ function doneToday(auditPath, now = new Date(), limit = 4) {
             const buf = Buffer.alloc(len);
             fs.readSync(fd, buf, 0, len, size - len);
             raw = buf.toString("utf-8");
-        } finally { fs.closeSync(fd); }
-    } catch { return []; }
+        } finally {
+            fs.closeSync(fd);
+        }
+    } catch {
+        return [];
+    }
     const today = now.toDateString();
     const out = [];
     for (const line of raw.split("\n").reverse()) {
         let e;
-        try { e = JSON.parse(line); } catch { continue; }
+        try {
+            e = JSON.parse(line);
+        } catch {
+            continue;
+        }
         const ts = Date.parse(e.ts);
         if (!ts) continue;
         if (new Date(ts).toDateString() !== today) break;

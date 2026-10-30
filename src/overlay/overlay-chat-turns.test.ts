@@ -11,7 +11,12 @@ import type { AgentResponse, ChannelContext } from "../agent.js";
 process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-overlay-chat-turns-"));
 process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
-type Call = { ctx: ChannelContext; signal: AbortSignal; resolve: (r: AgentResponse) => void; reject: (e: Error) => void };
+type Call = {
+    ctx: ChannelContext;
+    signal: AbortSignal;
+    resolve: (r: AgentResponse) => void;
+    reject: (e: Error) => void;
+};
 let call: Call | undefined;
 vi.mock("../agent.js", async (orig) => ({
     ...(await orig<typeof import("../agent.js")>()),

@@ -37,7 +37,10 @@ describe("turn nudges", () => {
         const history: ChatCompletionMessageParam[] = [msg("remind me in 3 minutes")];
         const owned = new Set<object>();
         runWithTurnNudges(owned, () => pushRetry(history, "Set for 7:43.", "If it is done, give your final answer."));
-        expect(history[2]).toMatchObject({ role: "user", content: expect.stringMatching(/^\[Automatic check, not from the owner\]/) });
+        expect(history[2]).toMatchObject({
+            role: "user",
+            content: expect.stringMatching(/^\[Automatic check, not from the owner\]/),
+        });
         history.push({ role: "assistant", content: "Done — 7:43." });
         stripTurnNudges(history, owned);
         expect(history.map((m) => m.content)).toEqual(["remind me in 3 minutes", "Done — 7:43."]);
