@@ -176,6 +176,7 @@ const FRAME_HEADERS = {
 // Credit cost table + lookup live in ./credit-cost.ts so the tier
 // mapping is unit-testable without a Convex harness.
 import { getCreditCost } from "./credit_cost.js";
+import { parseUpdateFeedPath } from "./updateFeed.js";
 import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
 import { isBotUsername, managedBotLink } from "./telegramManaged.js";
 import { newDeviceSecret, sha256Hex } from "./devices.js";
@@ -2428,7 +2429,10 @@ http.route({
 // The client uses the generic provider; electron-updater fetches the YAML
 // here and then downloads the binary from whatever URL is in the YAML.
 //
-// Channels: the client may append ?channel=beta to the feed URL. When a
+// Channels: the desktop sets autoUpdater.channel, so electron-updater asks
+// for <channel>-mac.yml / <channel>.yml (stable-mac.yml by default) and
+// appends ?channel=beta to the feed URL for other channels; latest-mac.yml /
+// latest.yml (channel from the query) are still served. When a
 // channel is specified, the handler looks for <name>_<CHANNEL> env vars
 // and falls back to the unsuffixed vars if the channel-specific ones are
 // unset. Default channel is "stable" (no suffix).
@@ -2558,31 +2562,22 @@ function buildYaml(opts: {
   return lines.join("\n") + "\n";
 }
 
+// The desktop sets autoUpdater.channel, so electron-updater asks for <channel>-mac.yml /
+// <channel>.yml; older or channel-less clients ask for latest-mac.yml / latest.yml.
 http.route({
-  path: "/api/updates/latest-mac.yml",
+  pathPrefix: "/api/updates/",
   method: "GET",
   handler: httpAction(async (_ctx, request) => {
-    const channel = pickChannel(request);
+    const feed = parseUpdateFeedPath(new URL(request.url).pathname);
+    if (!feed) return new Response("Not found", { status: 404 });
     const body =
       buildYaml({
-        platform: "mac",
-        channel,
-        defaultFilename: `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-arm64.dmg`,
-      }) || EMPTY_YAML;
-    return new Response(body, { status: 200, headers: yamlHeaders() });
-  }),
-});
-
-http.route({
-  path: "/api/updates/latest.yml",
-  method: "GET",
-  handler: httpAction(async (_ctx, request) => {
-    const channel = pickChannel(request);
-    const body =
-      buildYaml({
-        platform: "win",
-        channel,
-        defaultFilename: `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-Setup.exe`,
+        platform: feed.platform,
+        channel: feed.channel ?? pickChannel(request),
+        defaultFilename:
+          feed.platform === "mac"
+            ? `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-arm64.dmg`
+            : `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-Setup.exe`,
       }) || EMPTY_YAML;
     return new Response(body, { status: 200, headers: yamlHeaders() });
   }),
