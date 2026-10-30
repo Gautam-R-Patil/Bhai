@@ -44,6 +44,12 @@ function resolveFFmpeg(): string {
 
 function resolveFFprobe(): string {
     if (_ffprobePath !== undefined) return _ffprobePath as string;
+    // ffprobe-static's darwin "arm64" binary is x86_64: on a Mac without Rosetta it can't
+    // start (spawn error -86). A native Homebrew one wins when there is one.
+    if (process.platform === "darwin" && process.arch === "arm64" && existsSync("/opt/homebrew/bin/ffprobe")) {
+        _ffprobePath = "/opt/homebrew/bin/ffprobe";
+        return _ffprobePath;
+    }
 
     let resolved: string | null = null;
     try {
