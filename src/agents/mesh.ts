@@ -14,7 +14,6 @@ import { isWorktreeEnabled, setupAgentWorktree } from "./agent-worktree.js";
 import { buildHandoff, serializeHandoff } from "./handoff.js";
 import { shouldOverrideRole } from "./role-analyzer.js";
 import { shouldSpeculate, executeSpeculatively } from "./speculative.js";
-import { Blackboard } from "./blackboard.js";
 import { requestHumanApproval } from "./human-interrupt.js";
 import { getActiveChannel } from "../tools/channel-send.js";
 import { currentSwarmRun, isPaymentHold, runWideGrant, withSwarmStep } from "./swarm-context.js";
@@ -181,9 +180,6 @@ export async function executeMesh(
     const startTime = Date.now();
     const meshId = computeMeshId(steps);
     const taskDescription = steps.map(s => s.description.substring(0, 40)).join("; ");
-
-    // ── Per-execution shared blackboard for cross-agent discovery sharing ──
-    const blackboard = new Blackboard();
 
     // Deps outside this plan: a prior wave's successful step satisfies them;
     // a removed, failed or hallucinated step is dropped instead of throwing.
@@ -385,10 +381,7 @@ export async function executeMesh(
                     })
                     .filter(Boolean)
                     .join("\n\n");
-
-                // ── Inject blackboard shared context ──
-                const bbSummary = blackboard.getSummary();
-                const fullContext = [depContext, bbSummary].filter(Boolean).join("\n\n") || undefined;
+                const fullContext = depContext || undefined;
 
                 // Use recovery wrapper for resilient execution (#1)
                 const progressFn = onProgress ? async (stepId: string, msg: string) => {

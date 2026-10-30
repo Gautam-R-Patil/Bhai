@@ -106,6 +106,7 @@ desktop/hostinger-upload/
 !src/agent.prune-order.test.ts
 !src/account-guard.test.ts
 !src/tool-router.assemble.test.ts
+!src/tool-router-analytics.test.ts
 !src/channel-text.test.ts
 !src/telegram-batch.test.ts
 !src/step-status.test.ts
@@ -262,7 +263,6 @@ desktop/hostinger-upload/
 !src/screen/__tests__/grid-overlay.test.ts
 !src/screen/__tests__/computer-action.test.ts
 !src/agents/__tests__/
-!src/agents/__tests__/computer-use-agent.test.ts
 !src/tools/__tests__/
 !src/tools/__tests__/os-computer-action.test.ts
 !src/tools/__tests__/os-grounding.test.ts
@@ -295,7 +295,6 @@ desktop/hostinger-upload/
 !src/agents/tool-call-guardrail.test.ts
 !src/agents/metacognition.test.ts
 !src/agents/complexity-classifier.test.ts
-!src/agents/blackboard.test.ts
 !src/memory/spreading-activation.parity.test.ts
 !src/memory/value-gate.parity.test.ts
 !src/security/secrets-sanitizer.parity.test.ts

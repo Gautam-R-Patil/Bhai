@@ -47,8 +47,6 @@ const MUTATOR_TOOLS = new Set<string>([
     "win_os_click",
     "win_os_type",
     "win_os_ocr_click",
-    // Hierarchical computer-use agent
-    "computer_use",
     // Browser interaction — also a "did the action stick?" risk surface
     "browser_click_at",
     "browser_type",
@@ -106,7 +104,7 @@ export function isMutator(fnName: string, fnArgs: Record<string, unknown>): bool
 }
 
 /** Non-os_* tools that also drive the screen (os_* / win_os_* are matched by prefix). */
-const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut", "computer_use"]);
+const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut"]);
 
 /** Tools that hand the work to another agent, whose own calls this gate never sees. */
 const DELEGATES = new Set(["swarm_task", "start_long_task", "resume_long_task"]);

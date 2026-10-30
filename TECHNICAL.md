@@ -214,11 +214,9 @@ A `request_tools` meta-tool lets the agent ask for additional tool categories mi
 
 **Categories:** core, memory, browser, web_search, file_system, shell, os_control, system_controls, media, communication, scheduling, app_management, research, coding, long_tasks, google_api, social_media, voice, document, integrations.
 
-**FunctionGemma fallback** (`src/models/function-gemma.ts`): An optional 270M local model via Ollama (85% accuracy) can be used for zero-cost tool routing when the LLM call budget is tight.
-
 **Chat lane and gating:** the lean classifier also decides when a turn needs no tools at all (small talk, opinions, writing, math) so the agent takes the cheap chat lane (§3.2). `isToolOfferable` hides tools that cannot work right now — for example `whatsapp_send` / `whatsapp_sticker` / `whatsapp_group_info` while WhatsApp is not connected (`ATLAS_NO_WHATSAPP_TOOL_GATING` restores them); it is re-evaluated per message. Non-owners (contacts, guests, email senders, widget visitors) only ever get the narrow `NON_OWNER_TOOLS` set (`src/security/tool-access.ts`).
 
-**Analytics** (`src/tool-router-analytics.ts`): Tracks tool usage patterns, selection accuracy, and category hit rates for the Meta-Harness optimizer.
+**Analytics** (`src/tool-router-analytics.ts`): learns which tools the owner uses for each intent and which tools tend to follow which, and holds the pre-defined task chains that preload categories.
 
 
 ### 3.4 Agent Loop
@@ -305,8 +303,6 @@ Each state has an explicit `*_ALLOWED_TOOLS` list in `plan-mode.ts`; `filterTool
 - `mixture.ts` — Mixture-of-Agents: 3 parallel proposals blended for complex tasks
 - `speculative.ts` — races primary + alternative approach; first success wins
 - `a2a.ts` — Google A2A protocol; exposes Bhai as a callable agent to external systems
-
-**Shared context:** `blackboard.ts` provides a per-swarm key-value store for inter-agent data passing.
 
 **Swarm approval gate:** runs started by `swarm_task` hold explicit external-action tools, per-call-consent tools and shell launchers until the owner gives a fresh yes (see §3.4); payments and orders never run inside a swarm.
 
@@ -525,7 +521,7 @@ const prompt = await fetchSystemPrompt('coding');  // HTTP GET /api/system/promp
 
 In-flight request coalescing ensures concurrent callers requesting the same slug share a single HTTP round-trip. A single-flight auth refresh handler prevents auth-token-expired requests from stampeding the refresh endpoint.
 
-**Seeded slugs** (14): `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `thinking`, `coding`, `spec`, `proactive-composer`, `monitor-rule-parser`, `orchestrator-base`, `site-skill-mint`, `site-skill-review`, `unhinged`. A client-side system-prompt cache has a TTL with stale-fallback so a re-seed propagates without a restart. The personality chosen in Settings is pushed as a `user-personality` addendum (`src/setup/personality-sync.ts`) and rendered by `convex/systemContent.ts` as its own "Tone the user chose in Settings" section.
+**Seeded slugs** (13): `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `coding`, `spec`, `proactive-composer`, `monitor-rule-parser`, `orchestrator-base`, `site-skill-mint`, `site-skill-review`, `unhinged`. A client-side system-prompt cache has a TTL with stale-fallback so a re-seed propagates without a restart. The personality chosen in Settings is pushed as a `user-personality` addendum (`src/setup/personality-sync.ts`) and rendered by `convex/systemContent.ts` as its own "Tone the user chose in Settings" section.
 
 **Store marketplace flow:**
 
@@ -596,8 +592,6 @@ The agent calls `set_browser_mode({ mode: "vision" })` when text-only DOM inspec
 **Browser memory** (`src/tools/browser-memory.ts`): Persists site-specific learnings across sessions — element selectors that worked, cookie banners that were dismissed, anti-bot gates that were bypassed. Stored in the main `memories.db` with category `browser_strategy`.
 
 **Strategy save/recall** (`strategy-save.ts`, `strategy-recall.ts`): When the agent finds a good approach for a site ("on Reddit, click 'Show all comments' before scraping"), it saves that strategy. On the next visit to the same domain, the strategy is pre-injected into context.
-
-**Profile sync** (`profile-sync.ts`): Synchronizes the persistent Playwright profile across devices by exporting cookies, localStorage, and IndexedDB to a portable archive.
 
 **Vault-aware typing** (`vault-typing.ts`): browser typing resolves `{{vault:<id>.field}}` tokens only on an https page whose origin matches the entry's domains, checked again right before the keys land (§5.12).
 

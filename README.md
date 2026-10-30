@@ -116,9 +116,9 @@ src/                                  # ~910 TypeScript files (incl. tests)
 │   ├── metacognition.ts multi-critic.ts code-critic.ts
 │   ├── textgrad-refiner.ts self-editor.ts self-heal.ts
 │   ├── agent-worktree.ts             # Per-coder git worktree isolation
-│   ├── code-action-agent.ts computer-use-agent.ts
+│   ├── code-action-agent.ts
 │   ├── circuit-breaker.ts human-interrupt.ts tool-output-offload.ts a2a.ts
-│   └── error-recovery.ts handoff.ts blackboard.ts decomposition-library.ts
+│   └── error-recovery.ts handoff.ts decomposition-library.ts
 │
 ├── memory/                           # 89 files — organic memory system
 │   ├── sqlite.ts                     # Primary store (remember / recall / core)
@@ -168,7 +168,6 @@ src/                                  # ~910 TypeScript files (incl. tests)
 ├── marketing/                        # 29 files — 9-platform marketing brain
 ├── proactive/                        # 94 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources
 ├── planning/                         # 4 files — MCTS, hierarchical planner, logic verifier
-├── execution/                        # Speculative execution patterns
 ├── social/                           # emotion-detector.ts (lexicon + punctuation heuristic)
 ├── models/                           # 5 files — Local ASR/TTS/OCR/vision + FunctionGemma
 ├── voice/                            # 30 files (incl. live/) — TTS, transcription, live voice
@@ -290,11 +289,11 @@ All local SQLite (`data/memory.db`) — no memory ever leaves the device. Twelve
 
 Inside swarm runs, explicit external-action tools and shell launchers are held until the owner's fresh yes (`swarm_task confirmed: true`); payments and orders never run in a swarm.
 
-Additional optimization and reliability layers: evaluator scoring, replanner, mixture-of-agents, speculative racing, metacognition, multi-critic review, code-critic (compile/test/lint/SAST with Semgrep), TextGrad refinement, self-editor, self-heal, per-coder git worktrees, shared blackboard.
+Additional optimization and reliability layers: evaluator scoring, replanner, mixture-of-agents, speculative racing, metacognition, multi-critic review, code-critic (compile/test/lint/SAST with Semgrep), TextGrad refinement, self-editor, self-heal, per-coder git worktrees.
 
 ### Tool Router
 
-Semantic selection using MiniLM embeddings (384-dim, `@xenova/transformers`). On boot each tool category description is embedded and cached. Per message: user query is embedded, cosine similarity selects the top-K categories, tool schemas for those categories are loaded into the LLM call. A `request_tools` meta-tool lets the agent request additional categories mid-task. Optional FunctionGemma fallback (270M model via Ollama) provides zero-cost routing at ~85% accuracy. 20+ categories cover core, memory, browser, file_system, shell, system_control, media, integrations, research, coding, marketing, and more.
+Semantic selection using MiniLM embeddings (384-dim, `@xenova/transformers`). On boot each tool category description is embedded and cached. Per message: user query is embedded, cosine similarity selects the top-K categories, tool schemas for those categories are loaded into the LLM call. A `request_tools` meta-tool lets the agent request additional categories mid-task. 20+ categories cover core, memory, browser, file_system, shell, system_control, media, integrations, research, coding, marketing, and more.
 
 ### Deep Research
 

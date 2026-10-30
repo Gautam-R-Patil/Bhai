@@ -101,7 +101,6 @@ import { walkthroughTool } from "./coding/walkthrough.js";
 import { webAssetDownload } from "./coding/web-asset-download.js";
 import { write } from "./coding/write.js";
 import { coldOutreach } from "./cold-outreach.js";
-import { computerUseTool, setComputerUseLLM } from "./computer-use-tool.js";
 import { createTool, listDynamicTools, setRegistryRef } from "./create-tool.js";
 import { credentialSetup } from "./credential-setup.js";
 import { cronTool } from "./cron-tool.js";
@@ -281,7 +280,6 @@ export {
     initDeepResearch,
     setCodeActionExecutor,
     setCodeActionLLM,
-    setComputerUseLLM,
     setDeepResearchLLM,
     setDeepResearchNotifier,
     setDeepResearchProgress,
@@ -620,9 +618,6 @@ registry.set(walkthroughTool.schema.function.name, walkthroughTool);
 registry.set(mdToPdfTool.schema.function.name, mdToPdfTool);
 registry.set(screenRecordTool.schema.function.name, screenRecordTool);
 registry.set(demoProjectTool.schema.function.name, demoProjectTool);
-
-// Computer use agent (desktop automation)
-registry.set(computerUseTool.schema.function.name, computerUseTool);
 
 // WhatsApp messaging tools
 registry.set(whatsappSendTool.schema.function.name, whatsappSendTool);

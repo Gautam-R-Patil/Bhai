@@ -144,13 +144,7 @@ import {
     selectTools,
     selectToolsFast,
 } from "./tool-router.js";
-import {
-    getPreferredTools,
-    recordIntentToolUsage,
-    recordToolFailure,
-    recordToolRecovery,
-    recordToolSuccess,
-} from "./tool-router-analytics.js";
+import { getPreferredTools, recordIntentToolUsage } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
@@ -1234,16 +1228,6 @@ async function executeAndProcessToolCall(
         } catch {
             /* scrubber unavailable — leave result unfenced */
         }
-    }
-
-    // Feed the PASTE pattern speculator so it can learn recurring tool
-    // sequences. Cheap (rolling list push + native batch); if the module
-    // isn't initialized the call is a no-op.
-    try {
-        const { recordToolExecution } = await import("./execution/pattern-speculator.js");
-        recordToolExecution(fnName, !isError);
-    } catch {
-        /* pattern speculator not wired in this build */
     }
 
     const isBrowser = isBrowserTool(fnName);
@@ -4113,23 +4097,6 @@ PLAN:`,
         const currentIntent = getLastIntent();
         if (currentIntent && usedToolNames.length > 0) {
             recordIntentToolUsage(currentIntent, usedToolNames);
-        }
-
-        // Track tool failures and successes for the learning system
-        let lastFailedTool: string | null = null;
-        for (const r of batchResults) {
-            const content = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
-            if (toolFailed(r)) {
-                recordToolFailure(r.fnName, content.substring(0, 200));
-                lastFailedTool = r.fnName;
-            } else {
-                recordToolSuccess(r.fnName);
-                // If previous tool failed and this one succeeded → record recovery
-                if (lastFailedTool) {
-                    recordToolRecovery(lastFailedTool, r.fnName, `${lastFailedTool} failed → ${r.fnName} succeeded`);
-                    lastFailedTool = null;
-                }
-            }
         }
 
         for (const r of batchResults) {

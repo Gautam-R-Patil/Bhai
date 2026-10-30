@@ -111,8 +111,8 @@ export function swarmConsentKey(task: string): string {
 //   anything requiresConfirmation() flags (the main agent's gate: dangerous shell
 //             patterns, destructive hotkeys, wifi off, ...); in shell, not inside the
 //             arguments of a plain read/search command (`grep -rn shutdown src/`, see shellGated).
-// Not gated: generic browser and desktop input (clicks, typing, keys, run_js,
-// computer_use), other shell commands, send_file / send_screenshot (they deliver
+// Not gated: generic browser and desktop input (clicks, typing, keys, run_js),
+// other shell commands, send_file / send_screenshot (they deliver
 // only to the owner's own chat), reads, research, navigation, code edits, builds.
 const ALWAYS = new Set([
     "whatsapp_send",

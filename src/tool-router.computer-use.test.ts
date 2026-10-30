@@ -28,8 +28,6 @@ vi.mock("./tool-router-analytics.js", () => ({
     getLikelyCategories: () => [],
     getPreferredTools: (_i: string, t: string[]) => t,
     initAnalytics: () => {},
-    recordToolUsage: () => {},
-    updateCategoryAffinity: () => {},
 }));
 vi.mock("./tools/index.js", () => ({
     getToolSchemas: () =>

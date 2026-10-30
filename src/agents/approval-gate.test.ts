@@ -268,7 +268,6 @@ describe("swarmGate (tool level)", () => {
         ["os_smart_click", { description: "Search button" }],
         ["os_type", { text: "hello there" }],
         ["os_type", { key: "tab" }],
-        ["computer_use", { task: "find the downloads folder" }],
         ["browser_batch_fetch", { urls: ["https://api.example.com/items"] }],
         ["browser_batch_fetch", { urls: ["https://api.example.com/items"], method: "GET" }],
     ];

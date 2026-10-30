@@ -708,11 +708,8 @@ export function initOverlayChat(llm: LLMClient): void {
                     if (actionText === "feedback:good" || actionText === "feedback:bad") {
                         const isGood = actionText === "feedback:good";
                         console.log(`📊 [Overlay] User feedback: ${isGood ? "👍 good" : "👎 bad"}`);
-                        // Record feedback for learning — both tool analytics and strategy library
+                        // Reinforce the most recent strategy
                         try {
-                            const { recordTaskFeedback } = await import("../tool-router-analytics.js");
-                            recordTaskFeedback(isGood);
-                            // Also reinforce the most recent strategy
                             const { getTopStrategies, reinforceStrategy } = await import("../memory/strategy-library.js");
                             const recent = getTopStrategies(1);
                             if (recent.length > 0) {

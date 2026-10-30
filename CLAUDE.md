@@ -76,7 +76,7 @@ TS wrapper around napi-rs native binary (falls back to JS-only). Factors: iterat
 Task-context routing (iteration 1): the tool router's lean classifier also returns `tier` (chat|simple|standard|complex) and `multi_step`. `agent.ts` adjusts the native pick from it: chat → Haiku with thinking off and only `request_tools` (the "chat lane"), simple → Haiku with low thinking, complex → at least Sonnet. The planner runs only for multi-step/complex/chained work; later iterations reuse the turn's tool set (prompt cache). A non-complex desktop-only turn (classifier categories ⊆ os_control/app_management/system_controls) stays on Haiku for its first 8 iterations instead of the native router's iteration-3 Sonnet bump, until a step fails, metacognition flags a loop, or request_tools widens it; it also skips the periodic memory nudge. The verify-before-done gate is order-aware and counts a screenshot (the model sees it) taken after the last action. Opus is gated by `opusWarranted()` (explicit ask, `modelHint` complex, or 3+ errors). Helper calls (classifier, HyDE) pass `lean: true`: no thinking, no client clock block, and no server `rules` preamble when tool-less. `reasoning.effort: "none"` turns thinking off in the proxy (Haiku `disabled`, Sonnet `between_tools`). HyDE runs only in `retrieve` mode. LLM telemetry logs cached tokens.
 
 ### Tool Router (`src/tool-router.ts` + `src/tool-router-analytics.ts`)
-Semantic selection via MiniLM (384-dim). Boot: embed each category description. Per-message: embed query → cosine top-K → load schemas. `request_tools` meta-tool expands mid-task. 20+ categories. **FunctionGemma fallback** (`src/models/function-gemma.ts`): optional local 270M via Ollama for zero-cost routing. Analytics track usage/accuracy/hit rates.
+Semantic selection via MiniLM (384-dim). Boot: embed each category description. Per-message: embed query → cosine top-K → load schemas. `request_tools` meta-tool expands mid-task. 20+ categories. Analytics learn intent→tool preferences. FunctionGemma (`src/models/function-gemma.ts`) is used only by Forge lookup, not routing.
 
 ### Memory System (`src/memory/` — ~60 files)
 All local SQLite (`data/memory.db`):
@@ -108,9 +108,9 @@ Four-tier execution model.
 
 **Reliability:** `error-recovery.ts` (retry→rephrase→reroute→skip), `error-types.ts` (`ErrorCategory`), `smart-truncate.ts` (tool-specific: shell tail-heavy, JSON parse+prune, browser keep IDs, files head+tail), `handoff.ts` (300-char summary, 5 findings, artifacts, errors)
 
-**Optimization:** `evaluator.ts` (0-100 scoring + retry), `replanner.ts`, `role-analyzer.ts` (overrides LLM roles when conf >0.7), `mixture.ts` (MoA, ≥5 steps), `speculative.ts` (races approaches), `decomposition-library.ts`, `blackboard.ts`, `complexity-classifier.ts`
+**Optimization:** `evaluator.ts` (0-100 scoring + retry), `replanner.ts`, `role-analyzer.ts` (overrides LLM roles when conf >0.7), `mixture.ts` (MoA, ≥5 steps), `speculative.ts` (races approaches), `decomposition-library.ts`, `complexity-classifier.ts`
 
-**Self-Improvement / Specialized:** `metacognition.ts`, `multi-critic.ts`, `code-critic.ts` (compile+test+lint+SAST+ui_verify, fires `swarm.ts:~215` for coder steps, weights 0.4/0.4/0.2/0.15, budget `ATLAS_POST_SYNTHESIS_BUDGET_MS` 90s), `agent-worktree.ts` (opt-in `ATLAS_AGENT_WORKTREE=true`, `data/agent-worktrees/<id>/` when ≥2 coders race), `textgrad-refiner.ts`, `self-editor.ts`, `self-heal.ts`, `code-action-agent.ts`, `computer-use-agent.ts`
+**Self-Improvement / Specialized:** `metacognition.ts`, `multi-critic.ts`, `code-critic.ts` (compile+test+lint+SAST+ui_verify, fires `swarm.ts:~215` for coder steps, weights 0.4/0.4/0.2/0.15, budget `ATLAS_POST_SYNTHESIS_BUDGET_MS` 90s), `agent-worktree.ts` (opt-in `ATLAS_AGENT_WORKTREE=true`, `data/agent-worktrees/<id>/` when ≥2 coders race), `textgrad-refiner.ts`, `self-editor.ts`, `self-heal.ts`, `code-action-agent.ts`
 
 ### Coding Agent Pipeline (`src/tools/coding/` — 25+ files)
 Staged pipeline with runtime gating. Read before touching `src/tools/coding/` or `plan-mode.ts`.
@@ -151,7 +151,7 @@ Rule: tools writing user artifacts default to `getWorkspaceSubdir()`, override o
 Dual-backend via `BrowserBackend` interface (`browser-backend.ts`):
 - **Playwright** (`playwright-backend.ts`) — headless Chromium, persistent profile `data/browser-profile/`
 - **Chrome Extension** (`chrome-backend.ts` + `chrome-bridge.ts`) — WS bridge to real Chrome; `ChromePageProxy` mimics Playwright Page API
-- `stagehand-bridge.ts` (AI-native), `mode-tools.ts` (fast DOM ↔ vision OCR switch), `profile-sync.ts`
+- `mode-tools.ts` (fast DOM ↔ vision OCR switch)
 - 25+ actions: navigate/click/type/scroll/extract, parallel tabs/actions, upload, JS exec, strategy save/recall
 
 ### Tool Intelligence (`src/tools/tool-intelligence.ts` + `create-tool.ts`)
@@ -183,8 +183,8 @@ Gitignored; internal state ≠ user-facing outputs (see Workspace). `memories.db
 ### Social Cognition (`src/social/`)
 `emotion-detector.ts` — zero-cost heuristic (lexicon + punctuation) → `{ primary, valence, arousal, signals }`. `dynamic-context.ts::buildDynamicContextReminder` bridges into `assembleDynamicPrompt`'s `userEmotionalState`; injected on first iter. Stubs (`theory-of-mind`, `pragmatics`, `persuasion`) removed — LLM handles natively.
 
-### Planning & Execution (`src/planning/` + `src/execution/`)
-`mcts-planner.ts` (UCB1, PRM-scored), `hierarchical-planner.ts`, `process-reward.ts`, `logic-verifier.ts`, `pattern-speculator.ts`.
+### Planning (`src/planning/`)
+`mcts-planner.ts` (UCB1, PRM-scored), `hierarchical-planner.ts`, `process-reward.ts`, `logic-verifier.ts`. Swarm runs them only with `ATLAS_SWARM_DEEP_PLANNING=true` (~25 extra LLM calls per plan).
 
 ### Local Models (`src/models/` — 5 files) — zero-API-cost on-device
 `function-gemma.ts` (270M Ollama tool routing, 85% acc, LLM fallback), `local-asr.ts`, `local-tts.ts`, `local-ocr.ts`, `local-vision.ts`.
@@ -259,6 +259,7 @@ Default ON unless marked opt-IN. Set `"true"` to disable. `grep -rnE "process\.e
 - `ATLAS_DISABLE_BUILTIN_HOOKS` — drop built-in LSP-pre-edit hook; `ATLAS_NO_CODE_CRITIC` — skip swarm-synthesis critic
 - `ATLAS_NO_POST_EDIT_DIAGNOSTICS` — no auto LSP diagnostics; `ATLAS_NO_SAST` — skip Semgrep
 - `ATLAS_POST_SYNTHESIS_BUDGET_MS` — critic+MoA+verifier wall-clock cap (default 90000); `ATLAS_AUTO_PLAN_MODE` — opt-in auto plan mode
+- `ATLAS_SWARM_DEEP_PLANNING` — opt-IN hierarchical planning + logic verification + MCTS refinement in `swarm.ts` (`src/planning/`)
 - `ATLAS_NO_GUI_FASTPATH=true` — disables the simple-GUI/messaging orchestrator skip. Default ON: a single-target OS/app/messaging/media action (cats ⊆ {os_control,app_management,communication,media,system_controls}, not chained, conf≥0.7) SKIPS the ~14K-token ~20s Sonnet plan. Complex/chained/browser/coding/research still plan. `ATLAS_ALWAYS_ORCHESTRATE=true` also disables it.
 - `ATLAS_NO_WHATSAPP_TOOL_GATING=true` — restores offering `whatsapp_send`/`whatsapp_sticker`/`whatsapp_group_info` when Baileys isn't connected. Default OFF: those tools are hidden (via `isToolOfferable`) when `getWhatsAppStatus() !== "connected"`, re-evaluated per message so they reappear once linked.
 

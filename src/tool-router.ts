@@ -37,8 +37,6 @@ import {
     getLikelyCategories,
     getPreferredTools,
     initAnalytics,
-    recordToolUsage,
-    updateCategoryAffinity,
 } from "./tool-router-analytics.js";
 import { getToolSchemas } from "./tools/index.js";
 import { extractJSON } from "./utils/json-extract.js";
@@ -297,8 +295,6 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "win_os_visual_verify",
             "win_set_brightness",
             "win_send_screenshot",
-            // computer_use (computer-use-agent.ts) is NOT offered: it plans blind,
-            // types unparsed plan lines into the focused app and always reports success.
         ],
     },
     system_controls: {
@@ -1792,9 +1788,6 @@ export async function selectTools(opts: {
         }
     }
 
-    // Update category affinity
-    updateCategoryAffinity(selectedCategories);
-
     // ══════════════════════════════════════════════
     // STAGE 3: TOOL ASSEMBLY — Cap at MAX_TOOLS
     // Precision filter: only send what's needed
@@ -2040,16 +2033,6 @@ export function clearToolRouterState(): void {
 
 export function isRequestToolsCall(toolName: string): boolean {
     return toolName === "request_tools";
-}
-
-// ── Record tool usage for analytics ──────────
-
-export function recordToolUsageForAnalytics(opts: {
-    toolsUsed: string[];
-    categories: string[];
-    success?: boolean;
-}): void {
-    recordToolUsage(opts);
 }
 
 // ── Get router stats ─────────────────────────

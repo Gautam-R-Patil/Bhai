@@ -78,7 +78,6 @@ import {
     setCaptchaLLM,
     setCodeActionExecutor,
     setCodeActionLLM,
-    setComputerUseLLM,
     setDeepResearchLLM,
     setDeepResearchNotifier,
     setIngestLLM,
@@ -119,7 +118,6 @@ setDeepResearchLLM(llm); // Inject into deep research tool
 setLongTaskLLM(llm); // Inject into long task executor
 setCodeActionLLM(llm); // Inject into code-as-action agent tool
 setCodeActionExecutor(executeTool); // Inject tool executor for code_execute sandbox
-setComputerUseLLM(llm); // Inject into computer use agent tool
 setSmartClickLLM(llm); // Inject into os_smart_click cloud-grounding cascade tier
 setSiteMintLLM(llm); // Inject into the Site Skill Minter (site_skill_mint)
 setCaptchaLLM(llm); // Inject into the picture-CAPTCHA vision solver
@@ -328,18 +326,6 @@ async function boot() {
         try {
             const { initPromptEvolver } = await import("./prompts/prompt-evolver.js");
             initPromptEvolver(memDb);
-            // PASTE pattern speculator records tool sequences so future turns
-            // can predict the next likely tool. Observation-only for now —
-            // speculative pre-execution stays unwired until the latency/cost
-            // tradeoff is validated. Kill with ATLAS_NO_PATTERN_SPECULATOR=true.
-            if (process.env.ATLAS_NO_PATTERN_SPECULATOR !== "true") {
-                try {
-                    const { initPatternSpeculator } = await import("./execution/pattern-speculator.js");
-                    initPatternSpeculator(memDb);
-                } catch (err) {
-                    console.warn("[PASTE] init failed (non-fatal):", (err as Error).message);
-                }
-            }
         } catch (peErr) {
             console.warn("[BOOT] Prompt evolver init failed (non-fatal):", (peErr as Error).message);
         }
@@ -1202,13 +1188,11 @@ async function boot() {
             onStart: (botInfo) => {
                 console.log(`✅ Bot online: @${botInfo.username}`);
                 console.log(`   Mode    : long-polling (no HTTP server)`);
-                console.log(`   Tools   : ${toolNames.join(", ")}`);
                 console.log(`   Send me a message on Telegram to get started!\n`);
             },
         });
     } else {
         console.log(`✅ Bhai online (Telegram disabled)`);
-        console.log(`   Tools   : ${toolNames.join(", ")}`);
         console.log(`   Configure Telegram in the Channels tab to enable.\n`);
     }
 
