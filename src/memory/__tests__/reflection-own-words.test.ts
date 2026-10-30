@@ -15,4 +15,11 @@ it("a recap by the assistant isn't the owner saying it; the owner's own words ar
     const vent = ownerWords([{ role: "user", content: "ugh long day, the demo crashed twice in front of the client" }] as never);
     expect(saidByOwner("Product demo crashed twice in front of a client", vent)).toBe(true);
     expect(saidByOwner("stressed about the launch", ownerWords([{ role: "user", content: "so stressed, we launch tomorrow" }] as never))).toBe(true);
+
+    // A feeling told in Hinglish has no English word in common, and isn't a recap either.
+    const hinglish = ownerWords([
+        { role: "user", content: "yaar aaj bahut thak gaya hoon, kuch nahi karna" },
+        { role: "assistant", content: "Sounds like a long one. Rest up, I'll keep things quiet tonight." },
+    ] as never);
+    expect(saidByOwner("tired after a long day", hinglish)).toBe(true);
 });

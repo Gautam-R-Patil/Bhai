@@ -1111,20 +1111,32 @@ const SIGNAL_STOP = new Set(
 const signalWords = (t: string) =>
     (t.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).filter((w) => !SIGNAL_STOP.has(w));
 
-/** Words the owner wrote this session (channel notes stripped). */
-export function ownerWords(history: ChatCompletionMessageParam[]): Set<string> {
-    const words = new Set<string>();
-    for (const m of history.slice(-40)) {
-        if (m.role !== "user" || typeof m.content !== "string") continue;
-        const own = m.content.replace(/\[(?:SOURCE|BROWSER CONTEXT|Browser context|From browser)[^\]]*\]/g, "");
-        for (const w of signalWords(own)) words.add(w);
-    }
-    return words;
+export interface SessionWords {
+    owner: Set<string>;
+    assistant: Set<string>;
 }
 
-/** An emotion/episode the owner brought up (shares a meaningful word with what they wrote), not a recap. */
-export function saidByOwner(text: string, words: Set<string>): boolean {
-    return signalWords(text).some((w) => words.has(w));
+/** Words the owner and Bhai wrote this session (channel notes stripped). */
+export function ownerWords(history: ChatCompletionMessageParam[]): SessionWords {
+    const owner = new Set<string>();
+    const assistant = new Set<string>();
+    for (const m of history.slice(-40)) {
+        if (typeof m.content !== "string" || (m.role !== "user" && m.role !== "assistant")) continue;
+        const text = m.content.replace(/\[(?:SOURCE|BROWSER CONTEXT|Browser context|From browser)[^\]]*\]/g, "");
+        for (const w of signalWords(text)) (m.role === "user" ? owner : assistant).add(w);
+    }
+    return { owner, assistant };
+}
+
+/**
+ * Not a recap of Bhai's own words: drop a signal only when it repeats what Bhai said (two
+ * or more words) and shares nothing with the owner. Comparing with the owner's words alone
+ * dropped feelings told in Hinglish ("thak gaya hoon" → "tired after a long day").
+ */
+export function saidByOwner(text: string, words: SessionWords): boolean {
+    const w = signalWords(text);
+    if (w.some((x) => words.owner.has(x))) return true;
+    return w.filter((x) => words.assistant.has(x)).length < 2;
 }
 
 function buildTranscript(history: ChatCompletionMessageParam[]): string {
