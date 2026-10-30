@@ -187,6 +187,12 @@ export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
 
 // ── Cross-Platform Command Executor ──────────
 
+/** command + args as one sh line, each arg one literal (shell_exec and shell_exec_background). */
+export function posixCommandLine(command: string, args: string[]): string {
+    const q = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
+    return args.length ? `${command} ${args.map(q).join(" ")}` : command;
+}
+
 async function execCommand(
     command: string,
     args: string[],
@@ -206,9 +212,7 @@ async function execCommand(
     // spaces fell apart: bash -c "set -e; zip …" ran as \`bash -c set -e; zip …\` — a bare
     // \`set\`, which printed Bhai's whole environment into the tool result. Each arg is one
     // literal argument (as the schema says); shell syntax belongs in \`command\`.
-    const q = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
-    const line = args.length ? `${command} ${args.map(q).join(" ")}` : command;
-    return execFileAsync(line, [], {
+    return execFileAsync(posixCommandLine(command, args), [], {
         env: childEnv(),
         cwd: options.cwd,
         timeout: options.timeout,

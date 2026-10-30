@@ -12,6 +12,7 @@ import { promises as fs } from "node:fs";
 import { basename, join } from "node:path";
 import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
 import { shellNamesBhaiState } from "../security/sensitive-paths.js";
+import { posixCommandLine } from "./shell.js";
 import { auditLog } from "../security/audit-log.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
@@ -195,8 +196,10 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
 
         try {
             // Before spawn, resolve shell on Windows
-            let spawnCmd = command;
-            let spawnArgs = args;
+            // On POSIX one quoted line: spawn with shell: true joins args with bare spaces, so
+            // sh -c "sleep 2; echo done" ran as \`sh -c sleep 2; …\` (see shell.ts).
+            let spawnCmd = IS_WIN ? command : posixCommandLine(command, args);
+            let spawnArgs = IS_WIN ? args : [];
             if (IS_WIN) {
                 const shell = await resolveWindowsShell();
                 const wrapped = wrapForShell(shell, command, args);
