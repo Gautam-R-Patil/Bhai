@@ -16,7 +16,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { execSync } = require("node:child_process");
+const { execFileSync, execSync, spawnSync } = require("node:child_process");
 const { pruneBotModules } = require("./prune-bot-modules.js");
 
 // Import protection modules
@@ -481,6 +481,78 @@ function archName(arch) {
     return ["ia32", "x64", "armv7l", "arm64", "universal"][arch] || process.arch;
 }
 
+function findFiles(dir, nameRe, out = []) {
+    if (!fs.existsSync(dir)) return out;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) findFiles(p, nameRe, out);
+        else if (e.isFile() && nameRe.test(e.name)) out.push(p);
+    }
+    return out;
+}
+
+/** Export names of a Node-API module, loaded in a child Node (a crash can't take the build down). */
+function loadedExports(file) {
+    const r = spawnSync(
+        process.execPath,
+        [
+            "-e",
+            "const m={exports:{}};process.dlopen(m,process.argv[1]);process.stdout.write(Object.keys(m.exports).sort().join(','))",
+            file,
+        ],
+        { encoding: "utf8", timeout: 60000 },
+    );
+    if (r.status !== 0) throw new Error((r.stderr || "load failed").split("\n")[0]);
+    return r.stdout;
+}
+
+/**
+ * strip -x the large native libraries before electron-builder signs them:
+ * onnxruntime's dylibs and the atlas-native module (native/Cargo.toml keeps
+ * strip=false because of a linker bug, so it happens here, after linking).
+ * A stripped file replaces the original only after it loads in this Node with
+ * the same exports (a dylib through the .node binding next to it). Anything
+ * that can't be checked here (another arch, no binding next to it) ships as is.
+ */
+function stripNativeLibraries(botDir, arch) {
+    if (process.platform !== "darwin" || process.arch !== arch) return 0;
+    let saved = 0;
+    const libs = [
+        ...findFiles(path.join(botDir, "node_modules"), /^libonnxruntime[^/]*\.dylib$/),
+        ...findFiles(path.join(botDir, "native"), /^atlas-native\..*\.node$/),
+    ];
+    for (const file of libs) {
+        const dir = path.dirname(file);
+        const probes = file.endsWith(".node")
+            ? [file]
+            : fs
+                  .readdirSync(dir)
+                  .filter((n) => n.endsWith(".node"))
+                  .map((n) => path.join(dir, n));
+        if (probes.length === 0) continue;
+        const backup = `${file}.unstripped`;
+        const before = fs.statSync(file).size;
+        try {
+            const expected = probes.map(loadedExports);
+            fs.copyFileSync(file, backup);
+            execFileSync("strip", ["-x", file], { stdio: "pipe" });
+            execFileSync("codesign", ["--force", "--sign", "-", file], { stdio: "pipe" });
+            probes.forEach((p, i) => {
+                if (loadedExports(p) !== expected[i]) throw new Error(`exports of ${path.basename(p)} changed`);
+            });
+            fs.unlinkSync(backup);
+            saved += before - fs.statSync(file).size;
+            console.log(
+                `[PROTECT] → Stripped ${path.basename(file)}: ${(before / 1048576).toFixed(1)} → ${(fs.statSync(file).size / 1048576).toFixed(1)} MB`,
+            );
+        } catch (e) {
+            if (fs.existsSync(backup)) fs.renameSync(backup, file);
+            console.warn(`[PROTECT] → Kept ${path.basename(file)} unstripped: ${e.message}`);
+        }
+    }
+    return saved;
+}
+
 /**
  * Generate integrity hash for ASAR
  */
@@ -632,9 +704,10 @@ exports.default = async function afterPack(context) {
     const nativeDir = path.join(process.cwd(), "..", "native");
     const destNativeDir = path.join(botDir, "native");
 
-    // Find the correct .node file for this platform
-    const platform = process.platform;
-    const arch = process.arch;
+    // Find the .node file for the target platform and arch (not the build
+    // machine's, which differ in a cross-arch build).
+    const platform = targetPlatform;
+    const arch = targetArch;
     let nativeNodeFile = null;
 
     if (platform === "darwin") {
@@ -669,9 +742,15 @@ exports.default = async function afterPack(context) {
     if (nativeNodeFile && fs.existsSync(nativeNodeFile)) {
         fs.mkdirSync(destNativeDir, { recursive: true });
 
-        // Copy the .node file
+        // Copy the .node file, and drop the other platforms' and arches' builds
+        // that extraResources copied from ../native.
         const nodeFileName = path.basename(nativeNodeFile);
         fs.copyFileSync(nativeNodeFile, path.join(destNativeDir, nodeFileName));
+        for (const other of fs.readdirSync(destNativeDir)) {
+            if (/^atlas-native\..*\.node$/.test(other) && other !== nodeFileName) {
+                fs.unlinkSync(path.join(destNativeDir, other));
+            }
+        }
 
         // Copy the loader: index.js (fail-open front) + binding.js (napi-generated)
         for (const loader of ["index.js", "binding.js"]) {
@@ -712,6 +791,10 @@ exports.default = async function afterPack(context) {
         console.log("[PROTECT] → sharp already present in bot/node_modules");
     }
 
+    // 5d. Strip symbols from the big native libraries (before signing).
+    const stripped = stripNativeLibraries(botDir, targetArch);
+    if (stripped) console.log(`[PROTECT] → Stripping saved ${(stripped / 1048576).toFixed(1)} MB`);
+
     // 6. Write protection marker
     const marker = {
         protected: true,
@@ -728,3 +811,4 @@ exports.default = async function afterPack(context) {
 };
 
 exports.archName = archName;
+exports.stripNativeLibraries = stripNativeLibraries;
