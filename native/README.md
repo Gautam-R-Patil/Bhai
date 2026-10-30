@@ -53,9 +53,9 @@ Output is a platform-specific `.node` file written to `native/`:
 |-------|-------|---------|
 | Vector math | `vector.rs`, `batch.rs`, `hnsw.rs` | SIMD dot-product, cosine similarity, batch + ANN search |
 | Routing | `model_router.rs`, `tool_router.rs`, `tool_analytics.rs`, `query_classifier.rs` | Model tier + tool category selection |
-| Memory hot path | `memory_state.rs`, `memory_tiers.rs`, `knowledge_graph.rs`, `hopfield.rs`, `spreading.rs`, `temporal_cache.rs`, `consolidation.rs`, `context_pruning.rs`, `sleep_gate.rs`, `surprise_gate.rs`, `reflection_core.rs`, `session_memory.rs`, `working_memory.rs`, `task_learnings.rs`, `traits_engine.rs` | Memory reads, scoring, decay |
-| Agents | `agent_core.rs`, `swarm.rs`, `mesh.rs`, `sub_agent.rs`, `long_task.rs` | Orchestration state + scheduling helpers |
-| Reasoning | `metacognition.rs`, `mcts_engine.rs`, `active_inference.rs`, `logic_engine.rs`, `process_reward.rs`, `pattern_speculator.rs`, `prompt_evaluator.rs` | Inference + planning kernels |
+| Memory hot path | `memory_tiers.rs`, `knowledge_graph.rs`, `hopfield.rs`, `spreading.rs`, `temporal_cache.rs`, `consolidation.rs`, `context_pruning.rs`, `sleep_gate.rs`, `surprise_gate.rs`, `reflection_core.rs`, `session_memory.rs`, `working_memory.rs`, `task_learnings.rs`, `traits_engine.rs` | Memory reads, scoring, decay |
+| Agents | `swarm.rs`, `mesh.rs`, `sub_agent.rs`, `long_task.rs` | Orchestration state + scheduling helpers |
+| Reasoning | `metacognition.rs`, `mcts_engine.rs`, `active_inference.rs`, `logic_engine.rs`, `process_reward.rs`, `prompt_evaluator.rs` | Inference + planning kernels |
 | World/user models | `world_model.rs`, `user_model.rs`, `credibility_model.rs` | Predictive state |
 | Proactive | `proactive_scheduler.rs`, `proactive_monitor.rs`, `proactive_intent.rs`, `proactive_calendar.rs`, `proactive_news.rs`, `proactive_stale_email.rs`, `proactive_tasks.rs`, `proactive_weather.rs`, `proactive_source_gate.rs`, `inner_thoughts.rs`, `goal_engine.rs`, `habit_detector.rs`, `notification_tracker.rs` | Intent queue, per-source scoring, rate limit + DND |
 | Browser | `browser_agent.rs`, `browser_guard.rs`, `chrome_bridge.rs`, `ip_guard.rs` | Element scoring, stealth, CAPTCHA detection |
