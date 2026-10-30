@@ -3111,7 +3111,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         )
             pushNudge(
                 messages,
-                "This asks about something that may have changed. Check it with web_search now; earlier answers in this conversation may be out of date.",
+                "If this asks about something in the world that may have changed (a release, news, a price, a score), check it with web_search now; earlier answers in this conversation may be out of date. A question about this computer or the owner's own things doesn't need a search.",
             );
 
         // ── Task-context routing (iteration 1) ──
