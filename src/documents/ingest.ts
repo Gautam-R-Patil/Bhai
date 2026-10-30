@@ -17,6 +17,7 @@ import path from "node:path";
 import { resolveScript } from "../config/paths.js";
 import type { LLMClient } from "../llm.js";
 import { MODELS } from "../llm.js";
+import { setBounded } from "../utils/bounded-map.js";
 import { extractJSON } from "../utils/json-extract.js";
 import {
     type DocumentType,
@@ -35,7 +36,8 @@ export function setIngestLLM(client: LLMClient): void {
     llm = client;
 }
 
-// ── Cache for identical inputs (keyed by SHA-256) ─
+// ── Cache for identical inputs (keyed by SHA-256; the 50 most recent) ─
+const EXTRACTION_CACHE_MAX = 50;
 const extractionCache = new Map<string, { resume?: Resume; general?: GeneralDocument; confidence: number }>();
 
 // ── Tier 1: text extraction ─────────────────────
@@ -415,11 +417,12 @@ export async function ingestPdfToDocument(
         }
     }
 
-    extractionCache.set(cacheKey, {
-        resume: resume ?? undefined,
-        general: general ?? undefined,
-        confidence,
-    });
+    setBounded(
+        extractionCache,
+        cacheKey,
+        { resume: resume ?? undefined, general: general ?? undefined, confidence },
+        EXTRACTION_CACHE_MAX,
+    );
 
     const data = type === "resume" ? resume! : general!;
     const stored = saveDocument({

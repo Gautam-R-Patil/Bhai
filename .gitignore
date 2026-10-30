@@ -110,6 +110,7 @@ desktop/hostinger-upload/
 !src/proactive/activity.test.ts
 !src/overlay/overlay-placeholder.test.ts
 !src/network-health.test.ts
+!src/utils/bounded-map.test.ts
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
 !src/tools/google-api-clients.test.ts
 !src/video-studio/util/ffmpeg-bin.test.ts

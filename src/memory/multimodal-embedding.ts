@@ -4,6 +4,7 @@
 
 import { embedText, cosineSimilarity, EMBEDDING_DIM } from "./embeddings.js";
 import fs from "node:fs";
+import { setBounded } from "../utils/bounded-map.js";
 
 export interface MultimodalResult {
     id: string;
@@ -15,9 +16,12 @@ export interface MultimodalResult {
 const imageEmbeddings = new Map<string, Float32Array>();
 const imageDescriptions = new Map<string, string>();
 
+// The most recent images only: the maps lived for the whole process and only grew.
+const MAX_IMAGES = 500;
+
 export function storeImageEmbedding(id: string, embedding: Float32Array, description: string): void {
-    imageEmbeddings.set(id, embedding);
-    imageDescriptions.set(id, description);
+    setBounded(imageEmbeddings, id, embedding, MAX_IMAGES);
+    setBounded(imageDescriptions, id, description, MAX_IMAGES);
 }
 
 export async function crossModalSearch(query: string, topK = 5): Promise<MultimodalResult[]> {

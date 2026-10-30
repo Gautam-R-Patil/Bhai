@@ -63,6 +63,22 @@ describe("TemporalCache — LRU cache", () => {
         }
     });
 
+    it("drops expired entries when a new set comes in", () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date("2025-01-01T00:00:00Z"));
+            for (let i = 0; i < 10; i++) cache.set(`old${i}`, [rec(i)]);
+            vi.setSystemTime(new Date("2025-01-01T00:03:00Z"));
+            cache.set("mid", [rec(10)]);
+            vi.setSystemTime(new Date("2025-01-01T00:05:30Z"));
+            cache.set("new", [rec(11)]);
+            expect(cache.size).toBe(2);
+            expect(cache.get("mid")).not.toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("evicts the least-recently-used entry at capacity", () => {
         cache.set("keep-me", [rec(0)]);
         for (let i = 1; i < 500; i++) cache.set(`q${i}`, [rec(i)]);
