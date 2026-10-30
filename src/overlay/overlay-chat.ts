@@ -352,11 +352,12 @@ export function initOverlayChat(llm: LLMClient): void {
             // Return tool list + home dir for the @ picker
             const { getToolNames } = await import("../tools/index.js");
             const { getLoadedSkills } = await import("../skills/loader.js");
-            const { homedir } = await import("node:os");
             const tools = getToolNames().map(name => ({ type: "tool", name, label: name.replace(/_/g, " ") }));
             const skills = getLoadedSkills().map((s: { name: string }) => ({ type: "skill", name: s.name, label: s.name }));
             res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "http://127.0.0.1:18792" });
-            res.end(JSON.stringify({ tools, skills, homeDir: homedir() }));
+            // The file picker starts where /api/browse serves from: the workspace (the home
+            // folder it used to start in is refused, so the picker showed "Nothing here").
+            res.end(JSON.stringify({ tools, skills, rootDir: resolveSafePath(getWorkspaceDir()) ?? getWorkspaceDir() }));
 
         } else if (url.pathname === "/api/browse") {
             // Browse filesystem for @ file/folder picker — workspace-only, auth required

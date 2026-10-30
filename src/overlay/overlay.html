@@ -3404,6 +3404,16 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         progress.innerHTML = '';
       }
 
+      function localToken() {
+        const placeholder = window.__ATLAS_LOCAL_TOKEN__;
+        return (placeholder && placeholder.indexOf('%%') === -1) ? placeholder : (window.__atlasLocalToken || '');
+      }
+      // The file picker's /api/browse and /api/file refuse requests without the token.
+      function authFetch(url) {
+        const tok = localToken();
+        return fetch(url, tok ? { headers: { Authorization: `Bearer ${tok}` } } : {});
+      }
+
       function connect() {
         // Authenticate the WS handshake with the server-injected loopback token.
         // The server rejects token-less connections (4001), which previously left
@@ -3411,10 +3421,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         // ways: the %%ATLAS_LOCAL_TOKEN%% placeholder (→ window.__ATLAS_LOCAL_TOKEN__)
         // and window.__atlasLocalToken. Prefer either; fall back to token-less in
         // dev so the failure mode is visible, not silent.
-        const _placeholder = window.__ATLAS_LOCAL_TOKEN__;
-        const _tok = (_placeholder && _placeholder.indexOf('%%') === -1)
-          ? _placeholder
-          : (window.__atlasLocalToken || '');
+        const _tok = localToken();
         const qs = _tok ? `?localToken=${encodeURIComponent(_tok)}` : '';
         ws = new WebSocket(`ws://${location.host}${qs}`);
         window._atlasWS = ws; // Expose for Electron IPC (live voice shortcut)
@@ -4241,22 +4248,25 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       let allTools = [];
       let allSkills = [];
       let currentDir = '/';
-      let homeDir = '/';
+      let rootDir = '/'; // the workspace: the only folder the server lists and serves
+      let previewPath = null;
+      let previewUrl = null;
+      const atPickerRoot = () => currentDir === rootDir || currentDir === '/' || currentDir === '';
       let browseCache = {};
       let pickerItems = [];
       let pickerSelectedIdx = -1;
       let mentionChips = []; // [{ type, name, value }]
       let mentionTriggerPos = -1; // caret pos when @ was typed
 
-      // Fetch tools and home dir from server once
+      // Fetch tools and the picker's root folder from server once
       async function loadMentionData() {
         try {
           const r = await fetch('/api/mentions');
           const d = await r.json();
           allTools = d.tools || [];
           allSkills = d.skills || [];
-          homeDir = d.homeDir || '/';
-          currentDir = homeDir;
+          rootDir = d.rootDir || '/';
+          currentDir = rootDir;
         } catch { allTools = []; allSkills = []; }
       }
       loadMentionData();
@@ -4264,7 +4274,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       async function browseDir(dir) {
         if (browseCache[dir]) return browseCache[dir];
         try {
-          const r = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}`);
+          const r = await authFetch(`/api/browse?dir=${encodeURIComponent(dir)}`);
+          if (!r.ok) return []; // don't cache a refusal
           const d = await r.json();
           browseCache[dir] = d.entries || [];
           return browseCache[dir];
@@ -4351,7 +4362,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         } else {
           // Files or Folders
           pickerPathBar.style.display = 'block';
-          pickerPathBar.textContent = `← ${currentDir === '/' || currentDir === '' ? 'Categories' : currentDir}`;
+          pickerPathBar.textContent = `← ${atPickerRoot() ? 'Categories' : currentDir}`;
           const entries = await browseDir(currentDir);
           const filtered = entries.filter(e => {
             if (activeTab === 'folders' && !e.isDir) return false;
@@ -4424,17 +4435,27 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const isVideo = ['mp4', 'webm', 'mov'].includes(ext);
           
           if (isImage || isVideo) {
-            const src = `/api/file?path=${encodeURIComponent(item.path)}`;
+            // An <img src> can't send the token, so the file comes through authFetch.
+            const path = item.path;
+            previewPath = path;
             pickerPreview.style.display = 'flex';
-            if (isVideo) {
-              pickerPreview.innerHTML = `<video src="${src}" autoplay loop muted style="max-width: 100%; max-height: 160px; border-radius: 8px;"></video>`;
-            } else {
-              pickerPreview.innerHTML = `<img src="${src}" style="max-width: 100%; max-height: 160px; border-radius: 8px; object-fit: contain;" />`;
-            }
+            pickerPreview.innerHTML = '';
+            authFetch(`/api/file?path=${encodeURIComponent(path)}`)
+              .then((r) => (r.ok ? r.blob() : null))
+              .then((blob) => {
+                if (!blob || previewPath !== path) return; // moved on meanwhile
+                if (previewUrl) URL.revokeObjectURL(previewUrl);
+                previewUrl = URL.createObjectURL(blob);
+                pickerPreview.innerHTML = isVideo
+                  ? `<video src="${previewUrl}" autoplay loop muted style="max-width: 100%; max-height: 160px; border-radius: 8px;"></video>`
+                  : `<img src="${previewUrl}" style="max-width: 100%; max-height: 160px; border-radius: 8px; object-fit: contain;" />`;
+              })
+              .catch(() => {});
             return;
           }
         }
-        
+
+        previewPath = null;
         pickerPreview.style.display = 'none';
         pickerPreview.innerHTML = '';
       }
@@ -4446,7 +4467,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (activeTab === 'categories') {
           activeTab = item.id;
           pickerSearch.value = '';
-          currentDir = homeDir;
+          currentDir = rootDir;
           pickerSelectedIdx = -1;
           renderPicker();
           pickerSearch.focus();
@@ -4555,7 +4576,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           renderPicker();
           return;
         }
-        if (currentDir === '/' || currentDir === '') {
+        if (atPickerRoot()) {
           activeTab = 'categories';
           pickerSearch.value = '';
           renderPicker();
