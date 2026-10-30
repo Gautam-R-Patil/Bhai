@@ -126,5 +126,11 @@ describe("file_manage", () => {
         mkdirSync(join(sub, "inner"));
         const r = JSON.parse(await listDirectory.handler({ path: sub }));
         expect(r.by_kind).toEqual({ txt: 2, md: 1, folders: 1 });
+        // 50-task run: the largest file was past the newest 100.
+        writeFileSync(join(sub, "big.bin"), "x".repeat(5000));
+        expect(JSON.parse(await listDirectory.handler({ path: sub })).largest).toEqual({ name: "big.bin", size: 5000 });
+        // A bare name right after listing a folder is one in it.
+        const m = await run({ action: "move", paths: ["c.md"], destination: join(sub, "inner") });
+        expect(m.done[0].from).toBe(join(sub, "c.md"));
     });
 });

@@ -219,7 +219,7 @@ export const browserNavigate: ToolDefinition = {
             if (!isDesignTool) {
                 const text = await page
                     .evaluate(
-                        /* javascript-obfuscator:disable */ () => {
+                        /* javascript-obfuscator:disable */ ({ max }: { max: number }) => {
                             // No named helpers in here: the bundler's __name() doesn't exist in the page.
                             const out: string[] = [];
                             let n = 0;
@@ -240,9 +240,9 @@ export const browserNavigate: ToolDefinition = {
                                 if (row.length < 120) facts.push(row);
                                 if (facts.join("; ").length > 500) break;
                             }
-                            return `${out.join(" ").slice(0, 1200)}${facts.length ? `\nFacts: ${facts.join("; ")}` : ""}`;
+                            return `${out.join(" ").slice(0, max)}${facts.length ? `\nFacts: ${facts.join("; ")}` : ""}`;
                         },
-                        /* javascript-obfuscator:enable */ undefined, // esbuild keeps the comment only before an argument
+                        /* javascript-obfuscator:enable */ { max: 1200 },
                     )
                     .catch(() => "");
                 if (text.trim()) result.page_text = text;
