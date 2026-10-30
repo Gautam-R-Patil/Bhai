@@ -91,6 +91,17 @@ describe("late-hour remark detector", () => {
     });
 });
 
+// The patterns spell the curly apostrophe as \u2019 (one-byte bundle source).
+describe("curly apostrophes", () => {
+    it("matches \u2019 and ' alike", () => {
+        for (const a of ["\u2019", "'", ""]) {
+            expect(isLateHourRemark(`Shouldn${a}t you be asleep?`)).toBe(true);
+            expect(isLateHourRemark(`You${a}re still up? Paste the trace.`)).toBe(true);
+        }
+        expect(isLateHourRemark("Shouldn\u2018t you be asleep?")).toBe(false);
+    });
+});
+
 describe("late-night nudge tracker", () => {
     beforeEach(() => {
         fs.rmSync(path.join(process.env.ATLAS_DATA_DIR as string, "late-night-nudge.json"), { force: true });

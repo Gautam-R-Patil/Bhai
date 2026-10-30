@@ -40,9 +40,9 @@ const REMARK_RE = new RegExp(
         String.raw`\b(?:hit|head to) (?:the )?(?:sack|hay|bed)\b`,
         // imperative "go (to) sleep/bed/crash", not "the Mac will go to sleep"
         String.raw`(?:^|\b(?:now|just|so|pls|please|then|and|should|gotta|need to|must|better)\s+)go (?:to )?(?:sleep|bed|crash)\b`,
-        String.raw`\bshouldn[’']?t you be (?:asleep|sleeping|in bed)\b`,
+        String.raw`\bshouldn[\u2019']?t you be (?:asleep|sleeping|in bed)\b`,
         String.raw`\byou (?:should|need to|gotta|must|better) (?:sleep|rest|crash)\b`,
-        String.raw`(?:\b(?:you[’']?re|you are|are you|you)\s|^|,\s*)still (?:up|awake)\b(?! for\b)`,
+        String.raw`(?:\b(?:you[\u2019']?re|you are|are you|you)\s|^|,\s*)still (?:up|awake)\b(?! for\b)`,
         String.raw`\bwhy are you (?:still )?(?:up|awake)\b`,
         String.raw`\b(?:up|awake) at this hour\b`,
     ].join("|"),

@@ -94,8 +94,12 @@ const OBFUSCATION_OPTIONS = {
     // (selfDefending causes issues with some runtime environments)
     selfDefending: false,
 
-    // Unicode escape
-    unicodeEscapeSequence: true,
+    // Unicode escape — OFF. Strings are still rc4-encrypted in the string
+    // array; escaping every ASCII character as \uXXXX only made the bundle 70%
+    // bigger (16.9 → 9.7 MB) and slower to parse at every start. escapeLiterals()
+    // escapes non-Latin-1 characters in string and regex literals, so V8 keeps
+    // the source one byte per char, and module paths in full as before.
+    unicodeEscapeSequence: false,
 
     // Keep module exports working
     renameGlobals: false,
@@ -129,6 +133,58 @@ const SKIP_PATTERNS = [
 
 function shouldSkip(filePath) {
     return SKIP_PATTERNS.some(p => p.test(filePath));
+}
+
+/**
+ * Post-obfuscation pass over string and regex literals.
+ *
+ * V8 stores a script's source one byte per character only when every character
+ * is Latin-1 (≤ U+00FF). With unicodeEscapeSequence off the obfuscator leaves
+ * string and regex literals as written, and their emoji / Devanagari / CJK would
+ * make the whole bundle two bytes per character. In both, \uXXXX (a surrogate
+ * pair for astral characters) means the same thing, with or without a regex's
+ * u flag, and so it does in place of an identity escape (\ + character). A
+ * backslash before U+2028/U+2029 in a string is a line continuation, which adds
+ * nothing. Template literals are left alone: a tag such as String.raw would see
+ * the escape itself.
+ *
+ * Module paths ('../dist/…js', the keys of esbuild's lazy-init wrappers) are
+ * written fully as \xNN, as unicodeEscapeSequence did, so the bundle's file
+ * names stay out of a plain-text search.
+ */
+function escapeLiterals(code) {
+    const acorn = require("acorn");
+    const hex = (ch) => {
+        const n = ch.charCodeAt(0);
+        return n > 0xff ? `\\u${n.toString(16).padStart(4, "0")}` : `\\x${n.toString(16).padStart(2, "0")}`;
+    };
+    let out = "";
+    let last = 0;
+    for (const tok of acorn.tokenizer(code, { ecmaVersion: "latest", sourceType: "module", allowHashBang: true })) {
+        const isString = tok.type === acorn.tokTypes.string;
+        if (tok.type !== acorn.tokTypes.regexp && !isString) continue;
+        const raw = code.slice(tok.start, tok.end);
+        if (isString && /^['"]\.\.\/dist\/[\w./-]+['"]$/.test(raw)) {
+            out += code.slice(last, tok.start) + raw[0] + [...raw.slice(1, -1)].map(hex).join("") + raw[0];
+            last = tok.end;
+            continue;
+        }
+        if (!/[\u0100-\uffff]/.test(raw)) continue;
+        let fixed = "";
+        for (let i = 0; i < raw.length; i++) {
+            const c = raw[i];
+            if (c === "\\") {
+                const n = raw[++i];
+                if (n === " " || n === " ") continue;
+                fixed += n.charCodeAt(0) > 0xff ? hex(n) : c + n;
+            } else {
+                fixed += c.charCodeAt(0) > 0xff ? hex(c) : c;
+            }
+        }
+        out += code.slice(last, tok.start) + fixed;
+        last = tok.end;
+    }
+    return out + code.slice(last);
 }
 
 /**
@@ -166,6 +222,13 @@ function obfuscateFile(filePath) {
             const obfuscated = JavaScriptObfuscator.obfuscate(code, OBFUSCATION_OPTIONS);
             let protectedCode = obfuscated.getObfuscatedCode();
             protectedCode = additionalScramble(protectedCode);
+            protectedCode = escapeLiterals(protectedCode);
+            const wide = (protectedCode.match(/[\u0100-\uffff]/g) || []).length;
+            if (wide) {
+                console.warn(
+                    `[PROTECT] ⚠ ${wide} non-Latin-1 characters left (template literals?): V8 will hold this bundle at two bytes per character`,
+                );
+            }
             const header = `// ${crypto.randomBytes(8).toString('hex')} © ${crypto.randomBytes(4).toString('hex')}\n`;
             const finalCode = header + protectedCode;
             // Write to a tmp .mjs so Node treats it as ESM for the parse check.
@@ -810,5 +873,8 @@ exports.default = async function afterPack(context) {
     console.log("[PROTECT] ═══════════════════════════════════════\n");
 };
 
+exports.escapeLiterals = escapeLiterals;
+exports.OBFUSCATION_OPTIONS = OBFUSCATION_OPTIONS;
 exports.archName = archName;
 exports.stripNativeLibraries = stripNativeLibraries;
+exports.obfuscateFile = obfuscateFile;
