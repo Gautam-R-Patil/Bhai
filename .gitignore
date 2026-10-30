@@ -90,6 +90,8 @@ desktop/hostinger-upload/
 !src/stream-filter.test.ts
 !src/turn-events.test.ts
 !src/agent-turn-events.test.ts
+!src/overlay/turn-relay.test.ts
+!src/overlay/overlay-chat-turns.test.ts
 !src/prompts/identity-guard.test.ts
 !src/serious-mode.test.ts
 !src/proactive/timed-quiet.test.ts

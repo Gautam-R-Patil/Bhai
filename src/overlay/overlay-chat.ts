@@ -24,11 +24,13 @@ import {
     setConversationHistory,
     type MediaAttachment,
     type ChannelContext,
+    type AgentResponse,
 } from "../agent.js";
 import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
 import { formatStepStatus, parseStepLine } from "../step-status.js";
 import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
+import { createTurnRelay } from "./turn-relay.js";
 import { classifyQuery } from "../memory/classifier.js";
 import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
 import { captureScreenshot } from "../tools/platform.js";
@@ -636,6 +638,15 @@ export function initOverlayChat(llm: LLMClient): void {
 
                 if (typeof msg.chat === "string" && msg.chat) chatIds.set(ws, msg.chat.slice(0, 64));
 
+                if (msg.type === "hello") {
+                    // A chat bar (re)joining its chat while that chat's turn runs picks up where it was.
+                    const t = ownerTurn;
+                    if (t && wsIsOwner(ws) && t.chat === chatOf(ws)) {
+                        ws.send(JSON.stringify({ type: "turn_snapshot", turn: t.turn, ...t.relay.snapshot() }));
+                    }
+                    return;
+                }
+
                 if (msg.type === "cancel_task") {
                     // The task drawer's Cancel: the owner's researches and long tasks only.
                     if (!wsIsOwner(ws) || typeof msg.taskId !== "string") return;
@@ -793,7 +804,8 @@ export function initOverlayChat(llm: LLMClient): void {
         const isComplete =
             msg.includes("Deep research complete") || msg.includes("✅") || msg.includes("Research complete");
         for (const client of ownerClients()) {
-            sendToClient(client, { type: "progress", text: humanizeForOverlay(msg) });
+            // Background: never the running turn's live line.
+            sendToClient(client, { type: "progress", text: humanizeForOverlay(msg), background: true });
             if (isComplete) {
                 // Signal overlay to auto-show and display results prominently
                 sendToClient(client, { type: "research_complete", text: msg });
@@ -952,6 +964,82 @@ function ownerClients(): WebSocket[] {
     return [...overlayClients].filter(wsIsOwner);
 }
 
+/** Where a turn's messages go: its own socket, or after a reconnect the owner's socket back in the same chat. */
+function liveSocket(ws: WebSocket, chat: string): WebSocket | undefined {
+    if (ws.readyState === 1) return ws;
+    if (!wsIsOwner(ws)) return undefined;
+    return ownerClients().find((c) => c !== ws && c.readyState === 1 && chatIds.get(c) === chat);
+}
+
+const STREAM_CUT_TEXT = "Lost the connection mid-answer. Ask me again.";
+
+/** One overlay turn's id and live events (`turn_*`). */
+function newTurn(ws: WebSocket, chat: string) {
+    const turn = randomBytes(6).toString("hex");
+    const started = Date.now();
+    const relay = createTurnRelay({
+        turn,
+        owner: wsIsOwner(ws),
+        // Never the "only owner socket" fallback: that can put an overlay turn in the side panel.
+        // A closed socket just drops them; a rejoining chat bar asks for a snapshot.
+        send: (m) => {
+            try {
+                liveSocket(ws, chat)?.send(JSON.stringify(m));
+            } catch { /* closed mid-send */ }
+        },
+    });
+    return {
+        chat,
+        turn,
+        relay,
+        worked: () => ({ secs: Math.round((Date.now() - started) / 1000), steps: relay.snapshot().steps.length }),
+    };
+}
+type OverlayTurn = ReturnType<typeof newTurn>;
+/** The owner's running turn (one at a time), for the snapshot a rejoining chat bar gets. */
+let ownerTurn: OverlayTurn | null = null;
+
+/** Run a turn: Stop can abort it, a rejoining chat bar can catch up, and its live events end with it. */
+async function runTurn(
+    ws: WebSocket,
+    live: OverlayTurn,
+    run: (signal: AbortSignal) => Promise<AgentResponse>,
+): Promise<{ result: AgentResponse; stopped: boolean }> {
+    const ac = new AbortController();
+    turnAborts.set(ws, ac);
+    if (wsIsOwner(ws)) ownerTurn = live;
+    try {
+        return { result: await run(ac.signal), stopped: ac.signal.aborted };
+    } finally {
+        if (turnAborts.get(ws) === ac) turnAborts.delete(ws);
+        if (ownerTurn === live) ownerTurn = null;
+        live.relay.finish();
+    }
+}
+
+/** A stopped turn keeps the answer it had already streamed. */
+const stoppedReply = (r: AgentResponse, live: OverlayTurn) => ({
+    type: "response",
+    text: r.partialText ? `${r.partialText}\n\nStopped.` : "Stopped.",
+    stopped: true,
+    turn: live.turn,
+    worked: live.worked(),
+});
+
+/** The turn failed: if its answer was already on screen, say the answer was cut off. */
+const turnFailedText = (live: OverlayTurn, fallback: string) =>
+    live.relay.snapshot().answer ? STREAM_CUT_TEXT : fallback;
+
+/** Agent progress for an overlay socket (the owner's live thinking goes as its own type). */
+const overlayProgress = (ws: WebSocket) => async (msg: string) => {
+    if (msg.startsWith("[THINKING] ")) {
+        const thinkingText = msg.slice(11).trim();
+        if (thinkingText) sendToClient(ws, { type: "thinking_content", text: thinkingText });
+        return;
+    }
+    sendToClient(ws, overlayProgressMessage(msg));
+};
+
 // ── Handle Overlay Message ────────────────────
 
 // `logText` is what the transcript shows as the user's words (without injected
@@ -964,7 +1052,8 @@ async function handleOverlayMessage(
     tabShot?: MediaAttachment,
     imageKind: "tab" | "pasted" = "tab",
 ): Promise<void> {
-    if (!llmClient) {
+    const llm = llmClient;
+    if (!llm) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
         return;
     }
@@ -1002,7 +1091,8 @@ async function handleOverlayMessage(
 
     // Send varied "thinking" status using alive-ux
     const thinkingText = getThinkingPhrase("default");
-    sendToClient(ws, { type: "thinking", text: `💭 ${thinkingText}` });
+    const live = newTurn(ws, chat);
+    sendToClient(ws, { type: "thinking", text: `💭 ${thinkingText}`, turn: live.turn });
 
     // Track for timeout warnings
     const startTime = Date.now();
@@ -1082,32 +1172,23 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
 
 
     try {
-        // Progress callback — sends live updates to the overlay using alive-ux
-        const onProgress = async (msg: string) => {
-            // Live thinking display — send as special type so overlay can render it differently
-            if (msg.startsWith("[THINKING] ")) {
-                const thinkingText = msg.slice(11).trim();
-                if (thinkingText) {
-                    sendToClient(ws, { type: "thinking_content", text: thinkingText });
-                }
-                return;
-            }
-            sendToClient(ws, overlayProgressMessage(msg));
-        };
-
         // Use the SAME shared conversation history (no fork)
         // Fast-path: pass "simple" hint for greetings so model router picks a lighter model
         const overlayHint = !media && classifyQuery(userMessage) === "llm_only" ? "simple" as const : undefined;
-        const ac = new AbortController();
-        turnAborts.set(ws, ac);
-        const result = await runAgent(llmClient, taggedMessage, onProgress, media, ac.signal, undefined, overlayHint, undefined, { channel: "overlay", userId: "local", isOwner: wsIsOwner(ws), isPrivate: wsIsOwner(ws) }).finally(() => {
-            if (turnAborts.get(ws) === ac) turnAborts.delete(ws);
-        });
+        const { result, stopped } = await runTurn(ws, live, (signal) =>
+            runAgent(llm, taggedMessage, overlayProgress(ws), media, signal, undefined, overlayHint, undefined, {
+                channel: "overlay",
+                userId: "local",
+                isOwner: wsIsOwner(ws),
+                isPrivate: wsIsOwner(ws),
+                onTurnEvent: live.relay.sink,
+            }),
+        );
 
         // Clear timeout warning timer
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
-        if (ac.signal.aborted) {
-            sendToClient(ws, { type: "response", text: "Stopped.", stopped: true });
+        if (stopped) {
+            sendToClient(ws, stoppedReply(result, live));
             return;
         }
 
@@ -1130,7 +1211,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         if (!interactive.text && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
             // LLM returned only internal tags (e.g. [NO_REPLY]) — don't leave user hanging
             console.warn(`⚠️ [Overlay] Response stripped to empty — sending fallback`);
-            sendToClient(ws, { type: "response", text: "hmm", toolCalls: 0, quickActions: [], files: [], links: [], widgets: [] });
+            sendToClient(ws, { type: "response", text: "hmm", toolCalls: 0, quickActions: [], files: [], links: [], widgets: [], turn: live.turn, worked: live.worked() });
             return;
         }
 
@@ -1158,12 +1239,14 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             widgets: interactive.widgets,
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
+            turn: live.turn,
+            worked: live.worked(),
         });
     } catch (err) {
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
         console.error("[OVERLAY] Agent error:", err);
         const errorType = categorizeError(err as Error);
-        sendToClient(ws, { type: "error", text: getErrorMessage(errorType) });
+        sendToClient(ws, { type: "error", text: turnFailedText(live, getErrorMessage(errorType)) });
     }
 }
 
@@ -1201,7 +1284,8 @@ async function handleFileAttachment(
     mimeType: string,
     userText: string,
 ): Promise<void> {
-    if (!llmClient) {
+    const llm = llmClient;
+    if (!llm) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
         return;
     }
@@ -1216,7 +1300,8 @@ async function handleFileAttachment(
     console.log(`\n📎 [Overlay] File attached: ${fileName} (${mimeType})`);
     const chat = chatOf(ws);
     logChatMessage(chat, "user", userText ? `${userText}\n📎 ${fileName}` : `📎 ${fileName}`);
-    sendToClient(ws, { type: "thinking" });
+    const live = newTurn(ws, chat);
+    sendToClient(ws, { type: "thinking", turn: live.turn });
 
     const isImage = mimeType.startsWith("image/");
     let media: MediaAttachment[] | undefined;
@@ -1237,17 +1322,18 @@ async function handleFileAttachment(
         : `[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. The user dropped a file: "${fileName}". ${isImage ? "Analyze the image and describe what you see." : `Here is its content:${fileContext}`}]`;
 
     try {
-        const onProgress = async (msg: string) => {
-            sendToClient(ws, overlayProgressMessage(msg));
-        };
-
-        const ac = new AbortController();
-        turnAborts.set(ws, ac);
-        const result = await runAgent(llmClient, prompt, onProgress, media, ac.signal, undefined, undefined, undefined, { channel: "overlay", userId: "local", isOwner: wsIsOwner(ws), isPrivate: wsIsOwner(ws) }).finally(() => {
-            if (turnAborts.get(ws) === ac) turnAborts.delete(ws);
-        });
-        if (ac.signal.aborted) {
-            sendToClient(ws, { type: "response", text: "Stopped.", stopped: true });
+        // Reasoning goes as `thinking_content` (owner turns only), never as a progress line.
+        const { result, stopped } = await runTurn(ws, live, (signal) =>
+            runAgent(llm, prompt, overlayProgress(ws), media, signal, undefined, undefined, undefined, {
+                channel: "overlay",
+                userId: "local",
+                isOwner: wsIsOwner(ws),
+                isPrivate: wsIsOwner(ws),
+                onTurnEvent: live.relay.sink,
+            }),
+        );
+        if (stopped) {
+            sendToClient(ws, stoppedReply(result, live));
             return;
         }
         const cleanText = withStuckReplyLine(result, wsIsOwner(ws))
@@ -1275,10 +1361,12 @@ async function handleFileAttachment(
             widgets: interactive.widgets,
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
+            turn: live.turn,
+            worked: live.worked(),
         });
     } catch (err) {
         console.error("[OVERLAY] File attachment error:", err);
-        sendToClient(ws, { type: "error", text: "Could not process the file." });
+        sendToClient(ws, { type: "error", text: turnFailedText(live, "Could not process the file.") });
     }
 }
 
@@ -1398,17 +1486,12 @@ function sendToClient(ws: WebSocket, data: unknown): void {
     const status = msg?.type ? COMPANION_TYPES[msg.type] : undefined;
     if (status) emitCompanionStatus(status, status === "progress" ? msg.text : undefined);
     const json = JSON.stringify(data);
-    if (ws.readyState === 1) {
-        ws.send(json);
+    // The turn's socket died (overlay hidden, reconnected): the same chat bar, back on a
+    // new socket, announces its chat id on open; deliver there.
+    const live = liveSocket(ws, chatOf(ws));
+    if (live) {
+        live.send(json);
     } else if (wsIsOwner(ws)) {
-        // The turn's socket died (overlay hidden, reconnected): the same chat bar, back on a
-        // new socket, announces its chat id on open; deliver there.
-        const chat = chatIds.get(ws);
-        const same = ownerClients().find((c) => c !== ws && c.readyState === 1 && chatIds.get(c) === chat);
-        if (same) {
-            same.send(json);
-            return;
-        }
         if (ownerClients().length !== 1) return;
         // Fallback: original ws died (overlay hidden/refocused) and there is exactly
         // one owner client connected — the reconnected native overlay. Never a
