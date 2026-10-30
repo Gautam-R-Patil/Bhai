@@ -1,7 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
 import { getCreditCost } from "./credit_cost";
-import { azureDeployment, isAzureModel, isGrokModel, toGrokRequest } from "./grok";
+import { azureDeployment, azureTimeoutMs, isAzureModel, isGrokModel, toGrokRequest } from "./grok";
 
 describe("grok passthrough (unhinged mode)", () => {
     it("only the xai/grok id goes to Grok; billing and fallback are Sonnet's", () => {
@@ -49,5 +49,45 @@ describe("grok passthrough (unhinged mode)", () => {
         expect(r.max_tokens).toBeUndefined();
         expect(r.temperature).toBeUndefined();
         expect((toGrokRequest({}, [], "gpt-4.1") as any).reasoning_effort).toBeUndefined();
+    });
+
+    it("asks for the client's reasoning effort, in each family's own terms", () => {
+        const tools = [{ type: "function", function: { name: "x" } }];
+        const effort = (model: string, body: any) => (toGrokRequest(body, [], model) as any).reasoning_effort;
+        // GPT-6 takes function tools on chat completions only with reasoning off.
+        expect(effort("gpt-6.1-terra", { reasoning: { effort: "medium" }, tools })).toBe("none");
+        expect(effort("gpt-6.1-terra", { reasoning: { effort: "medium" } })).toBe("medium");
+        expect(effort("gpt-5-mini", { reasoning: { effort: "none" }, tools })).toBe("minimal");
+        expect(effort("gpt-5-mini", { reasoning: { effort: "max" } })).toBe("high");
+        expect(effort("grok-4.7", { reasoning: { effort: "high" } })).toBe("low");
+    });
+
+    it("leaves room for the Claude fallback inside the client's attempt", () => {
+        expect(azureTimeoutMs({ attemptTimeoutMs: 25_000 })).toBeLessThan(12_500);
+        expect(azureTimeoutMs({ reasoning: { effort: "medium" } })).toBeLessThan(30_000); // no deadline sent: sized by effort
+        expect(azureTimeoutMs({ attemptTimeoutMs: 8_000 })).toBe(5_000); // never below 5s
+    });
+
+    it("moves screenshots out of tool results (Azure takes images only from the user)", () => {
+        const img = { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } };
+        const msgs = [
+            { role: "assistant", content: "", tool_calls: [{ id: "1" }, { id: "2" }] },
+            { role: "tool", tool_call_id: "1", content: [{ type: "text", text: "clicked" }, img] },
+            { role: "tool", tool_call_id: "2", content: "ok" },
+            { role: "assistant", content: "done" },
+        ];
+        const out = (toGrokRequest({}, msgs, "gpt-4.1-nano") as any).messages;
+        expect(out.map((m: any) => m.role)).toEqual(["assistant", "tool", "tool", "user", "assistant"]);
+        expect(out[1].content).toEqual([{ type: "text", text: "clicked" }]);
+        expect(out[3].content[1]).toEqual(img);
+    });
+
+    it("keeps the output cap inside a small deployment's limit", () => {
+        expect((toGrokRequest({ max_tokens: 32_768 }, [], "gpt-4o-mini") as any).max_completion_tokens).toBe(16_384);
+    });
+
+    it("the router's cheap Azure arms bill like Haiku, GPT-6 like Sonnet", () => {
+        for (const m of ["azure/gpt-4.1-nano", "azure/gpt-4o-mini", "azure/gpt-5-mini"]) expect(getCreditCost(m)).toBe(0.25);
+        expect(getCreditCost("azure/gpt-6.1-terra")).toBe(1);
     });
 });

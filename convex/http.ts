@@ -7,7 +7,7 @@ import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import Anthropic from "@anthropic-ai/sdk";
 import { toClaudeRequest, toOpenAIResponse } from "./claude";
-import { callAzure, isAzureModel } from "./grok";
+import { callAzure, clientAttemptMs, isAzureModel } from "./grok";
 import { decodeBase64, STT_CREDIT_COST, STT_MAX_AUDIO_BYTES, sttConfigFromEnv, transcribeWithProvider } from "./stt";
 import {
   generateServerKeyPair,
@@ -680,9 +680,17 @@ http.route({
     // 7. Call Claude (or an Azure model: Grok, GPT-6; falling back to Claude Sonnet)
     try {
       const anthropic = new Anthropic({ apiKey: anthropicKey });
-      let responseData = isAzureModel(model) ? await callAzure(body, messages) : null;
+      const azureTried = isAzureModel(model);
+      const azureStart = Date.now();
+      let responseData = azureTried ? await callAzure(body, messages) : null;
       if (!responseData) try {
-        const message = await anthropic.beta.messages.stream(claudeParams).finalMessage();
+        // After an Azure try, Claude gets only what's left of the client's attempt: an answer
+        // the client has stopped waiting for would be paid for and thrown away (an abort here
+        // is refunded below, like any network failure).
+        const left = clientAttemptMs(body) - (Date.now() - azureStart) - 2_000;
+        const message = await anthropic.beta.messages
+          .stream(claudeParams, azureTried ? { signal: AbortSignal.timeout(Math.max(1_000, left)) } : undefined)
+          .finalMessage();
         responseData = toOpenAIResponse(message);
       } catch (err) {
         // 8. If Claude returned an error, refund the pre-deduction and pass
