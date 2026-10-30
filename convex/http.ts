@@ -176,7 +176,7 @@ const FRAME_HEADERS = {
 // Credit cost table + lookup live in ./credit-cost.ts so the tier
 // mapping is unit-testable without a Convex harness.
 import { getCreditCost } from "./credit_cost.js";
-import { parseUpdateFeedPath } from "./updateFeed.js";
+import { updateFeedResponse } from "./updateFeed.js";
 import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
 import { isBotUsername, managedBotLink } from "./telegramManaged.js";
 import { newDeviceSecret, sha256Hex } from "./devices.js";
@@ -2455,132 +2455,13 @@ http.route({
 //   UPDATE_URL_WIN_MIRROR[_<C>]
 // ══════════════════════════════════════════════════════════════════════════
 
-const EMPTY_YAML = 'version: 0.0.0\npath: ""\nsha512: ""\nreleaseDate: ""\n';
-
-function yamlHeaders(): Record<string, string> {
-  return {
-    "Content-Type": "text/yaml; charset=utf-8",
-    // Cache for 2 minutes at the edge so a thundering-herd recheck doesn't
-    // hammer the backend. Clients can still bypass via ?t=<timestamp>.
-    "Cache-Control": "public, max-age=120",
-  };
-}
-
-function pickChannel(request: Request): string {
-  try {
-    const url = new URL(request.url);
-    const ch = (url.searchParams.get("channel") || "stable").toLowerCase();
-    // Only allow a small whitelist — env var names must be predictable.
-    if (ch === "stable" || ch === "beta" || ch === "alpha" || ch === "canary") return ch;
-  } catch { /* fall through */ }
-  return "stable";
-}
-
-function envForChannel(name: string, channel: string): string | undefined {
-  if (channel && channel !== "stable") {
-    const v = process.env[`${name}_${channel.toUpperCase()}`];
-    if (v) return v;
-  }
-  return process.env[name];
-}
-
-// Channels in descending stability order. When the client asks for a
-// channel that hasn't been provisioned yet, we fall back to the most-stable
-// channel that IS provisioned. So while only alpha exists, every client —
-// stable, beta, alpha — gets the alpha yml. As soon as beta env vars are
-// set, stable+beta clients flip to beta and alpha clients keep their own.
-const CHANNEL_STABILITY: readonly string[] = ["stable", "beta", "alpha"];
-
-function resolveChannelWithFallback(
-  platform: "mac" | "win",
-  requested: string,
-): string {
-  const P = platform.toUpperCase();
-  const probe = (ch: string) =>
-    !!envForChannel("UPDATE_VERSION", ch) && !!envForChannel(`UPDATE_URL_${P}`, ch);
-  if (probe(requested)) return requested;
-  // The requested channel has no artifacts — find a substitute. Walk
-  // toward less-stable channels first (so when only alpha is provisioned,
-  // a "stable" client gets alpha instead of nothing); then walk back
-  // toward more-stable channels as a last resort.
-  const startIdx = CHANNEL_STABILITY.indexOf(requested);
-  if (startIdx >= 0) {
-    for (let i = startIdx + 1; i < CHANNEL_STABILITY.length; i++) {
-      if (probe(CHANNEL_STABILITY[i])) return CHANNEL_STABILITY[i];
-    }
-    for (let i = startIdx - 1; i >= 0; i--) {
-      if (probe(CHANNEL_STABILITY[i])) return CHANNEL_STABILITY[i];
-    }
-  } else {
-    for (const ch of CHANNEL_STABILITY) if (probe(ch)) return ch;
-  }
-  return requested; // nothing provisioned — caller will return EMPTY_YAML
-}
-
-function buildYaml(opts: {
-  platform: "mac" | "win";
-  channel: string;
-  defaultFilename: string;
-}): string | null {
-  const { platform, defaultFilename } = opts;
-  const P = platform.toUpperCase(); // MAC | WIN
-  const channel = resolveChannelWithFallback(platform, opts.channel);
-
-  const version = envForChannel("UPDATE_VERSION", channel);
-  const url = envForChannel(`UPDATE_URL_${P}`, channel);
-  if (!version || !url) return null;
-
-  const sha512 = envForChannel(`UPDATE_SHA512_${P}`, channel) || "";
-  const size = Number(envForChannel(`UPDATE_SIZE_${P}`, channel) || 0) || 0;
-  const mirror = envForChannel(`UPDATE_URL_${P}_MIRROR`, channel);
-  const releaseDate =
-    envForChannel("UPDATE_RELEASE_DATE", channel) || new Date().toISOString();
-
-  const filename = url.split("/").pop() || defaultFilename;
-
-  // electron-updater reads the first entry in `files:`; additional entries
-  // are tried as fallbacks. Top-level path/sha512 kept for v5 compat.
-  const lines = [
-    `version: ${version}`,
-    `files:`,
-    `  - url: ${url}`,
-    `    sha512: ${sha512}`,
-    `    size: ${size}`,
-  ];
-  if (mirror) {
-    lines.push(
-      `  - url: ${mirror}`,
-      `    sha512: ${sha512}`,
-      `    size: ${size}`,
-    );
-  }
-  lines.push(
-    `path: ${filename}`,
-    `sha512: ${sha512}`,
-    `releaseDate: ${releaseDate}`,
-  );
-  return lines.join("\n") + "\n";
-}
-
-// The desktop sets autoUpdater.channel, so electron-updater asks for <channel>-mac.yml /
-// <channel>.yml; older or channel-less clients ask for latest-mac.yml / latest.yml.
+// One route for every feed file: unprovisioned feeds answer 404, which the desktop treats as
+// "nothing published" (a 200 placeholder read as version 0.0.0 and, with the channel's
+// allowDowngrade, as an update). Logic in ./updateFeed.ts.
 http.route({
   pathPrefix: "/api/updates/",
   method: "GET",
-  handler: httpAction(async (_ctx, request) => {
-    const feed = parseUpdateFeedPath(new URL(request.url).pathname);
-    if (!feed) return new Response("Not found", { status: 404 });
-    const body =
-      buildYaml({
-        platform: feed.platform,
-        channel: feed.channel ?? pickChannel(request),
-        defaultFilename:
-          feed.platform === "mac"
-            ? `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-arm64.dmg`
-            : `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-Setup.exe`,
-      }) || EMPTY_YAML;
-    return new Response(body, { status: 200, headers: yamlHeaders() });
-  }),
+  handler: httpAction(async (_ctx, request) => updateFeedResponse(request)),
 });
 
 // ══════════════════════════════════════════════════════════════════════════
