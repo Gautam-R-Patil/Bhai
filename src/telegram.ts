@@ -1634,7 +1634,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 await ctx.answerCallbackQuery({ text: (await researchStatusLine(id)).slice(0, 190), show_alert: true });
             } else {
                 const stopped = await cancelResearchById(id);
-                await ctx.answerCallbackQuery({ text: stopped ? "Stopping the research…" : "It already finished." });
+                // Not running may mean failed or interrupted, not finished: say which.
+                await ctx.answerCallbackQuery({
+                    text: stopped ? "Stopping the research…" : `Not running. ${(await researchStatusLine(id)).slice(0, 170)}`,
+                });
             }
             return;
         }
@@ -2261,6 +2264,10 @@ export async function sendProactiveMessage(
         return false;
     }
 
+    // Proactive messages are the owner's (briefings, reminders, alerts carry their calendar,
+    // tasks and mail, research reports): owners only, never every allowed user.
+    const recipients = parseTelegramOwners(config);
+
     // File attachment path — send document/photo/video based on extension
     const refusedFile = filePath ? (await import("./security/sensitive-paths.js")).outboundFileRefusal(filePath) : null;
     if (refusedFile) console.warn(`[TG] ${refusedFile}`);
@@ -2275,27 +2282,33 @@ export async function sendProactiveMessage(
                 const ext = path.extname(filePath).toLowerCase();
                 const isImage = [".jpg", ".jpeg", ".png", ".webp"].includes(ext);
                 const isVideo = [".mp4", ".mov", ".webm"].includes(ext);
-                const caption = message.length <= 1024 ? message : undefined;
-                for (const userId of config.allowedUserIds) {
-                    try {
+                // A short message rides as the caption, rendered like the text path; a longer one
+                // follows as its own message below.
+                const md = chunkMarkdownForTelegram(sanitizeReply(message));
+                const cap = message.length <= 1024 && md.length === 1 ? md[0] : undefined;
+                let fileSent = false;
+                for (const userId of recipients) {
+                    const send = (opts: { caption?: string; parse_mode?: "HTML" }): Promise<unknown> => {
                         const inputFile = new InputFile(buf, fileName);
-                        if (isImage) {
-                            await bot.api.sendPhoto(userId, inputFile, { caption });
-                        } else if (isVideo) {
-                            await bot.api.sendVideo(userId, inputFile, { caption });
-                        } else {
-                            await bot.api.sendDocument(userId, inputFile, { caption });
+                        if (isImage) return bot.api.sendPhoto(userId, inputFile, opts);
+                        if (isVideo) return bot.api.sendVideo(userId, inputFile, opts);
+                        return bot.api.sendDocument(userId, inputFile, opts);
+                    };
+                    try {
+                        try {
+                            await withTelegramRetry(() => send(cap ? { caption: cap.html, parse_mode: "HTML" } : {}));
+                        } catch (err) {
+                            if (!cap) throw err;
+                            await withTelegramRetry(() => send({ caption: markdownToPlainText(cap.md) }));
                         }
+                        fileSent = true;
                     } catch (err) {
                         console.error(`❌ Failed to send proactive file to ${userId}:`, (err as Error).message);
                     }
                 }
-                // If caption was too long for Telegram (>1024), send the message separately
-                if (caption === undefined && message) {
-                    // fall through to also send the message as a regular text below
-                } else {
-                    return true;
-                }
+                // Done only when the file went out and carried the message; otherwise the text path
+                // below still delivers the message (and reports failure if nothing got through).
+                if (fileSent && (cap || !message.trim())) return true;
             }
         } catch (fileErr) {
             console.error("❌ Proactive file send failed, falling back to text:", (fileErr as Error).message);
@@ -2346,10 +2359,6 @@ export async function sendProactiveMessage(
         keyboard?.text(b.text, b.data);
         if (i % 4 === 3) keyboard?.row();
     }
-    // Proactive messages are the owner's (briefings, reminders, alerts carry their calendar,
-    // tasks and mail): owners only, never every allowed user.
-    const recipients = parseTelegramOwners(config);
-
     let delivered = false;
     for (const userId of recipients) {
         for (const [ci, chunk] of chunks.entries()) {
