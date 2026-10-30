@@ -129,6 +129,7 @@ export type AgentRole = "researcher" | "coder" | "browser" | "system" | "general
 const ROLE_TOOLS: Record<AgentRole, string[]> = {
     researcher: [
         "web_search",
+        "web_read",
         "deep_research",
         "memory_store",
         "memory_search",

@@ -261,7 +261,7 @@ import {
     videoSearchBroll,
 } from "./video-studio.js";
 import { weatherTool } from "./weather.js";
-import { webSearch } from "./web-search.js";
+import { webRead, webSearch } from "./web-search.js";
 import { listWebhooks, registerWebhook } from "./webhook.js";
 import {
     powerShellScript,
@@ -533,6 +533,7 @@ registry.set(scaffoldProject.schema.function.name, scaffoldProject);
 
 // Web & browser tools
 registry.set(webSearch.schema.function.name, webSearch);
+registry.set(webRead.schema.function.name, webRead);
 registry.set(browserNavigate.schema.function.name, browserNavigate);
 registry.set(browserScan.schema.function.name, browserScan);
 registry.set(browserClickAt.schema.function.name, browserClickAt);
@@ -735,6 +736,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     run_code: 30_000,
     // Research/network tools
     web_search: 20_000,
+    web_read: 60_000, // up to 3 tries of a 15s fetch, plus PDF parsing
     deep_research: 300_000, // 5 minutes for deep research
     // File operations (coding primitives)
     read: 10_000,

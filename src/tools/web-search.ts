@@ -8,6 +8,7 @@ import { getSessionToken } from "../session.js";
 import { getLocation } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { baseUrlHostMatches } from "../utils/atomic-io.js";
+import { fetchPageContent } from "../research/fetcher.js";
 
 // One log line per engine and failure kind — a silent `return []` hid that
 // Tavily/Exa had no API key, so every search quietly ran on Bing scraping.
@@ -626,5 +627,41 @@ export const webSearch: ToolDefinition = {
         } catch (err) {
             return JSON.stringify({ error: `Search failed: ${(err as Error).message}` });
         }
+    },
+};
+
+// Reading one page a search found: without it the model curls raw HTML in the shell and greps it.
+export const webRead: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "web_read",
+            description:
+                "Read one public web page or PDF as plain text — the fast way to check a source web_search found, no browser launched. Logged-in, interactive or script-rendered pages need browser_navigate instead.",
+            parameters: {
+                type: "object",
+                properties: {
+                    url: { type: "string", description: "http(s) URL to read" },
+                    max_chars: { type: "number", description: "Characters to return (default 12000, max 50000)" },
+                },
+                required: ["url"],
+            },
+        },
+    },
+
+    async handler(input) {
+        const url = String(input.url ?? "").trim();
+        if (!/^https?:\/\//i.test(url)) return JSON.stringify({ error: "web_read takes an http(s) URL" });
+        const max = Math.min(Math.max(Number(input.max_chars) || 12_000, 500), 50_000);
+        // fetchPageContent refuses private/loopback/metadata hosts and caps the download.
+        const text = await fetchPageContent(url);
+        if (!text) {
+            return JSON.stringify({
+                success: false,
+                url,
+                error: "Couldn't read that page (not found, blocked, private address, or it needs a real browser). Try browser_navigate.",
+            });
+        }
+        return JSON.stringify({ success: true, url, text: text.slice(0, max), ...(text.length > max ? { truncated: true, total_chars: text.length } : {}) });
     },
 };

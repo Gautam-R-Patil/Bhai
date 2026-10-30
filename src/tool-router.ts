@@ -259,7 +259,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     web_search: {
         description:
             "Searching the internet, looking up information online, Google search, finding answers, researching topics, fact-checking, finding news, looking up definitions or documentation, checking weather and forecasts.",
-        tools: ["web_search", "weather"],
+        tools: ["web_search", "web_read", "weather"],
     },
     os_control: {
         description:
