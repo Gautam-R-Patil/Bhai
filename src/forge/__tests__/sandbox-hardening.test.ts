@@ -497,7 +497,13 @@ describe("F7: test-self-bait detection", () => {
                 side_effects: "none",
                 synthesis_notes: "self-baiting",
             });
-        const r = await runVerifier({ slug: "f7throws", initialPrompt: "x", llmFn, maxAttempts: 1, failedReportDir: tmpDir });
+        const r = await runVerifier({
+            slug: "f7throws",
+            initialPrompt: "x",
+            llmFn,
+            maxAttempts: 1,
+            failedReportDir: tmpDir,
+        });
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.failureReason).toBe("sast_unrecoverable");
     });

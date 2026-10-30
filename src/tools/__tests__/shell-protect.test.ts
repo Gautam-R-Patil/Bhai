@@ -62,7 +62,9 @@ describe("shell_exec codebase write protection", () => {
 
 describe("shell_exec failure output", () => {
     it.skipIf(process.platform === "win32")("keeps stdout and stderr of a failing command", async () => {
-        const res = JSON.parse(String(await shellExec.handler({ command: "echo OUT; echo ERR >&2; exit 1", cwd: other })));
+        const res = JSON.parse(
+            String(await shellExec.handler({ command: "echo OUT; echo ERR >&2; exit 1", cwd: other })),
+        );
         expect(res).toMatchObject({ success: false, code: 1, stdout: "OUT\n", stderr: "ERR\n" });
         expect(res.error).toBe("Command failed: echo OUT; echo ERR >&2; exit 1");
     });
