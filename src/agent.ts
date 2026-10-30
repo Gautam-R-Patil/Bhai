@@ -153,6 +153,7 @@ import {
 } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
+import { runQuickCommand } from "./quick-commands.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
 import { sendFailed, withSendLedger } from "./tools/send-ledger.js";
 import { ownerMemoryTool } from "./tools/tool-intelligence.js";
@@ -1800,6 +1801,20 @@ async function _runAgentBody(
         console.log(
             `  ✂️ Hard-capped conversation history: dropped ${trimmed} oldest messages (limit: ${MAX_CONVERSATION_HISTORY})`,
         );
+    }
+
+    // ── Quick commands: everyday computer commands run without a model call ──
+    // (src/quick-commands.ts). The owner's own text turns only; anything not fully
+    // understood, or a step that fails, carries on to the model below.
+    if (!isForked && channelContext?.isOwner === true && !channelContext.autonomous && !media?.length) {
+        const quick = await runQuickCommand(userIntentText, executeTool).catch(() => null);
+        if (quick?.reply) {
+            console.log(`  ⚡ Quick command: ${quick.reply}`);
+            workingHistory.push({ role: "assistant", content: quick.reply });
+            if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
+            return { text: quick.reply, toolCalls: 1 };
+        }
+        if (quick?.partial) workingHistory.push({ role: "system", content: quick.partial });
     }
 
     const messages: ChatCompletionMessageParam[] = workingHistory;

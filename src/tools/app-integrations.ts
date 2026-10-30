@@ -100,6 +100,8 @@ tell application "System Events" to tell process "Music"
             repeat with sa in (scroll areas of splitter group 1 of window 1)
                 repeat with t in (tables of sa whose description is "track list")
                     repeat with r in (rows of t whose selected is true)
+                        -- The keystroke goes to the frontmost app: make sure that's Music.
+                        set frontmost to true
                         set focused of t to true
                         key code 36
                         return "ok"
