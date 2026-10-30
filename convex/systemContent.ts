@@ -365,6 +365,25 @@ export const upsertPrompt = internalMutation({
   },
 });
 
+// ── Delete a system prompt ───────────────────────
+
+export const deletePrompt = internalMutation({
+  args: { slug: v.string() },
+  handler: async (ctx, { slug }) => {
+    const existing = await ctx.db
+      .query("system_prompts")
+      .withIndex("by_slug", (q) => q.eq("slug", slug))
+      .unique();
+
+    if (!existing) {
+      throw new Error(`Prompt not found: ${slug}`);
+    }
+
+    await ctx.db.delete(existing._id);
+    return { deleted: slug };
+  },
+});
+
 // ── Upsert a system skill ────────────────────────
 export const upsertSkill = internalMutation({
   args: {
