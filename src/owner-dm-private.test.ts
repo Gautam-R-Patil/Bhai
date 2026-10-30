@@ -76,7 +76,9 @@ describe("owner DMs count as private", () => {
         // Bhai only Bcc'd (not on To/Cc at all): not private.
         expect(emailChannelContext(me, ["pal@y.com"], "bhai@box.com").isPrivate).toBe(false);
         expect(emailChannelContext(me, [], "bhai@box.com").isPrivate).toBe(false);
-        expect(emailChannelContext({ email: "pal@y.com", name: "Pal" }, ["bhai@box.com"], "bhai@box.com")).toMatchObject({
+        expect(
+            emailChannelContext({ email: "pal@y.com", name: "Pal" }, ["bhai@box.com"], "bhai@box.com"),
+        ).toMatchObject({
             isOwner: false,
             isPrivate: false,
         });
@@ -85,7 +87,10 @@ describe("owner DMs count as private", () => {
     it("Bhai's own email: only owner mail the server marked as sent to Bhai alone", () => {
         const mail = { from: "me@x.com", fromName: "Me", fromOwner: true, direct: true };
         expect(bhaiMailContext("me@x.com", mail)).toMatchObject({ isOwner: true, isPrivate: true });
-        expect(bhaiMailContext("me@x.com", { ...mail, direct: false })).toMatchObject({ isOwner: true, isPrivate: false });
+        expect(bhaiMailContext("me@x.com", { ...mail, direct: false })).toMatchObject({
+            isOwner: true,
+            isPrivate: false,
+        });
         // An older server that doesn't say: not private.
         expect(bhaiMailContext("me@x.com", { ...mail, direct: undefined }).isPrivate).toBe(false);
         expect(bhaiMailContext("me@x.com", { ...mail, from: "pal@y.com", fromOwner: false })).toMatchObject({
