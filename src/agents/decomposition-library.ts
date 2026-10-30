@@ -8,7 +8,8 @@
 // and improve plan quality by learning from past successes.
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { dirname } from "path";
+import { dirname, join } from "path";
+import { getDataDir } from "../config/paths.js";
 import type { MeshStep } from "./mesh.js";
 import { getDimensionValue } from "../harness/registry.js";
 
@@ -39,7 +40,7 @@ export interface TemplateMatch {
 
 // ── Constants ────────────────────────────────
 
-const LIBRARY_PATH = "data/decomposition-templates.json";
+const LIBRARY_PATH = join(getDataDir(), "decomposition-templates.json");
 const MAX_TEMPLATES = 100;
 const MATCH_THRESHOLD = 0.4;
 const DECAY_DAYS = 30;

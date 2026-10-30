@@ -340,6 +340,19 @@ export function stripTurnNudges(msgs: ChatCompletionMessageParam[], owned: Reado
 }
 
 /**
+ * Send the model back for another pass: its draft reply plus a steering note, both kept
+ * only for this turn. Left in the history they read, next turn, as a reply nobody got
+ * and as words the owner never said.
+ */
+export function pushRetry(msgs: ChatCompletionMessageParam[], draft: string, note: string): void {
+    const a: ChatCompletionMessageParam = { role: "assistant", content: draft };
+    const u: ChatCompletionMessageParam = { role: "user", content: `[Automatic check, not from the owner] ${note}` };
+    turnNudges.getStore()?.add(a);
+    turnNudges.getStore()?.add(u);
+    msgs.push(a, u);
+}
+
+/**
  * The turn's contract: the done-criterion Bhai stated in its ack ("on it — …;
  * done = it shows in Sent"). The marker is "done =" at the start of the line or
  * after a clause break (". ", ", ", "; ", ": ", —, – or " - "), so "All done!",
@@ -3761,11 +3774,11 @@ PLAN:`,
                 console.log(
                     `  🔄 Anti-giving-up: agent stopped after tool failure (${recentFailures} errors) — forcing retry with visual fallback`,
                 );
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({
-                    role: "user",
-                    content: `Your previous approach didn't work, but the task is NOT done. Don't ask me — try a different approach yourself. ${continuationHint} If your dedicated tool failed, that's fine — you have dozens of other tools. Complete the task, then verify the result.`,
-                });
+                pushRetry(
+                    messages,
+                    responseText,
+                    `Your previous approach didn't work, but the task is NOT done. Don't ask the owner — try a different approach yourself. ${continuationHint} If your dedicated tool failed, that's fine — you have dozens of other tools. Complete the task, then verify the result.`,
+                );
                 lastToolCalls = undefined;
                 continue;
             }
@@ -3779,12 +3792,11 @@ PLAN:`,
             ) {
                 lookNudged = true;
                 console.log("  🔄 Asked leave to look before finishing — continuing instead");
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({
-                    role: "user",
-                    content:
-                        "You can see my screen yourself: don't ask me to look or ask leave to look. Open what shows it (e.g. the right System Settings pane), read it with os_inspect or a screenshot, finish the task, and give me the actual answer.",
-                });
+                pushRetry(
+                    messages,
+                    responseText,
+                    "You can see the owner's screen yourself: don't ask them to look or ask leave to look. Open what shows it (e.g. the right System Settings pane), read it with os_inspect or a screenshot, finish the task, and give them the actual answer.",
+                );
                 lastToolCalls = undefined;
                 continue;
             }
@@ -3794,12 +3806,11 @@ PLAN:`,
             if (!ackNudged && ackWithoutAction(responseText, totalToolCalls)) {
                 ackNudged = true;
                 console.log("  🔄 Announced the task but called no tool — continuing");
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({
-                    role: "user",
-                    content:
-                        "You said what you'll do but made no tool call, so nothing has happened yet. Do it now with your tools, then tell me the result.",
-                });
+                pushRetry(
+                    messages,
+                    responseText,
+                    "You said what you'll do but made no tool call, so nothing has happened yet. Do it now with your tools, then tell the owner the result.",
+                );
                 lastToolCalls = undefined;
                 continue;
             }
@@ -3817,8 +3828,7 @@ PLAN:`,
                     `  🔍 Verify gate: ${verifyGate.lastMutator} mutated UI but no verification ran — forcing one more iteration`,
                 );
                 verifyGate.nudgedThisRun = true;
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({ role: "user", content: buildVerifyReminder(verifyGate) });
+                pushRetry(messages, responseText, buildVerifyReminder(verifyGate));
                 if (turnContract) pushNudge(messages, contractCheckNudge(turnContract));
                 lastToolCalls = undefined; // bump model selection to PRO for the verify-and-respond turn
                 continue;
@@ -3854,12 +3864,11 @@ PLAN:`,
                 console.log(
                     `  🔄 Persistence nudge: model paused after ${totalToolCalls} tool calls — checking if more work needed`,
                 );
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({
-                    role: "user",
-                    content:
-                        "It looks like there may be more steps to complete this task. If you are genuinely done, go ahead and give your final answer. Otherwise, continue working.",
-                });
+                pushRetry(
+                    messages,
+                    responseText,
+                    "There may be more steps to this task. If it is done, give your final answer to the owner's last message and don't mention this check; otherwise keep working.",
+                );
                 // Force PRO model for the assessment (without polluting errorCount)
                 // The next iteration will use PRO regardless of tool history
                 lastToolCalls = undefined; // Clears FLASH routing, causes chooseModel to pick PRO
@@ -3972,12 +3981,11 @@ PLAN:`,
                                 console.log(`  ✂️ Pruned ${dropped} mid-conversation messages to recover from overflow`);
                             }
                         }
-                        messages.push({ role: "assistant", content: "" });
-                        messages.push({
-                            role: "user",
-                            content:
-                                "You produced an empty response. Please provide a concise meaningful reply to the user based on what you've already done.",
-                        });
+                        pushRetry(
+                            messages,
+                            "",
+                            "You produced an empty response. Please provide a concise meaningful reply to the user based on what you've already done.",
+                        );
                         lastToolCalls = undefined;
                         continue;
                     }
@@ -4006,11 +4014,11 @@ PLAN:`,
                 console.log(
                     `  🔄 Empty response after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES}`,
                 );
-                messages.push({ role: "assistant", content: "" });
-                messages.push({
-                    role: "user",
-                    content: "You produced an empty response. Please provide a meaningful reply to the user.",
-                });
+                pushRetry(
+                    messages,
+                    "",
+                    "You produced an empty response. Please provide a meaningful reply to the user.",
+                );
                 lastToolCalls = undefined;
                 continue;
             }
