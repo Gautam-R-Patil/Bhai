@@ -2,9 +2,11 @@
 // Dynamic tool handlers must not reach the host process. Every one of these
 // used to work: a host function or object in the sandbox leads to the host
 // Function constructor, then process, then child_process.
+import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { _buildHandlerForTest as buildHandler } from "./create-tool.js";
 
 const ESCAPES = [
@@ -54,5 +56,32 @@ describe("dynamic tool sandbox", () => {
         expect(await buildHandler('return utils.fs.readFileSync(utils.homedir + "/.ssh/id_rsa")')({})).toMatch(/not allowed/);
         expect(await buildHandler("return utils.exec('ls')")({})).toMatch(/denied/);
         expect(await buildHandler('return require("child_process")')({})).toMatch(/not available/);
+    });
+});
+
+// A persisted handler.js (forge/sandbox-supervisor.ts) gets the same utils as the
+// sandbox: promise-returning utf8 reads, os.platform a string, and a console
+// that never writes to stdout (the forge child's IPC channel).
+describe("persisted handler contract", () => {
+    it("matches the session sandbox", async () => {
+        const { wrapPersistedHandler } = await import("../forge/sandbox-supervisor.js");
+        const dir = fs.mkdtempSync(path.join(tmpdir(), "persisted-"));
+        const file = path.join(dir, "a.txt");
+        fs.writeFileSync(file, "x\ny");
+        const code = `console.log("noise");
+            return { lines: (await utils.fs.readFile(input.file)).split("\\n").length,
+                sync: require("fs").readFileSync(input.file).length, platform: utils.require("os").platform };`;
+        fs.writeFileSync(path.join(dir, "handler.js"), wrapPersistedHandler(code));
+        const handler = createRequire(import.meta.url)(path.join(dir, "handler.js"));
+        const write = vi.spyOn(process.stdout, "write");
+        try {
+            const want = { lines: 2, sync: 3, platform: process.platform };
+            expect(await handler({ file })).toEqual(want);
+            expect(write).not.toHaveBeenCalled();
+            expect(JSON.parse(await buildHandler(code)({ file }))).toEqual(want);
+        } finally {
+            write.mockRestore();
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

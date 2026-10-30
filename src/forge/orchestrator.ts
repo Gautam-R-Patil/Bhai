@@ -13,7 +13,7 @@ import {
     getPlanModeState,
 } from "../agents/plan-mode.js";
 import { ownerApproved } from "../security/consent.js";
-import { getRegistryRef, registerDynamicTool } from "../tools/create-tool.js";
+import { getRegistryRef, isBuiltinToolName, registerDynamicTool, unregisterDynamicTool } from "../tools/create-tool.js";
 import { parseCapabilities, type Capabilities } from "./capabilities.js";
 import {
     closeLibrary,
@@ -225,6 +225,19 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
     // F5: refuse path-traversal-shaped or otherwise malformed slugs at entry.
     if (!SLUG_RE.test(req.name)) {
         return rejectInvalidSlug(req.name, req);
+    }
+    if (isBuiltinToolName(req.name)) {
+        return {
+            kind: "failed",
+            report: {
+                requestedName: req.name,
+                description: req.description,
+                attempts: 0,
+                finalDiagnosis: `"${req.name}" is a built-in tool; choose a different name`,
+                failureReason: "exhausted_attempts",
+                reportPath: "",
+            },
+        };
     }
 
     if (process.env.ATLAS_NO_FORGE_LOOKUP !== "true" && _embedFn) {
@@ -529,10 +542,7 @@ export async function revokeDynamicTool(slug: string): Promise<void> {
     } catch (err) {
         console.error("revokeDynamicTool: uninstall failed:", (err as Error).message);
     }
-    const registry = getRegistryRef();
-    if (registry) {
-        registry.delete(slug);
-    }
+    unregisterDynamicTool(slug);
     try {
         setLifecycleState(slug, "archived");
     } catch {

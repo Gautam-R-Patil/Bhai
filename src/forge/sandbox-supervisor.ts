@@ -16,6 +16,7 @@ import path from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 
+import { SANDBOX_API } from "../tools/create-tool.js";
 import { asJSON, type Capabilities } from "./capabilities.js";
 import { manifestDir, readManifest, writeManifest } from "./manifest.js";
 import type { PersistedToolManifest } from "./types.js";
@@ -187,15 +188,32 @@ export async function invokePersistedTool(
     return parseNativeResponse(raw);
 }
 
+// handler.js: the handler body under the same (input, utils, console)
+// contract as session tools (create-tool's SANDBOX_API), with callSync done
+// in-process like create-tool's sandboxBridge; the kernel caps fence the reads.
+// console is a no-op: stdout is the shim's IPC channel and stderr is not drained.
 export function wrapPersistedHandler(handlerCode: string): string {
-    return `const __deny = (w) => async () => { throw new Error(w + " is denied in dynamic tools"); };
-const __utils = Object.freeze({ fs: require("fs"), path: require("path"), homedir: require("os").homedir(), JSON, console, setTimeout,
-    require: (m) => { if (/^(node:)?(fs|path|os)$/.test(m)) return require(m); throw new Error('require("' + m + '") is not available. Allowed: path, fs, os.'); },
-    exec: __deny("utils.exec"), execFile: __deny("utils.execFile"), fetch: __deny("utils.fetch") });
-module.exports = async function(input) {
-const utils = __utils;
+    return `const __fs = require("fs"), __path = require("path");
+const callSync = (name, a) => {
+    const [op, fn] = name.split(".");
+    if (op === "path") return __path[fn](...a.map(String));
+    const t = __path.resolve(String(a[0] ?? ""));
+    if (/^readFile/.test(fn)) return __fs.readFileSync(t, "utf8");
+    if (/^readdir/.test(fn)) return a[1] && a[1].withFileTypes === true
+        ? __fs.readdirSync(t, { withFileTypes: true }).map((d) => ({ name: d.name, isFile: d.isFile(), isDirectory: d.isDirectory() }))
+        : __fs.readdirSync(t);
+    if (fn === "existsSync") return __fs.existsSync(t);
+    const st = __fs.statSync(t);
+    return { size: st.size, isFile: st.isFile(), isDirectory: st.isDirectory(), mtimeMs: st.mtimeMs };
+};
+const __noop = () => {};
+const __console = Object.freeze({ log: __noop, info: __noop, debug: __noop, warn: __noop, error: __noop });
+const __utils = Object.freeze({ ...${SANDBOX_API}, console: __console, setTimeout });
+const __handler = async function (input, utils, console) {
+const require = utils.require;
 ${handlerCode}
 };
+module.exports = (input) => __handler(input, __utils, __console);
 `;
 }
 

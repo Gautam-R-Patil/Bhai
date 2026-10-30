@@ -35,11 +35,22 @@ export function getRegistryRef(): Map<string, ToolDefinition> | null {
 // ── Tracked dynamic tool names for listing ───────────────
 const dynamicToolNames = new Set<string>();
 
+/** True when `name` belongs to a built-in tool, which no dynamic tool may replace. */
+export function isBuiltinToolName(name: string): boolean {
+    return !!registryRef?.has(name) && !dynamicToolNames.has(name);
+}
+
 /** Register a runtime-made tool so list_dynamic_tools and the tool router see it. */
-export function registerDynamicTool(name: string, def: ToolDefinition): void {
-    if (!registryRef) return;
+export function registerDynamicTool(name: string, def: ToolDefinition): boolean {
+    if (!registryRef || isBuiltinToolName(name)) return false;
     registryRef.set(name, def);
     dynamicToolNames.add(name);
+    return true;
+}
+
+/** Remove a dynamic tool; built-ins are left alone. */
+export function unregisterDynamicTool(name: string): void {
+    if (dynamicToolNames.delete(name)) registryRef?.delete(name);
 }
 
 /** Schemas of the dynamic tools still registered (revoke removes them). */
@@ -183,7 +194,7 @@ function sandboxBridge(name: string, rawArgs: unknown): unknown {
 
 // In-context expression for runIsolated's `api`: the handler's `utils`.
 // Stats and Dirents come back in Node's shape (s.isFile() is a method).
-const SANDBOX_API = `(() => {
+export const SANDBOX_API = `(() => {
     const fns = (op, names, isAsync, post) => Object.freeze(Object.fromEntries(names.map((n) => [n, isAsync(n)
         ? async (...a) => post(n, callSync(op + "." + n, a))
         : (...a) => post(n, callSync(op + "." + n, a))])));
@@ -372,7 +383,7 @@ export const createTool: ToolDefinition = {
         }
 
         // Check for conflicts with built-in tools
-        if (registryRef.has(name) && !dynamicToolNames.has(name)) {
+        if (isBuiltinToolName(name)) {
             return JSON.stringify({ error: `Cannot override built-in tool "${name}". Choose a different name.` });
         }
 
@@ -521,7 +532,7 @@ export async function loadDynamicTools(): Promise<void> {
             const { name, description, parameters_schema, handler_code } = data;
 
             if (!name || !handler_code) continue;
-            if (registryRef.has(name) && !dynamicToolNames.has(name)) continue; // Don't override built-in
+            if (isBuiltinToolName(name)) continue; // Don't override built-in
 
             // F8: HMAC verification. Refuse unsigned / tampered files.
             if (
