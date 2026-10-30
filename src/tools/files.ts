@@ -109,6 +109,9 @@ export const listDirectory: ToolDefinition = {
 // overwrites: an existing destination is refused, so nothing is lost.
 
 /** Why a path may not be moved/copied/created, or undefined. */
+/** Extensions that name a file, not a folder. */
+const FILE_EXT = /^\.(txt|md|pdf|docx?|xlsx?|pptx?|csv|json|png|jpe?g|heic|gif|zip|html?|rtf|log|js|ts|py)$/i;
+
 /** Formats whose bytes differ: a new extension alone doesn't make one into another. */
 const CONVERTIBLE = new Set(["png", "jpg", "jpeg", "heic", "tiff", "tif", "gif", "bmp", "webp", "pdf"]);
 
@@ -164,15 +167,30 @@ export const fileManage: ToolDefinition = {
         if (!["move", "copy", "rename", "new_folder"].includes(action))
             return JSON.stringify({ success: false, error: "action must be move, copy, rename or new_folder." });
         const raw = input.paths ?? (input as { path?: unknown }).path;
-        const paths = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => path.resolve(String(p).trim()));
-        if (!paths.length) return JSON.stringify({ success: false, error: "Provide 'paths'." });
+        const given = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => String(p).trim());
+        if (!given.length) return JSON.stringify({ success: false, error: "Provide 'paths'." });
+        // Relative to what? Bhai's own working directory is never meant.
+        const loose = given.find((p) => !path.isAbsolute(p));
+        if (loose) return JSON.stringify({ success: false, error: `Give the full path for "${loose}" (e.g. ~/Desktop/${loose}).` });
+        const paths = given.map((p) => path.resolve(p));
         auditLog("file_manage", { action, paths, destination: input.destination });
+        // A relative destination is relative to the first item's folder: nano's new_folder
+        // { paths: [~/Desktop/BhaiEval], destination: "PDFs" } made a PDFs folder in Bhai's checkout.
+        const near = (base: string, p: string) => (path.isAbsolute(p) ? path.resolve(p) : path.resolve(base, p));
 
         if (action === "new_folder") {
             // Models put the new folder in destination and its parent in paths.
-            const made = input.destination ? [path.resolve(String(input.destination))] : paths;
+            const parent = fs.statSync(paths[0], { throwIfNoEntry: false })?.isDirectory() ? paths[0] : path.dirname(paths[0]);
+            const made = input.destination ? [near(parent, String(input.destination).trim())] : paths;
             const refused = made.map((p) => manageRefusal(p, false)).find(Boolean);
             if (refused) return JSON.stringify({ success: false, error: refused });
+            // gpt-4.1-nano made a folder named count.txt, then couldn't write the file.
+            const fileName = made.find((p) => FILE_EXT.test(path.extname(p)));
+            if (fileName)
+                return JSON.stringify({
+                    success: false,
+                    error: `${path.basename(fileName)} is a file name, not a folder: to create the file use write.`,
+                });
             const file = made.find((p) => fs.statSync(p, { throwIfNoEntry: false })?.isFile());
             if (file) return JSON.stringify({ success: false, error: `A file already has that name: ${file}` });
             for (const p of made) fs.mkdirSync(p, { recursive: true });
@@ -186,7 +204,7 @@ export const fileManage: ToolDefinition = {
         // Where each item ends up: rename keeps the folder; an existing folder receives the items.
         // "a.pdf" moved to ".../PDFs" (not there yet, no extension) means into a new folder
         // PDFs: taken as a new name, gpt-4.1-nano's move turned the PDF into a file named PDFs.
-        const d = path.resolve(dest);
+        const d = near(path.dirname(paths[0]), dest);
         const newFolder =
             action !== "rename" &&
             !fs.existsSync(d) &&

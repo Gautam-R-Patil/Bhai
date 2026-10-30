@@ -561,6 +561,15 @@ export const osType: ToolDefinition = {
                 await execFileAsync("open", ["-a", bgApp], { timeout: 5000 }).catch(() => {});
                 if (await waitForFrontmost(bgApp, 5000)) raisedFor = `${bgApp} (background typing: ${r.error})`;
             }
+        } else if (bgApp && (input.key || input.combo)) {
+            // A key for a named app goes to that app: gpt-4.1-nano sent key "return" with app
+            // "Calculator" while TextEdit was in front, and TextEdit got it.
+            const front = await getFrontmostApp();
+            if (!front || !frontmostMatches(bgApp, front)) {
+                await execFileAsync("open", ["-a", bgApp], { timeout: 5000 }).catch(() => {});
+                if (await waitForFrontmost(bgApp, 5000)) raisedFor = bgApp;
+                else return JSON.stringify({ success: false, error: `${bgApp} didn't come to the front, so nothing was pressed.` });
+            }
         }
         // Another app took the front since Bhai's last step: put Bhai's app back first
         // (not when this call just brought its own app forward).
@@ -590,18 +599,36 @@ export const osType: ToolDefinition = {
             });
         }
 
-        // Calculator keeps its last entry, even across a relaunch: "42*3" typed after "75 + 2"
-        // made 75 + 242 × 3 = 801. A whole new expression starts from a cleared display.
+        // Calculator, only for text that looks like arithmetic (no extra lookup otherwise).
         if (
             typeof input.text === "string" &&
-            /\d\s*[-+*/×÷x]\s*\d/.test(input.text) &&
-            /^[\d\s.,+\-*/×÷x()%=]+$/.test(input.text) &&
+            /\d/.test(input.text) &&
+            /^[\w\s.,+\-*/×÷()%=]+$/.test(input.text) &&
             /^calculator$/i.test((await getFrontmostApp())?.name ?? "")
         ) {
-            await execFileAsync("osascript", [
-                "-e",
-                'tell application "System Events" to repeat 2 times\nkey code 53\ndelay 0.05\nend repeat',
-            ]).catch(() => {});
+            // It reads letters as keys: gpt-4.1-nano typed "123 times 45" and n became natural log.
+            const expr = input.text
+                .toLowerCase()
+                .replace(/\bmultiplied by\b|\btimes\b|\bx\b|×/g, "*")
+                .replace(/\bdivided by\b|÷/g, "/")
+                .replace(/\bplus\b/g, "+")
+                .replace(/\bminus\b/g, "-")
+                .replace(/\bequals\b/g, "=");
+            if (/[a-z]/.test(expr)) {
+                return JSON.stringify({
+                    success: false,
+                    error: `Not typed: Calculator reads letters as function keys. Type the expression with digits and + - * / ( ) %, e.g. "123*45", then key "return".`,
+                });
+            }
+            input = { ...input, text: expr };
+            // It keeps its last entry, even across a relaunch: "42*3" typed after "75 + 2" made
+            // 75 + 242 × 3 = 801. A whole new expression starts from a cleared display.
+            if (/\d\s*[-+*/]\s*\d/.test(expr)) {
+                await execFileAsync("osascript", [
+                    "-e",
+                    'tell application "System Events" to repeat 2 times\nkey code 53\ndelay 0.05\nend repeat',
+                ]).catch(() => {});
+            }
         }
 
         // text plus key/combo in one call ("45*12" then return): type, then press.
@@ -681,6 +708,7 @@ export const osType: ToolDefinition = {
                 success: true,
                 ...(typedFirst ? { typed_chars: typedFirst } : {}),
                 pressed: input.key || input.combo,
+                ...(raisedFor ? { brought_forward: raisedFor } : {}),
                 ...(shows.length ? { window_shows: shows } : {}),
                 ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                 stdout: (stdout || "").substring(0, 500),

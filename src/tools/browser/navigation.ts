@@ -200,6 +200,41 @@ export const browserNavigate: ToolDefinition = {
                     "⚠️ Few interactive elements detected — the page may still be loading or the scan ran early. Re-run browser_scan (optionally visual:true) before deciding it's element-less.";
             }
 
+            // The start of what the page says, so "when was it completed / what's the capital"
+            // needs no selector: gpt-4.1-nano read Wikipedia with invalid or heading-only
+            // selectors and never found the fact. Rendered text only (no hidden text).
+            if (!isDesignTool) {
+                const text = await page
+                    .evaluate(
+                        /* javascript-obfuscator:disable */ () => {
+                            // No named helpers in here: the bundler's __name() doesn't exist in the page.
+                            const out: string[] = [];
+                            let n = 0;
+                            for (const p of Array.from(document.querySelectorAll("main p, article p, #content p, p"))) {
+                                const t = (p as HTMLElement).innerText?.replace(/\s+/g, " ").trim() ?? "";
+                                if (t.length < 60 || out.includes(t)) continue;
+                                out.push(t);
+                                n += t.length;
+                                if (n > 1000) break;
+                            }
+                            // The page's first fact table (an infobox: Capital, Population, Born…).
+                            const facts: string[] = [];
+                            for (const tr of Array.from(document.querySelectorAll("table tr")).slice(0, 60)) {
+                                const th = tr.querySelector("th");
+                                const td = tr.querySelector("td");
+                                if (!th || !td) continue;
+                                const row = `${(th as HTMLElement).innerText} ${(td as HTMLElement).innerText}`.replace(/\s+/g, " ").trim();
+                                if (row.length < 120) facts.push(row);
+                                if (facts.join("; ").length > 500) break;
+                            }
+                            return `${out.join(" ").slice(0, 1200)}${facts.length ? `\nFacts: ${facts.join("; ")}` : ""}`;
+                        },
+                        /* javascript-obfuscator:enable */
+                    )
+                    .catch(() => "");
+                if (text.trim()) result.page_text = text;
+            }
+
             result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
             addTreeWithinBudget(result, accessibilityTree, 4000);
             return JSON.stringify(result);

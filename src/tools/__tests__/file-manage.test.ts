@@ -72,6 +72,9 @@ describe("file_manage", () => {
         expect((await run({ action: "write", file_path: join(dir, "t.txt") })).error).toMatch(/use write/);
         expect((await run({ action: "zip", paths: [dir] })).error).toMatch(/compress_files/);
         expect((await run({ action: "merge", paths: [dir] })).error).toMatch(/pdf_edit/);
+        // 40-task run: a folder named count.txt.
+        expect((await run({ action: "new_folder", paths: [join(dir, "count.txt")] })).error).toMatch(/use write/);
+        expect(existsSync(join(dir, "count.txt"))).toBe(false);
     });
 
     // From the media eval: "convert photo.png to a JPG" done as a rename.
@@ -100,6 +103,19 @@ describe("file_manage", () => {
         // Zipping a zip is a mistaken unzip.
         const z = JSON.parse(await compressFiles.handler({ action: "zip", paths: [join(dir, "zipme.zip")] }));
         expect(z.error).toMatch(/already a zip/);
+    });
+
+    // From the long-task eval: new_folder { paths: [BhaiEval], destination: "PDFs" } made
+    // PDFs in Bhai's own checkout.
+    it("reads a relative destination against the item's folder, and wants full source paths", async () => {
+        const base = join(dir, "rel");
+        mkdirSync(base);
+        writeFileSync(join(base, "a.pdf"), "a");
+        expect((await run({ action: "new_folder", paths: [base], destination: "PDFs" })).created).toEqual([join(base, "PDFs")]);
+        expect((await run({ action: "move", paths: [join(base, "a.pdf")], destination: "PDFs" })).done[0].to).toBe(
+            join(base, "PDFs", "a.pdf"),
+        );
+        expect((await run({ action: "new_folder", paths: ["Images"] })).error).toMatch(/full path/);
     });
 
     // From the harder eval: asked to count the .txt files, gpt-4.1-nano counted every file.

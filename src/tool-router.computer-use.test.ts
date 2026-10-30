@@ -108,6 +108,8 @@ const CASES: [string, string][] = [
     ["make photo.png 100 pixels wide and resize the image", "image_edit"],
     ["combine these two pdfs into one", "pdf_edit"],
     ["how many pages does the report pdf have", "pdf_edit"],
+    // Long-task eval: nano went digging in System Settings for this.
+    ["find out which version of macos i'm running and write it into version.txt", "system_info"],
 ];
 
 describe("computer-use routing without the classifier", () => {

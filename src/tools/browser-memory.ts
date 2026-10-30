@@ -358,7 +358,10 @@ const STRATEGY_STOP = new Set(
     "about after also been from have here into just know like make more need only please some than that them then there they this what when where which while with would your".split(" "),
 );
 const strategyWords = (text: string): string[] =>
-    (text.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}.-]*/gu) ?? []).filter((w) => w.length > 3 && !STRATEGY_STOP.has(w));
+    (text.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}.-]*/gu) ?? [])
+        // A site counts by its name too: the owner says "smartprix", the pattern has www.smartprix.com.
+        .flatMap((w) => (w.includes(".") ? [w, w.replace(/^www\./, "").split(".")[0]] : [w]))
+        .filter((w) => w.length > 3 && !STRATEGY_STOP.has(w));
 
 export function findStrategy(task: string, domain?: string): BrowsingStrategy | null {
     const keywords = strategyWords(task);

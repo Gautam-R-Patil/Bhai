@@ -705,6 +705,11 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
         tool: "pdf_edit",
         category: "file_system",
     },
+    {
+        pattern: /\b(mac ?os|os|operating system)\b.{0,25}\bversion\b|\bversion of (mac ?os|my mac|the os)\b/i,
+        tool: "system_info",
+        category: "system_controls",
+    },
     // "copy its name to my clipboard" is the clipboard's.
     {
         pattern:

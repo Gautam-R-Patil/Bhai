@@ -126,4 +126,27 @@ describe("os_type with text and key together", () => {
         JSON.parse(await osType.handler({ text: "hi", app: "TextEdit", delay_ms: 1 }));
         expect(events).toEqual(["type:hi"]);
     });
+
+    // 40-task nano run: "123 times 45" typed into Calculator, n became natural log.
+    it("turns operator words into operators for Calculator and refuses other letters", async () => {
+        bg.front = "Calculator";
+        events.length = 0;
+        await osType.handler({ text: "123 times 45", delay_ms: 1 });
+        expect(events).toEqual(["type:123 * 45"]);
+        const r = JSON.parse(await osType.handler({ text: "log of 45", delay_ms: 1 }));
+        expect(r.success).toBe(false);
+        expect(events).toEqual(["type:123 * 45"]);
+        bg.front = "Terminal";
+    });
+
+    // 40-task nano run: key "return" with app "Calculator" landed in TextEdit.
+    it("a key for a named app brings that app forward first", async () => {
+        bg.front = "TextEdit";
+        events.length = 0;
+        const r = JSON.parse(await osType.handler({ key: "return", app: "Calculator", delay_ms: 1 }));
+        expect(bg.front).toBe("Calculator");
+        expect(r.brought_forward).toBe("Calculator");
+        expect(events).toEqual(["osascript:key"]);
+        bg.front = "Terminal";
+    });
 });
