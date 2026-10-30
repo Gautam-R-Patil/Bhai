@@ -478,3 +478,4 @@ brag-output/
 !src/tools/web-search-grace.test.ts
 !src/proactive/sources/_shared/daily-done.test.ts
 !src/tools/web-search-claude-backup.test.ts
+!src/research/finding-filter.test.ts

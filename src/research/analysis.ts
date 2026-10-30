@@ -120,6 +120,16 @@ Output JSON only: { "queries": ["query 1", ...] }`;
 
 // ── Analyze Page Content ─────────────────────
 
+/**
+ * "The page provides no dates…", "The fetched page doesn't mention…": a remark about a
+ * page that missed the topic, not a finding. Such lines became research memories.
+ */
+export function isAboutThePage(finding: string): boolean {
+    return /^(the|this) (fetched |web |source )?(page|article|site|website|document|text)('s (text|content))? (contains no|provides no|has no|gives no|offers no|does not|doesn't|lacks|is not about|isn't about)\b/i.test(
+        finding.trim(),
+    );
+}
+
 export async function analyzeAndExtract(
     llm: LLMClient,
     topic: string,
@@ -140,7 +150,7 @@ ${sanitizeUntrusted(pageContent, 10000)}
 </page_content>
 
 Tasks:
-1. Extract the 5-10 most important findings related to the topic. Be specific — include numbers, dates, names, technical details.
+1. Extract up to 10 findings about the topic itself. Be specific — include numbers, dates, names, technical details. If the page doesn't address the topic, return "findings": []. Never describe the page itself (what it is, or what it lacks).
 2. Suggest 3-5 follow-up search queries to deepen the investigation.
 3. Categorize the findings into 1-3 theme categories.
 
@@ -163,7 +173,7 @@ Output JSON only:
         const strings = (v: unknown): string[] =>
             Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
         return {
-            findings: strings(parsed?.findings),
+            findings: strings(parsed?.findings).filter((f) => !isAboutThePage(f)),
             followUpQueries: strings(parsed?.follow_up_queries),
             categories: strings(parsed?.categories),
         };
