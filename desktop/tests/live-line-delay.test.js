@@ -94,6 +94,31 @@ describe("chat bar (overlay.html)", () => {
         expect(replyText.textContent).toBe("Hi there");
     });
 
+    it("a retry in a quick turn takes the empty reply box down until its words come", () => {
+        const { t, replyBox, think } = bar();
+        think("t1");
+        t.onTurnEvent({ type: "turn_answer", turn: "t1", seq: 1, attempt: 0, text: "Hi" });
+        frame();
+        expect(replyBox.classList.contains("visible")).toBe(true);
+        t.onTurnEvent({ type: "turn_answer_reset", turn: "t1", seq: 2, attempt: 0 });
+        frame();
+        expect(replyBox.classList.contains("visible")).toBe(false);
+        t.onTurnEvent({ type: "turn_answer", turn: "t1", seq: 3, attempt: 1, text: "Hello" });
+        frame();
+        expect(replyBox.classList.contains("visible")).toBe(true);
+    });
+
+    it("a retry keeps a reply box that was already up when the turn began", () => {
+        const { t, replyBox, think } = bar();
+        replyBox.classList.add("visible");
+        think("t1");
+        t.onTurnEvent({ type: "turn_answer", turn: "t1", seq: 1, attempt: 0, text: "Hi" });
+        frame();
+        t.onTurnEvent({ type: "turn_answer_reset", turn: "t1", seq: 2, attempt: 0 });
+        frame();
+        expect(replyBox.classList.contains("visible")).toBe(true);
+    });
+
     it("a long turn shows its line at 15 s with its steps, then Worked for", () => {
         const { t, icon, think, view } = bar();
         think("t1");

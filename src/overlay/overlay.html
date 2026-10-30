@@ -3097,7 +3097,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       const plainStatus = (t) => String(t || '').replace(/^[\p{Extended_Pictographic}\u200d\ufe0f\s]+/u, '');
       // A turn quicker than this shows no live line, mood or ripple and leaves no "Worked for" line.
       const SHOW_LIVE_AFTER_MS = 15000;
-      // { state (turnView), el, start, statusAt, fallback, shown, frame, tick, stopping, quiet, done }
+      // { state (turnView), el, start, statusAt, fallback, shown, frame, tick, stopping, quiet, done, boxUp }
       let live = null;
 
       function liveStart(turn, text) {
@@ -3123,6 +3123,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           state: { turn, seq: 0, status: null, steps: [], notes: [], answer: '', attempt: 0, open },
           el: { root, answer, now: q('.turn-now'), count: q('.turn-count'), empty: q('.turn-empty'), notes: q('.turn-notes'), steps: q('.turn-steps') },
           start: Date.now(), statusAt: 0, fallback: plainStatus(text) || 'Thinking…', shown: '', stepsShown: null, frame: 0, tick: 0, stopping: false, quiet: true, done: false,
+          boxUp: replyBox.classList.contains('visible'), // the box was already up when the turn began
         };
         setPanelOpen(root, open);
         live.tick = setInterval(liveCount, 1000);
@@ -3221,6 +3222,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           live.shown = s.answer;
           el.answer.innerHTML = s.answer ? `${renderStreamingMd(s.answer)}<span class="turn-caret" aria-hidden="true"></span>` : '';
           if (s.answer) showLiveBox();
+          // A retry withdrew a quiet turn's words: the box goes back to how the turn found it
+          // instead of standing empty until the new words (or the 15 s line) bring it back.
+          else if (live.quiet && !live.boxUp) replyBox.classList.remove('visible');
         }
       }
 
