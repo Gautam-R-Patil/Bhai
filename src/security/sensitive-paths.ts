@@ -49,12 +49,13 @@ function exactDeniedPaths(): string[] {
         path.join(HOME, ".zsh_history"),
         path.join(HOME, ".docker", "config.json"),
         path.join(HOME, ".kube", "config"),
-        path.join(getDataDir(), "google-credentials.json"),
-        path.join(getDataDir(), "chrome-bridge-token.txt"),
-        path.join(getDataDir(), "audit.jsonl"),
-        path.join(getDataDir(), "memories.db"),
     ];
 }
+
+// Inside the data dir, only these are the model's to read: saved tool outputs (masked),
+// research reports, video projects and coders' worktrees (ATLAS_AGENT_WORKTREE). Everything
+// else there is Bhai's state.
+const READABLE_DATA_SUBDIRS = ["tool-outputs", "research", "video-projects", "agent-worktrees"];
 
 // Prefix deny list — anything under these dirs is denied.
 function deniedDirPrefixes(): string[] {
@@ -63,7 +64,34 @@ function deniedDirPrefixes(): string[] {
         path.join(HOME, ".aws"),
         path.join(HOME, ".gnupg"),
         path.join(HOME, ".atlas"),
-        path.join(getDataDir(), "google-tokens"),
+        // Bhai's own state: memory.db (+ -wal), chat history, the WhatsApp session, its
+        // browser's cookies, the account session. The deny list named "memories.db", an
+        // empty decoy, and the rest of the folder was readable.
+        getDataDir(),
+        ...(process.env.ATLAS_USER_DATA_DIR ? [process.env.ATLAS_USER_DATA_DIR] : []),
+        // Credentials other apps keep in plain or decryptable form.
+        path.join(HOME, ".config", "gh"),
+        path.join(HOME, ".config", "gcloud"),
+        path.join(HOME, ".azure"),
+        path.join(HOME, ".password-store"),
+        path.join(HOME, "Library", "Keychains"),
+        path.join(HOME, "Library", "Cookies"),
+        path.join(HOME, "Library", "Messages"),
+        path.join(HOME, "Library", "Mail"),
+        path.join(HOME, "Library", "Safari"),
+        // Browser profiles (cookies, saved logins): macOS, Linux, Windows.
+        ...["Google/Chrome", "BraveSoftware", "Microsoft Edge", "Arc", "Firefox", "Chromium"].map((b) =>
+            path.join(HOME, "Library", "Application Support", ...b.split("/")),
+        ),
+        path.join(HOME, ".config", "google-chrome"),
+        path.join(HOME, ".config", "chromium"),
+        path.join(HOME, ".config", "BraveSoftware"),
+        path.join(HOME, ".mozilla"),
+        ...(process.env.LOCALAPPDATA
+            ? ["Google/Chrome/User Data", "Microsoft/Edge/User Data", "BraveSoftware"].map((b) =>
+                  path.join(process.env.LOCALAPPDATA as string, ...b.split("/")),
+              )
+            : []),
         // Linux process/kernel pseudo-filesystems. /proc/self/environ dumps THIS
         // process's env (every token in .env — Telegram/Discord/Slack/GitHub/HF…),
         // /proc/self/mem exposes its memory (decrypted vault values, session keys),
@@ -137,8 +165,11 @@ export function isSensitivePath(inputPath: string): SensitivePathCheck {
         }
     }
 
+    const dataDir = normalize(getDataDir());
+    const readableData = READABLE_DATA_SUBDIRS.some((d) => startsWith(resolved + path.sep, path.join(dataDir, d) + path.sep));
     for (const prefix of deniedDirPrefixes()) {
         const np = normalize(prefix);
+        if (readableData && (np === dataDir || startsWith(dataDir, np + path.sep))) continue;
         if (eq(resolved, np) || startsWith(resolved, np + path.sep)) {
             return { denied: true, reason: `Path "${inputPath}" is inside a sensitive directory (${prefix}).` };
         }

@@ -1,7 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // A proactive Discord message with a file (e.g. a research answer plus its report) must arrive
 // whole, not cut to the first 2000-char chunk, and in the DM of the owner it was meant for.
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -39,7 +39,8 @@ process.env.DISCORD_BOT_TOKEN = "t";
 process.env.OWNER_DISCORD_IDS = "A,B";
 const { initDiscord, sendDiscordProactiveMessage } = await import("./discord.js");
 await initDiscord({} as never);
-const report = join(dir, "report.md");
+mkdirSync(join(dir, "research")); // Bhai's own files elsewhere in the data dir never leave
+const report = join(dir, "research", "report.md");
 writeFileSync(report, "# Report\n");
 
 it("sends every chunk of a long message with a file, to the owner asked for", async () => {

@@ -1,7 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Proactive messages carry the owner's calendar, tasks and mail: they go to the owners,
 // not to every allowed Telegram user.
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -11,7 +11,8 @@ process.env.ATLAS_DATA_DIR = dir;
 process.env.OWNER_TELEGRAM_IDS = "111";
 const { sendProactiveMessage } = await import("./telegram.js");
 const config = { allowedUserIds: new Set([111, 222]) };
-const report = join(dir, "report.md");
+mkdirSync(join(dir, "research")); // Bhai's own files elsewhere in the data dir never leave
+const report = join(dir, "research", "report.md");
 writeFileSync(report, "# Report\n");
 
 it("sends a plain proactive message to the owners only", async () => {

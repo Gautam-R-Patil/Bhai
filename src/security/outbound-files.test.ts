@@ -15,7 +15,8 @@ fs.mkdirSync(path.join(home, "Documents"), { recursive: true });
 fs.writeFileSync(path.join(home, "Documents", "report.pdf"), "pdf");
 fs.writeFileSync(path.join(home, "Documents", "vault.enc"), "secret");
 fs.writeFileSync(path.join(dataDir, "google-credentials.json"), '{"client_secret":"zzz-findme"}');
-fs.writeFileSync(path.join(dataDir, "notes.txt"), "zzz-findme in an ordinary note");
+fs.mkdirSync(path.join(dataDir, "tool-outputs"), { recursive: true });
+fs.writeFileSync(path.join(dataDir, "tool-outputs", "notes.txt"), "zzz-findme in a saved tool output");
 
 const { outboundFileRefusal } = await import("./sensitive-paths.js");
 const { sendFileTool, setTelegramContext } = await import("../tools/send-file.js");
@@ -38,9 +39,11 @@ describe("files that never leave", () => {
         expect(out.error).toMatch(/Refused/);
     });
 
-    it("grep over Bhai's data dir skips its credential files", async () => {
+    it("grep refuses Bhai's data dir; its saved tool outputs stay searchable", async () => {
         const out = await grep.handler({ pattern: "zzz-findme", path: dataDir, output_mode: "files_with_matches" });
-        expect(out).toContain("notes.txt");
+        expect(out).toMatch(/Refusing/);
         expect(out).not.toContain("google-credentials.json");
+        const saved = await grep.handler({ pattern: "zzz-findme", path: path.join(dataDir, "tool-outputs"), output_mode: "files_with_matches" });
+        expect(saved).toContain("notes.txt");
     });
 });
