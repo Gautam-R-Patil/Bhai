@@ -52,7 +52,9 @@ export async function executeDeepResearch(
         allFindings.sort((a, b) => b.text.length - a.text.length);
         allFindings.length = MAX_FINDINGS;
     }
+    // Shared with research so checkpoints and the status tool see live counts (a resume skipping Phase 1 never reassigns it).
     const engineBreakdown: Record<string, number> = { ...resume?.research.engineBreakdown };
+    research.engineBreakdown = engineBreakdown;
 
     // Reset engine health at the start of each research session
     resetEngineHealth();

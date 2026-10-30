@@ -12,6 +12,7 @@ const ctl = vi.hoisted(() => ({
     inFlight: 0,
     maxInFlight: 0,
     seedCalls: 0,
+    checkpoints: [] as ResearchState[],
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -88,7 +89,9 @@ vi.mock("./scoring.js", async (importOriginal) => ({
 }));
 
 vi.mock("./persistence.js", () => ({
-    saveResearchState: async () => {},
+    saveResearchState: async (s: ResearchState) => {
+        ctl.checkpoints.push(structuredClone(s));
+    },
     deleteResearchState: async () => {},
     storeResearchInMemory: async () => {},
 }));
@@ -112,7 +115,7 @@ const profile: ResearchProfile = {
 };
 
 beforeEach(() => {
-    Object.assign(ctl, { search: null, fetched: [], inFlight: 0, maxInFlight: 0, seedCalls: 0 });
+    Object.assign(ctl, { search: null, fetched: [], inFlight: 0, maxInFlight: 0, seedCalls: 0, checkpoints: [] });
 });
 
 describe("executeDeepResearch source cap", () => {
@@ -199,6 +202,9 @@ describe("executeDeepResearch source cap", () => {
         // Engine counts from before the interruption carry over into the report's "Engines used".
         expect(research.engineBreakdown?.earlier).toBe(4);
         expect(research.engineBreakdown?.mock).toBeGreaterThan(0);
+        // ...and into every checkpoint taken after the resume, so a second interruption keeps them.
+        expect(ctl.checkpoints.length).toBeGreaterThan(0);
+        expect(ctl.checkpoints.at(-1)?.research.engineBreakdown?.mock).toBeGreaterThan(0);
     }, 30_000);
 });
 
