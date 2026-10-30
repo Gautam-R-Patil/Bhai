@@ -142,10 +142,11 @@ const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
 // Shown while the bot boots; the ##ATLAS_READY## reload swaps in the real overlay.
-const OVERLAY_SPLASH =
+// With a message instead when the bot won't come up (see botDownMessage).
+const overlaySplash = (text = "Bhai is waking up…") =>
     "data:text/html," +
     encodeURIComponent(
-        `<meta charset="utf-8"><style>:root{--bg-panel:rgba(252,251,249,.97);color:#1d1d1f}@media(prefers-color-scheme:dark){:root{--bg-panel:rgba(30,28,26,.97);color:#f5f5f7}}body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;font:500 15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif}</style>Bhai is waking up…`,
+        `<meta charset="utf-8"><style>:root{--bg-panel:rgba(252,251,249,.97);color:#1d1d1f}@media(prefers-color-scheme:dark){:root{--bg-panel:rgba(30,28,26,.97);color:#f5f5f7}}body{margin:0;padding:0 24px;height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;font:500 15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif}</style>${text}`,
     );
 // The overlay page embeds the owner token only for a request that proves it holds it
 // (src/overlay/overlay-chat.ts): this app's own requests add it, read from the 0600 file
@@ -1251,6 +1252,10 @@ let stopPromise = null; // resolves when the bot being stopped has really exited
 let botCrashTimes = []; // recent crash times, for restart backoff
 let installInFlight = null; // the running setup install, shared by every caller
 let overlayLoadFailed = false; // the overlay tried to load before the bot was listening
+// Set when the bot won't start again on its own (exit 78, or it gave up after crashing):
+// the overlay shows this instead of retrying the splash forever.
+let botDownMessage = null;
+const SIGN_IN_AGAIN_MSG = "Bhai couldn't start. Open Bhai to sign in again or check your credits.";
 
 function getBotStatus() {
     return isAlive(botProcess) ? "running" : "stopped";
@@ -1282,6 +1287,7 @@ async function startBot() {
     const session = loadAccountSession();
     if (session?.userId && !session.deviceSecret) {
         _signInNeeded = "sign_in_required";
+        botDownMessage = SIGN_IN_AGAIN_MSG;
         console.log("[BOT] Not starting: sign in again (Account) — this device has no sign-in secret yet");
         return { status: "sign_in_required" };
     }
@@ -1391,6 +1397,7 @@ async function startBot() {
     }
 
     let child = null;
+    botDownMessage = null;
     try {
         child = botProcess = spawn(executable, args, {
             cwd: BOT_DIR,
@@ -1563,8 +1570,10 @@ async function startBot() {
             } else {
                 sendLog("Bot crashed 5 times in 10 minutes; not restarting. Use Start to try again.");
                 exitStatus = "failed";
+                botDownMessage = "Bhai stopped after crashing several times. Open Bhai and press Start to try again.";
             }
         }
+        if (code === 78) botDownMessage = SIGN_IN_AGAIN_MSG;
         hideBuddy();
         for (const k of Object.keys(channelStatuses)) delete channelStatuses[k];
         // Clean up temp env
@@ -2079,8 +2088,15 @@ function createOverlayWindow() {
         if (errCode === -102 || errCode === -6 || errDesc === "ERR_CONNECTION_REFUSED") {
             // Bot server not up yet: the bot's ##ATLAS_READY## line reloads it the
             // moment it listens; this slower retry is only a fallback.
+            // Not coming up at all: say why instead of retrying forever. Still
+            // flagged failed so a later start's ##ATLAS_READY## loads the overlay.
+            if (botDownMessage && !isAlive(botProcess)) {
+                overlayLoadFailed = true;
+                overlayWindow.loadURL(overlaySplash(botDownMessage));
+                return;
+            }
             overlayLoadFailed = true;
-            overlayWindow.loadURL(OVERLAY_SPLASH);
+            overlayWindow.loadURL(overlaySplash());
             setTimeout(() => {
                 if (overlayLoadFailed && overlayWindow && !overlayWindow.isDestroyed()) {
                     overlayLoadFailed = false;

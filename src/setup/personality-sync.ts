@@ -97,7 +97,17 @@ export interface PersonalitySyncResult {
     version?: number;
 }
 
-export async function syncPersonalityIfPresent(dirs: { userDataDir?: string; dataDir?: string }): Promise<PersonalitySyncResult> {
+// One sync at a time (boot, the Settings watcher, retries): each reads the file
+// when its turn comes, so the newest choice is always the last push to land.
+let syncChain: Promise<unknown> = Promise.resolve();
+
+export function syncPersonalityIfPresent(dirs: { userDataDir?: string; dataDir?: string }): Promise<PersonalitySyncResult> {
+    const next = syncChain.then(() => syncOnce(dirs));
+    syncChain = next.catch(() => {});
+    return next;
+}
+
+async function syncOnce(dirs: { userDataDir?: string; dataDir?: string }): Promise<PersonalitySyncResult> {
     const { source, marker } = resolvePersonalityPaths(dirs);
     if (!source) return { ran: false, reason: "no-file" };
     if (!fs.existsSync(source)) return { ran: false, reason: "no-file" };
