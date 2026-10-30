@@ -223,8 +223,11 @@ export function toOpenAIResponse(msg: Beta.BetaMessage) {
     .filter((b): b is Beta.BetaTextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
+  // Tool calls from a declined attempt must never run: those before the last
+  // fallback block, and any half-built call on a refusal.
+  const lastFallback = msg.content.findLastIndex((b) => b.type === "fallback");
   const tool_calls = msg.content
-    .filter((b): b is Beta.BetaToolUseBlock => b.type === "tool_use")
+    .filter((b, i): b is Beta.BetaToolUseBlock => b.type === "tool_use" && i > lastFallback && msg.stop_reason !== "refusal")
     .map((b) => ({
       id: b.id,
       type: "function" as const,

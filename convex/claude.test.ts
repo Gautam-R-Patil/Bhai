@@ -160,4 +160,41 @@ describe("toOpenAIResponse", () => {
     });
     expect(out.usage).toMatchObject({ prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 90 } });
   });
+
+  const usage = { input_tokens: 1, output_tokens: 1 };
+
+  it("drops tool calls made before a server-side fallback", () => {
+    const out = toOpenAIResponse({
+      id: "msg_2",
+      model: "claude-sonnet-5-5",
+      stop_reason: "tool_use",
+      content: [
+        { type: "text", text: "Let me " },
+        { type: "tool_use", id: "t1", name: "shell_exec", input: {} },
+        { type: "fallback" },
+        { type: "text", text: "check that." },
+        { type: "tool_use", id: "t2", name: "read_file", input: {} },
+      ],
+      usage,
+    } as any);
+    const msg = out.choices[0].message as any;
+    expect(msg.tool_calls.map((c: any) => c.id)).toEqual(["t2"]);
+    expect(msg.content).toBe("Let me check that.");
+  });
+
+  it("returns no tool calls on a refusal", () => {
+    const out = toOpenAIResponse({
+      id: "msg_3",
+      model: "claude-sonnet-5-5",
+      stop_reason: "refusal",
+      content: [
+        { type: "text", text: "I can't" },
+        { type: "tool_use", id: "t1", name: "a", input: {} },
+      ],
+      usage,
+    } as any);
+    const msg = out.choices[0].message as any;
+    expect(msg.tool_calls ?? []).toEqual([]);
+    expect(out.choices[0].finish_reason).toBe("content_filter");
+  });
 });
