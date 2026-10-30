@@ -135,3 +135,14 @@ describe("preflight — fail-open", () => {
         expect(() => preflight("read", { file_path: 123 as unknown as string })).not.toThrow();
     });
 });
+
+describe("preflight — ~ paths", () => {
+    it("expands ~/ in place instead of refusing it as relative", async () => {
+        const { homedir } = await import("node:os");
+        const { join } = await import("node:path");
+        const args: Record<string, unknown> = { file_path: "~/no-such-file-for-preflight.txt" };
+        const hint = preflight("read", args);
+        expect(args.file_path).toBe(join(homedir(), "no-such-file-for-preflight.txt"));
+        expect(hint?.reason).toMatch(/does not exist/); // checked as the real path, not refused as relative
+    });
+});
