@@ -61,6 +61,12 @@ describe("markdownToTelegramHtml", () => {
     it("plain fallback strips markers", () => {
         expect(markdownToPlainText("**b** `c`\n```py\nx\n```")).toBe("b c\nx");
     });
+
+    it("keeps spaced asterisks as arithmetic, not emphasis", () => {
+        expect(markdownToTelegramHtml("5 * 3 * 2 = 30, and 2 ** 10 ** 2")).toBe("5 * 3 * 2 = 30, and 2 ** 10 ** 2");
+        expect(markdownToPlainText("5 * 3 * 2 = 30")).toBe("5 * 3 * 2 = 30");
+        expect(markdownToTelegramHtml("*really* and **bold** and 2*3*4")).toBe("<i>really</i> and <b>bold</b> and 2*3*4");
+    });
 });
 
 describe("smartChunkMessage fences", () => {

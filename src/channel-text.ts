@@ -32,6 +32,9 @@ function replaceFences(text: string, render: (code: string, lang?: string) => st
     );
 }
 
+// *text*, with no space just inside the stars (CommonMark): "5 * 3 * 2" is arithmetic.
+const ITALIC = /(?<!\w)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\w)/g;
+
 /**
  * Convert the model's Markdown into the HTML subset Telegram accepts.
  * Code (fenced and inline) is pulled out into placeholders first so the inline
@@ -55,11 +58,12 @@ export function markdownToTelegramHtml(text: string): string {
 
     html = escapeHtml(html);
 
-    // Bold: **text** → <b>text</b>
-    html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+    // Bold: **text** → <b>text</b>. As in CommonMark, no space just inside the markers:
+    // "5 * 3 * 2 = 30" or "a ** b" is arithmetic, and lost its asterisks to italics.
+    html = html.replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, "<b>$1</b>");
 
     // Italic: *text* → <i>text</i> (but not inside bold)
-    html = html.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, "<i>$1</i>");
+    html = html.replace(ITALIC, "<i>$1</i>");
 
     // Strikethrough: ~~text~~ → <s>text</s>
     html = html.replace(/~~(.+?)~~/g, "<s>$1</s>");
@@ -106,8 +110,8 @@ export function markdownToTelegramHtml(text: string): string {
 export function markdownToPlainText(text: string): string {
     return replaceFences(text, (code) => code)
         .replace(/`([^`\n]+)`/g, "$1")
-        .replace(/\*\*(.+?)\*\*/g, "$1")
-        .replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, "$1")
+        .replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, "$1")
+        .replace(ITALIC, "$1")
         .replace(/__(.+?)__/g, "$1");
 }
 
