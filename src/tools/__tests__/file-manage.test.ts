@@ -132,5 +132,7 @@ describe("file_manage", () => {
         // A bare name right after listing a folder is one in it.
         const m = await run({ action: "move", paths: ["c.md"], destination: join(sub, "inner") });
         expect(m.done[0].from).toBe(join(sub, "c.md"));
+        // What's left to sort.
+        expect(m.still_in_folder.sort()).toEqual(["a.txt", "b.txt", "big.bin"]);
     });
 });
