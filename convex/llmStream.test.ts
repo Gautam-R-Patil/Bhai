@@ -1,4 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
+
+import { BetaMessageStream } from "@anthropic-ai/sdk/lib/BetaMessageStream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pipeClaudeStream } from "./llmStream";
 import type { Frame } from "./streamFrames";
@@ -31,13 +33,21 @@ const textBlock = (i: number, ...parts: string[]): Ev[] => [
     stop(i),
 ];
 
-async function* gen(events: Ev[]) {
-    for (const e of events) yield e as never;
+function toStream(events: Ev[]) {
+    const enc = new TextEncoder();
+    return BetaMessageStream.fromReadableStream(
+        new ReadableStream({
+            start(c) {
+                for (const e of events) c.enqueue(enc.encode(`${JSON.stringify(e)}\n`));
+                c.close();
+            },
+        }),
+    );
 }
 
 async function run(events: Ev[]) {
     const frames: Frame[] = [];
-    const message = await pipeClaudeStream(gen(events), (f) => frames.push(f), { coalesceMs: 0 });
+    const message = await pipeClaudeStream(toStream(events), (f) => frames.push(f), { coalesceMs: 0 });
     return { frames, message };
 }
 
@@ -106,26 +116,77 @@ describe("pipeClaudeStream", () => {
 
     it("coalesces deltas within the window", async () => {
         vi.useFakeTimers();
-        let release!: () => void;
-        const gate = new Promise<void>((r) => {
-            release = r;
-        });
-        async function* slow() {
-            yield start() as never;
-            yield blockStart(0, { type: "text", text: "" }) as never;
-            for (const t of ["a", "b", "c", "d", "e"]) yield delta(0, { type: "text_delta", text: t }) as never;
-            await gate;
-            yield stop(0) as never;
-            for (const e of end("end_turn")) yield e as never;
-        }
+        const enc = new TextEncoder();
+        const line = (e: Ev) => enc.encode(`${JSON.stringify(e)}\n`);
+        let ctl!: ReadableStreamDefaultController;
+        const stream = BetaMessageStream.fromReadableStream(
+            new ReadableStream({
+                start(c) {
+                    ctl = c;
+                },
+            }),
+        );
         const frames: Frame[] = [];
-        const done = pipeClaudeStream(slow(), (f) => frames.push(f), { coalesceMs: 60 });
+        const done = pipeClaudeStream(stream, (f) => frames.push(f), { coalesceMs: 60 });
+        for (const e of [start(), blockStart(0, { type: "text", text: "" })]) ctl.enqueue(line(e));
+        for (const t of ["a", "b", "c", "d", "e"]) ctl.enqueue(line(delta(0, { type: "text_delta", text: t })));
         await vi.advanceTimersByTimeAsync(10);
         expect(frames).toEqual([]);
         await vi.advanceTimersByTimeAsync(60);
         expect(frames).toEqual([{ kind: "text", text: "abcde" }]);
-        release();
+        for (const e of [stop(0), ...end("end_turn")]) ctl.enqueue(line(e));
+        ctl.close();
         await done;
         expect(frames).toHaveLength(1);
+    });
+
+    it("each thinking block is its own note", async () => {
+        const think = (i: number, t: string): Ev[] => [
+            blockStart(i, { type: "thinking", thinking: "", signature: "" }),
+            delta(i, { type: "thinking_delta", thinking: t }),
+            stop(i),
+        ];
+        const { frames } = await run([start(), ...think(0, "One."), ...think(1, "Two."), ...end("end_turn")]);
+        expect(frames).toEqual([
+            { kind: "note", text: "One." },
+            { kind: "note", text: "Two." },
+        ]);
+    });
+
+    it("returns exactly the SDK's final message", async () => {
+        const events: Ev[] = [
+            {
+                type: "message_start",
+                message: {
+                    id: "m1",
+                    type: "message",
+                    role: "assistant",
+                    model: "claude-opus-5-5",
+                    content: [],
+                    stop_reason: null,
+                    stop_sequence: null,
+                    usage: { input_tokens: 100, output_tokens: 1, cache_read_input_tokens: 50 },
+                },
+            },
+            ...textBlock(0, "Hi"),
+            blockStart(1, {
+                type: "fallback",
+                from: { model: "claude-opus-5-5" },
+                to: { model: "claude-sonnet-5-5" },
+                trigger: { type: "refusal" },
+            }),
+            stop(1),
+            {
+                type: "message_delta",
+                delta: { stop_reason: "end_turn", stop_sequence: null },
+                usage: { input_tokens: null, cache_read_input_tokens: null, output_tokens: 9 },
+            },
+            { type: "message_stop" },
+        ];
+        const reference = await toStream(events).finalMessage();
+        const { message } = await run(events);
+        expect(message).toEqual(reference);
+        expect(message.usage.input_tokens).toBe(100);
+        expect(message.usage.cache_read_input_tokens).toBe(50);
     });
 });
