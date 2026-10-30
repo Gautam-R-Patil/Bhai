@@ -2990,9 +2990,21 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       let activeTasks = new Map(); // taskId -> { name, type, progress, phase }
       let inboxItems = new Map();  // intentId -> wire item (status "pending" only)
       const turnRunning = () => waiting || icon.classList.contains('thinking');
-      // With no turn running, the progress card can only be holding a research's status.
+      // A background research's round, on the card only while no turn uses it and it isn't
+      // holding something the owner still has to read (a lost-reply notice). A research that
+      // fails before the task drawer lists it gets no end event, so the card also hides itself.
+      let researchStatusTimer = null;
+      function showResearchStatus(text) {
+        if (!text || turnRunning()) return;
+        if (progress.classList.contains('visible') && !progress.querySelector('.research-status')) return;
+        progress.innerHTML = `<div class="progress-card research-status"><span class="progress-label">${esc(text)}</span><div class="progress-dots"><span></span><span></span><span></span></div></div>`;
+        progress.classList.add('visible');
+        clearTimeout(researchStatusTimer);
+        researchStatusTimer = setTimeout(clearResearchStatus, 60000);
+      }
+      // Clears the card only if it still holds a research's status.
       function clearResearchStatus() {
-        if (turnRunning()) return;
+        if (turnRunning() || !progress.querySelector('.research-status')) return;
         progress.classList.remove('visible');
         progress.innerHTML = '';
       }
@@ -3500,11 +3512,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           contract.textContent = msg.text || '';
         }
         else if (msg.type === 'research_status') {
-          // A background research's round: shown only while no turn is using the card.
-          if (msg.text && !turnRunning()) {
-            progress.innerHTML = `<div class="progress-card"><span class="progress-label">${esc(msg.text)}</span><div class="progress-dots"><span></span><span></span><span></span></div></div>`;
-            progress.classList.add('visible');
-          }
+          showResearchStatus(msg.text);
         }
         else if (msg.type === 'progress') {
           // During a live turn its line says what's happening; a progress line only fills in
