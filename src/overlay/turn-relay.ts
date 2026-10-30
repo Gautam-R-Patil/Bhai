@@ -25,6 +25,9 @@ export function createTurnRelay(opts: {
     let done = false;
     let pending: Delta[] = [];
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const started = Date.now();
+    let liveMs: number | undefined; // send -> first turn_status
+    let firstWordMs: number | undefined; // send -> first turn_answer
 
     const out = (type: string, fields: object) => opts.send({ type, turn: opts.turn, seq: ++seq, ...fields });
     const flush = () => {
@@ -39,6 +42,7 @@ export function createTurnRelay(opts: {
             } else {
                 state.answer += d.text;
                 out("turn_answer", { attempt: d.attempt, text: d.text });
+                firstWordMs ??= Date.now() - started;
             }
         }
     };
@@ -56,8 +60,15 @@ export function createTurnRelay(opts: {
         }
     };
     const finish = () => {
+        if (done) return;
         flush();
         done = true;
+        // One timing line per owner turn: how fast it went live and how fast the first word came.
+        if (opts.owner) {
+            console.log(
+                `⏱️ [overlay] turn ${opts.turn} live=${liveMs ?? "-"} firstWord=${firstWordMs ?? "-"} total=${Date.now() - started}`,
+            );
+        }
     };
 
     const sink = (e: TurnEvent) => {
@@ -75,6 +86,7 @@ export function createTurnRelay(opts: {
         }
         flush(); // keep order: what was pending goes out before this
         if (e.type === "status") {
+            liveMs ??= Date.now() - started;
             state.status = { text: e.text, step: e.step, elapsed: e.elapsedSec };
             out("turn_status", state.status);
         } else if (e.type === "step") {

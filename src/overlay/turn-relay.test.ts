@@ -65,3 +65,25 @@ it("snapshot reflects state after a reset", () => {
     vi.advanceTimersByTime(100);
     expect(r.sent.at(-1)).toMatchObject({ type: "turn_answer", text: "3 unread" });
 });
+
+it("logs live and first-word timings", () => {
+    vi.useFakeTimers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const r = relay();
+    vi.advanceTimersByTime(100);
+    r.sink({ type: "status", text: "Reading mail", step: 1, elapsedSec: 0 });
+    vi.advanceTimersByTime(400);
+    r.sink({ type: "answer", attempt: 0, text: "hi" });
+    vi.advanceTimersByTime(300); // flushed at +40, the turn ends at +300
+    r.sink({ type: "end" });
+    r.finish(); // a second finish never logs twice
+    expect(log.mock.calls.map((c) => c[0])).toEqual(["⏱️ [overlay] turn t1 live=100 firstWord=540 total=800"]);
+
+    log.mockClear();
+    const quiet = relay(); // no status, no answer, and a guest never logs
+    quiet.sink({ type: "end" });
+    const guest = relay(false);
+    guest.sink({ type: "end" });
+    expect(log.mock.calls.map((c) => c[0])).toEqual(["⏱️ [overlay] turn t1 live=- firstWord=- total=0"]);
+    log.mockRestore();
+});

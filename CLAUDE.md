@@ -44,6 +44,7 @@ Models in `MODELS` constant (Opus, Sonnet, Haiku, GPT-5.x, Gemini). `LLMClient` 
 Client-side layers in `.chat()`:
 - **Semantic response cache** (`llm-cache.ts`) — Embedding cache (cosine ≥ 0.97 (`ATLAS_LLM_CACHE_THRESHOLD`), 10min TTL, 200 LRU); tool-state not in cache key. Only caches simple queries (no tool calls or thinking).
 - **Adaptive language matching** (`language.ts`) — Unicode script + keyword heuristics; injects "Respond in {language}". Devanagari/CJK/Cyrillic/Arabic/Hangul/Thai/Latin incl. Romanized Hindi/Hinglish.
+- **Streaming** (`src/llm-stream.ts`, `convex/llmStream.ts`, `convex/streamFrames.ts`) — `chat({ onDelta })` streams the reply over encrypted NDJSON frames (256-byte padding, ~60 ms server coalescing; first frame within the attempt timeout, ≤30 s between frames) and resolves the same `ChatCompletion` from the final `done` frame, so callers see no difference. Opus/Sonnet main-loop calls send thinking `display: "updates"` (beta `thinking-display-updates-2026-08-18`) whether or not they stream; never on Sonnet `between_tools`, Haiku or `lean` calls.
 
 ### Boot Sequence (`src/index.ts`)
 1. Session + Auth (`initSession()` → `initAccountGuard()` credit check)
@@ -232,6 +233,8 @@ Next.js + Tailwind, own `package.json` + `.env.example`: `admin-panel/` (users, 
 
 ### Overlay (`src/overlay/` + Electron)
 Electron overlay window (`overlay.html` + `overlay-chat.ts`, hosted by desktop app; the desktop `panel.html` holds Settings (search, saves by itself, Data & privacy, About, personality pills, update channel under Advanced), Account (Devices), Channels (one-click setup, e.g. Telegram managed-bot creation, WhatsApp link by QR/code; Overlay and Web Widget are "Always on"), Vault and Memory (opened from Settings));  former native Swift `overlay-app/` removed (`09391f1`). Overlay WebSocket authed via `?localToken=` gate from a discovery-first handshake (`/discover`).
+**Live turns:** an owner turn streams to the surfaces as `turn_*` WS messages, each with `turn` and `seq`: `turn_status`, `turn_step`, `turn_note` (owner only), `turn_answer` (coalesced ~40 ms per socket), `turn_answer_reset` (a retry withdraws the draft) and `turn_snapshot` (what a rejoining socket gets). `src/overlay/turn-relay.ts` builds them from the agent's `TurnEvent`s and logs one `⏱️ [overlay] turn <id> live=<ms> firstWord=<ms> total=<ms>` line per owner turn. `src/stream-filter.ts` keeps the stream safe: it never shows what the final reply hides (secret handles like `[OTP_1]` reveal only in the final `response`), and notes stop at the first key block. Surfaces: the overlay chat bar, the in-app Chats, the Chrome side panel and the web widget; the stopped note is `Stopped.`, the finish line `Worked for {N}s · {K} steps`.
+
 
 ### Chrome Extension (`chrome-extension/`)
 Companion for `chrome-backend.ts`. `background.js` (WS bridge), `content.js` (DOM), `popup.*` (toggle). Drives real Chrome instead of headless. The extension fetches its bridge token over **native messaging** (host `com.atlas.bridge`, registered by `chrome-bridge.ts`, scoped to the OS user); `/discover` stops serving tokens once that works, and only Bhai's own extension may take the bridge token or owner socket. Bhai stays on its own tab when the owner switches tabs. Permission rationale: `chrome-extension/PERMISSIONS.md`.
@@ -266,6 +269,9 @@ Default ON unless marked opt-IN. Set `"true"` to disable. `grep -rnE "process\.e
 - `ATLAS_NO_QUICK_COMMANDS=true` — disables quick commands (`src/quick-commands.ts`). Default ON: an owner text turn made only of everyday commands (volume/mute, dark/light mode, open a settings page, play X on Spotify/Apple Music, pause/next/previous, open/quit an app, lock screen; chained with ","/"and"/"then") runs straight through `executeTool` with no model call (~0.3-4s, $0). All or nothing, checked before anything runs; a failed step hands the rest to the model with what already ran.
 - `ATLAS_NO_GUI_FASTPATH=true` — disables the simple-GUI/messaging orchestrator skip. Default ON: a single-target OS/app/messaging/media action (cats ⊆ {os_control,app_management,communication,media,system_controls}, not chained, conf≥0.7) SKIPS the ~14K-token ~20s Sonnet plan. Complex/chained/browser/coding/research still plan. `ATLAS_ALWAYS_ORCHESTRATE=true` also disables it.
 - `ATLAS_NO_WHATSAPP_TOOL_GATING=true` — restores offering `whatsapp_send`/`whatsapp_sticker`/`whatsapp_group_info` when Baileys isn't connected. Default OFF: those tools are hidden (via `isToolOfferable`) when `getWhatsAppStatus() !== "connected"`, re-evaluated per message so they reappear once linked.
+
+**Streaming:**
+- `ATLAS_NO_STREAMING=true` — bot: `chat()` ignores `onDelta` and makes the plain request (no streamed turns, no `turn_*` events). `LLM_STREAMING_DISABLED=true` — Convex env: `/api/llm/chat` answers with one final `done` frame for everyone. Either one alone returns to the one-shot path.
 
 **Model routing / cost:**
 - `ATLAS_LLM_ATTEMPT_TIMEOUT_MS` — per-attempt LLM HTTP timeout (`crypto-transport.ts`, default `25000`); each fallback hop gets a fresh `AbortSignal.timeout`. Raise for slow max-thinking calls.

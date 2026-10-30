@@ -1,6 +1,6 @@
 # Live streaming: see Bhai think, work and answer as it happens
 
-Design, 2026-10-30. Status: owner's choices final (sections 2 and 9); awaiting approval of the whole design. Builds on the Phase 4 tree (main `5d12c401`).
+Design, 2026-10-30. Status: built 2026-10-30; manual check on the real surfaces pending. Builds on the Phase 4 tree (main `5d12c401`).
 
 ## 1. Why
 
