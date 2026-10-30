@@ -190,7 +190,7 @@ const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
 const { fileMemo } = require("./file-memo");
 const { pruneCompileCache } = require("./compile-cache");
 const { readVault, registerVaultIpc } = require("./vault-store");
-const { readMasterKey } = require("./settings-key");
+const { readMasterKey, setAsideIfUnreadable } = require("./settings-key");
 
 // ── Desktop Session Token Management ─────────────
 // Authenticates the Electron main process with the Convex backend via
@@ -740,7 +740,9 @@ function saveEnvEncrypted(envContent) {
     if (ENV_PATH.endsWith(".enc")) {
         // Production: encrypt before writing (throws, writing nothing, when the keychain refused the key).
         // Atomic: a crash mid-write must not leave half a settings file.
-        fs.writeFileSync(`${ENV_PATH}.tmp`, encrypt(envContent, getMasterKey()));
+        const data = encrypt(envContent, getMasterKey());
+        setAsideIfUnreadable(ENV_PATH, (buf) => decryptStored(buf));
+        fs.writeFileSync(`${ENV_PATH}.tmp`, data);
         fs.renameSync(`${ENV_PATH}.tmp`, ENV_PATH);
     } else {
         // Dev mode: write plain text to .env
@@ -1051,7 +1053,8 @@ function saveAccountSession(session) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
         const masterKey = getMasterKey();
         const data = encrypt(JSON.stringify(session), masterKey);
-        fs.writeFileSync(ACCOUNT_SESSION_PATH, data);
+        fs.writeFileSync(`${ACCOUNT_SESSION_PATH}.tmp`, data);
+        fs.renameSync(`${ACCOUNT_SESSION_PATH}.tmp`, ACCOUNT_SESSION_PATH);
     } catch (err) {
         console.error("[Account] Failed to save session:", err.message);
     }
@@ -4196,28 +4199,6 @@ function registerIPC() {
                     [cap]);
                 return { success: true, entries: rows };
             } finally { db.close(); }
-        } catch (err) {
-            return { success: false, error: err.message };
-        }
-    });
-
-    // Setup: save credentials
-    ipcMain.handle("setup:save-credentials", async (_, creds) => {
-        try {
-            const envLines = [
-                "# Bhai — Environment Variables",
-                "# Encrypted by XAGI Labs Secure Storage",
-                "",
-                `TELEGRAM_BOT_TOKEN=${creds.botToken}`,
-                `ALLOWED_USER_IDS=${creds.userIds}`,
-            ];
-            if (creds.githubToken) envLines.push(`GITHUB_TOKEN=${creds.githubToken}`);
-            if (creds.workspace) envLines.push(`ATLAS_WORKSPACE=${creds.workspace}`);
-
-            const envContent = envLines.join("\n") + "\n";
-            saveEnvEncrypted(envContent);
-
-            return { success: true };
         } catch (err) {
             return { success: false, error: err.message };
         }

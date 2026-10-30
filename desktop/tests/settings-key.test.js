@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readMasterKey } from "../settings-key.js";
+import { readMasterKey, setAsideIfUnreadable } from "../settings-key.js";
 
 const keychain = (refuse = false) => ({
     isEncryptionAvailable: () => true,
@@ -36,5 +36,16 @@ describe("settings key", () => {
         const noOs = { ...keychain(), isEncryptionAvailable: () => false };
         const key = readMasterKey(f, noOs);
         expect(readMasterKey(f, noOs)).toBe(key); // used to come back as a machine-derived key
+    });
+
+    it("a settings file no key opens is kept aside, a readable one stays", () => {
+        const f = keyFile();
+        fs.writeFileSync(f, "ok");
+        setAsideIfUnreadable(f, () => "settings");
+        expect(fs.readFileSync(f, "utf8")).toBe("ok");
+        setAsideIfUnreadable(f, () => { throw new Error("bad key"); });
+        expect(fs.existsSync(f)).toBe(false);
+        const kept = fs.readdirSync(path.dirname(f)).filter((n) => n.startsWith(".keystore.unreadable-"));
+        expect(kept).toHaveLength(1);
     });
 });

@@ -29,4 +29,17 @@ function readMasterKey(keyPath, safeStorage) {
     return key;
 }
 
-module.exports = { readMasterKey };
+/**
+ * Before a settings save: a file no key opens (its key file lost or replaced) read as
+ * empty, so the save would drop every setting in it. Keep it aside instead.
+ */
+function setAsideIfUnreadable(file, read) {
+    if (!fs.existsSync(file)) return;
+    try {
+        read(fs.readFileSync(file));
+    } catch {
+        fs.renameSync(file, `${file}.unreadable-${Date.now()}`);
+    }
+}
+
+module.exports = { readMasterKey, setAsideIfUnreadable };
