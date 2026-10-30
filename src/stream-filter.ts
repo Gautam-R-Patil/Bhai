@@ -230,74 +230,51 @@ function mask(text: string): string {
     return sanitizeSecrets(protect(text, { credentials: true })).sanitized;
 }
 
-const PEM_BEGIN = /-----BEGIN ([A-Z0-9 ]+)-----/g;
-// A held PEM block past this is prose that mentioned a BEGIN: drop it, stop holding.
-// A 4096-bit RSA key is ~50 lines, a 4096-bit PGP secret key block ~110.
-const PEM_HOLD_MAX_LINES = 200;
-const PEM_HOLD_MAX_CHARS = 16 * 1024;
+// Any PEM block (key, certificate, any label or case) in a note stops the notes for good.
+const KEY_BLOCK = /-----BEGIN /i;
 
 /**
  * Filters streamed thinking/narration: the answer rules, then credential masking and the
  * secrets sanitizer (code tools' raw output can reach the model unmasked).
  * Line-buffered: only complete lines go out; the last partial line on flush. Each line is
  * masked together with the last non-blank line before it, so a label there
- * ("aws_secret_access_key:", '"password":') still masks the value. A PEM block is held from
- * its BEGIN to the END with the same label and shown as [redacted]; unterminated at flush,
- * or past the hold bound, it is dropped, never released.
+ * ("aws_secret_access_key:", '"password":') still masks the value.
+ * The first `-----BEGIN ` latches: the text before it goes out masked, then `[redacted]`,
+ * then nothing more, ever (no END releases it). Notes are optional progress extras, so
+ * losing the rest of a turn's notes after a key shows up is the accepted cost.
  */
 export class NoteStreamFilter {
     private readonly answer = new AnswerStreamFilter({ channel: "note" });
     private line = "";
     private prev = "";
-    private pem: { label: string; lines: number; chars: number } | null = null;
+    private latched = false;
 
     push(delta: string): string {
+        if (this.latched) return "";
         this.line += this.answer.push(delta);
-        const end = this.line.lastIndexOf("\n");
-        if (end < 0) return "";
-        const done = this.line.slice(0, end).split("\n");
-        this.line = this.line.slice(end + 1);
-        return done.map((l) => this.take(l)).join("");
+        return this.drain(false);
     }
 
     flush(): string {
-        const lines = (this.line + this.answer.flush()).split("\n");
-        this.line = "";
+        if (this.latched) return "";
+        this.line += this.answer.flush();
+        return this.drain(true);
+    }
+
+    /** Emit the complete lines buffered so far (all of it when final), stopping at a key block. */
+    private drain(final: boolean): string {
+        // The buffer holds the whole unsent line, so a marker split across deltas is whole here.
+        const key = this.line.search(KEY_BLOCK);
+        const lines = (key < 0 ? this.line : this.line.slice(0, key)).split("\n");
         const last = lines.pop() as string;
-        let out = lines.map((l) => this.take(l)).join("");
-        // The last partial line goes out without a newline; an unterminated PEM block never shows.
-        if (last) out += this.take(last).replace(/\n$/, "");
-        this.pem = null;
-        return out;
-    }
-
-    /** One complete line in; what may be shown for it out. */
-    private take(line: string): string {
-        if (!this.pem) return this.open(line);
-        const endTag = `-----END ${this.pem.label}-----`;
-        const end = line.indexOf(endTag);
-        if (end < 0) {
-            this.pem.lines++;
-            this.pem.chars += line.length + 1;
-            if (this.pem.lines <= PEM_HOLD_MAX_LINES && this.pem.chars <= PEM_HOLD_MAX_CHARS) return "";
-            this.pem = null;
-            return "[redacted]\n";
+        const out = lines.map((l) => `${this.maskLine(l)}\n`).join("");
+        if (key >= 0) {
+            this.latched = true;
+            this.line = "";
+            return `${out}${this.maskLine(last)}[redacted]`;
         }
-        this.pem = null;
-        return `[redacted]${this.open(line.slice(end + endTag.length))}`;
-    }
-
-    /**
-     * Text outside a held block. The first BEGIN with no END of its label after it on this line
-     * opens a hold: the text before it goes out now, the block's [redacted] follows later.
-     */
-    private open(text: string): string {
-        for (const m of text.matchAll(PEM_BEGIN)) {
-            if (text.includes(`-----END ${m[1]}-----`, m.index + m[0].length)) continue;
-            this.pem = { label: m[1], lines: 0, chars: 0 };
-            return this.maskLine(text.slice(0, m.index));
-        }
-        return `${this.maskLine(text)}\n`;
+        this.line = final ? "" : last;
+        return final ? out + this.maskLine(last) : out;
     }
 
     private maskLine(text: string): string {
