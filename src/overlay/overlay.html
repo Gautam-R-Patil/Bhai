@@ -3010,9 +3010,11 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       });
 
       function setAgentBusy(busy) {
+        // Announce only on the way in: thinking and liveStart both set it for one turn.
+        const was = replyText.getAttribute('aria-busy') === 'true';
         stopBtn.hidden = !busy;
         replyText.setAttribute('aria-busy', busy ? 'true' : 'false');
-        if (busy) announceToSR('Bhai is processing your request');
+        if (busy && !was) announceToSR('Bhai is processing your request');
       }
 
       // ── Live turn (turn_* from the bot): the live line, its Notes/Steps panel, the typed answer ──

@@ -178,3 +178,27 @@ describe("the Worked for line", () => {
         expect(ctx.workedLine(s(0), null, Date.now() - 5000).text).toBe("Worked for 5s");
     });
 });
+
+describe("setAgentBusy", () => {
+    it("announces once per busy stretch, though thinking and liveStart both set it", () => {
+        const said: string[] = [];
+        const attrs: Record<string, string> = { "aria-busy": "false" };
+        const c = vm.createContext({
+            stopBtn: { hidden: true },
+            replyText: {
+                getAttribute: (k: string) => attrs[k],
+                setAttribute: (k: string, v: string) => (attrs[k] = v),
+            },
+            announceToSR: (t: string) => said.push(t),
+        });
+        vm.runInContext(fn("setAgentBusy"), c);
+        c.setAgentBusy(true); // thinking
+        c.setAgentBusy(true); // liveStart
+        expect(said).toEqual(["Bhai is processing your request"]);
+        expect(attrs["aria-busy"]).toBe("true");
+        expect(c.stopBtn.hidden).toBe(false);
+        c.setAgentBusy(false);
+        c.setAgentBusy(true);
+        expect(said).toHaveLength(2);
+    });
+});
