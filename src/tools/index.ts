@@ -828,6 +828,30 @@ const FOCUS_TOOLS = new Set(["app_manager", "open_in_app", "open_settings", "win
 const PATH_ARG = /^(paths?|file_?paths?|target|folder|dir|directory|cwd|archive_path|output(_dir|_path)?|source|dest(ination)?)$/i;
 const HOMEISH = /^(~|\/Users\/|\/home\/|[A-Za-z]:[\\/]Users)/;
 /** Path arguments with the home folder resolved (see resolveHomePath); everything else as is. */
+// Names models use for the same thing: a required key that's missing is filled from one of these.
+// gpt-4.1-nano called write with "path" five times and was refused each time ("file_path: expected string").
+const ARG_ALIASES: Record<string, string[]> = {
+    file_path: ["path", "filepath", "file", "filename", "target"],
+    path: ["file_path", "folder", "dir", "directory", "target"],
+    content: ["text", "body", "contents", "data"],
+    query: ["q", "search", "text", "term"],
+    pattern: ["query", "glob", "q", "search"],
+    url: ["link", "href", "website"],
+    text: ["content", "message", "value"],
+};
+
+/** Copies an alias into each required key the call left out. */
+export function withArgAliases(name: string, input: Record<string, unknown>): Record<string, unknown> {
+    const required = (registry.get(name)?.schema.function.parameters as { required?: string[] } | undefined)?.required;
+    let out = input;
+    for (const key of required ?? []) {
+        if (out[key] !== undefined) continue;
+        const alias = ARG_ALIASES[key]?.find((a) => out[a] !== undefined);
+        if (alias) out = { ...out, [key]: out[alias] };
+    }
+    return out;
+}
+
 export function withHomePaths(input: Record<string, unknown>): Record<string, unknown> {
     let out = input;
     for (const [k, v] of Object.entries(input)) {
@@ -988,7 +1012,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
     // "~/Downloads" or "/Users/your_username/…" from a model: each tool path.resolve()s
     // its path, so "~" became "<cwd>/~/Downloads". Resolve the home once, for all of them.
-    input = withHomePaths(input);
+    input = withHomePaths(withArgAliases(name, input));
 
     // Zod schema validation — validate input before execution
     const validation = validateToolInput(name, input);

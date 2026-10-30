@@ -443,7 +443,8 @@ async function searchParallel(query: string): Promise<SearchResult[]> {
             signal: AbortSignal.timeout(15000),
         });
         if (!response.ok) {
-            if (response.status === 429) markFailure("parallel");
+            await noteNotConfigured("parallel", response);
+            if (response.status === 429 || response.status >= 500) markFailure("parallel");
             return [];
         }
         const data = await response.json() as { results?: Array<{ url?: string; title?: string; snippet?: string }> };

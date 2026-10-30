@@ -2,6 +2,7 @@
 // Deep Research v2 — State persistence + memory integration
 
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import { join } from "node:path";
 import type {
     ResearchState,
@@ -130,12 +131,15 @@ export async function recoverInterruptedResearches(): Promise<{
     return withIndexLock(async () => {
         const index = await loadIndex();
         const now = Date.now();
+        // A process from before this machine booted can't still be running, whatever reuses its pid now.
+        const bootMs = now - os.uptime() * 1000;
         const interrupted: ResearchIndexEntry[] = [];
         for (const entry of index.researches) {
             if (entry.status !== "running") continue;
             const updatedMs = new Date(entry.updatedAt).getTime();
             // Its process is gone (the app was relaunched): cut off, however recent the last update.
-            if (!(entry.pid && !processAlive(entry.pid)) && now - updatedMs <= INTERRUPTED_THRESHOLD_MS) continue;
+            const dead = (entry.pid && !processAlive(entry.pid)) || updatedMs < bootMs;
+            if (!dead && now - updatedMs <= INTERRUPTED_THRESHOLD_MS) continue;
             entry.status = "interrupted";
             entry.updatedAt = new Date().toISOString();
             entry.error = entry.error ?? "Process restarted while research was running";
@@ -184,11 +188,31 @@ export async function deleteResearchState(researchId: string): Promise<void> {
     } catch {}
 }
 
-/** Finished researches keep their sources for follow-ups: the newest KEEP_FINISHED of them. */
+/** Finished researches keep their sources for follow-ups: the newest KEEP_FINISHED of them. A failed or
+ *  interrupted one keeps its checkpoint for resume_id for KEEP_UNFINISHED_MS; any other listed checkpoint
+ *  (cancelled, older) is deleted. One the index doesn't list (dropped by its cap, or the index was lost)
+ *  goes only once its file is older than KEEP_UNFINISHED_MS. */
 const KEEP_FINISHED = 20;
+const KEEP_UNFINISHED_MS = 14 * 24 * 60 * 60 * 1000;
 export async function pruneFinishedStates(): Promise<void> {
-    const finished = await listIndex({ status: ["completed"] });
-    for (const e of finished.slice(KEEP_FINISHED)) await deleteResearchState(e.id);
+    const all = await listIndex();
+    // An unreadable or missing index reads as empty: that says nothing about which checkpoints are wanted.
+    if (all.length === 0) return;
+    const listed = new Set(all.map((e) => e.id));
+    const keep = new Set([
+        ...all.filter((e) => e.status === "completed").slice(0, KEEP_FINISHED),
+        ...all.filter((e) => e.status === "running"
+            || ((e.status === "failed" || e.status === "interrupted") && Date.now() - Date.parse(e.updatedAt) < KEEP_UNFINISHED_MS)),
+    ].map((e) => e.id));
+    for (const f of await fs.readdir(STATE_DIR).catch(() => [] as string[])) {
+        const id = f.replace(/\.state\.json$/, "");
+        if (id === f || !isResearchId(id) || keep.has(id)) continue;
+        if (!listed.has(id)) {
+            const mtime = (await fs.stat(join(STATE_DIR, f)).catch(() => null))?.mtimeMs;
+            if (mtime === undefined || Date.now() - mtime < KEEP_UNFINISHED_MS) continue;
+        }
+        await deleteResearchState(id);
+    }
 }
 
 // ── Memory Integration ───────────────────────
@@ -223,6 +247,8 @@ export async function storeResearchInMemory(
     topic: string,
     findings: StructuredFinding[],
     report: string,
+    id: string,
+    reportFile: string,
 ): Promise<void> {
     try {
         const { remember } = await import("../memory/sqlite.js");
@@ -252,9 +278,9 @@ export async function storeResearchInMemory(
             );
         }
 
-        // Store the report file path
+        // Where the report is and its id: check_deep_research's no-id list only covers the last day.
         remember(
-            `Research report on "${topic}" saved to ~/Documents/Research/. Use check_deep_research to read.`,
+            `Research report on "${topic}" (research_id ${id}) saved at ${reportFile}. check_deep_research({ research_id: "${id}" }) returns it.`,
             "research",
             `research,${topic.substring(0, 50)},report`,
             6,

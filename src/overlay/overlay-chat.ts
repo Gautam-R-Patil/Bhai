@@ -699,7 +699,8 @@ export function initOverlayChat(llm: LLMClient): void {
                     const owner = { channel: "overlay", userId: "local", isOwner: true, isPrivate: true };
                     let out: { error?: string; research_id?: string } = {};
                     if (msg.action === "cancel" && typeof msg.id === "string") {
-                        if (!(await research.cancelResearchById(msg.id))) out = { error: "It already finished." };
+                        // Not running may mean failed or interrupted, not finished: say which.
+                        if (!(await research.cancelResearchById(msg.id))) out = { error: `Not running. ${await research.researchStatusLine(msg.id)}` };
                     } else if (msg.action === "resume" && typeof msg.id === "string") {
                         out = JSON.parse(await research.deepResearch.handler({ resume_id: msg.id, _channelContext: owner }));
                     } else if (msg.action === "start" && typeof msg.topic === "string" && msg.topic.trim()) {
@@ -855,11 +856,11 @@ export function initOverlayChat(llm: LLMClient): void {
     }, 4000).unref();
 
     // ── Persistent Overlay Research Progress ──────
-    // This callback persists across agent iterations (unlike _onProgress which is cleared)
-    // So background research progress + completion notifications always reach the overlay
+    // Its own event, not "progress": that one is a turn's status line (the chat bar's card,
+    // the app chat's "working" line), and a background research isn't that turn. The text
+    // is already written for the owner; the tool-step humanizer turned it into "searching…".
     setOverlayResearchProgress(async (msg: string) => {
-        // Background: never the running turn's live line.
-        for (const client of ownerClients()) sendToClient(client, { type: "progress", text: humanizeForOverlay(msg), background: true });
+        for (const client of ownerClients()) sendToClient(client, { type: "research_status", text: msg });
     });
     // The finished answer: a card that stays until dismissed, with the report one click away.
     // The owner asked for it, so Do Not Disturb doesn't hold it back.
@@ -1730,18 +1731,9 @@ export async function sendOverlayNotification(message: string, opts: { requested
         if (opts.requested) notifyDesktop("reminder", "Bhai", message);
         return false;
     }
-    const isResearchComplete =
-        message.includes("Deep research complete") ||
-        message.includes("research complete") ||
-        (message.includes("✅") && message.includes("sources"));
-    for (const client of clients) {
-        sendToClient(client, { type: "notification", text: message });
-        if (isResearchComplete) {
-            sendToClient(client, { type: "research_complete", text: message });
-        }
-    }
-    if (isResearchComplete) notifyDesktop("done", "Research complete", message);
-    else notifyDesktop(opts.requested ? "reminder" : "proactive", "Bhai", message);
+    // A finished research has its own event (setOverlayResearchResult); this is only a notification.
+    for (const client of clients) sendToClient(client, { type: "notification", text: message });
+    notifyDesktop(opts.requested ? "reminder" : "proactive", "Bhai", message);
 
     // Record notification for engagement tracking
     try {

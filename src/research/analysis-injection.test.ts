@@ -11,7 +11,7 @@ vi.mock("../model-router.js", () => ({
     selectForSynthesis: () => ({ modelId: "test-model" }),
 }));
 
-const { analyzeAndExtract, detectContradictions, synthesizeResearch } = await import("./analysis.js");
+const { analyzeAndExtract, detectContradictions, generateMoreQueries, synthesizeResearch } = await import("./analysis.js");
 
 describe("analyzeAndExtract prompt injection hardening", () => {
     it("wraps and neutralizes untrusted page content", async () => {
@@ -148,5 +148,15 @@ describe("research checkpoint persistence", () => {
             if (prev === undefined) delete process.env.ATLAS_DATA_DIR;
             else process.env.ATLAS_DATA_DIR = prev;
         }
+    });
+});
+
+describe("lean research helpers", () => {
+    it("tell the model today's date (lean calls carry no clock)", async () => {
+        let systemPrompt = "";
+        const llm = { chat: async (req: { systemPrompt: string }) => { systemPrompt = req.systemPrompt; return { choices: [{ message: { content: "{}" } }] }; } };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await generateMoreQueries(llm as any, "latest phones", [], []);
+        expect(systemPrompt).toContain(String(new Date().getFullYear()));
     });
 });

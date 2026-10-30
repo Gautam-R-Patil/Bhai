@@ -353,7 +353,7 @@ export const browserExtract: ToolDefinition = {
             const selector = input.selector as string;
             // "innerText"/"text" are text, not HTML attributes (getAttribute gave nano 200 nulls).
             const rawAttr = (input.attribute as string) || "textContent";
-            const attr = /^(textcontent|innertext|text|innerhtml)$/i.test(rawAttr) ? "textContent" : rawAttr;
+            const attr = /^(textcontent|innertext|text|innerhtml|outerhtml|html)$/i.test(rawAttr) ? "textContent" : rawAttr;
             // jQuery's :contains() isn't CSS, and models write it ("th:contains('Born') + td"):
             // every try failed. Match by visible text instead, returning the whole table row.
             const terms = [...String(selector).matchAll(/:contains\(\s*(['"]?)(.*?)\1\s*\)/g)].map((m) => m[2]).filter(Boolean);

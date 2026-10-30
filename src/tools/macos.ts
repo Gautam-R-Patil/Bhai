@@ -599,6 +599,23 @@ export const osType: ToolDefinition = {
             });
         }
 
+        // A sum entered with Return in another app while Calculator is open: gpt-4.1-nano typed
+        // "17*23" + return into TextEdit, then wrote down whatever TextEdit showed.
+        if (
+            !bgApp &&
+            typeof input.text === "string" &&
+            /^\s*[\d.]+\s*[-+*/×÷x]\s*[\d.][\d\s.+\-*/×÷x()]*$/.test(input.text) &&
+            /^(return|enter)$/i.test(String(input.key ?? "")) &&
+            (await pidOfApp("Calculator"))
+        ) {
+            const front = await getFrontmostApp();
+            if (front && !/^calculator$/i.test(front.name))
+                return JSON.stringify({
+                    success: false,
+                    error: `Not typed: ${front.name} is in front, not Calculator. To work it out, call os_type again with app "Calculator". To type it into ${front.name} anyway, pass app "${front.name}".`,
+                });
+        }
+
         // Calculator, only for text that looks like arithmetic (no extra lookup otherwise).
         if (
             typeof input.text === "string" &&
@@ -1652,6 +1669,7 @@ export const osVisualVerify: ToolDefinition = {
         };
 
         let overallSuccess = true;
+        const checked: string[] = []; // what was actually checked, for the verdict
 
         if (expectText) {
             const found = findVerifyMatch(
@@ -1674,6 +1692,13 @@ export const osVisualVerify: ToolDefinition = {
                 ...(inAx ? { source: "accessibility" } : {}),
             };
             if (!pass) overallSuccess = false;
+            checked.push(
+                found
+                    ? `"${expectText}" is on screen`
+                    : inAx
+                      ? `"${expectText}" is in the front window's text (not read on screen)`
+                      : `"${expectText}" was not found`,
+            );
         }
 
         if (expectGone) {
@@ -1686,12 +1711,15 @@ export const osVisualVerify: ToolDefinition = {
                 pass,
             };
             if (!pass) overallSuccess = false;
+            checked.push(pass ? `"${expectGone}" is no longer on screen` : `"${expectGone}" is still on screen`);
         }
 
+        // Say what was checked, never the caller's description as fact: finding one word
+        // doesn't prove "switched to the Research section" (and text there before the action proves nothing).
         results.success = overallSuccess;
         results.verdict = overallSuccess
-            ? `✅ Verified: ${description}`
-            : `❌ Verification FAILED: ${description}. The expected text was not found. Try: 1) Take a fresh screenshot to verify the current state, 2) The action may need more time — try wait(ms=1000) before verifying.`;
+            ? `✅ Text check passed: ${checked.join("; ")}. It checks only that text, not "${description}" itself.`
+            : `❌ Verification FAILED: ${checked.join("; ")}. Try: 1) Take a fresh screenshot to verify the current state, 2) The action may need more time — try wait(ms=1000) before verifying.`;
 
         return JSON.stringify(results);
     },
@@ -1721,17 +1749,31 @@ async function frontWindowText(): Promise<string[]> {
     return out;
 }
 
-/** Whether the frontmost app's accessibility tree shows `text` (labels and values, case and spacing ignored). */
-async function frontAppHasText(text: string): Promise<boolean> {
+const AX_CONTROL_ROLES = new Set<string | null>([
+    "AXButton", "AXLink", "AXTab", "AXRadioButton", "AXMenuItem", "AXMenuButton",
+    "AXCheckBox", "AXPopUpButton", "AXComboBox", "AXTextField", "AXTextArea",
+]);
+
+/**
+ * Whether the front window shows `text` as static text or a heading (case and spacing ignored).
+ * Not other windows (Bhai's overlay holds the owner's request) and not control labels or typed
+ * drafts: a button's own name or the text just typed is there before and after the action.
+ */
+export async function frontAppHasText(text: string): Promise<boolean> {
     const flat = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
     const want = flat(text);
     if (!want) return false;
     const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
     const dump = await dumpAccessibilityTree({ depth: 20, timeoutMs: 3000 }).catch(() => null);
     if (!dump || dump.error) return false;
-    const stack = [dump.root];
+    const win = dump.root.children.find((n) => n.role === "AXWindow");
+    const stack = win ? [win] : [];
     for (let n = stack.pop(); n; n = stack.pop()) {
-        for (const t of [n.label, n.value]) if (t && t !== "[secure]" && flat(t).includes(want)) return true;
+        // Web/Electron controls keep their name in a child AXStaticText, and a text area's
+        // draft is AXStaticText too: neither proves the action happened, so skip their subtrees.
+        if (AX_CONTROL_ROLES.has(n.role)) continue;
+        const t = n.role === "AXStaticText" || n.role === "AXHeading" ? n.value || n.label : "";
+        if (t && t !== "[secure]" && flat(t).includes(want)) return true;
         stack.push(...n.children);
     }
     return false;

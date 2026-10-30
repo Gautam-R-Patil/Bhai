@@ -3,7 +3,7 @@
 // texts. The old executor re-filtered originals by `dedupedTexts.includes(text)`,
 // which re-admitted every copy of a surviving text (no-op for exact dupes).
 import { describe, expect, it } from "vitest";
-import { dedupeByText, deduplicateFindings, normalizeUrl, UrlSet } from "./scoring.js";
+import { dedupeByText, deduplicateFindings, mentionsTopic, normalizeUrl, UrlSet } from "./scoring.js";
 
 describe("dedupeByText", () => {
     it("collapses exact-duplicate texts to a single object", () => {
@@ -56,5 +56,14 @@ describe("non-Latin findings and URL identity", () => {
         const visited = new UrlSet();
         visited.add(same[0]);
         expect(visited.has(same[1])).toBe(true);
+    });
+});
+
+describe("mentionsTopic", () => {
+    it("keeps a page that names the topic in another form, drops one that never does", () => {
+        expect(mentionsTopic("New lithium-ion battery cells", "lithium batteries")).toBe(true);
+        expect(mentionsTopic("Nvidia's H100 GPU", "Nvidia GPUs")).toBe(true);
+        expect(mentionsTopic("Best laptop for students", "sabse accha laptop kaunsa hai")).toBe(true);
+        expect(mentionsTopic("Please sign in to continue", "lithium batteries")).toBe(false);
     });
 });

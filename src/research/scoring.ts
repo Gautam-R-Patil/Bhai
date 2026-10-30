@@ -110,7 +110,10 @@ export function mentionsTopic(content: string, topic: string): boolean {
     const words = [...getWords(topic)].filter((w) => !TOPIC_STOPWORDS.has(w));
     if (words.length === 0) return true;
     const text = content.slice(0, 20000).toLowerCase();
-    return words.filter((w) => text.includes(w)).length >= Math.min(2, words.length);
+    // Any one topic word, crudely stemmed, will do: requiring two dropped "lithium-ion battery"
+    // for "lithium batteries", and every English page for a Hinglish topic.
+    const stem = (w: string) => (w.length > 3 ? w.replace(/(ies|es|s)$/, "") : w);
+    return words.some((w) => text.includes(stem(w)));
 }
 
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {

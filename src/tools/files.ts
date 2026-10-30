@@ -270,7 +270,23 @@ export const fileManage: ToolDefinition = {
                 }
                 done.push({ from: src, to: targets[i] });
             }
-            return JSON.stringify({ success: true, action, ...(newFolder ? { made_folder: d } : {}), done });
+            // What's still where they came from: sorting a folder by type, gpt-4.1-nano moved one
+            // file of each kind and called it done.
+            const from = path.dirname(paths[0]);
+            const left =
+                action === "move"
+                    ? fs
+                          .readdirSync(from, { withFileTypes: true })
+                          .filter((e) => e.isFile() && !e.name.startsWith("."))
+                          .map((e) => e.name)
+                    : [];
+            return JSON.stringify({
+                success: true,
+                action,
+                ...(newFolder ? { made_folder: d } : {}),
+                done,
+                ...(left.length && left.length <= 20 ? { still_in_folder: left } : {}),
+            });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message, ...(done.length ? { done } : {}) });
         }

@@ -532,6 +532,13 @@ export function parseWhen(text: string, now = new Date()): Date | null {
     return d;
 }
 
+/** The fast way to drive an app, returned when it's brought forward. Given a plan to "click the
+ *  buttons", gpt-4.1-nano pressed Calculator's keys one by one in the wrong order. */
+const APP_TIPS: Record<string, string> = {
+    Calculator:
+        "Type the whole expression in one os_type call (text '17*23', key 'return'); the result shows in the display. Don't click its buttons one by one.",
+};
+
 /** An AppleScript date built field by field: `date "<string>"` parses by the Mac's locale. */
 function asDate(d: Date): string {
     return `(my mkDate(${d.getFullYear()}, ${d.getMonth() + 1}, ${d.getDate()}, ${d.getHours()}, ${d.getMinutes()}))`;
@@ -1328,6 +1335,7 @@ end tell`);
                             frontmost: front.name,
                             pid: front.pid,
                             ...(await describeWindows(front.pid)),
+                            ...(APP_TIPS[front.name] ? { tip: APP_TIPS[front.name] } : {}),
                         });
                     }
                     return JSON.stringify({ success: true, action: "activate", app });

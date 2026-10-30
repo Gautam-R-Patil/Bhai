@@ -17,7 +17,7 @@ import {
     shouldExtractContacts, extractContactsSection,
 } from "./analysis.js";
 import { crossReferenceFindings, dedupeByText, mentionsTopic, rankSource, UrlSet } from "./scoring.js";
-import { saveResearchState, storeResearchInMemory } from "./persistence.js";
+import { loadResearchState, saveResearchState, storeResearchInMemory } from "./persistence.js";
 import { generateHypotheses, updateHypothesis, type Hypothesis, type ResearchPlan } from "./hypothesis-engine.js";
 import { getCredibility, recordClaimVerification } from "./credibility-model.js";
 import { getDimensionValue } from "../harness/registry.js";
@@ -45,6 +45,16 @@ export async function executeDeepResearch(
 
     // Memory leak prevention: cap findings array to avoid unbounded growth
     const MAX_FINDINGS = 1000;
+    // A follow-up (builds_on) starts from a finished research's findings, often already at the cap:
+    // keep the longest half so its own findings have room, and don't store the old ones to memory again.
+    // A resumed follow-up starts from its own checkpoint, so the old findings come from the basis's.
+    const basisTexts = research.buildsOn
+        ? new Set((resume?.buildsOn ? resume : await loadResearchState(research.buildsOn))?.allFindings.map(f => f.text))
+        : null;
+    if (resume?.buildsOn && allFindings.length > MAX_FINDINGS / 2) {
+        allFindings.sort((a, b) => b.text.length - a.text.length);
+        allFindings.length = MAX_FINDINGS / 2;
+    }
     /** Trim allFindings to MAX_FINDINGS, keeping longer (higher-confidence) findings */
     function trimFindings(): void {
         if (allFindings.length <= MAX_FINDINGS) return;
@@ -66,7 +76,7 @@ export async function executeDeepResearch(
 
     // A fresh start was already announced by the agent's reply; a resume (often after a restart) wasn't.
     // A follow-up arrives here with a finished research's sources: that isn't a resume.
-    const resuming = resume?.research.id === research.id;
+    const resuming = !!resume && !resume.buildsOn;
     if (resuming) await notify(`🔬 Picking up the research on "${research.topic.substring(0, 50)}" where it stopped (${allSources.length} sources so far)`, true);
     else await notify(`🔬 Deep research started: "${research.topic.substring(0, 50)}" (${research.profile} profile: ${research.depth} rounds, ${research.maxSources} sources)`);
 
@@ -101,6 +111,8 @@ export async function executeDeepResearch(
 
         let globalRound = resume?.currentRound ?? 0;
         let consecutiveFailures = 0;
+        // Pace is this run's time over this run's rounds: a resume's earlier rounds took no time here.
+        const startRound = globalRound;
         const roundStartTime = Date.now();
 
         // Analyze fetched pages a few at a time (profile.concurrentQueries) instead of one
@@ -149,7 +161,7 @@ export async function executeDeepResearch(
         if (!skipDiscovery) {
             research.currentPhase = 1;
             console.log(`[RESEARCH] ═══ PHASE 1: DISCOVERY (${phase1Rounds} rounds) ═══`);
-            await notify(`🌐 Phase 1: Discovery — casting a wide net across 6+ search engines...`);
+            await notify(`🌐 Phase 1: Discovery — searching the web${profile.useAcademicEngines ? " and academic databases" : ""}...`);
         }
 
         let allEnginesOfflineCount = 0; // Track rounds where ALL engines return 0 results
@@ -202,6 +214,8 @@ export async function executeDeepResearch(
                         if (netStatus === "offline" || isOffline()) {
                             console.error(`[RESEARCH] ❌ Internet offline — aborting research after ${allEnginesOfflineCount} rounds with 0 results`);
                             research.status = "failed";
+                            research.error = "The internet seemed to be down. It can be continued once back online.";
+                            research.updatedAt = new Date().toISOString();
                             await notify(`⚠️ Research on "${research.topic.substring(0, 50)}" stopped: the internet seems to be down. Ask me to continue it once you're back online.`, true);
                             return;
                         }
@@ -260,9 +274,9 @@ export async function executeDeepResearch(
             research.engineBreakdown = engineBreakdown;
             research.updatedAt = new Date().toISOString();
 
-            // Estimate time remaining
-            const avgTimePerRound = (Date.now() - roundStartTime) / globalRound;
-            research.estimatedTimeRemaining = Math.round(((research.depth - globalRound) * avgTimePerRound) / 1000);
+            // Rounds still to go in Phases 1 and 2, at this run's pace, plus about a minute to write it up.
+            const avgTimePerRound = (Date.now() - roundStartTime) / Math.max(1, globalRound - startRound);
+            research.estimatedTimeRemaining = Math.round(((phase1Rounds - round - 1 + phase2Rounds) * avgTimePerRound) / 1000) + 60;
 
             if (round % 3 === 0) {
                 await notify(`🔍 Phase 1 round ${round + 1}/${phase1Rounds}: ${allSources.length} sources, ${allFindings.length} findings`);
@@ -327,7 +341,7 @@ export async function executeDeepResearch(
 
         research.currentPhase = 2;
         console.log(`[RESEARCH] ═══ PHASE 2: DEEP READING (${adjustedPhase2Rounds} rounds, citation depth: ${profile.citationDepth}) ═══`);
-        await notify(`📖 Phase 2: Deep Reading — following citation chains (depth ${profile.citationDepth})...`);
+        await notify(`📖 Phase 2: Deep Reading — ${profile.citationDepth > 0 ? `following citation chains (depth ${profile.citationDepth})` : "reading more sources from follow-up searches"}...`);
 
         // Sort sources by score, read top unread ones more deeply
         const sourcesToDeepRead = [...allSources].sort((a, b) => b.finalScore - a.finalScore);
@@ -424,7 +438,7 @@ export async function executeDeepResearch(
             research.findingsCount = allFindings.length;
             research.updatedAt = new Date().toISOString();
             // Rounds still to go in this phase, at this run's pace, plus about a minute to write it up.
-            const avgPerRound = (Date.now() - roundStartTime) / Math.max(1, globalRound);
+            const avgPerRound = (Date.now() - roundStartTime) / Math.max(1, globalRound - startRound);
             research.estimatedTimeRemaining = Math.round(((adjustedPhase2Rounds - round - 1) * avgPerRound) / 1000) + 60;
 
             if (round % 5 === 0) {
@@ -560,7 +574,11 @@ export async function executeDeepResearch(
         await fs.writeFile(filePath, report);
 
         // Store findings in memory for follow-up questions
-        await storeResearchInMemory(research.topic, structuredFindings, report);
+        await storeResearchInMemory(
+            research.topic,
+            basisTexts ? structuredFindings.filter(f => !basisTexts.has(f.text)) : structuredFindings,
+            report, research.id, filePath,
+        );
 
         research.report = report;
         research.reportFile = filePath;

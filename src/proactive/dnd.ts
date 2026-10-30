@@ -87,8 +87,10 @@ const IMPORTANT_PATTERNS = [
     /\burgent\b/i,
     /\bemergency\b/i,
     /⚠️.*critical/i,
-    // A research the owner asked for: its answer, not a nudge
+    // A research the owner asked for: its answer, and word that it stopped, failed or picked up again
     /^📚 Research ready/,
+    /^(?:❌|⚠️) Research on "/,
+    /^🔬 Picking up the research/,
 ];
 
 export function isImportantMessage(message: string): boolean {

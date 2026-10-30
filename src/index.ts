@@ -569,7 +569,9 @@ async function boot() {
         );
     }
     registerChannelSender("whatsapp", (message, filePath) => sendWhatsAppProactiveMessage(message, filePath));
-    registerChannelSender("discord", (message, filePath) => sendDiscordProactiveMessage(message, filePath));
+    registerChannelSender("discord", (message, filePath, _buttons, _ownerOnly, to) =>
+        sendDiscordProactiveMessage(message, filePath, to),
+    );
     registerChannelSender("slack", (message) => sendSlackProactiveMessage(message));
     registerChannelSender("matrix", (message) => sendMatrixProactiveMessage(message));
     registerChannelSender("overlay", (message) => sendOverlayNotification(message));
