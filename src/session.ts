@@ -65,6 +65,11 @@ export function getSessionTokenSync(): string | null {
 let _needsSignIn = false;
 export const sessionNeedsSignIn = (): boolean => _needsSignIn;
 
+// The server's Retry-After on a 429 (10 session requests a minute per IP): boot retried
+// after 3s and 6s, inside the same minute, then exited, and the app's relaunch asked again.
+let _retryAfterMs = 0;
+export const sessionRetryAfterMs = (): number => _retryAfterMs;
+
 /**
  * Initialize session on startup. Call once during boot.
  */
@@ -164,6 +169,8 @@ async function createSession(otplessUserId: string): Promise<void> {
     if (!response.ok) {
         const error = await response.json().catch(() => ({ error: "Unknown error" }));
         _needsSignIn = ["sign_in_required", "device_removed"].includes((error as any).error);
+        const wait = Number(response.headers.get("retry-after"));
+        _retryAfterMs = response.status === 429 ? Math.min(Number.isFinite(wait) && wait > 0 ? wait : 60, 120) * 1000 : 0;
         throw new Error(`Session creation failed (${response.status}): ${(error as any).error}`);
     }
 

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./config/keys.js", () => ({ getConvexSiteUrl: () => "https://convex.test" }));
 
-const { initSession, sessionNeedsSignIn } = await import("./session.js");
+const { initSession, sessionNeedsSignIn, sessionRetryAfterMs } = await import("./session.js");
 
 afterEach(() => {
     vi.unstubAllGlobals();
@@ -31,5 +31,21 @@ describe("bot session and the device secret", () => {
         vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Session creation failed" }), { status: 403 })));
         expect(await initSession()).toBe(false);
         expect(sessionNeedsSignIn()).toBe(false);
+        expect(sessionRetryAfterMs()).toBe(0);
+    });
+
+    it("a rate limit says how long to wait before asking again", async () => {
+        process.env.ATLAS_OTPLESS_USER_ID = "u1";
+        const limited = (h: Record<string, string>) =>
+            new Response(JSON.stringify({ error: "Rate limit exceeded" }), { status: 429, headers: h });
+        vi.stubGlobal("fetch", vi.fn(async () => limited({ "Retry-After": "60" })));
+        expect(await initSession()).toBe(false);
+        expect(sessionRetryAfterMs()).toBe(60_000);
+        vi.stubGlobal("fetch", vi.fn(async () => limited({ "Retry-After": "9999" })));
+        await initSession();
+        expect(sessionRetryAfterMs()).toBe(120_000); // capped
+        vi.stubGlobal("fetch", vi.fn(async () => limited({})));
+        await initSession();
+        expect(sessionRetryAfterMs()).toBe(60_000);
     });
 });

@@ -52,7 +52,7 @@ import { startHeartbeat, stopHeartbeat } from "./proactive/heartbeat.js";
 import { initCredibilityModel } from "./research/credibility-model.js";
 import { initSandbox } from "./security/sandbox.js";
 import { loggableRejection } from "./security/vm-isolate.js";
-import { initSession, revokeCurrentSession, sessionNeedsSignIn } from "./session.js";
+import { initSession, revokeCurrentSession, sessionNeedsSignIn, sessionRetryAfterMs } from "./session.js";
 import { seedProfileIfPresent } from "./setup/wizard-seed.js";
 import { initSkillMetadata } from "./skills/loader.js";
 import { closeSlack, initSlack, sendSlackProactiveMessage } from "./slack.js";
@@ -187,7 +187,7 @@ async function boot() {
             process.exit(78);
         }
         if (attempt < 3) {
-            const delay = attempt * 3000;
+            const delay = Math.max(attempt * 3000, sessionRetryAfterMs());
             console.warn(`⚠️  Session creation failed (attempt ${attempt}/3) — retrying in ${delay / 1000}s...`);
             await new Promise((r) => setTimeout(r, delay));
         }
