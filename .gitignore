@@ -117,6 +117,7 @@ desktop/hostinger-upload/
 !src/tools/scheduled-cron-timer.test.ts
 !src/tool-router.category-cache.test.ts
 !src/security/pii-memo-idle.test.ts
+!src/memory/codebase-app-bundle.test.ts
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
 !src/tools/google-api-clients.test.ts
 !src/video-studio/util/ffmpeg-bin.test.ts

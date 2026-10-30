@@ -574,9 +574,17 @@ export function wipeIndex(root: string): void {
  *  - any SQL / fs error occurs.
  * Never throws.
  */
+/**
+ * The packaged app's own folder (Bhai.app/Contents/Resources/bot is the bot's cwd): an
+ * obfuscated bundle, nothing the owner codes on. The automatic first-coding-turn index skips it
+ * (it took 2-17 s each time); an explicit codebase_index call still can.
+ */
+export const isAppBundleDir = (root: string) => fs.existsSync(path.join(root, "bot-bundle.mjs"));
+
 export async function getArchitectureSnippet(root: string): Promise<string> {
     try {
         if ((process.env.ATLAS_NO_ARCHITECTURE_INJECTION ?? "").toLowerCase() === "true") return "";
+        if (isAppBundleDir(root)) return "";
         if ((process.env.ATLAS_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true") return "";
         const repoRoot = resolveRepoRoot(root);
         const { hasSidecar, openSidecar } = await import("./codebase-sidecar.js");
@@ -615,6 +623,7 @@ export async function getArchitectureSnippet(root: string): Promise<string> {
 export async function ensureIndexForCoding(root: string): Promise<void> {
     try {
         if ((process.env.ATLAS_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true") return;
+        if (isAppBundleDir(root)) return;
         const repoRoot = resolveRepoRoot(root);
         const { hasSidecar } = await import("./codebase-sidecar.js");
         // Probe file count without opening the sidecar (quick walk, capped).
