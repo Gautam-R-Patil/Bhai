@@ -144,6 +144,17 @@ function pruneBotModules(botDir, lock, { platform, arch }) {
                 fs.rmdirSync(path.join(nmDir, e.name));
             }
         }
+        // .bin links into packages removed above dangle, and electron-builder
+        // fails with ENOENT when it stats them for signing.
+        const binDir = path.join(nmDir, ".bin");
+        if (fs.existsSync(binDir)) {
+            for (const name of fs.readdirSync(binDir)) {
+                if (!fs.existsSync(path.join(binDir, name))) fs.unlinkSync(path.join(binDir, name));
+            }
+            if (fs.readdirSync(binDir).length === 0) fs.rmdirSync(binDir);
+        }
+        // A node_modules left empty (all its packages extraneous) goes too.
+        if (keyPrefix && fs.readdirSync(nmDir).length === 0) fs.rmdirSync(nmDir);
     };
 
     walk(path.join(botDir, "node_modules"), "");

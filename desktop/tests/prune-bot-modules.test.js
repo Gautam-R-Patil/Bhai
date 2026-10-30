@@ -204,6 +204,45 @@ describe("pruneBotModules", () => {
         }
     });
 
+    // electron-builder stats every file it signs; a .bin link into a removed
+    // package fails the build with ENOENT (node-cron/node_modules/.bin/uuid).
+    it("removes .bin links into packages it removed and keeps the others", () => {
+        const botDir = fixture([
+            "node_modules/prod/index.js",
+            "node_modules/prod/node_modules/nested/cli.js",
+            "node_modules/prod/node_modules/stale/cli.js",
+            "node_modules/other/index.js",
+            "node_modules/other/node_modules/stale/cli.js",
+        ]);
+        const bin = (p) => path.join(botDir, p);
+        fs.mkdirSync(bin("node_modules/prod/node_modules/.bin"));
+        fs.symlinkSync("../nested/cli.js", bin("node_modules/prod/node_modules/.bin/nested"));
+        fs.symlinkSync("../stale/cli.js", bin("node_modules/prod/node_modules/.bin/stale"));
+        fs.mkdirSync(bin("node_modules/other/node_modules/.bin"));
+        fs.symlinkSync("../stale/cli.js", bin("node_modules/other/node_modules/.bin/stale"));
+        const lock = {
+            packages: {
+                "": {},
+                "node_modules/prod": {},
+                "node_modules/prod/node_modules/nested": {},
+                "node_modules/other": {},
+            },
+        };
+        pruneBotModules(botDir, lock, mac);
+        const linked = (p) => {
+            try {
+                fs.lstatSync(bin(p));
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        expect(fs.readFileSync(bin("node_modules/prod/node_modules/.bin/nested"), "utf8")).toBe("x");
+        expect(linked("node_modules/prod/node_modules/.bin/stale")).toBe(false);
+        expect(linked("node_modules/other/node_modules/.bin")).toBe(false);
+        fs.rmSync(botDir, { recursive: true, force: true });
+    });
+
     it("reports production packages the copied tree lacks", () => {
         const botDir = fixture(["node_modules/prod/index.js"]);
         const lock = {
