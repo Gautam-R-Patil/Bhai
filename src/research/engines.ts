@@ -5,61 +5,15 @@ import { decodeBingUrl } from "../tools/web-search.js";
 import { baseUrlHostMatches } from "../utils/atomic-io.js";
 import type { SearchResult } from "./types.js";
 import { UrlSet } from "./scoring.js";
-import { randomUA, sleep, ENGINE_COOLDOWN_MS, ENGINE_MAX_CONSECUTIVE_FAILURES, SEARCH_BROWSER_IDLE_MS } from "./profiles.js";
+import { randomUA, sleep, ENGINE_COOLDOWN_MS, ENGINE_MAX_CONSECUTIVE_FAILURES } from "./profiles.js";
 import { getSessionToken } from "../session.js";
 import { getConvexSiteUrl } from "../config/keys.js";
 import { encryptedFetch } from "../crypto-transport.js";
 
-// ── Headless Browser (for Google JS-rendered search) ──
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _searchBrowser: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _searchContext: any = null;
-let _searchBrowserIdleTimer: ReturnType<typeof setTimeout> | null = null;
-
-async function getSearchBrowser(): Promise<{ context: any; newPage: () => Promise<any> }> {
-    if (_searchBrowserIdleTimer) clearTimeout(_searchBrowserIdleTimer);
-    _searchBrowserIdleTimer = setTimeout(async () => {
-        try {
-            if (_searchContext) await _searchContext.close().catch(() => {});
-            if (_searchBrowser) await _searchBrowser.close().catch(() => {});
-        } catch {}
-        _searchBrowser = null;
-        _searchContext = null;
-    }, SEARCH_BROWSER_IDLE_MS);
-
-    if (_searchContext) return { context: _searchContext, newPage: () => _searchContext.newPage() };
-
-    const pw = await import("playwright");
-    _searchBrowser = await pw.chromium.launch({
-        headless: true,
-        args: ["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
-    });
-    _searchContext = await _searchBrowser.newContext({
-        userAgent: randomUA(),
-        viewport: { width: 1280, height: 800 },
-        locale: "en-US",
-    });
-
-    return { context: _searchContext, newPage: () => _searchContext.newPage() };
-}
-
-/** Closes the research search browser; called from the bot's shutdown (index.ts). */
-export const closeSearchBrowser = async () => {
-    if (_searchBrowserIdleTimer) clearTimeout(_searchBrowserIdleTimer);
-    try { if (_searchContext) await _searchContext.close().catch(() => {}); } catch {}
-    try { if (_searchBrowser) await _searchBrowser.close().catch(() => {}); } catch {}
-    _searchBrowser = null;
-    _searchContext = null;
-};
-// No SIGTERM/SIGINT handlers here: exiting from an import-time handler cut off
-// the bot's own graceful shutdown (MCP, WhatsApp, session) on every quit.
-process.on("beforeExit", closeSearchBrowser);
 
 // ── Engine Health Tracking ──────────────────
 
-type EngineName = "google" | "brave" | "duckduckgo" | "bing" | "searxng" | "mojeek" | "tavily" | "exa" | "parallel" | "wikipedia" | "openalex" | "semantic_scholar" | "arxiv";
+type EngineName = "brave" | "duckduckgo" | "bing" | "searxng" | "mojeek" | "tavily" | "exa" | "parallel" | "wikipedia" | "openalex" | "semantic_scholar" | "arxiv";
 
 interface EngineHealth {
     consecutiveFailures: number;
@@ -114,124 +68,6 @@ export function resetEngineHealth(): void {
 /** Test-only: observe whether an engine is currently available (not backing off). */
 export function __isEngineAvailable(engine: EngineName): boolean {
     return isAvailable(engine);
-}
-
-// ── Google Search (Playwright) ───────────────
-
-async function searchGoogle(query: string): Promise<SearchResult[]> {
-    if (!isAvailable("google")) return [];
-    let page: any = null;
-    try {
-        const { newPage, context } = await getSearchBrowser();
-
-        // Bypass consent dialog
-        await context.addCookies([
-            { name: "CONSENT", value: "YES+cb.20240101-00-p0.en+FX+999", domain: ".google.com", path: "/" },
-        ]);
-
-        page = await newPage();
-
-        // Anti-detection stealth
-        await page.evaluate(
-            /* javascript-obfuscator:disable */ () => {
-                Object.defineProperty(navigator, "webdriver", { get: () => false });
-            },
-            /* javascript-obfuscator:enable */ undefined,
-        );
-
-        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=15&hl=en`;
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
-
-        // Wait for results to load
-        await page
-            .waitForFunction(
-                /* javascript-obfuscator:disable */ () => document.querySelectorAll("h3").length > 0,
-                /* javascript-obfuscator:enable */ { timeout: 10000 },
-            )
-            .catch(() => {});
-        await sleep(800);
-
-        const results: SearchResult[] = await page.evaluate(
-            /* javascript-obfuscator:disable */ () => {
-                const items: Array<{ url: string; title: string; snippet: string }> = [];
-                const seen = new Set<string>();
-
-                // Primary: structured result blocks
-                document.querySelectorAll("div.g, div[data-hveid]").forEach((block: Element) => {
-                    const linkEl = block.querySelector("a[href^='http']") as HTMLAnchorElement | null;
-                    const h3El = block.querySelector("h3");
-                    const snippetEl = block.querySelector(
-                        "div[data-sncf], div.VwiC3b, span.aCOpRe, div[style*='line-clamp']",
-                    );
-                    if (linkEl && h3El && linkEl.href && !/(^|\.)google\.com$/.test(linkEl.hostname)) {
-                        if (seen.has(linkEl.href)) return;
-                        seen.add(linkEl.href);
-                        items.push({
-                            url: linkEl.href,
-                            title: h3El.textContent?.trim() || "",
-                            snippet: snippetEl?.textContent?.trim() || "",
-                        });
-                    }
-                });
-
-                // Fallback: any a > h3
-                if (items.length === 0) {
-                    document.querySelectorAll("a").forEach((a: HTMLAnchorElement) => {
-                        const h3 = a.querySelector("h3");
-                        if (
-                            h3 &&
-                            a.href &&
-                            a.href.startsWith("http") &&
-                            !/(^|\.)google\.com$/.test(a.hostname) &&
-                            !seen.has(a.href)
-                        ) {
-                            seen.add(a.href);
-                            items.push({ url: a.href, title: h3.textContent?.trim() || "", snippet: "" });
-                        }
-                    });
-                }
-                return items.slice(0, 15);
-            },
-            /* javascript-obfuscator:enable */ undefined,
-        );
-
-        // Fallback: parse raw HTML if evaluate found nothing (e.g. Google changed DOM)
-        if (results.length === 0) {
-            const html = await page.content();
-            const fallbackResults = parseGoogleHTML(html);
-            if (fallbackResults.length > 0) {
-                markSuccess("google");
-                return fallbackResults;
-            }
-        }
-
-        if (results.length > 0) markSuccess("google");
-        else markFailure("google");
-        return results.map(r => ({ ...r, source: "google" }));
-    } catch {
-        markFailure("google");
-        return [];
-    } finally {
-        if (page) await page.close().catch(() => {});
-    }
-}
-
-/** Fallback: regex-parse raw Google HTML when page.evaluate finds nothing */
-function parseGoogleHTML(html: string): SearchResult[] {
-    const results: SearchResult[] = [];
-    const seen = new Set<string>();
-    // Match /url?q=... links with h3 content
-    const pattern = /<a[^>]*href="\/url\?q=(https?:\/\/[^&"]+)[^"]*"[^>]*>[\s\S]*?<h3[^>]*>([\s\S]*?)<\/h3>/gi;
-    let match;
-    while ((match = pattern.exec(html)) !== null && results.length < 15) {
-        const url = decodeURIComponent(match[1]);
-        const title = match[2].replace(/<[^>]+>/g, "").trim();
-        if (!seen.has(url) && !baseUrlHostMatches(url, "google.com") && title.length > 3) {
-            seen.add(url);
-            results.push({ url, title, snippet: "", source: "google" });
-        }
-    }
-    return results;
 }
 
 // ── Brave Search ─────────────────────────────
@@ -775,7 +611,6 @@ export async function multiEngineSearch(
         searchBrave(query),      // Independent index
         searchDDG(query),        // Privacy-friendly
         searchWikipedia(query),  // Free, reliable, structured
-        searchGoogle(query),     // Playwright-based (slower, may get blocked)
         searchMojeek(query),     // Independent crawler
     ];
 

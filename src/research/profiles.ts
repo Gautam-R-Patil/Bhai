@@ -14,7 +14,6 @@ export const CONCURRENT_FETCHES = 10;       // was 3
 export const ENGINE_COOLDOWN_MS = 15000;
 export const ENGINE_MAX_CONSECUTIVE_FAILURES = 3;
 export const CITATION_CHAIN_MAX_PER_SOURCE = 5;
-export const SEARCH_BROWSER_IDLE_MS = 5 * 60 * 1000;
 
 export const USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",

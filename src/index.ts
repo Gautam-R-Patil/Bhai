@@ -1267,12 +1267,6 @@ async function boot() {
         }
         await closeMCPServers();
         await closeBrowser();
-        try {
-            const { closeSearchBrowser } = await import("./research/engines.js");
-            await closeSearchBrowser();
-        } catch {
-            /* not loaded */
-        }
         closeChromeBridge();
         closeCanvas();
         closeOverlayChat();
