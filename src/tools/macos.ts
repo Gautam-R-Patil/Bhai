@@ -526,6 +526,12 @@ export const osType: ToolDefinition = {
         const delaySec = delayMs / 1000;
         let script: string;
 
+        // text "return" alone means the key (gpt-4.1-nano typed the word into Calculator).
+        const keyWord = typeof input.text === "string" ? input.text.trim().toLowerCase() : "";
+        if (!input.key && !input.combo && /^(return|enter|escape|esc|tab)$/.test(keyWord)) {
+            input = { ...input, key: keyWord === "esc" ? "escape" : keyWord, text: undefined };
+        }
+
         // text plus key/combo in one call ("45*12" then return): type, then press.
         // Taking only the key dropped the text while reporting success.
         let typedFirst = 0;
