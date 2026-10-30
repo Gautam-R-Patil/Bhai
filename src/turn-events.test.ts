@@ -71,4 +71,36 @@ describe("createTurnStream", () => {
         expect(seen.filter((e) => e.type === "answer_reset")).toEqual([{ type: "answer_reset", attempt: 0 }]);
         expect(t.partial()).toBe("");
     });
+
+    it("a finished step moves the live line on to its results; the next step's status still wins", () => {
+        vi.useFakeTimers();
+        try {
+            const seen: TurnEvent[] = [];
+            const t = createTurnStream((e) => seen.push(e), { channel: "overlay", notes: false });
+            const statuses = () => seen.filter((e) => e.type === "status").map((e) => (e as { text: string }).text);
+            t.step("Searching the web");
+            t.status("Searching the web", 1, 2);
+            vi.advanceTimersByTime(4000);
+            t.stepEnd("done");
+            expect(seen.at(-1)).toEqual({ type: "status", text: "Reading what I found", step: 1, elapsedSec: 6 });
+            t.step("Opening the page");
+            t.stepEnd("failed");
+            t.status("Opening the page", 2, 6); // inside the 3s gap: replaces the pending one
+            vi.advanceTimersByTime(3000);
+            expect(statuses()).toEqual(["Searching the web", "Reading what I found", "Opening the page"]);
+            t.step("Trying another way");
+            t.status("Trying another way", 3, 10);
+            vi.advanceTimersByTime(3000);
+            t.stepEnd("failed");
+            vi.advanceTimersByTime(3000);
+            expect(statuses().at(-1)).toBe("Seeing what went wrong");
+            // A step closed by the next one or by the turn's end leaves no extra status.
+            const before = statuses().length;
+            t.step("Last look");
+            t.end();
+            expect(statuses().length).toBe(before);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

@@ -74,6 +74,8 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
     let shown = "";
     let stepId = 0;
     let openStep: { id: number; text: string } | null = null;
+    // The last status's step and clock, so a status sent here carries on from it.
+    let lastStatus = { step: 0, elapsedSec: 0, at: Date.now() };
 
     const emitNote = (text: string) => {
         if (text && opts.notes) sink({ type: "note", text });
@@ -117,10 +119,15 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
                 return withdraw();
         }
     };
-    const stepEnd = (state: "done" | "failed" = "done") => {
-        if (!openStep) return;
+    const closeStep = (state: "done" | "failed" = "done") => {
+        if (!openStep) return false;
         sink({ type: "step", ...openStep, state });
         openStep = null;
+        return true;
+    };
+    const pushStatus = (text: string, step: number, elapsedSec: number) => {
+        lastStatus = { step, elapsedSec, at: Date.now() };
+        status.push({ type: "status", text, step, elapsedSec });
     };
 
     return {
@@ -136,21 +143,28 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
             this.step(stepText);
         },
         step(text: string) {
-            stepEnd();
+            closeStep();
             openStep = { id: ++stepId, text };
             sink({ type: "step", ...openStep, state: "running" });
         },
-        stepEnd,
-        status(text: string, step: number, elapsedSec: number) {
-            status.push({ type: "status", text, step, elapsedSec });
+        /** A tool step finished: the live line moves on from its "Searching…" to its results. */
+        stepEnd(state: "done" | "failed" = "done") {
+            if (!closeStep(state)) return;
+            const elapsedSec = lastStatus.elapsedSec + Math.round((Date.now() - lastStatus.at) / 1000);
+            pushStatus(
+                state === "done" ? "Reading what I found" : "Seeing what went wrong",
+                lastStatus.step,
+                elapsedSec,
+            );
         },
+        status: pushStatus,
         /** The filtered answer streamed so far (the turn was stopped). */
         partial(): string {
             return shown + answer.flush();
         },
         end() {
             endNotes();
-            stepEnd();
+            closeStep();
             status.flush();
             status.stop();
             sink({ type: "end" });
