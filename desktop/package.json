@@ -12,7 +12,7 @@
         "prebuild": "echo 'Source protection will run after pack...'",
         "build:win": "cd .. && npm run build && cd desktop && node build/patch-nsis.js && electron-builder --win --x64",
         "build:mac": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac --dir --arm64 && bash build/resign-local.sh && ARCH=arm64 bash build/create-dmg.sh",
-        "build:mac:release": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac dmg",
+        "build:mac:release": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac dmg zip",
         "build:mac:protected": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && npm run prebuild && electron-builder --mac",
         "build:linux": "cd .. && npm run build && cd desktop && electron-builder --linux",
         "build:win:protected": "cd .. && npm run build && cd desktop && node build/patch-nsis.js && npm run prebuild && electron-builder --win --x64",
@@ -211,7 +211,8 @@
             "gatekeeperAssess": false,
             "notarize": false,
             "target": [
-                "dir"
+                "dir",
+                "zip"
             ],
             "icon": "build/icon-mac.png",
             "entitlements": "build/entitlements.mac.plist",
@@ -237,7 +238,7 @@
             "icon": "build/icon-mac.png",
             "background": "build/dmg-background@2x.png",
             "sign": true,
-            "writeUpdateInfo": true,
+            "writeUpdateInfo": false,
             "window": {
                 "width": 540,
                 "height": 380

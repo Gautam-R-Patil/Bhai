@@ -15,12 +15,13 @@ endpoint at `/api/updates` serves only the YAML metadata and points
  │ (electron- │                     │   reads UPDATE_* env vars  │
  │  updater)  │◀── latest*.yml ─────│   returns metadata only    │
  └─────┬──────┘                     └────────────────────────────┘
-       │ downloads DMG/EXE + blockmap directly from R2
+       │ downloads the mac ZIP / EXE + blockmap directly from R2
        ▼
  ┌────────────────────────────────────────────────────────────────┐
  │ Cloudflare R2 bucket (e.g. atlas-releases)                     │
- │   stable/0.2.1/Bhai-0.2.1-arm64.dmg                       │
- │   stable/0.2.1/Bhai-0.2.1-arm64.dmg.blockmap              │
+ │   stable/0.2.1/Bhai-0.2.1-arm64.dmg      (download only)  │
+ │   stable/0.2.1/Bhai-0.2.1-arm64-mac.zip  (mac update)     │
+ │   stable/0.2.1/Bhai-0.2.1-arm64-mac.zip.blockmap          │
  │   stable/0.2.1/Bhai Setup 0.2.1.exe                       │
  │   stable/0.2.1/Bhai Setup 0.2.1.exe.blockmap              │
  │   beta/…                                                       │
@@ -133,11 +134,15 @@ The script (uses the AWS S3 SDK multipart upload, not wrangler):
    currently 0.2.1, is not touched).
 2. Builds the installer via `npm run build:mac:release` (which first runs
    `npm run build:helpers` — the Swift OCR/location/AX helpers must exist —
-   then `npm run build`, then `electron-builder --mac dmg` so a blockmap is
-   emitted; `build:mac`'s custom `create-dmg.sh` does NOT produce blockmaps
-   and must not be used for releases). On a Windows host it runs
+   then `npm run build`, then `electron-builder --mac dmg zip`), then converts
+   the DMG to ULMO (LZMA, ~26% smaller; electron-builder only offers UDZO/ULFO)
+   and re-signs it as it was. electron-updater's MacUpdater installs only from
+   the ZIP (`ERR_UPDATER_ZIP_FILE_NOT_FOUND` otherwise), so the ZIP and its
+   blockmap are the Mac update and `UPDATE_*_MAC` describe the ZIP; the DMG is
+   the first-install download. `build:mac`'s custom `create-dmg.sh` makes no
+   ZIP and must not be used for releases. On a Windows host it runs
    `npm run build:win` (NSIS, x64).
-3. Locates the DMG / EXE / blockmap / `latest*.yml` in `desktop/dist/`.
+3. Locates the DMG / ZIP / EXE / blockmaps / `latest*.yml` in `desktop/dist/`.
 4. Uploads each file to `r2://<bucket>/<channel>/<version>/<filename>`.
 5. Computes SHA-512 (base64) and byte size for each binary.
 6. Either prints or runs the `npx convex env set UPDATE_…` commands.
@@ -187,7 +192,7 @@ npx convex env remove UPDATE_SHA512_MAC
 npx convex env remove UPDATE_SIZE_MAC
 npx convex env remove UPDATE_RELEASE_DATE
 npx convex env set UPDATE_VERSION_ALPHA    0.2.1
-npx convex env set UPDATE_URL_MAC_ALPHA    https://.../alpha/0.2.1/<file>.dmg
+npx convex env set UPDATE_URL_MAC_ALPHA    https://.../alpha/0.2.1/<file>-mac.zip
 npx convex env set UPDATE_SHA512_MAC_ALPHA <base64-sha512>
 npx convex env set UPDATE_SIZE_MAC_ALPHA   <bytes>
 npx convex env set UPDATE_RELEASE_DATE_ALPHA <iso-date>

@@ -2378,7 +2378,8 @@ http.route({
 // Env vars (per channel; replace <C> with STABLE / BETA / CANARY — or
 // leave blank for the stable channel):
 //   UPDATE_VERSION[_<C>]      — e.g. "0.2.1"
-//   UPDATE_URL_MAC[_<C>]      — direct download URL for the macOS .dmg
+//   UPDATE_URL_MAC[_<C>]      — direct download URL for the macOS update .zip
+//                               (MacUpdater installs only from a zip)
 //   UPDATE_URL_WIN[_<C>]      — direct download URL for the Windows .exe
 //   UPDATE_SHA512_MAC[_<C>]   — SHA-512 (base64) of the macOS artifact
 //   UPDATE_SHA512_WIN[_<C>]   — SHA-512 (base64) of the Windows artifact
