@@ -1186,6 +1186,17 @@ $.CGEventPost($.kCGHIDEventTap, upEvent);
 // 8. APP MANAGER
 // ═══════════════════════════════════════════════
 
+type AppEntry = { name: string; frontmost: boolean; visible: boolean };
+/** One entry per app: two processes with one name (the owner's Chrome and Bhai's) were listed twice. */
+export function mergeAppsByName(apps: AppEntry[]): AppEntry[] {
+    const byName = new Map<string, AppEntry>();
+    for (const a of apps) {
+        const had = byName.get(a.name);
+        byName.set(a.name, had ? { name: a.name, frontmost: had.frontmost || a.frontmost, visible: had.visible || a.visible } : { ...a });
+    }
+    return [...byName.values()];
+}
+
 export const appManager: ToolDefinition = {
     schema: {
         type: "function",
@@ -1237,15 +1248,10 @@ export const appManager: ToolDefinition = {
                         );
                         const procs = JSON.parse(result.trim() || "[]");
                         const arr = Array.isArray(procs) ? procs : [procs];
-                        return JSON.stringify({
-                            success: true,
-                            count: arr.length,
-                            apps: arr.map((p: Record<string, unknown>) => ({
-                                name: p.ProcessName,
-                                frontmost: false,
-                                visible: true,
-                            })),
-                        });
+                        const apps = mergeAppsByName(
+                            arr.map((p: Record<string, unknown>) => ({ name: String(p.ProcessName), frontmost: false, visible: true })),
+                        );
+                        return JSON.stringify({ success: true, count: apps.length, apps });
                     }
                     case "quit":
                         if (!app) return JSON.stringify({ error: "Provide 'app' name to quit." });
@@ -1285,7 +1291,7 @@ const apps = procs.map(p => ({
     visible: p.visible(),
 }));
 JSON.stringify(apps);`);
-                    const apps = JSON.parse(result || "[]");
+                    const apps = mergeAppsByName(JSON.parse(result || "[]"));
                     return JSON.stringify({ success: true, count: apps.length, apps });
                 }
 
