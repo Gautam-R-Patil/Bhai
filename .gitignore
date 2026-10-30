@@ -498,3 +498,4 @@ brag-output/
 !src/owner-delivery.ts
 !src/owner-delivery.test.ts
 !src/tools/browser-strategy-match.test.ts
+!src/skills/relevant-skills.test.ts

@@ -3077,7 +3077,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             toolSelection = turnToolSelection;
         } else {
             toolSelection = await selectTools({
-                message: userMessage,
+                message: rawUserMessage, // the owner's words, not the channel notes (tab titles)
                 recentToolCalls: lastToolCalls?.map((tc) => tc.function.name),
                 iteration: iterations,
                 requestedCategories,

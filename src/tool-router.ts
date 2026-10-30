@@ -1936,7 +1936,7 @@ export async function selectTools(opts: {
     selectedSchemas.push(REQUEST_TOOLS_SCHEMA);
 
     // ── Select relevant skill slugs ──
-    const skillSlugs = getRelevantSkillSlugs(selectedCategories);
+    const skillSlugs = getRelevantSkillSlugs(selectedCategories, `${opts.message} ${llmResult?.intent ?? ""}`);
 
     // Thread the classifier's output through the selection so callers can
     // implement fast-path gates without relying on the mutable module-level
