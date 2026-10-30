@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
     parseOtplessVerifyResponse,
     isLegacyUserId,
+    isLoopbackHost,
 } from "../auth-helpers.js";
 
 describe("parseOtplessVerifyResponse", () => {
@@ -60,5 +61,12 @@ describe("isLegacyUserId", () => {
     it("handles null/undefined", () => {
         expect(isLegacyUserId(null)).toBe(false);
         expect(isLegacyUserId(undefined)).toBe(false);
+    });
+});
+
+describe("isLoopbackHost (DNS-rebinding guard for the sign-in server)", () => {
+    it("accepts the loopback names on our port, and nothing else", () => {
+        for (const h of ["127.0.0.1:7421", "localhost:7421", "[::1]:7421", "LOCALHOST:7421"]) expect(isLoopbackHost(h, 7421)).toBe(true);
+        for (const h of ["rebind.evil.example:7421", "127.0.0.1:7422", "127.0.0.1", "", undefined]) expect(isLoopbackHost(h, 7421)).toBe(false);
     });
 });

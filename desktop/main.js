@@ -182,7 +182,7 @@ const _CONVEX_DEPLOY_NAME = _ATLAS_IS_PROD ? "avid-finch-726" : "avid-finch-726"
 const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.site`;
 const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.cloud`;
 
-const { parseOtplessVerifyResponse, isLegacyUserId } = require("./auth-helpers");
+const { parseOtplessVerifyResponse, isLegacyUserId, isLoopbackHost } = require("./auth-helpers");
 const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
 const { readVault, registerVaultIpc } = require("./vault-store");
 
@@ -1681,6 +1681,12 @@ function startLocalServer() {
         const desktopDir = __dirname;
         const desktopDirResolved = path.resolve(desktopDir);
         const server = http.createServer((req, res) => {
+            // A rebound website (its name pointed at 127.0.0.1) would read the app's files here.
+            if (!isLoopbackHost(req.headers.host, server.address()?.port)) {
+                res.writeHead(421);
+                res.end("Misdirected");
+                return;
+            }
             let filePath = path.join(desktopDir, req.url === "/" ? "/panel.html" : req.url);
             // Strip query strings
             filePath = filePath.split("?")[0];
