@@ -113,7 +113,7 @@ export function detect(dir: string): Detection {
             return {
                 kind: "web",
                 command: "python3",
-                args: ["manage.py", "runserver", "8000"],
+                args: ["manage.py", "runserver", "--noreload", "8000"],
                 urlCandidate: "http://localhost:8000",
                 note: "django runserver (port 8000)",
             };

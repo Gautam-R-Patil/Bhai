@@ -39,6 +39,9 @@ describe("classifyCodingComplexity — 3-tier router", () => {
             "create a greenfield event-driven pipeline",
             "write a PRD for a new billing service",
             "build a production-ready upload service",
+            "Write a PRD.",
+            "I need a design doc.",
+            "draft a technical doc.",
         ])("`%s` → complex", (msg) => {
             expect(classifyCodingComplexity(msg)).toBe("complex");
         });
@@ -87,6 +90,7 @@ that the downstream services can consume without knowing auth details. Please sc
             "integrate Stripe into the checkout flow",
             "why isn't this working",
             "fix auth.spec.ts",
+            "refactor the parser that reads prd.md",
             "the end-to-end test in checkout.e2e.ts fails, fix it",
             "update the spec file for login",
             "fix the failing production-ready check",

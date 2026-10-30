@@ -18,7 +18,7 @@ function project(name: string, files: Record<string, string>): string {
 describe("demo_project detection", () => {
     it("runs Django and Flask apps from requirements.txt", () => {
         const django = detect(project("dj", { "requirements.txt": "django\n", "manage.py": "" }));
-        expect(django.args).toEqual(["manage.py", "runserver", "8000"]);
+        expect(django.args).toEqual(["manage.py", "runserver", "--noreload", "8000"]);
         const flask = detect(project("fl", { "requirements.txt": "Flask==3.0\n", "app.py": "" }));
         expect(flask.args.slice(0, 3)).toEqual(["-m", "flask", "--app"]);
         const asgi = detect(project("fa", { "requirements.txt": "fastapi\nuvicorn\n", "app.py": "" }));

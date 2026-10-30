@@ -628,7 +628,7 @@ const CODING_COMPLEX_PATTERNS: RegExp[] = [
     /\bevent[- ]driven\b/i,
     // User explicitly asking for the ceremony. Not inside file names
     // ("auth.spec.ts"), and a bare "spec" only as "write/draft a spec".
-    /(?<![.\w-])(?:prd|design\s+doc(?:ument)?|technical\s+doc|architecture\s+doc)(?![.\w-])|\b(?:write|draft)\s+(?:a|an|the)\s+spec\b/i,
+    /(?<![.\w-])(?:prd|design\s+doc(?:ument)?|technical\s+doc|architecture\s+doc)(?!\.?[\w-])|\b(?:write|draft)\s+(?:a|an|the)\s+spec\b/i,
 ];
 
 // Heavy scope markers — complex only with a build verb: "build a
