@@ -60,8 +60,11 @@ describe("stream frame codec", () => {
     });
 
     it("pads to 256-byte buckets", async () => {
-        const a = JSON.parse(await encodeFrame({ kind: "text", text: "a" }, 0, false, RID, serverKey));
-        const b = JSON.parse(await encodeFrame({ kind: "text", text: "ab" }, 0, false, RID, serverKey));
-        expect(a.ct.length).toBe(b.ct.length);
+        const texts = ["a", "ab", "é".repeat(200), "x".repeat(230), "👋".repeat(70)];
+        for (const text of texts) {
+            const env = JSON.parse(await encodeFrame({ kind: "text", text }, 0, false, RID, serverKey));
+            const bytes = Buffer.from(env.ct, "base64").length;
+            expect(bytes % 256, `text length ${text.length}`).toBe(0);
+        }
     });
 });
