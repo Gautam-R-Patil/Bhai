@@ -11,7 +11,7 @@
         "test": "vitest run",
         "prebuild": "echo 'Source protection will run after pack...'",
         "build:win": "cd .. && npm run build && cd desktop && node build/patch-nsis.js && electron-builder --win --x64",
-        "build:mac": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac --dir --arm64 && bash build/resign-local.sh && ARCH=arm64 bash build/create-dmg.sh",
+        "build:mac": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac --dir --arm64 && ARCH=arm64 bash build/create-dmg.sh",
         "build:mac:release": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac dmg zip",
         "build:mac:protected": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && npm run prebuild && electron-builder --mac",
         "build:linux": "cd .. && npm run build && cd desktop && electron-builder --linux",
@@ -321,6 +321,7 @@
         "appImage": {
             "license": "../LICENSE.txt"
         },
-        "afterPack": "./build/protect-source.js"
+        "afterPack": "./build/protect-source.js",
+        "afterSign": "./build/after-sign.js"
     }
 }

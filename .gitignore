@@ -126,6 +126,7 @@ desktop/hostinger-upload/
 # Session 2026-10-29: packaging track
 !desktop/tests/prune-bot-modules.test.js
 !desktop/tests/protect-source.test.js
+!desktop/tests/after-sign.test.js
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
 !src/tools/google-api-clients.test.ts
 !src/video-studio/util/ffmpeg-bin.test.ts

@@ -6,7 +6,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const { prodLockKeys, shouldDropFile, pruneBotModules, NODE_IGNORED_PACKAGES } = require("../build/prune-bot-modules.js");
+const {
+    prodLockKeys,
+    shouldDropFile,
+    pruneBotModules,
+    NODE_IGNORED_PACKAGES,
+} = require("../build/prune-bot-modules.js");
 
 const repo = path.join(__dirname, "..", "..");
 const mac = { platform: "darwin", arch: "arm64" };
@@ -65,6 +70,13 @@ describe("shouldDropFile", () => {
         expect(drop("tree-sitter/prebuilds/win32-x64/tree-sitter.node", win)).toBe(false);
         expect(drop("tree-sitter/prebuilds/darwin-arm64/tree-sitter.node", win)).toBe(true);
         expect(drop("tree-sitter/prebuilds/win32-arm64/tree-sitter.node", win)).toBe(true);
+    });
+
+    it("keeps both Mac arches' prebuilds in a universal build", () => {
+        const universal = { platform: "darwin", arch: "universal" };
+        expect(drop("tree-sitter/prebuilds/darwin-arm64/tree-sitter.node", universal)).toBe(false);
+        expect(drop("tree-sitter/prebuilds/darwin-x64/tree-sitter.node", universal)).toBe(false);
+        expect(drop("tree-sitter/prebuilds/linux-x64/tree-sitter.node", universal)).toBe(true);
     });
 
     it("drops other platforms' clipboard fallbacks and the Windows pageant helper", () => {
@@ -179,7 +191,11 @@ describe("pruneBotModules", () => {
 
     it("drops ffprobe-static on a Mac only (the video tools use ffmpeg there)", () => {
         const lock = { packages: { "": {}, "node_modules/ffprobe-static": {} } };
-        for (const [platform, kept] of [["darwin", false], ["win32", true], ["linux", true]]) {
+        for (const [platform, kept] of [
+            ["darwin", false],
+            ["win32", true],
+            ["linux", true],
+        ]) {
             const botDir = fixture(["node_modules/ffprobe-static/index.js"]);
             const r = pruneBotModules(botDir, lock, { platform, arch: "x64" });
             expect(fs.existsSync(path.join(botDir, "node_modules/ffprobe-static/index.js"))).toBe(kept);
@@ -196,7 +212,8 @@ describe("pruneBotModules", () => {
                 "node_modules/prod": {},
                 "node_modules/gone": {},
                 "node_modules/@types/node": {},
-                "node_modules/@huggingface/transformers/node_modules/onnxruntime-web/node_modules/onnxruntime-common": {},
+                "node_modules/@huggingface/transformers/node_modules/onnxruntime-web/node_modules/onnxruntime-common":
+                    {},
             },
         };
         expect(pruneBotModules(botDir, lock, mac).missing).toEqual(["node_modules/gone"]);
@@ -227,14 +244,21 @@ describe("the real lockfile's production tree", () => {
             const p = path.join(dir, e.name);
             if (e.isDirectory()) {
                 if (e.name !== "__tests__" && e.name !== "node_modules") walk(p, out);
-            } else if (/\.(ts|mts|cts|js|mjs|cjs)$/.test(e.name) && !/\.(test|spec)\.|\.d\.ts$/.test(e.name)) out.push(p);
+            } else if (/\.(ts|mts|cts|js|mjs|cjs)$/.test(e.name) && !/\.(test|spec)\.|\.d\.ts$/.test(e.name))
+                out.push(p);
         }
         return out;
     }
 
     it("keeps every package src/, the runtime scripts and the desktop's bot requires load", () => {
         const files = walk(path.join(repo, "src"), []);
-        for (const s of ["kokoro-worker.mjs", "pdf-text.cjs", "site-skill-host.cjs", "site-skill-lib.cjs", "check-deps.mjs"]) {
+        for (const s of [
+            "kokoro-worker.mjs",
+            "pdf-text.cjs",
+            "site-skill-host.cjs",
+            "site-skill-lib.cjs",
+            "check-deps.mjs",
+        ]) {
             files.push(path.join(repo, "scripts", s));
         }
         files.push(path.join(repo, "native", "index.js"));
@@ -250,17 +274,35 @@ describe("the real lockfile's production tree", () => {
                 if (/^[@a-z0-9][\w.@/-]*$/i.test(name)) pkgs.add(name);
             }
         }
-        for (const p of ["google-auth-library", "acorn", "node-cron", "sharp", "pdf-parse", "@whiskeysockets/baileys"]) expect(pkgs.has(p)).toBe(true);
+        for (const p of ["google-auth-library", "acorn", "node-cron", "sharp", "pdf-parse", "@whiskeysockets/baileys"])
+            expect(pkgs.has(p)).toBe(true);
         const main = fs.readFileSync(path.join(repo, "desktop", "main.js"), "utf8");
         for (const m of main.matchAll(/botRequire\("([^"]+)"\)/g)) pkgs.add(m[1]);
         // Type-only imports and names that are not packages (string templates,
         // optional peers the code feature-detects) are not in the lock at all.
         const missing = [...pkgs].filter((p) => lock.packages[`node_modules/${p}`] && !keep.has(`node_modules/${p}`));
         expect(missing).toEqual([]);
-        for (const p of ["@xenova/transformers", "@huggingface/transformers", "kokoro-js", "better-sqlite3", "tree-sitter-typescript", "@googleapis/gmail", "playwright-core"]) {
+        for (const p of [
+            "@xenova/transformers",
+            "@huggingface/transformers",
+            "kokoro-js",
+            "better-sqlite3",
+            "tree-sitter-typescript",
+            "@googleapis/gmail",
+            "playwright-core",
+        ]) {
             expect(keep.has(`node_modules/${p}`)).toBe(true);
         }
-        for (const p of ["convex", "@anthropic-ai/sdk", "fluent-ffmpeg", "resumed", "prettier", "esbuild", "typescript", "vitest"]) {
+        for (const p of [
+            "convex",
+            "@anthropic-ai/sdk",
+            "fluent-ffmpeg",
+            "resumed",
+            "prettier",
+            "esbuild",
+            "typescript",
+            "vitest",
+        ]) {
             expect(keep.has(`node_modules/${p}`)).toBe(false);
         }
     });
@@ -298,7 +340,10 @@ describe("the real lockfile's production tree", () => {
             const p = JSON.parse(fs.readFileSync(pj, "utf8"));
             const name = k.slice(k.lastIndexOf("node_modules/") + "node_modules/".length);
             const targets = p.exports
-                ? [...pick(p.exports, ["node", "import", "default"]), ...pick(p.exports, ["node", "require", "default"])]
+                ? [
+                      ...pick(p.exports, ["node", "import", "default"]),
+                      ...pick(p.exports, ["node", "require", "default"]),
+                  ]
                 : [p.main || "index.js"];
             for (const t of targets) {
                 if (t.includes("*")) continue;

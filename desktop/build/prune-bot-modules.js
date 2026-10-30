@@ -58,10 +58,9 @@ function dropsPrebuild(rel, platform, arch) {
     if (!m) return false;
     const dir = m[1];
     if (!dir.startsWith(`${platform}-`)) return true;
-    return !dir
-        .slice(platform.length + 1)
-        .split("+")
-        .includes(arch);
+    const archs = dir.slice(platform.length + 1).split("+");
+    // A universal Mac app runs both arches' prebuilds.
+    return arch === "universal" ? !archs.some((a) => a === "x64" || a === "arm64") : !archs.includes(arch);
 }
 
 /**

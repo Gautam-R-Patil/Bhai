@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 const { escapeLiterals, OBFUSCATION_OPTIONS, archName } = require("../build/protect-source.js");
 
-const nonLatin1 = (s) => (s.match(/[^\x00-\xff]/g) || []).length;
+const nonLatin1 = (s) => [...s].filter((c) => c.codePointAt(0) > 0xff).length;
 const BS = "\\";
 
 describe("escapeLiterals", () => {
@@ -16,7 +16,7 @@ describe("escapeLiterals", () => {
         expect(out).toContain(`__esm({'${BS}x2e${BS}x2e${BS}x2f${BS}x64${BS}x69${BS}x73${BS}x74${BS}x2f`);
         expect(out).not.toContain("dist/tools");
         expect(out).toContain("f('../dist', 'node:path')");
-        expect(new Function("return " + escapeLiterals("'../dist/a-b/c_d.js'"))()).toBe("../dist/a-b/c_d.js");
+        expect(new Function(`return ${escapeLiterals("'../dist/a-b/c_d.js'")}`)()).toBe("../dist/a-b/c_d.js");
     });
 
     it("rewrites non-Latin-1 characters inside string and regex literals only", () => {
@@ -48,13 +48,7 @@ describe("escapeLiterals", () => {
     });
 
     it("keeps every string's value", () => {
-        const lits = [
-            "'☃'",
-            '"café \u{1F600} नमस्ते"',
-            `'${BS}☃'`,
-            `'a${BS} b'`,
-            "' '",
-        ];
+        const lits = ["'☃'", '"café \u{1F600} नमस्ते"', `'${BS}☃'`, `'a${BS} b'`, "' '"];
         for (const lit of lits) {
             const out = escapeLiterals(lit);
             expect(nonLatin1(out)).toBe(0);
