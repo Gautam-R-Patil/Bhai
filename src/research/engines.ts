@@ -40,7 +40,6 @@ async function getSearchBrowser(): Promise<{ context: any; newPage: () => Promis
         userAgent: randomUA(),
         viewport: { width: 1280, height: 800 },
         locale: "en-US",
-        timezoneId: "America/New_York",
     });
 
     return { context: _searchContext, newPage: () => _searchContext.newPage() };

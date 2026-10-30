@@ -146,7 +146,7 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 - **Action cache can't replay correctly** (ids include `Date.now()`, no post-condition, stats self-inflate). Delete it. `action-cache.ts`. S.
 - **Browser-memory strategies are injected on stop-word matches** with labels that mean nothing next session. `browser-memory.ts:357,382,443`. S.
 - **`browser_type` select-alls whole documents** in Docs/Notion. In Chrome mode it appends and never submits. `interaction.ts:719`, `background.js:1209,1417`. M, high.
-- **Stealth fingerprint contradicts itself**: UA says Chrome 131 on Chromium 145, timezone is hard-coded to New York, service workers are blocked. `core.ts:214-262`. S.
+- **Stealth fingerprint contradicts itself**: UA says Chrome 131 on Chromium 145, timezone is hard-coded to New York, service workers are blocked. `core.ts:214-262`. S. *Partly fixed: the browser and the research search browser use the machine's timezone.*
 - **No login/OTP detection or handoff**; only CAPTCHA has one. Add `detectAuthWall` and reuse the CAPTCHA handoff banner. `captcha.ts:597`. S, high.
 
 ## Reliability: computer use (round 2)
@@ -157,11 +157,11 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 - **`modifiers` and `button` are silently dropped on every platform**, so a shift-click becomes a plain click reported as success. `os-computer-action.ts:223,254,273`. S, high.
 - **Dock, Spotlight and Control Center are AX-invisible** because only the frontmost app is dumped and `AXDockItem` isn't interactive. `ax-dump.ts:203`. S, high.
 - **`os_inspect` default depth 12 hides most web content** (links sit at depth 17). Depth 20 costs the same 0.37s. `os-inspect.ts:71`. S.
-- **AX dump walks minimized windows**, which can win the match and cause a misclick. `dump_ax.swift:157`. S.
+- **AX dump walks minimized windows**, which can win the match and cause a misclick. `dump_ax.swift:157`. S. *Fixed: a minimized window keeps its slot but not its contents.*
 - **No `AXPress`/`AXScrollToVisible`**, so off-screen list items always fall to vision. Add press/reveal to the Swift helper. M, high.
 - **Windows paste mangles non-ASCII.** `os_type` is a PowerShell injection from untrusted text. `os-computer-action.ts:650`, `windows.ts:539`. S, high.
 - **Linux key names no-op** (`enter` vs `Return`) but report success. Wayland hold/drag can't work. `os-computer-action.ts:740,837`. S.
-- **AX permission error is hidden behind the negative cache** after the first call. `ax-dump.ts:100`, `os-inspect.ts:84`. S.
+- **AX permission error is hidden behind the negative cache** after the first call. `ax-dump.ts:100`, `os-inspect.ts:84`. S. *Fixed: first and cached failures return the same `AX_PERMISSION_ERROR`, and `os_inspect` gives the grant hint for both.*
 - **Tool tips and `rules-windows.md` name tools that don't exist on that platform**, or contradict `rules-mac.md`. S.
 - **Dead `computer_use` agent** (~800 lines, broken AppleScript). Delete it. S.
 
@@ -218,11 +218,11 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 ## Reliability: voice, research, security
 
 - **STT fallback sends audio to the proxy, which drops it.** Without OpenAI or Groq keys, voice notes "transcribe" to nothing or to hallucinated text. `transcribe.ts:63`, `convex/claude.ts:39`. S, high.
-- **ElevenLabs uses an English-only model and sends MP3 labelled ogg/opus PTT.** `elevenlabs.ts:14-36`, `whatsapp.ts:736`. S, high.
-- **Voice replies read markdown and markers aloud.** `stripTtsMarkup` exists but is used only in live voice. `whatsapp.ts:734`. S.
+- **ElevenLabs uses an English-only model and sends MP3 labelled ogg/opus PTT.** `elevenlabs.ts:14-36`, `whatsapp.ts:736`. S, high. *Fixed: `eleven_multilingual_v2`, MP3 pinned and sent as `audio/mpeg`; only Ogg/Opus goes as a voice note.*
+- **Voice replies read markdown and markers aloud.** `stripTtsMarkup` exists but is used only in live voice. `whatsapp.ts:734`. S. *Fixed: `textToSpeech` strips markup for every caller; headings too.*
 - **Hybrid barge-in cancels the audio but not the in-flight turn**, so the old answer resumes mid-sentence. `live/session.ts:597`. S, high.
 - **Research URL dedup is byte-exact**, so one article counts as "3 sources". `executor.ts:137`. S, high.
-- **Research fetch failures are silent**, 4xx responses are retried, PDFs and JS shells are dropped, and there's no browser fallback. `fetcher.ts:121-170`. M, high.
+- **Research fetch failures are silent**, 4xx responses are retried, PDFs and JS shells are dropped, and there's no browser fallback. `fetcher.ts:121-170`. M, high. *Partly fixed: a 4xx (other than 408/429) or a blocked URL is no longer retried.*
 - **Per-page LLM analysis runs serially** after a parallel fetch. `executor.ts:208`. S, high.
 - **Synthesis never sees source URLs**, so citations can't link. `analysis.ts:393,437`. S, high.
 - **Research crash checkpoints are deleted on boot**, never resumed. `persistence.ts:116-163`. M.

@@ -274,7 +274,7 @@ export async function getBrowser(): Promise<BrowserContext> {
             deviceScaleFactor: 1, // consistent across Retina/non-Retina on all platforms
             userAgent: ua,
             locale: "en-US",
-            timezoneId: "America/New_York",
+            // No timezoneId: the machine's own, so it matches the owner's IP.
             // Deny all permission prompts upfront — prevents OS-level dialogs blocking automation
             permissions: [],
             args: stealthArgs,

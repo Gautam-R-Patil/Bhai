@@ -12,7 +12,7 @@ vi.mock("../security/url-safety.js", () => ({
     fetchWithRedirectGuard: async () => ({ response: nextResponse() }),
 }));
 
-const { fetchPages } = await import("./fetcher.js");
+const { fetchPages, fetchPageContent } = await import("./fetcher.js");
 
 describe("fetcher response-body safety", () => {
     it("caps a huge body by cancelling the stream early (no OOM)", async () => {
@@ -69,6 +69,23 @@ describe("fetcher response-body safety", () => {
         expect(page.content).toContain("café");
         expect(page.content).toContain("résumé");
         expect(page.content).not.toContain("�");
+    });
+});
+
+describe("fetch retries", () => {
+    const calls = async (status: number) => {
+        let n = 0;
+        nextResponse = () => {
+            n++;
+            return new Response("x", { status, headers: { "content-type": "text/html" } });
+        };
+        expect(await fetchPageContent("https://x.com/r")).toBe("");
+        return n;
+    };
+    it("gives up at once on a 4xx but retries 5xx and 429", async () => {
+        expect(await calls(404)).toBe(1);
+        expect(await calls(503)).toBe(3);
+        expect(await calls(429)).toBe(3);
     });
 });
 
