@@ -931,7 +931,7 @@ Candidates that fail safety gates are marked `scope-violation` and discarded wit
 
 **Transcription** (`transcribe.ts`, `telegram-voice.ts`): local Whisper (OpenAI `whisper-1` or Groq `whisper-large-v3-turbo`) when an `OPENAI_API_KEY` / `GROQ_API_KEY` is configured; otherwise the server transcribes via `/api/stt` (`convex/stt.ts`), so a fresh install needs no voice key. It throws `STT_NOT_CONFIGURED` when neither can. `transcribeAudio()` and `transcribeBuffer()` variants both supported.
 
-**TTS** (`tts.ts`, `elevenlabs.ts`): provider order is `ATLAS_TTS_PROVIDER` → `ELEVENLABS_API_KEY` → `OPENAI_API_KEY` → none. OpenAI `tts-1` (default voice `nova`; also `alloy`, `echo`, `fable`, `onyx`, `shimmer`) and ElevenLabs as paid premium. Output format: Opus. For local-only operation, `voice/live/kokoro-tts.ts` runs Kokoro TTS in-process via `kokoro-js` — zero API cost, fully offline.
+**TTS** (`tts.ts`, `elevenlabs.ts`): provider order is `ATLAS_TTS_PROVIDER` → `ELEVENLABS_API_KEY` → `OPENAI_API_KEY` → none. OpenAI `tts-1` (default voice `nova`; also `alloy`, `echo`, `fable`, `onyx`, `shimmer`) and ElevenLabs (`eleven_multilingual_v2`) as paid premium. Output: Opus from OpenAI (sent on WhatsApp as a voice note), MP3 from ElevenLabs (sent as audio). `textToSpeech` strips markdown and markers first. For local-only operation, `voice/live/kokoro-tts.ts` runs Kokoro TTS in-process via `kokoro-js` — zero API cost, fully offline.
 
 **Live voice mode** (`live/`): Streaming bidirectional voice with tool calling. The subdirectory contains the backend abstractions, audio pipeline (`audio/`), screen-share streaming, transcript speaker, memory bridge, tool bridge, and prompt builder.
 

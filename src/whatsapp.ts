@@ -740,14 +740,15 @@ async function sendTypingThenMessage(jid: string, text: string | undefined, quot
 async function sendVoiceReply(jid: string, text: string, quotedMsg?: WAMessage): Promise<void> {
     try {
         const { textToSpeech } = await import("./voice/tts.js");
-        const audioBuffer = await textToSpeech(text);
+        const { audio, mimetype } = await textToSpeech(text);
         const opts = quotedMsg ? { quoted: quotedMsg } : undefined;
         await socket?.sendMessage(
             jid,
             {
-                audio: audioBuffer,
-                ptt: true,
-                mimetype: "audio/ogg; codecs=opus",
+                audio,
+                // A voice note must be Ogg/Opus; ElevenLabs MP3 goes as a plain audio message.
+                ptt: mimetype.startsWith("audio/ogg"),
+                mimetype,
             },
             opts,
         );
