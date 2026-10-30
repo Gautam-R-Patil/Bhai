@@ -699,7 +699,8 @@ export function initOverlayChat(llm: LLMClient): void {
                     const owner = { channel: "overlay", userId: "local", isOwner: true, isPrivate: true };
                     let out: { error?: string; research_id?: string } = {};
                     if (msg.action === "cancel" && typeof msg.id === "string") {
-                        if (!(await research.cancelResearchById(msg.id))) out = { error: "It already finished." };
+                        // Not running may mean failed or interrupted, not finished: say which.
+                        if (!(await research.cancelResearchById(msg.id))) out = { error: `Not running. ${await research.researchStatusLine(msg.id)}` };
                     } else if (msg.action === "resume" && typeof msg.id === "string") {
                         out = JSON.parse(await research.deepResearch.handler({ resume_id: msg.id, _channelContext: owner }));
                     } else if (msg.action === "start" && typeof msg.topic === "string" && msg.topic.trim()) {

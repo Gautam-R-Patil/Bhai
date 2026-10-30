@@ -346,12 +346,12 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
                 error: "Invalid resume_id — expected a research id like research_<n>_<timestamp>.",
             });
         const resumeState = resumeId ? await loadResearchState(resumeId) : null;
-        if (resumeId && !resumeState) return JSON.stringify({ error: `No checkpoint for research "${resumeId}" — it can't be resumed. Start a new deep_research instead.` });
+        if (resumeId && !resumeState) return JSON.stringify({ error: `No checkpoint for research "${resumeId}" — it can't be resumed. Start a new research instead.` });
         const live = resumeId ? activeResearches.get(resumeId)?.status : undefined;
         if (live === "running") return JSON.stringify({ error: `Research "${resumeId}" is already running.` });
         const was = live ?? (resumeId ? (await getIndexEntry(resumeId))?.status : undefined);
         // A cancelled run may still be finishing its last model call; a new run under its id would race it.
-        if (was === "cancelled") return JSON.stringify({ error: `Research "${resumeId}" was cancelled. Start a new deep_research instead.` });
+        if (was === "cancelled") return JSON.stringify({ error: `Research "${resumeId}" was cancelled. Start a new research instead.` });
         if (was === "completed")
             return JSON.stringify({ error: `Research "${resumeId}" already finished. To dig deeper, start a new one with builds_on: "${resumeId}".` });
 
@@ -359,7 +359,7 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
         const basisId = resumeId ? undefined : (input.builds_on as string | undefined);
         if (basisId && !isResearchId(basisId)) return JSON.stringify({ error: "Invalid builds_on — expected a research id like research_<n>_<timestamp>." });
         const basis = basisId ? await loadResearchState(basisId) : null;
-        if (basisId && !basis) return JSON.stringify({ error: `Research "${basisId}" has no saved sources (too old, or it didn't finish). Start a new deep_research instead.` });
+        if (basisId && !basis) return JSON.stringify({ error: `Research "${basisId}" has no saved sources (too old, or it didn't finish). Start a new research instead.` });
 
         // A follow-up like "now compare the top two" means nothing to a search engine on its own: anchor it on the subject.
         const asTopic = input.topic as string | undefined;
@@ -603,8 +603,8 @@ export const checkDeepResearch: ToolDefinition = {
                 updated_at: research.updatedAt,
             };
             if (research.status === "completed") {
+                result.report_file = research.reportFile; // before the report: a cut long report keeps its path
                 result.report = research.report;
-                result.report_file = research.reportFile;
             } else if (research.status === "failed" || research.status === "interrupted") {
                 result.error = research.error;
             }
