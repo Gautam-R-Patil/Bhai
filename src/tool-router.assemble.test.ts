@@ -57,5 +57,7 @@ describe("assembleToolNames", () => {
         expect(boosts("thanks bhai, good night")).not.toContain("web_search");
         expect(asksChangingFact("Has Node.js 26 become an LTS release yet?")).toBe(true);
         expect(asksChangingFact("I haven't slept yet")).toBe(false); // not a question
+        expect(boosts("which app is in front right now, and which other apps are running?")).toContain("app_management");
+        expect(boosts("what is an app store review?")).not.toContain("app_management");
     });
 });

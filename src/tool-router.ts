@@ -894,6 +894,12 @@ export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: numb
     },
     // Communication
     { pattern: /\b(email|gmail|mail|imessage|sms|text.?message)\b/i, category: "communication", minScore: 0.65 },
+    // "Which app is in front / which apps are running?" was once filed as system_controls alone, without app_manager.
+    {
+        pattern: /\b(apps?|applications?)\b.{0,25}\b(open|running|in front|frontmost|active)\b|\b(running|open|frontmost)\s+(apps|applications)\b/i,
+        category: "app_management",
+        minScore: 0.7,
+    },
     // OS / Screenshots
     { pattern: /\b(screenshot|screen.?shot|screen.?capture)\b/i, category: "os_control", minScore: 0.7 },
     // Desktop-app automation — "open WhatsApp", "click in Photoshop", "open
@@ -1253,7 +1259,7 @@ const REQUEST_TOOLS_SCHEMA: ChatCompletionTool = {
     function: {
         name: "request_tools",
         description:
-            "Request additional tools when you realize you need capabilities not currently available. Describe what you need and the router will provide the right tools on your next turn. Use this when the task evolved and you need different tools than what was initially provided.",
+            "Request additional tools when you realize you need capabilities not currently available. Describe what you need and the router will provide the right tools on your next turn. Your tool list is only the subset picked for this message: before telling the owner you can't do something because no tool here does it, ask for it with this.",
         parameters: {
             type: "object",
             properties: {
