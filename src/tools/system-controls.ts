@@ -20,6 +20,7 @@ import {
     IS_LINUX,
     IS_MAC,
     IS_WIN,
+    psQuote,
     runPowerShell,
     runPowerShellInline,
 } from "./platform.js";
@@ -89,49 +90,33 @@ export const setVolume: ToolDefinition = {
             const mute = input.mute as boolean | undefined;
 
             if (IS_WIN) {
-                // Windows: use PowerShell + COM Audio
-                const commands: string[] = [];
-                if (level !== undefined) {
-                    const clamped = Math.max(0, Math.min(100, Math.round(level)));
-                    // Use nircmd if available, otherwise PowerShell COM
-                    commands.push(`try { & nircmd.exe setsysvolume ${Math.round(clamped * 655.35)} } catch {`);
-                    commands.push(
-                        `  Add-Type -TypeDefinition 'using System.Runtime.InteropServices; [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface IAudioEndpointVolume { int _0(); int _1(); int _2(); int _3(); int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext); int GetMasterVolumeLevelScalar(out float pfLevel); }' -ErrorAction SilentlyContinue`,
-                    );
-                    commands.push(`}`);
+                // Windows has no built-in volume command: nircmd if it's installed, else the
+                // volume keys (2% a press) for a level. Nothing here reads the volume back.
+                const clamped = level === undefined ? undefined : Math.max(0, Math.min(100, Math.round(level)));
+                const nircmd: string[] = [];
+                if (clamped !== undefined) nircmd.push(`nircmd.exe setsysvolume ${Math.round(clamped * 655.35)}`);
+                if (mute !== undefined) nircmd.push(`nircmd.exe mutesysvolume ${mute ? 1 : 0}`);
+                if (nircmd.length === 0) {
+                    return JSON.stringify({ success: false, error: "Reading the volume isn't supported on Windows." });
+                }
+                try {
+                    await runPowerShellInline(`$ErrorActionPreference = 'Stop'; ${nircmd.join("; ")}`, 5000);
+                    return JSON.stringify({ success: true, volume: clamped, muted: mute });
+                } catch {
+                    /* no nircmd */
                 }
                 if (mute !== undefined) {
-                    commands.push(`try { & nircmd.exe mutesysvolume ${mute ? "1" : "0"} } catch {}`);
-                }
-                // Query final state
-                commands.push(`$vol = try { [int]((& nircmd.exe getvolume '') 2>&1) } catch { -1 }`);
-                commands.push(`"$vol|false"`);
-
-                try {
-                    const result = await runPowerShell(commands.join("\n"));
-                    const [volStr, muteStr] = result.split("|");
+                    // The mute key only toggles, and the current state can't be read: don't guess.
                     return JSON.stringify({
-                        success: true,
-                        volume: parseInt(volStr) >= 0 ? parseInt(volStr) : (level ?? 50),
-                        muted: muteStr === "true" || (mute ?? false),
-                        note: "For best results, install nircmd (nirsoft.net/utils/nircmd.html)",
-                    });
-                } catch {
-                    // Simplest fallback: just set and assume
-                    if (level !== undefined) {
-                        const clamped = Math.max(0, Math.min(100, Math.round(level)));
-                        await runPowerShellInline(
-                            `(New-Object -ComObject WScript.Shell).SendKeys([char]173)`,
-                            3000,
-                        ).catch(() => {});
-                    }
-                    return JSON.stringify({
-                        success: true,
-                        volume: level ?? 50,
-                        muted: mute ?? false,
-                        note: "Volume set via fallback method.",
+                        success: false,
+                        error: "Muting on Windows needs nircmd (nirsoft.net/utils/nircmd.html); nothing was changed.",
                     });
                 }
+                await runPowerShellInline(
+                    `$w = New-Object -ComObject WScript.Shell; 1..50 | % { $w.SendKeys([char]174) }; if (${Math.round((clamped ?? 0) / 2)} -gt 0) { 1..${Math.round((clamped ?? 0) / 2)} | % { $w.SendKeys([char]175) } }`,
+                    10000,
+                );
+                return JSON.stringify({ success: true, volume: clamped, note: "Set with the volume keys (2% steps)." });
             }
 
             // macOS
@@ -540,15 +525,18 @@ export const wifiControl: ToolDefinition = {
                         const ssid = input.ssid as string;
                         if (!ssid) return JSON.stringify({ error: "Provide 'ssid'." });
                         const password = input.password as string;
+                        // Network names are anyone's text: escape them for the XML and for PowerShell.
+                        const xml = (v: string) =>
+                            v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
                         if (password) {
                             // Create temp profile
-                            const profileXml = `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${ssid}</name><SSIDConfig><SSID><name>${ssid}</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security><authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption></authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>${password}</keyMaterial></sharedKey></security></MSM></WLANProfile>`;
+                            const profileXml = `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${xml(ssid)}</name><SSIDConfig><SSID><name>${xml(ssid)}</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security><authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption></authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>${xml(password)}</keyMaterial></sharedKey></security></MSM></WLANProfile>`;
                             const tmpProfile = join(tmpdir(), `wifi_profile_${Date.now()}.xml`);
                             await fs.writeFile(tmpProfile, profileXml);
-                            await runPowerShellInline(`netsh wlan add profile filename="${tmpProfile}"`, 5000);
+                            await runPowerShellInline(`netsh wlan add profile filename=${psQuote(tmpProfile)}`, 5000);
                             await fs.unlink(tmpProfile).catch(() => {});
                         }
-                        await runPowerShellInline(`netsh wlan connect name="${ssid}"`, 5000);
+                        await runPowerShellInline(`netsh wlan connect name=${psQuote(ssid)}`, 5000);
                         return JSON.stringify({ success: true, action: "connect", ssid });
                     }
                     default:
@@ -603,7 +591,12 @@ export const wifiControl: ToolDefinition = {
                     const password = input.password as string;
                     const args = ["-setairportnetwork", iface, ssid];
                     if (password) args.push(password);
-                    await execFileAsync("networksetup", args, { timeout: 15000 });
+                    // networksetup exits 0 on a failed join and says so on stdout instead.
+                    const { stdout, stderr } = await execFileAsync("networksetup", args, { timeout: 15000 });
+                    const said = `${stdout}${stderr}`.trim();
+                    if (/fail|could not|error/i.test(said)) {
+                        return JSON.stringify({ success: false, action: "connect", ssid, error: said.split("\n")[0] });
+                    }
                     return JSON.stringify({ success: true, action: "connect", ssid });
                 }
                 default:
@@ -756,31 +749,21 @@ end tell`);
 
                 case "on":
                 case "off": {
-                    if (hasBlueutil) {
-                        await execFileAsync("blueutil", ["--power", action === "on" ? "1" : "0"], { timeout: 5000 });
-                    } else {
-                        // Fallback: use AppleScript to toggle via System Settings
-                        const script =
-                            action === "on"
-                                ? `do shell script "defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 1" with administrator privileges`
-                                : `do shell script "defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0" with administrator privileges`;
-                        try {
-                            await runAppleScript(script, 10000);
-                        } catch {
-                            // If admin fails, try the GUI approach
-                            await runAppleScript(`
-tell application "System Events"
-    tell process "ControlCenter"
-        -- This may not work on all macOS versions
-    end tell
-end tell`);
-                            return JSON.stringify({
-                                success: false,
-                                error: "Could not toggle Bluetooth. Install 'blueutil' (brew install blueutil) for reliable control.",
-                            });
-                        }
+                    // Without blueutil there's no working script: the old fallback asked for the
+                    // admin password, wrote a plist modern macOS ignores, and said "turned on".
+                    if (!hasBlueutil) {
+                        return JSON.stringify({
+                            success: false,
+                            error: "Bluetooth can't be switched by script without blueutil (brew install blueutil). Nothing was changed.",
+                            next_step: `Do it on screen: Control Center → Bluetooth → turn it ${action}, and check it took.`,
+                        });
                     }
-                    return JSON.stringify({ success: true, action, note: `Bluetooth turned ${action}.` });
+                    await execFileAsync("blueutil", ["--power", action === "on" ? "1" : "0"], { timeout: 5000 });
+                    const { stdout: power } = await execFileAsync("blueutil", ["--power"], { timeout: 3000 });
+                    const isOn = power.trim() === "1";
+                    if (isOn !== (action === "on"))
+                        return JSON.stringify({ success: false, error: `Asked for Bluetooth ${action}, but it's still ${isOn ? "on" : "off"}.` });
+                    return JSON.stringify({ success: true, action, note: `Bluetooth is ${action}.` });
                 }
 
                 case "list": {
@@ -904,33 +887,40 @@ export const setDoNotDisturb: ToolDefinition = {
                 });
             }
 
-            // macOS
-            try {
-                await runAppleScript(
-                    `
-tell application "System Events"
-end tell
-do shell script "defaults -currentHost write ~/Library/Preferences/ByHost/com.apple.notificationcenterui doNotDisturb -boolean ${enabled}"
-do shell script "defaults -currentHost write ~/Library/Preferences/ByHost/com.apple.notificationcenterui doNotDisturbDate -date \\"$(date -u +\\"%Y-%m-%d %H:%M:%S +0000\\")\\"" 
-do shell script "killall NotificationCenter 2>/dev/null || true"`,
-                    10000,
-                );
-                return JSON.stringify({
-                    success: true,
-                    do_not_disturb: enabled,
-                    note: enabled ? "🔕 Do Not Disturb is ON." : "🔔 Do Not Disturb is OFF.",
-                });
-            } catch {
-                try {
-                    const script = enabled
-                        ? `do shell script "shortcuts run 'Do Not Disturb' 2>/dev/null || true"`
-                        : `do shell script "shortcuts run 'Do Not Disturb Off' 2>/dev/null || true"`;
-                    await runAppleScript(script, 10000);
-                    return JSON.stringify({ success: true, do_not_disturb: enabled });
-                } catch (err2) {
-                    return JSON.stringify({ success: false, error: (err2 as Error).message });
-                }
+            // macOS has no supported way for an app to switch Focus. The old code wrote a
+            // pre-Big Sur flag (ignored), killed Notification Center and said "Do Not Disturb
+            // is ON" — nothing had changed. Now: the owner's own Shortcut if they have one,
+            // checked where Focus can be read; otherwise say so and switch it on screen.
+            const name = enabled ? "Do Not Disturb" : "Do Not Disturb Off";
+            const { stdout: list } = await execFileAsync("shortcuts", ["list"], { timeout: 10000 }).catch(() => ({
+                stdout: "",
+            }));
+            if (list.split("\n").some((l) => l.trim() === name)) {
+                await execFileAsync("shortcuts", ["run", name], { timeout: 15000 });
+                await new Promise((r) => setTimeout(r, 1000));
+                const { macFocusActive } = await import("../proactive/dnd.js");
+                const now = await macFocusActive();
+                if (now === null)
+                    return JSON.stringify({ success: true, do_not_disturb: enabled, note: `Ran your "${name}" Shortcut (Focus state can't be read to confirm).` });
+                return now === enabled
+                    ? JSON.stringify({ success: true, do_not_disturb: enabled })
+                    : JSON.stringify({ success: false, error: `Ran your "${name}" Shortcut, but Focus is still ${now ? "on" : "off"}.` });
             }
+            // Say what Focus is now, or that it can't be told: told only "couldn't switch",
+            // the model answered "Do Not Disturb is still on" while it was off.
+            const { macFocusActive } = await import("../proactive/dnd.js");
+            const current = await macFocusActive();
+            return JSON.stringify({
+                success: false,
+                error: "macOS doesn't let apps switch Focus by script, so nothing was changed.",
+                focus_now:
+                    current === null
+                        ? "unknown — Bhai can't read Focus without Full Disk Access; don't say whether it's on or off"
+                        : current
+                          ? "on"
+                          : "off",
+                next_step: `Do it on screen: open Control Center in the menu bar, click Focus, then ${enabled ? "Do Not Disturb" : "the active Focus to turn it off"} — and check it took. (A Shortcut named "${name}" would let this tool do it directly.)`,
+            });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
         }

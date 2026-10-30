@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { anySecretTyped, noteSecretTyped, resetVaultTask } from "../security/vault.js";
 import { setActiveChannel } from "../tools/channel-send.js";
 import {
+    isMutator,
     drivesScreen,
     isVerifier,
     newVerifyGateState,
@@ -177,4 +178,11 @@ describe("browser_form_state", () => {
         expect(fresh.osStateMutated).toBe(false);
     });
 });
+});
+
+describe("iMessage sends need a look before 'sent'", () => {
+    it("messages_tool send is a mutator; reading isn't", () => {
+        expect(isMutator("messages_tool", { action: "send", to: "+911234567890", text: "hi" })).toBe(true);
+        expect(isMutator("messages_tool", { action: "read_recent" })).toBe(false);
+    });
 });

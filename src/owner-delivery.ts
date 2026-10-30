@@ -22,3 +22,10 @@ export async function deliverOnFirst(
     }
     return null;
 }
+
+/** Why Telegram polling stopped, in the owner's terms. */
+export function telegramStopReason(message: string): string {
+    if (/\b401\b|Unauthorized/i.test(message)) return "its bot token no longer works (revoked or replaced) — reconnect it in Channels → Telegram";
+    if (/\b409\b|Conflict/i.test(message)) return "another copy of Bhai is already using this Telegram bot";
+    return message.slice(0, 160);
+}

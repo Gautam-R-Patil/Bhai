@@ -1,5 +1,5 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// After 3 GPS timeouts in a row, background refreshes skip GPS for an hour or until the
+// After a GPS timeout, background refreshes skip GPS for an hour or until the
 // location permission changes; a refresh the owner asks for still tries it.
 import fs from "node:fs";
 import os from "node:os";
@@ -37,25 +37,22 @@ vi.mock("../location/providers/ip-geoloc.js", () => ({
     },
 }));
 
-it("backs off GPS after 3 timeouts, retries hourly, and a forced refresh still tries it", async () => {
+it("backs off GPS after a timeout, retries hourly, and a forced refresh still tries it", async () => {
     const loc = await import("../location/index.js");
     await loc.initLocationService();
-    await vi.waitFor(() => expect(gps.calls).toBe(1)); // boot refresh
-    await loc.refreshLocation();
-    await loc.refreshLocation();
-    expect(gps.calls).toBe(3);
+    await vi.waitFor(() => expect(gps.calls).toBe(1)); // boot refresh timed out
 
     const r = await loc.refreshLocation(); // backed off: straight to IP
-    expect(gps.calls).toBe(3);
+    expect(gps.calls).toBe(1);
     expect(r?.source).toBe("ip");
 
     await loc.refreshLocation({ force: true });
-    expect(gps.calls).toBe(4);
+    expect(gps.calls).toBe(2);
 
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.now() + 61 * 60_000);
     await loc.refreshLocation();
-    expect(gps.calls).toBe(5);
+    expect(gps.calls).toBe(3);
     vi.useRealTimers();
 });
 

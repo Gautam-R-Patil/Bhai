@@ -1625,6 +1625,7 @@ async function startBot() {
             if (msg.includes("Email connected") || msg.includes("IMAP connected") || msg.includes("Bhai's email:")) channelStatuses.email = "connected";
             if (msg.includes("\u2705 Bot online: @")) channelStatuses.telegram = "connected";
             if (msg.includes("Bhai online (Telegram disabled)")) channelStatuses.telegram = "not_configured";
+            if (msg.includes("[TELEGRAM] Stopped:")) channelStatuses.telegram = "disconnected";
 
             pushChannelStatuses();
         }

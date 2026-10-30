@@ -68,10 +68,16 @@ export function isForeignExtensionOrigin(origin: string | undefined): boolean {
     const ids = bhaiExtensionIds();
     if (!ids) return false;
     const foreign = !m || !ids.has(m[1]);
-    if (foreign)
+    // An extension that retries every 2s logged this 525 times in an hour: once per
+    // origin per 10 minutes says the same.
+    const now = Date.now();
+    if (foreign && now - (lastRefusalLog.get(origin) ?? 0) > 10 * 60_000) {
+        lastRefusalLog.set(origin, now);
         console.warn(`🔌 Refused extension ${origin} — not Bhai's. If it is yours, add its ID to ATLAS_EXTENSION_IDS.`);
+    }
     return foreign;
 }
+const lastRefusalLog = new Map<string, number>();
 
 /** Tests only: forget the computed IDs. */
 export function _resetExtensionIdsForTests(): void {

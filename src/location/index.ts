@@ -49,14 +49,13 @@ let _emitter: EventEmitter | null = null;
 let _initialized = false;
 
 // ── GPS back-off ─────────────────────────────
-// The GPS helper can time out on every try (no fix, or a permission prompt that never shows):
-// 60-70 times a day here, each holding location back ~12 s. After 3 timeouts in a row a
-// background refresh skips GPS (Wi-Fi/IP answer at once) and tries it again once an hour, or
-// as soon as the location permission changes; a refresh the owner asks for (get_location
-// refresh) always tries it. On disk, because the bot
-// restarts often and every boot refreshes.
+// The GPS helper can time out on every try (no fix, or a permission prompt macOS never shows
+// the CLI helper): 60-70 times a day here, each holding location back ~12 s. After a timeout a
+// background refresh skips GPS (Wi-Fi/IP answer at once) and tries it again once an hour, or as
+// soon as the location permission changes; a refresh the owner asks for (get_location refresh)
+// always tries it. On disk, because the bot restarts often and every boot refreshes.
 
-const GPS_BACKOFF_AFTER = 3;
+const GPS_BACKOFF_AFTER = 1;
 const GPS_RETRY_MS = 60 * 60_000;
 type GpsBackoff = { timeouts: number; retryAt: number; status?: string | null };
 const gpsBackoffFile = () => join(getDataDir(), "location-gps-backoff.json");

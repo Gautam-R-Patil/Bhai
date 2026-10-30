@@ -18,13 +18,13 @@
 // (default data/eval-computer-use.jsonl). Spotify and Apple Music tasks need those apps signed in.
 import Anthropic from "@anthropic-ai/sdk";
 import { execFile } from "node:child_process";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { executeTool } from "../src/tools/index.js";
-import { initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
+import { initToolRouter, selectTools, setDecisionTransport, setToolRouterLLM } from "../src/tool-router.js";
 import { ackWithoutAction } from "../src/agent.js";
 import { resolveHomePath } from "../src/tools/file-utils.js";
 import { runQuickCommand } from "../src/quick-commands.js";
@@ -48,7 +48,7 @@ const ALLOWED = new Set([
     "find_files", "open_in_app", "app_manager", "window_manage", "os_smart_click", "os_inspect", "os_click_id",
     "os_type", "os_screenshot", "os_click", "os_visual_verify", "os_keyboard_shortcuts", "os_context",
     "list_directory", "glob", "get_current_time", "bluetooth_control", "wifi_control",
-    "write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
+    "write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit", "calculator", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
     "browser_navigate", "browser_extract", "browser_extract_article", "browser_scan", "browser_click", "browser_type",
     "browser_scroll", "browser_wait", "browser_back", "browser_close",
 ]);
@@ -61,9 +61,14 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
         return JSON.stringify({ error: "only status is allowed in this test" });
     // Writes stay in the sandbox folder; nothing is deleted.
     if (["write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit"].includes(name)) {
-        const paths = JSON.stringify(args).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
+        // image_edit/pdf_edit write their output, not their source (a source that isn't there gets
+        // corrected to the file of that name nearby, in the sandbox).
+        const media = name === "image_edit" || name === "pdf_edit";
+        const src = String(args.path ?? (args.paths as string[] | undefined)?.[0] ?? "");
+        const checked = media ? (args.output ? { output: args.output } : existsSync(resolveHomePath(src)) ? { src } : {}) : args;
+        const paths = JSON.stringify(checked).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
         // Resolved as Bhai resolves them (a placeholder home is the real one).
-        if (!paths.length || paths.some((p) => !resolveHomePath(p).startsWith(EVAL_DIR)))
+        if ((!paths.length && !media) || paths.some((p) => !resolveHomePath(p).startsWith(EVAL_DIR)))
             return JSON.stringify({ error: `In this test, files may only be written inside ${EVAL_DIR}` });
     }
     if ((name === "apple_notes" || name === "reminders_tool") && /delete|remove|move/.test(String(args.action)))
@@ -384,6 +389,22 @@ setToolRouterLLM(
         : ({ chat: () => new Promise(() => {}) } as never),
 );
 if (ROUTER) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "10000";
+// DECISION_DEPLOYMENT=<name>: the classifier is Microsoft-Decision-1, called straight on Azure
+// (in the app it goes through Convex /api/decide); otherwise no Decision step here.
+setDecisionTransport(
+    process.env.DECISION_DEPLOYMENT
+        ? async (state, questions, timeoutMs) => {
+              const res = await fetch(`${process.env.AZ_ENDPOINT?.replace(/\/openai\/v1\/?$/, "")}/providers/microsoft/v1/systemone`, {
+                  method: "POST",
+                  headers: { "api-key": process.env.AZ_KEY ?? "", "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: process.env.DECISION_DEPLOYMENT, state, questions }),
+                  signal: AbortSignal.timeout(timeoutMs),
+              });
+              return ((await res.json()) as { answers?: never }).answers ?? null;
+          }
+        : null,
+);
+if (process.env.DECISION_DEPLOYMENT) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "6000";
 let planCost = 0; // PLAN=1: the planner's own cost, added to the task's
 const only = process.argv.slice(2);
 const results = [];

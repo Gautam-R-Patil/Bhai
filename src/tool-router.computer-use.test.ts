@@ -63,6 +63,7 @@ vi.mock("./tools/index.js", () => ({
             "apple_notes",
             "image_edit",
             "pdf_edit",
+            "calculator",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -108,6 +109,8 @@ const CASES: [string, string][] = [
     ["make photo.png 100 pixels wide and resize the image", "image_edit"],
     ["combine these two pdfs into one", "pdf_edit"],
     ["how many pages does the report pdf have", "pdf_edit"],
+    // Every model got Calculator wrong some way; one call does it.
+    ["use the calculator app to work out 17 times 23, then add 100", "calculator"],
     // Long-task eval: nano went digging in System Settings for this.
     ["find out which version of macos i'm running and write it into version.txt", "system_info"],
     ["Find the capital of Australia on Wikipedia and create an Apple Note titled Capital with the answer", "apple_notes"],

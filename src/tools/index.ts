@@ -37,6 +37,7 @@ import {
     osDrag,
     remindersTool,
     windowManage,
+    calculatorTool,
 } from "./app-integrations.js";
 import { appleNotesTool } from "./apple-notes.js";
 import { askOwnerTool } from "./ask-owner.js";
@@ -507,6 +508,7 @@ registry.set(glob.schema.function.name, glob);
 registry.set(listDirectory.schema.function.name, listDirectory);
 registry.set(deleteFile.schema.function.name, deleteFile);
 registry.set(fileManage.schema.function.name, fileManage);
+registry.set(calculatorTool.schema.function.name, calculatorTool);
 registry.set(imageEdit.schema.function.name, imageEdit);
 registry.set(pdfEdit.schema.function.name, pdfEdit);
 
@@ -827,7 +829,6 @@ const FOCUS_TOOLS = new Set(["app_manager", "open_in_app", "open_settings", "win
 /** Arguments that hold paths: path, file_path, paths, archive_path, output_dir, folder, target… */
 const PATH_ARG = /^(paths?|file_?paths?|target|folder|dir|directory|cwd|archive_path|output(_dir|_path)?|source|dest(ination)?)$/i;
 const HOMEISH = /^(~|\/Users\/|\/home\/|[A-Za-z]:[\\/]Users)/;
-/** Path arguments with the home folder resolved (see resolveHomePath); everything else as is. */
 // Names models use for the same thing: a required key that's missing is filled from one of these.
 // gpt-4.1-nano called write with "path" five times and was refused each time ("file_path: expected string").
 const ARG_ALIASES: Record<string, string[]> = {
@@ -852,11 +853,28 @@ export function withArgAliases(name: string, input: Record<string, unknown>): Re
     return out;
 }
 
+/** A path whose name came back garbled (control characters where "×" or "—" were: gpt-4.1-nano,
+ *  six tries at "Bhai × TinyFish — Pitch Deck.pdf"), as the one file in its folder with the
+ *  same letters and digits. Only garbled names: a new file is never redirected onto another. */
+function ungarble(p: string): string {
+    const name = path.basename(p);
+    if (!/[\p{Cc}\uFFFD]/u.test(name) || fs.existsSync(p)) return p;
+    const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    try {
+        const same = fs.readdirSync(path.dirname(p)).filter((n) => key(n) === key(name));
+        return same.length === 1 ? path.join(path.dirname(p), same[0]) : p;
+    } catch {
+        return p;
+    }
+}
+
+/** Path arguments with the home folder resolved (see resolveHomePath); everything else as is. */
 export function withHomePaths(input: Record<string, unknown>): Record<string, unknown> {
     let out = input;
     for (const [k, v] of Object.entries(input)) {
         if (!PATH_ARG.test(k)) continue;
-        const fix = (x: unknown) => (typeof x === "string" && HOMEISH.test(x) ? resolveHomePath(x) : x);
+        const fix = (x: unknown) =>
+            typeof x === "string" ? ungarble(HOMEISH.test(x) ? resolveHomePath(x) : x) : x;
         const fixed = Array.isArray(v) ? v.map(fix) : fix(v);
         if (JSON.stringify(fixed) !== JSON.stringify(v)) out = { ...out, [k]: fixed };
     }

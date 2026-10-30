@@ -606,7 +606,11 @@ http.route({
       }
     } else {
       // Normal path: assemble system prompt from server DB
-      const platform = body.platform || "linux";
+      // The platform rules (rules-mac/rules-windows, ~10K chars) only say which tool drives
+      // the computer: a call that can't act (chat lane: just request_tools) doesn't need them.
+      const actsOnComputer =
+        Array.isArray(body.tools) && body.tools.some((t: any) => t?.function?.name && t.function.name !== "request_tools");
+      const platform = actsOnComputer ? body.platform || "linux" : "none";
       const skillSlugs: string[] = Array.isArray(body.skillSlugs) ? body.skillSlugs : [];
 
       try {
@@ -2358,6 +2362,60 @@ http.route({
       return await buildResponse({ results }, 200, encrypted, account.sharedKey, request);
     } catch (err: any) {
       return await buildResponse({ error: err.message }, 500, encrypted, account.sharedKey, request);
+    }
+  }),
+});
+
+// POST /api/decide — Microsoft-Decision-1 proxy (the Azure key stays in Convex env). A typed
+// decision (yes/no per option, one choice, a score) instead of generated text: the tool
+// router's classifier, ~0.5s and ~$0.0001 a turn against ~1s for a gpt-4.1-nano call
+// (scripts/bench-decision.ts). Bounded state and questions; only answers come back.
+http.route({
+  path: "/api/decide",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const state = typeof body.state === "string" ? body.state.slice(0, 12000) : "";
+    const questions = body.questions && typeof body.questions === "object" ? (body.questions as Record<string, any>) : null;
+    const names = questions ? Object.keys(questions) : [];
+    if (!state || !names.length || names.length > 64) {
+      return await buildResponse({ error: "state and 1-64 questions are required" }, 400, encrypted, account.sharedKey, request);
+    }
+    const clean: Record<string, unknown> = {};
+    for (const name of names) {
+      const q = questions![name];
+      if (!/^[\w-]{1,64}$/.test(name) || !q || !["noul", "choice", "score"].includes(q.type)) continue;
+      const instructions = String(q.instructions ?? "").slice(0, 800);
+      let criteria: unknown;
+      if (Array.isArray(q.criteria)) criteria = q.criteria.slice(0, 12).map((c: unknown) => String(c).slice(0, 300));
+      else if (q.criteria && typeof q.criteria === "object")
+        criteria = Object.fromEntries(Object.entries(q.criteria).slice(0, 12).map(([k, v]) => [String(k).slice(0, 64), String(v).slice(0, 300)]));
+      clean[name] = { type: q.type, instructions, ...(criteria ? { criteria } : {}) };
+    }
+
+    const endpoint = (process.env.AZURE_GROK_ENDPOINT ?? "").replace(/\/openai\/v1\/?$/, "");
+    const key = process.env.AZURE_GROK_API_KEY;
+    if (!endpoint || !key) {
+      return await buildResponse({ error: "Decision model not configured" }, 500, encrypted, account.sharedKey, request);
+    }
+    try {
+      const response = await fetch(`${endpoint}/providers/microsoft/v1/systemone`, {
+        method: "POST",
+        headers: { "api-key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: process.env.AZURE_DECISION_DEPLOYMENT || "Decision-1", state, questions: clean }),
+        signal: AbortSignal.timeout(Math.min(Math.max(Number(body.timeoutMs) || 4000, 1000), 8000)),
+      });
+      const data = (await response.json()) as { answers?: unknown; usage?: unknown; error?: unknown };
+      if (!response.ok || !data.answers) {
+        return await buildResponse({ error: `Decision HTTP ${response.status}` }, response.ok ? 502 : response.status, encrypted, account.sharedKey, request);
+      }
+      return await buildResponse({ answers: data.answers, usage: data.usage }, 200, encrypted, account.sharedKey, request);
+    } catch (err: any) {
+      return await buildResponse({ error: err.message }, 504, encrypted, account.sharedKey, request);
     }
   }),
 });

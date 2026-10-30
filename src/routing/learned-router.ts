@@ -81,6 +81,13 @@ const SEED: Partial<Record<TaskClass, Record<string, [number, number, number, nu
         "gpt-6.1-terra": [6, 7, 5.3, 9.4],
         "gpt-4.1-nano": [3, 7, 4.1, 8.0],
     },
+    // Web lookups in Bhai's browser (read a page, compare two, put a fact in a file/note), five
+    // router runs: both passed every one; Sonnet cost 15-25x more a task ($0.035-0.07 vs ~$0.003).
+    // Forms, logins and purchases weren't measured: outcomes move this class like any other.
+    browser: {
+        haiku: [15, 15, 3.3, 14.7],
+        sonnet: [12, 12, 2.7, 12.7],
+    },
 };
 /**
  * Where nothing was measured, start where the rules before this router stood: chat,

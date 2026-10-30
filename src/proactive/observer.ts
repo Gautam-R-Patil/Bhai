@@ -326,7 +326,9 @@ export class Observer {
     }
 
     onBoundary(e: BoundaryEvent): void {
-        debugProactive("observer_boundary", { kind: e.kind, ts: e.ts });
+        // Every app switch (~30s apart): 605 lines a day in the log and the JSONL. Plumbing,
+        // not a proactive decision, so only with ATLAS_PROACTIVE_DEBUG=verbose.
+        if (process.env.ATLAS_PROACTIVE_DEBUG === "verbose") debugProactive("observer_boundary", { kind: e.kind, ts: e.ts });
         for (const ch of ALL_CHANNELS) {
             native.schedulerMarkBoundary(ch, BOUNDARY_WINDOW_MS);
         }

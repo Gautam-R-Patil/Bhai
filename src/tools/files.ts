@@ -103,6 +103,8 @@ export const listDirectory: ToolDefinition = {
                 success: true,
                 ...(Object.keys(kinds).length > 1 ? { by_kind: kinds } : {}),
                 count: all.length,
+                // Named outright: given the newest-first list, nano copied a plainer name further down.
+                ...(all.length > 1 ? { newest: all[0].e.name } : {}),
                 ...(largest && all.length > 1 ? { largest: { name: largest.e.name, size: largest.st?.size } } : {}),
                 ...(all.length > MAX_LIST ? { shown: MAX_LIST, note: `Newest ${MAX_LIST} shown.` } : {}),
                 items,
@@ -176,7 +178,10 @@ export const fileManage: ToolDefinition = {
         if (!["move", "copy", "rename", "new_folder"].includes(action))
             return JSON.stringify({ success: false, error: "action must be move, copy, rename or new_folder." });
         const raw = input.paths ?? (input as { path?: unknown }).path;
-        const given = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => String(p).trim());
+        let given = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((p) => String(p).trim()).filter(Boolean);
+        // new_folder with only a destination: that's the folder to make.
+        if (!given.length && action === "new_folder" && path.isAbsolute(String(input.destination ?? "")))
+            given = [String(input.destination)];
         if (!given.length) return JSON.stringify({ success: false, error: "Provide 'paths'." });
         // A bare name ("a.pdf") is one in the folder just listed, or next to an absolute
         // destination's folder; never Bhai's own working directory.
