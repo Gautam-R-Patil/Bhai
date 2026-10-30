@@ -56,6 +56,9 @@ vi.mock("./tools/index.js", () => ({
             "app_manager",
             "window_manage",
             "web_search",
+            "list_directory",
+            "compress_files",
+            "trash_manager",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -89,6 +92,9 @@ const CASES: [string, string][] = [
     ["open example.com in the browser and tell me the page's main heading", "browser_navigate"],
     ["open the wikipedia page for alan turing and tell me the year he was born", "browser_navigate"],
     ["find the newest pdf in my downloads folder and copy its file name to my clipboard", "clipboard"],
+    // From the all-nano run: zipping was filed under os_control and compress_files wasn't offered.
+    ["zip the bhaieval folder on my desktop and save the zip inside that folder", "compress_files"],
+    ["empty my trash", "trash_manager"],
 ];
 
 describe("computer-use routing without the classifier", () => {

@@ -684,6 +684,15 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
 // Guaranteed minimum scores for high-signal domain phrases.
 // Only used when LLM classifier is unavailable.
 
+const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
+    {
+        pattern: /\b(zip|unzip|compress|decompress|tar|gzip)\b|\.zip\b/i,
+        tool: "compress_files",
+        category: "file_system",
+    },
+    { pattern: /\b(empty|clear)\b.{0,12}\b(the |my )?(trash|bin)\b/i, tool: "trash_manager", category: "file_system" },
+];
+
 const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
     // Music / Media
     {
@@ -1760,6 +1769,15 @@ export async function selectTools(opts: {
                 ...selectedCategories.filter((c) => !activeRequestedCategories.categories.includes(c)),
             ];
         }
+    }
+
+    // ── A request that names a one-tool action gets that tool ──
+    // "Zip the BhaiEval folder" filed under os_control left compress_files past the cap,
+    // and gpt-4.1-nano tried to zip through Finder's menus.
+    for (const { pattern, tool, category } of NAMED_TOOLS) {
+        if (!pattern.test(opts.message) || !allToolNames.has(tool)) continue;
+        if (!selectedCategories.includes(category)) selectedCategories.push(category);
+        if (!specificTools.includes(tool)) specificTools = [...specificTools, tool];
     }
 
     // ── Always include alwaysInclude categories ──

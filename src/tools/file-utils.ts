@@ -6,7 +6,7 @@
 // Screen recording, file tags, compression, trash, shortcuts, and open-in-app.
 
 import { execFile } from "node:child_process";
-import { existsSync, promises as fs, readFileSync, statSync } from "node:fs";
+import { existsSync, promises as fs, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -801,6 +801,27 @@ let lastFound: string[] = [];
 // Folders that are almost never what someone means by "find my file".
 const FIND_NOISE = /\/(Library|node_modules|\.git|\.Trash|\.cache|\.npm|DerivedData)\//;
 
+/** Names under `dir` (two levels down) containing `q`: Spotlight indexes a new file a few seconds late. */
+function scanFolder(dir: string, q: string, depth = 2): string[] {
+    const out: string[] = [];
+    const walk = (d: string, left: number) => {
+        let names: import("node:fs").Dirent[];
+        try {
+            names = readdirSync(d, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const e of names) {
+            if (out.length >= 200 || e.name.startsWith(".")) continue;
+            const p = join(d, e.name);
+            if (e.name.toLowerCase().includes(q)) out.push(p);
+            if (e.isDirectory() && left > 0 && !FIND_NOISE.test(`${p}/`)) walk(p, left - 1);
+        }
+    };
+    walk(dir, depth);
+    return out;
+}
+
 export const findFiles: ToolDefinition = {
     schema: {
         type: "function",
@@ -847,8 +868,11 @@ export const findFiles: ToolDefinition = {
         try {
             const { stdout } = await execFileAsync("mdfind", args, { timeout: 10_000, maxBuffer: 20 * 1024 * 1024 });
             const home = homedir();
-            const hits = stdout
-                .split("\n")
+            let paths = stdout.split("\n");
+            // A folder made seconds ago isn't indexed yet: "find BhaiEval on the Desktop" found nothing.
+            if (!paths.some(Boolean) && folder && !folderName && !input.content)
+                paths = scanFolder(folder, query.toLowerCase());
+            const hits = paths
                 .filter((p) => p && (!ext || extname(p).toLowerCase() === `.${ext}`))
                 .slice(0, 2000)
                 .map((p) => {
