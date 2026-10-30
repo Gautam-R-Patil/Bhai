@@ -72,6 +72,9 @@ describe("file_manage", () => {
         expect((await run({ action: "write", file_path: join(dir, "t.txt") })).error).toMatch(/use write/);
         expect((await run({ action: "zip", paths: [dir] })).error).toMatch(/compress_files/);
         expect((await run({ action: "merge", paths: [dir] })).error).toMatch(/pdf_edit/);
+        // 40-task run: a folder named count.txt.
+        expect((await run({ action: "new_folder", paths: [join(dir, "count.txt")] })).error).toMatch(/use write/);
+        expect(existsSync(join(dir, "count.txt"))).toBe(false);
     });
 
     // From the media eval: "convert photo.png to a JPG" done as a rename.

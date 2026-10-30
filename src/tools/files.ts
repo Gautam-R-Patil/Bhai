@@ -109,6 +109,9 @@ export const listDirectory: ToolDefinition = {
 // overwrites: an existing destination is refused, so nothing is lost.
 
 /** Why a path may not be moved/copied/created, or undefined. */
+/** Extensions that name a file, not a folder. */
+const FILE_EXT = /^\.(txt|md|pdf|docx?|xlsx?|pptx?|csv|json|png|jpe?g|heic|gif|zip|html?|rtf|log|js|ts|py)$/i;
+
 /** Formats whose bytes differ: a new extension alone doesn't make one into another. */
 const CONVERTIBLE = new Set(["png", "jpg", "jpeg", "heic", "tiff", "tif", "gif", "bmp", "webp", "pdf"]);
 
@@ -173,6 +176,13 @@ export const fileManage: ToolDefinition = {
             const made = input.destination ? [path.resolve(String(input.destination))] : paths;
             const refused = made.map((p) => manageRefusal(p, false)).find(Boolean);
             if (refused) return JSON.stringify({ success: false, error: refused });
+            // gpt-4.1-nano made a folder named count.txt, then couldn't write the file.
+            const fileName = made.find((p) => FILE_EXT.test(path.extname(p)));
+            if (fileName)
+                return JSON.stringify({
+                    success: false,
+                    error: `${path.basename(fileName)} is a file name, not a folder: to create the file use write.`,
+                });
             const file = made.find((p) => fs.statSync(p, { throwIfNoEntry: false })?.isFile());
             if (file) return JSON.stringify({ success: false, error: `A file already has that name: ${file}` });
             for (const p of made) fs.mkdirSync(p, { recursive: true });

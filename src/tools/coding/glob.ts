@@ -74,7 +74,10 @@ export const glob: ToolDefinition = {
         const pattern = input.pattern as string;
         if (!pattern) return JSON.stringify({ error: "pattern is required" });
 
-        const basePath = path.resolve((input.path as string) || process.cwd());
+        // Models name it folder/dir too: glob({ pattern, folder: "~/Desktop" }) searched Bhai's
+        // own working directory and found nothing.
+        const given = input.path ?? input.folder ?? input.dir ?? input.directory ?? input.cwd;
+        const basePath = path.resolve((given as string) || process.cwd());
         if (!isPathAllowed(basePath)) {
             const reason = getPathBlockedReason(basePath) ?? `Path "${basePath}" is not allowed.`;
             return JSON.stringify({ error: reason });
