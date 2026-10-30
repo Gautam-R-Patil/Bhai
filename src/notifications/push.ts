@@ -9,8 +9,6 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-// @ts-expect-error -- web-push has no type declarations
-import webPush from "web-push";
 import { getDataDir } from "../config/paths.js";
 
 // -- Types ------------------------------------------------
@@ -37,13 +35,31 @@ let vapidKeys: StoredVapidKeys | null = null;
 const subscriptions: Map<string, PushSubscriptionData> = new Map();
 let initialized = false;
 
+// The part of web-push used here (it ships no type declarations).
+interface WebPush {
+    generateVAPIDKeys(): StoredVapidKeys;
+    setVapidDetails(subject: string, publicKey: string, privateKey: string): void;
+    sendNotification(
+        sub: { endpoint: string; keys: PushSubscriptionData["keys"] },
+        payload: string,
+        opts: { TTL: number },
+    ): Promise<unknown>;
+}
+let webPushMod: Promise<WebPush> | null = null;
+/** web-push loads on first send (or first-run key generation), not at boot. */
+function loadWebPush(): Promise<WebPush> {
+    // @ts-expect-error -- web-push has no type declarations
+    webPushMod ??= import("web-push").then((m: { default: WebPush }) => m.default);
+    return webPushMod;
+}
+
 // -- Initialize -------------------------------------------
 
 /**
  * Generate or load VAPID keys from data/vapid-keys.json.
  * Must be called before any push operations.
  */
-export function initPushNotifications(): void {
+export async function initPushNotifications(): Promise<void> {
     // Ensure data directory exists
     const dataDir = dirname(VAPID_PATH);
     if (!existsSync(dataDir)) {
@@ -63,7 +79,7 @@ export function initPushNotifications(): void {
     }
 
     if (!vapidKeys) {
-        const generated = webPush.generateVAPIDKeys();
+        const generated = (await loadWebPush()).generateVAPIDKeys();
         vapidKeys = {
             publicKey: generated.publicKey,
             privateKey: generated.privateKey,
@@ -75,10 +91,6 @@ export function initPushNotifications(): void {
             console.warn("[PUSH] Failed to persist VAPID keys:", (err as Error).message);
         }
     }
-
-    // Configure web-push with VAPID details
-    const contactEmail = process.env.EMAIL_USER || "atlas@localhost";
-    webPush.setVapidDetails(`mailto:${contactEmail}`, vapidKeys.publicKey, vapidKeys.privateKey);
 
     // Load persisted subscriptions
     if (existsSync(SUBSCRIPTIONS_PATH)) {
@@ -148,6 +160,19 @@ export async function sendPushNotification(
     url?: string,
 ): Promise<{ sent: number; failed: number }> {
     if (!initialized || subscriptions.size === 0) {
+        return { sent: 0, failed: 0 };
+    }
+
+    const keys = vapidKeys;
+    if (!keys) return { sent: 0, failed: 0 };
+    let webPush: WebPush;
+    try {
+        webPush = await loadWebPush();
+        // Configure web-push with VAPID details
+        const contactEmail = process.env.EMAIL_USER || "atlas@localhost";
+        webPush.setVapidDetails(`mailto:${contactEmail}`, keys.publicKey, keys.privateKey);
+    } catch (err) {
+        console.warn("[PUSH] web-push setup failed:", (err as Error).message);
         return { sent: 0, failed: 0 };
     }
 

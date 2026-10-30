@@ -5,7 +5,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import sharp from "sharp";
 import { getConvexSiteUrl } from "../../config/keys.js";
 import { getWorkspaceSubdir } from "../../config/paths.js";
 import { encryptedFetch } from "../../crypto-transport.js";
@@ -154,6 +153,7 @@ async function processImage(
 ): Promise<string> {
     const { targetWidth = 1920, targetHeight, quality = 82 } = opts;
     try {
+        const sharp = (await import("sharp")).default;
         const meta = await sharp(inputPath).metadata();
         const needsResize = (meta.width ?? 0) > targetWidth;
         if (!needsResize && !targetHeight) return inputPath;

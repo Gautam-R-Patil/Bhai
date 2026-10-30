@@ -505,11 +505,9 @@ export function initOverlayChat(llm: LLMClient): void {
     });
 
     // Initialize push notifications (generates/loads VAPID keys)
-    try {
-        initPushNotifications();
-    } catch (err) {
+    initPushNotifications().catch((err) => {
         console.warn("[OVERLAY] Push notification init failed (non-fatal):", (err as Error).message);
-    }
+    });
 
     // WebSocket server — real-time chat
     wss = new WebSocketServer({ server: httpServer });

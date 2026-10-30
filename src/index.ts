@@ -330,7 +330,7 @@ async function boot() {
             console.warn("[personality-sync] non-fatal:", (err as Error).message);
         }
 
-        initSupabase();
+        await initSupabase();
 
         // Living Continuity layers
         initSelfStateDB(memDb);
@@ -1246,7 +1246,7 @@ async function boot() {
     if (Number.isFinite(webhookPort) && webhookPort > 0 && webhookPort < 65536) {
         try {
             const { initWebhookServer, setWebhookHandler } = await import("./tools/webhook.js");
-            initWebhookServer(webhookPort);
+            await initWebhookServer(webhookPort);
             setWebhookHandler(async (endpointId, payload) => {
                 console.log(`[WEBHOOK] ${endpointId} received`, payload);
             });

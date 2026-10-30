@@ -20,7 +20,7 @@ vi.mock("../../agent.js", () => ({
     setConversationHistory: () => {},
 }));
 vi.mock("../../notifications/push.js", () => ({
-    initPushNotifications: vi.fn(),
+    initPushNotifications: vi.fn(async () => {}),
     getVapidPublicKey: () => "stub-vapid",
     registerSubscription: vi.fn(),
 }));

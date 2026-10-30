@@ -17,6 +17,28 @@ vi.mock("nodemailer", () => { loaded.push("nodemailer"); return {}; });
 vi.mock("apify-client", () => { loaded.push("apify-client"); return {}; });
 vi.mock("twitter-api-v2", () => { loaded.push("twitter-api-v2"); return {}; });
 vi.mock("pptxgenjs", () => { loaded.push("pptxgenjs"); return {}; });
+// Feature-only packages: each loads on first use of its feature, not at boot.
+for (const pkg of [
+    "discord.js",
+    "@google/genai",
+    "@supabase/supabase-js",
+    "dockerode",
+    "express",
+    "@modelcontextprotocol/sdk/client/index.js",
+    "@modelcontextprotocol/sdk/client/stdio.js",
+    "pino",
+    "qrcode-terminal",
+    "tar",
+    "markdown-it",
+    "acorn",
+    "google-auth-library",
+    "sharp",
+    "web-push",
+    "playwright",
+    "playwright-core",
+]) {
+    vi.doMock(pkg, () => { loaded.push(pkg); return {}; });
+}
 
 describe("heavy channel SDKs load lazily", () => {
     it("importing the channel/tool modules does not load their SDKs", async () => {
@@ -31,6 +53,22 @@ describe("heavy channel SDKs load lazily", () => {
         await import("../../marketing/adapters/twitter.js");
         await import("../../marketing/outreach-engine.js");
         await import("../presentation/render-pptx.js");
+        await import("../../discord.js");
+        await import("../../voice/live/backends/gemini-live.js");
+        await import("../../memory/supabase.js");
+        await import("../../security/sandbox.js");
+        await import("../webhook.js");
+        await import("../../mcp/client.js");
+        await import("../../store/installer.js");
+        await import("../../documents/renderers/markdown.js");
+        await import("../../forge/critics.js");
+        await import("../../skills/site/mint/minter.js");
+        await import("../../skills/site/mint/checks.js");
+        await import("../presentation/assets.js");
+        await import("../../notifications/push.js");
+        const { getPlatformCapabilities } = await import("../../utils/platform-capabilities.js");
+        // The availability check resolves Playwright without loading it.
+        expect((await getPlatformCapabilities()).browser.playwright).toBe(true);
 
         expect(loaded).toEqual([]);
         // Tools stay registered and status getters work without the SDKs.

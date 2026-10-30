@@ -24,13 +24,17 @@
 //
 // Findings name a value by its placeholder ({{input.query}}), never the value.
 
-import * as acorn from "acorn";
+import { createRequire } from "node:module";
 import { z } from "zod";
 import { runSastCritic } from "../../../forge/critics.js";
 import { findPii } from "../../../security/pii-redactor.js";
 import { ActionSchema } from "../host.js";
 import { commitEvent, type LoadedTrace } from "./recorder.js";
 import { lib } from "./replay.js";
+
+// acorn loads synchronously on first parse, not at boot.
+let acornMod: typeof import("acorn") | undefined;
+const acorn = (): typeof import("acorn") => (acornMod ??= createRequire(import.meta.url)("acorn"));
 
 export interface Finding {
     id: string;
@@ -202,7 +206,7 @@ export async function checkSkill(opts: {
     if (Buffer.byteLength(src) > MAX_SKILL_BYTES) err("too_large", `skill_cjs is over ${MAX_SKILL_BYTES} bytes`);
     let ast: N;
     try {
-        ast = acorn.parse(src, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: false });
+        ast = acorn().parse(src, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: false });
     } catch (e) {
         err("compile", (e as Error).message);
         return { manifest, findings };

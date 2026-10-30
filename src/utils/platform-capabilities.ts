@@ -4,6 +4,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { arch, homedir, release } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -140,7 +141,8 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilities> {
     // ── Browser ──────────────────────────────────
     let playwrightAvailable = false;
     try {
-        await import("playwright");
+        // Resolve, don't load: importing Playwright costs ~27 MB just to set a flag.
+        createRequire(import.meta.url).resolve("playwright");
         playwrightAvailable = true;
     } catch {
         /* not installed */

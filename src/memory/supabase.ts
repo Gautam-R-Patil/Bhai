@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // ── Types ─────────────────────────────────────
 
@@ -21,7 +21,7 @@ let supabase: SupabaseClient | null = null;
 
 // ── Initialize ────────────────────────────────
 
-export function initSupabase(): SupabaseClient | null {
+export async function initSupabase(): Promise<SupabaseClient | null> {
     const url = process.env.SUPABASE_URL;
     const key = process.env.SUPABASE_ANON_KEY;
 
@@ -30,6 +30,8 @@ export function initSupabase(): SupabaseClient | null {
         return null;
     }
 
+    // Loaded only when Supabase is configured, not at boot.
+    const { createClient } = await import("@supabase/supabase-js");
     supabase = createClient(url, key);
     console.log("☁️  Supabase connected");
     return supabase;

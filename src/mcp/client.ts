@@ -2,8 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import fs from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
@@ -130,6 +129,11 @@ async function connectServer(name: string, config: MCPServerConfig, isStoreItem 
         throw new Error(`OSV malware check blocked "${name}": ${ids}`);
     }
 
+    // The MCP SDK loads when the first server connects, not at boot.
+    const [{ Client }, { StdioClientTransport }] = await Promise.all([
+        import("@modelcontextprotocol/sdk/client/index.js"),
+        import("@modelcontextprotocol/sdk/client/stdio.js"),
+    ]);
     const transport = new StdioClientTransport({
         command: config.command,
         args: config.args || [],

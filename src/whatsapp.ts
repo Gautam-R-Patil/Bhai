@@ -9,8 +9,6 @@ import { join, basename as pathBasename } from "node:path";
 import type { Boom } from "@hapi/boom";
 import type { BaileysEventMap, WAMessage, WASocket } from "@whiskeysockets/baileys";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import pino from "pino";
-import qrcode from "qrcode-terminal";
 import { type MediaAttachment, runAgent } from "./agent.js";
 import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
 import { isStopCommand, STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
@@ -175,8 +173,6 @@ function stopStateSweep(): void {
     }
 }
 
-// Kick off the sweep at module load; unref'd so it never blocks process exit.
-startStateSweep();
 
 // Sanitize attacker-controlled inbound text before wrapping in delimiters.
 // Strips framing tokens that the LLM treats as authoritative.
@@ -2189,6 +2185,8 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
     // Ensure auth directory exists
     await fs.mkdir(AUTH_DIR, { recursive: true });
 
+    // Sweep stale per-chat state while the channel runs; unref'd so it never blocks process exit.
+    startStateSweep();
     await connectWhatsApp(llm);
 }
 
@@ -2232,6 +2230,7 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
     // Suppress Baileys verbose logging in production
+    const { default: pino } = await import("pino");
     const logger = pino({ level: "silent" }) as any;
 
     socket = makeWASocket({
@@ -2264,7 +2263,7 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
             currentQR = qr;
             console.log(`##ATLAS_QR##${qr}##END_QR##`);
             console.log("\n[WHATSAPP] Scan this QR code with WhatsApp on your phone:\n");
-            qrcode.generate(qr, { small: true });
+            (await import("qrcode-terminal")).default.generate(qr, { small: true });
             console.log("[WHATSAPP] Open WhatsApp > Settings > Linked Devices > Link a Device\n");
         }
 

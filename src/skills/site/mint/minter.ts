@@ -36,8 +36,8 @@
 // a row archives it.
 
 import { randomBytes } from "node:crypto";
-import * as acorn from "acorn";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { getDataDir } from "../../../config/paths.js";
@@ -51,6 +51,10 @@ import { type DriftCapture, noteRepair, repairBlocked } from "../drift.js";
 import { checkSkill, type Finding, type MintedManifest, type RecordedValue } from "./checks.js";
 import { commitEvent, type Descriptor, type LoadedTrace, loadTrace } from "./recorder.js";
 import { type PhaseName, type ReplayReport, replaySkill, type Verdict } from "./replay.js";
+
+// acorn loads synchronously on first parse, not at boot.
+let acornMod: typeof import("acorn") | undefined;
+const acorn = (): typeof import("acorn") => (acornMod ??= createRequire(import.meta.url)("acorn"));
 
 export const maxTurns = () => Math.max(1, Number(process.env.ATLAS_SITE_MINT_MAX_TURNS) || 12);
 const WALL_MS = 10 * 60_000;
@@ -317,7 +321,7 @@ export function buildDigest(t: LoadedTrace, redact: (s: string) => string, input
 
 // biome-ignore lint/suspicious/noExplicitAny: ESTree nodes
 type N = any;
-const parse = (src: string) => acorn.parse(src, { ecmaVersion: "latest", sourceType: "script" }) as N;
+const parse = (src: string) => acorn().parse(src, { ecmaVersion: "latest", sourceType: "script" }) as N;
 const keyOf = (p: N) => (p?.type === "Property" && !p.computed ? (p.key.name ?? p.key.value) : undefined);
 
 // [start, end) of phases.<name> (the `name(ctx, lib) {…}` member of the

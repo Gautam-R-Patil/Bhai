@@ -7,17 +7,23 @@
 // markdown-it, then hands off to the HTML renderer. Used by cover letters /
 // simple reports where markdown is the most ergonomic authoring format.
 
-import MarkdownIt from "markdown-it";
+import type MarkdownIt from "markdown-it";
 import { renderTemplate } from "../placeholders.js";
 import { readTemplateSource, readTemplateStyles, type TemplateMeta } from "../templates.js";
 import { type RenderHtmlPdfOptions, renderHtmlTemplateToPdf } from "./html.js";
 
-const md = new MarkdownIt({
-    html: true,
-    breaks: false,
-    linkify: true,
-    typographer: true,
-});
+// markdown-it loads on the first render, not at boot.
+let mdInstance: MarkdownIt | undefined;
+async function markdown(): Promise<MarkdownIt> {
+    const { default: MarkdownItCtor } = await import("markdown-it");
+    mdInstance ??= new MarkdownItCtor({
+        html: true,
+        breaks: false,
+        linkify: true,
+        typographer: true,
+    });
+    return mdInstance;
+}
 
 const DEFAULT_MD_STYLES = `
 body {
@@ -53,7 +59,7 @@ export async function renderMarkdownTemplateToPdf(
     const rawMd = readTemplateSource(tpl);
     // Interpolate with raw mode — don't HTML-escape inside markdown bodies.
     const interpolated = renderTemplate(rawMd, data, { raw: true });
-    const bodyHtml = md.render(interpolated);
+    const bodyHtml = (await markdown()).render(interpolated);
 
     const styles = readTemplateStyles(tpl) ?? DEFAULT_MD_STYLES;
     const full = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${styles}</style></head><body>${bodyHtml}</body></html>`;
@@ -71,7 +77,7 @@ export async function renderMarkdownStringToPdf(
     outputPath: string,
     opts: Partial<RenderHtmlPdfOptions> = {},
 ): Promise<string> {
-    const bodyHtml = md.render(mdText);
+    const bodyHtml = (await markdown()).render(mdText);
     const full = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${DEFAULT_MD_STYLES}</style></head><body>${bodyHtml}</body></html>`;
     const stub: TemplateMeta = {
         id: "__inline-markdown__",

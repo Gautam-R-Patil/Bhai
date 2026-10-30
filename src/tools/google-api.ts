@@ -9,9 +9,10 @@
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { OAuth2Client } from "google-auth-library";
+import type { OAuth2Client } from "google-auth-library";
 import type { calendar_v3 } from "googleapis";
 import { getDataDir } from "../config/paths.js";
 import { getTimezone } from "../location/index.js";
@@ -99,8 +100,10 @@ function loadCredentials(): { client_id: string; client_secret: string; redirect
 function createOAuth2Client(): OAuth2Client | null {
     const creds = loadCredentials();
     if (!creds) return null;
+    // google-auth-library loads only once there are credentials to use, not at boot.
+    const { OAuth2Client: Client } = createRequire(import.meta.url)("google-auth-library") as typeof import("google-auth-library");
     // Always use our callback server port for seamless OAuth
-    const client = new OAuth2Client(creds.client_id, creds.client_secret, OAUTH_REDIRECT_URI);
+    const client = new Client(creds.client_id, creds.client_secret, OAUTH_REDIRECT_URI);
 
     // Auto-refresh tokens and persist to disk
     client.on("tokens", (tokens) => {

@@ -2,21 +2,15 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import {
+import type {
     Client,
-    GatewayIntentBits,
-    Events,
     SlashCommandBuilder,
-    REST,
-    Routes,
     EmbedBuilder,
-    ChannelType,
-    InteractionContextType,
-    type ChatInputCommandInteraction,
-    type Message,
-    type TextChannel,
-    type ThreadChannel,
-    type Attachment,
+    ChatInputCommandInteraction,
+    Message,
+    TextChannel,
+    ThreadChannel,
+    Attachment,
 } from "discord.js";
 import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
@@ -69,7 +63,7 @@ function buildResultEmbed(
     description: string,
     fields?: Array<{ name: string; value: string; inline?: boolean }>,
 ): EmbedBuilder {
-    const embed = new EmbedBuilder()
+    const embed = new djs.EmbedBuilder()
         .setTitle(title)
         .setColor(0x5865f2) // Discord blurple
         .setTimestamp();
@@ -397,7 +391,7 @@ async function runInThread(
 // ── Slash Command Definitions ────────────────
 
 function buildSlashCommands(): SlashCommandBuilder[] {
-    const ask = new SlashCommandBuilder()
+    const ask = new djs.SlashCommandBuilder()
         .setName("ask")
         .setDescription("Ask Bhai anything")
         .addStringOption(option =>
@@ -406,7 +400,7 @@ function buildSlashCommands(): SlashCommandBuilder[] {
                 .setRequired(true),
         ) as SlashCommandBuilder;
 
-    const research = new SlashCommandBuilder()
+    const research = new djs.SlashCommandBuilder()
         .setName("research")
         .setDescription("Start a deep research task")
         .addStringOption(option =>
@@ -415,7 +409,7 @@ function buildSlashCommands(): SlashCommandBuilder[] {
                 .setRequired(true),
         ) as SlashCommandBuilder;
 
-    const task = new SlashCommandBuilder()
+    const task = new djs.SlashCommandBuilder()
         .setName("task")
         .setDescription("Start a long-running task")
         .addStringOption(option =>
@@ -424,11 +418,11 @@ function buildSlashCommands(): SlashCommandBuilder[] {
                 .setRequired(true),
         ) as SlashCommandBuilder;
 
-    const status = new SlashCommandBuilder()
+    const status = new djs.SlashCommandBuilder()
         .setName("status")
         .setDescription("Check Bhai status and running tasks") as SlashCommandBuilder;
 
-    const help = new SlashCommandBuilder()
+    const help = new djs.SlashCommandBuilder()
         .setName("help")
         .setDescription("List available Bhai commands") as SlashCommandBuilder;
 
@@ -439,12 +433,12 @@ function buildSlashCommands(): SlashCommandBuilder[] {
 
 async function registerCommands(clientId: string, token: string): Promise<void> {
     const commands = buildSlashCommands();
-    const rest = new REST({ version: "10" }).setToken(token);
+    const rest = new djs.REST({ version: "10" }).setToken(token);
 
     try {
         console.log("  [DISCORD] Registering slash commands...");
         await rest.put(
-            Routes.applicationCommands(clientId),
+            djs.Routes.applicationCommands(clientId),
             { body: commands.map(c => c.toJSON()) },
         );
         console.log("  [DISCORD] Slash commands registered");
@@ -480,7 +474,7 @@ export function isPlatformOwner(channel: "discord", userId: string): boolean {
  * command can run in a group DM, where everyone in it reads the reply.
  */
 function isBotDmInteraction(interaction: ChatInputCommandInteraction): boolean {
-    return !interaction.guildId && interaction.context !== InteractionContextType.PrivateChannel;
+    return !interaction.guildId && interaction.context !== djs.InteractionContextType.PrivateChannel;
 }
 
 /**
@@ -495,6 +489,8 @@ export function discordChannelContext(user: { id: string; username: string }, is
 // ── Init Discord Bot ─────────────────────────
 
 let discordClient: Client | null = null;
+// discord.js loads only when a bot token is set (initDiscord), not at boot.
+let djs: typeof import("discord.js");
 
 export async function initDiscord(llm: LLMClient): Promise<void> {
     const token = process.env.DISCORD_BOT_TOKEN;
@@ -508,16 +504,17 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
         console.warn("  [DISCORD] DISCORD_CLIENT_ID not set -- slash commands will not be registered");
     }
 
+    djs = await import("discord.js");
     const allowedUsers = parseDiscordAllowedUsers();
     const startTime = Date.now();
 
-    const client = new Client({
+    const client = new djs.Client({
         intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.MessageContent,
-            GatewayIntentBits.GuildVoiceStates,
-            GatewayIntentBits.DirectMessages,
+            djs.GatewayIntentBits.Guilds,
+            djs.GatewayIntentBits.GuildMessages,
+            djs.GatewayIntentBits.MessageContent,
+            djs.GatewayIntentBits.GuildVoiceStates,
+            djs.GatewayIntentBits.DirectMessages,
         ],
     });
 
@@ -534,7 +531,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
     // ── Ready Event ──────────────────────────
 
-    client.once(Events.ClientReady, async (readyClient) => {
+    client.once(djs.Events.ClientReady, async (readyClient) => {
         console.log(`  [DISCORD] Bot online: ${readyClient.user.tag}`);
 
         // Register slash commands
@@ -545,7 +542,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
     // ── Slash Command Handler ────────────────
 
-    client.on(Events.InteractionCreate, async (interaction) => {
+    client.on(djs.Events.InteractionCreate, async (interaction) => {
         if (!interaction.isChatInputCommand()) return;
 
         const userId = interaction.user.id;
@@ -691,12 +688,12 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
     // ── Message Handler (@mentions + DMs) ────
 
-    client.on(Events.MessageCreate, async (message: Message) => {
+    client.on(djs.Events.MessageCreate, async (message: Message) => {
         // Ignore bot messages (including our own)
         if (message.author.bot) return;
 
         // Check if this is a DM or an @mention
-        const isDM = message.channel.type === ChannelType.DM;
+        const isDM = message.channel.type === djs.ChannelType.DM;
         // A real @mention of Bhai, not @everyone/@here or a role ping.
         const isMention = message.mentions.has(client.user!, { ignoreEveryone: true, ignoreRoles: true });
 

@@ -10,7 +10,6 @@ import { spawn } from "child_process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "zlib";
-import { extract as tarExtract } from "tar";
 
 import type {
   StoreItem,
@@ -142,6 +141,8 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
 // ── Extract zip/tar helper ────────────────────────
 
 async function extractArchive(archivePath: string, destPath: string): Promise<void> {
+  // tar loads on the first store install, not at boot.
+  const { extract: tarExtract } = await import("tar");
   // Determine archive type from extension or magic bytes
   const content = await readFile(archivePath);
 

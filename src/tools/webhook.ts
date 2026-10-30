@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import express from "express";
+import type { Server } from "node:http";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Types ─────────────────────────────────────
@@ -17,13 +17,15 @@ interface WebhookEndpoint {
 // ── State ─────────────────────────────────────
 
 const endpoints = new Map<string, WebhookEndpoint>();
-let server: ReturnType<typeof express.application.listen> | null = null;
+let server: Server | null = null;
 let webhookCounter = 0;
 let onWebhook: ((endpointId: string, payload: unknown) => Promise<void>) | null = null;
 
 // ── Initialize ────────────────────────────────
 
-export function initWebhookServer(port = 18790): void {
+export async function initWebhookServer(port = 18790): Promise<void> {
+    // express loads only when the opt-in webhook server starts.
+    const { default: express } = await import("express");
     const app = express();
     app.use(express.json());
 
@@ -58,7 +60,7 @@ export function initWebhookServer(port = 18790): void {
     // Listen on localhost only
     server = app.listen(port, "127.0.0.1", () => {
         console.log(`🔔 Webhook server listening on http://127.0.0.1:${port}`);
-    }) as unknown as ReturnType<typeof express.application.listen>;
+    });
 }
 
 export function setWebhookHandler(handler: (endpointId: string, payload: unknown) => Promise<void>): void {
@@ -122,7 +124,7 @@ export const listWebhooks: ToolDefinition = {
 
 export function stopWebhookServer(): void {
     if (server) {
-        (server as unknown as { close: () => void }).close();
+        server.close();
         server = null;
     }
 }

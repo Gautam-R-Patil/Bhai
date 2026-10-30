@@ -3,9 +3,13 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as acorn from "acorn";
+
+// acorn loads synchronously on first parse, not at boot.
+let acornMod: typeof import("acorn") | undefined;
+const acorn = (): typeof import("acorn") => (acornMod ??= createRequire(import.meta.url)("acorn"));
 
 export interface CriticFinding {
     ruleId: string;
@@ -24,7 +28,7 @@ export interface CompileResult {
 
 export function runCompileCheck(code: string): CompileResult {
     try {
-        acorn.parse(`(async function() { ${code} })`, { ecmaVersion: "latest", sourceType: "script" });
+        acorn().parse(`(async function() { ${code} })`, { ecmaVersion: "latest", sourceType: "script" });
         return { pass: true, hardFail: false };
     } catch (err) {
         return { pass: false, hardFail: true, error: (err as Error).message };
