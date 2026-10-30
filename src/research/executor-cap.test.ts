@@ -205,6 +205,22 @@ describe("executeDeepResearch source cap", () => {
         expect(ctl.checkpoints.length).toBeGreaterThan(0);
         expect(ctl.checkpoints.at(-1)?.research.engineBreakdown?.mock).toBeGreaterThan(0);
     }, 30_000);
+    it("a follow-up on a research already at the findings cap keeps its own new findings", async () => {
+        const { abortController: _, ...saved } = { ...newResearch(), currentPhase: 1 };
+        const basis: ResearchState = {
+            research: saved,
+            // 1000 long findings from the basis: every new one ("f") is shorter.
+            allFindings: Array.from({ length: 1000 }, (_, i) => ({ text: `basis finding ${i} `.padEnd(80, "x"), sourceUrl: `https://b${i}.example/`, sourceTitle: "B", categories: [] })),
+            allSources: [], visitedUrls: [], usedQueries: [], pendingQueries: [], rounds: [], currentRound: 0,
+            buildsOn: "research_1_1",
+        };
+        const notices: Array<[string, boolean | undefined]> = [];
+        const research: ActiveResearch = { ...saved, abortController: new AbortController() };
+        await executeDeepResearch(research, profile, {} as never, async (m, important) => { notices.push([m, important]); }, basis);
+        expect(ctl.checkpoints.at(-1)?.allFindings.some((f) => f.text === "f")).toBe(true);
+        // A follow-up is a new research, not "picking up" an old one.
+        expect(notices.some(([m]) => m.includes("Picking up"))).toBe(false);
+    }, 30_000);
 });
 
 function newResearch(): ActiveResearch {

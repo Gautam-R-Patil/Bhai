@@ -8,6 +8,7 @@ import type { ChannelContext } from "../agent.js";
 import type { ActiveResearch, NotifyFn, ResearchIndexEntry, ResearchState } from "./types.js";
 import { PROFILES } from "./profiles.js";
 import { getChannelSender } from "../tools/channel-send.js";
+import { shouldSuppressMessage } from "../proactive/dnd.js";
 import { executeDeepResearch } from "./executor.js";
 import { multiEngineSearch } from "./engines.js";
 import type { SearchResult } from "./types.js";
@@ -54,6 +55,7 @@ function syncActiveToIndex(research: ActiveResearch): Promise<void> {
         reportFile: research.reportFile || undefined,
         originalPrompt: research.originalPrompt,
         error: research.error,
+        delivered: research.delivered,
         pid: isTerminal ? undefined : process.pid,
         completedAt: isTerminal ? research.updatedAt : undefined,
         durationSec: isTerminal ? Math.max(0, Math.round((updatedMs - startedMs) / 1000)) : undefined,
@@ -95,11 +97,13 @@ _indexHeartbeat.unref();
 // continues it once the channels are wired. Call this from src/index.ts at boot.
 let _initialized = false;
 let _cutOff: string[] = [];
+let _undelivered: ResearchIndexEntry[] = [];
 export async function initDeepResearch(): Promise<void> {
     if (_initialized) return;
     _initialized = true;
     try {
         _cutOff = (await recoverInterruptedResearches()).interrupted.map((e) => e.id);
+        _undelivered = (await listIndex({ status: ["completed"] })).filter((e) => e.delivered === false);
         await pruneFinishedStates();
     } catch (err) {
         console.warn(`[RESEARCH] Boot recovery failed:`, (err as Error).message);
@@ -111,6 +115,14 @@ export async function initDeepResearch(): Promise<void> {
 // "interrupted" in the status snippet for the agent to mention.
 const MAX_AUTO_RESUMES = 2;
 export async function resumeInterruptedResearch(): Promise<void> {
+    // Finished, but the restart came before its answer went out: send the report itself.
+    const undelivered = _undelivered;
+    _undelivered = [];
+    for (const e of undelivered) {
+        const origin = (await loadResearchState(e.id))?.research.origin;
+        await sendAnswer(origin, e.id, e.topic, `The app restarted before I could sum it up. The full report is saved at ${e.reportFile}; ask me to go through it.`, e.reportFile);
+        await upsertIndexEntry({ ...e, delivered: true });
+    }
     const ids = _cutOff;
     _cutOff = [];
     for (const id of ids) {
@@ -203,11 +215,25 @@ export function registerResearchStatusCard(channel: string, factory: StatusCardF
     statusCards.set(channel, factory);
 }
 
-/** To the channel it was asked on; when that can't take it, every channel, so it isn't lost. */
+/** To the channel it was asked on (the computer when it wasn't asked on a chat: voice, a sub-agent);
+ *  when that can't take it, every channel, so it isn't lost. */
 async function sendToOrigin(origin: ChannelContext | undefined, text: string, file?: string): Promise<void> {
-    const sender = origin && getChannelSender(startedOnDesktop(origin) ? "overlay" : origin.channel);
+    const sender = getChannelSender(!origin || startedOnDesktop(origin) ? "overlay" : origin.channel);
     if (sender && (await sender(text, file).catch(() => false)) !== false) return;
+    // Held by Do Not Disturb: the other channels stay quiet too (the answer is marked important and passes).
+    if (await shouldSuppressMessage(text).catch(() => false)) return;
+    // The answer keeps its report: the primary channel takes the file; only when it can't does every channel get the text.
+    const primary = file ? getChannelSender(process.env.PRIMARY_CHANNEL || "telegram") : undefined;
+    if (primary && primary !== sender && (await primary(text, file).catch(() => false)) !== false) return;
     if (_telegramNotifier) await _telegramNotifier(text).catch(() => {});
+}
+
+// The answer, with the report: on the computer as a card that stays until dismissed when it was
+// asked there; otherwise on its channel with the report file attached. The header marks it as
+// something the owner asked for, so Do Not Disturb doesn't swallow it.
+async function sendAnswer(origin: ChannelContext | undefined, id: string, topic: string, text: string, file?: string): Promise<void> {
+    if ((!origin || startedOnDesktop(origin)) && (await _overlayResult?.(text, id, file).catch(() => false))) return;
+    await sendToOrigin(origin, `📚 Research ready — ${topic.substring(0, 60)}\n\n${text}`, file);
 }
 
 export function createNotify(origin?: ChannelContext, card?: StatusCard | null, title = ""): NotifyFn {
@@ -293,8 +319,12 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
             });
         const resumeState = resumeId ? await loadResearchState(resumeId) : null;
         if (resumeId && !resumeState) return JSON.stringify({ error: `No checkpoint for research "${resumeId}" — it can't be resumed. Start a new deep_research instead.` });
-        if (resumeId && activeResearches.get(resumeId)?.status === "running") return JSON.stringify({ error: `Research "${resumeId}" is already running.` });
-        if (resumeId && (await getIndexEntry(resumeId))?.status === "completed")
+        const live = resumeId ? activeResearches.get(resumeId)?.status : undefined;
+        if (live === "running") return JSON.stringify({ error: `Research "${resumeId}" is already running.` });
+        const was = live ?? (resumeId ? (await getIndexEntry(resumeId))?.status : undefined);
+        // A cancelled run may still be finishing its last model call; a new run under its id would race it.
+        if (was === "cancelled") return JSON.stringify({ error: `Research "${resumeId}" was cancelled. Start a new deep_research instead.` });
+        if (was === "completed")
             return JSON.stringify({ error: `Research "${resumeId}" already finished. To dig deeper, start a new one with builds_on: "${resumeId}".` });
 
         // A follow-up starts from a finished research's sources and findings (kept for this).
@@ -303,7 +333,10 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
         const basis = basisId ? await loadResearchState(basisId) : null;
         if (basisId && !basis) return JSON.stringify({ error: `Research "${basisId}" has no saved sources (too old, or it didn't finish). Start a new deep_research instead.` });
 
-        const topic = resumeState?.research.topic ?? (input.topic as string);
+        // A follow-up like "now compare the top two" means nothing to a search engine on its own: anchor it on the subject.
+        const asTopic = input.topic as string | undefined;
+        const topic = resumeState?.research.topic
+            ?? (basis && asTopic && !asTopic.toLowerCase().includes(basis.research.topic.toLowerCase()) ? `${basis.research.topic}: ${asTopic}` : asTopic);
         if (!topic) return JSON.stringify({ error: "Missing 'topic' parameter" });
 
         // Cap concurrent running research jobs. The agent has a tendency to
@@ -369,7 +402,8 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
         };
 
         activeResearches.set(id, research);
-        void syncActiveToIndex(research);
+        // Awaited: the app's Research page reads the index as soon as this returns.
+        await syncActiveToIndex(research);
         // Starting point handed to the executor: its own checkpoint, or the finished research it builds on.
         const startFrom: ResearchState | undefined = resumeState ?? (basis ? {
             research: { ...research, abortController: undefined } as unknown as ResearchState["research"],
@@ -380,6 +414,7 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
             pendingQueries: [],
             rounds: [],
             currentRound: 0,
+            buildsOn: basisId,
         } : undefined);
 
         const cardTitle = `🔬 Research: ${topic.substring(0, 80)}`;
@@ -388,23 +423,22 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
             ? await makeCard(capturedChannelContext, id, `${cardTitle}\nStarting…`).catch(() => null)
             : null;
         const capturedNotify = createNotify(capturedChannelContext, card, cardTitle);
-        // The answer, with the report: on the computer as a card that stays until dismissed when it
-        // was asked there; otherwise on its channel with the report file attached. The header marks
-        // it as something the owner asked for, so Do Not Disturb doesn't swallow it.
         const deliverResult = async (text: string) => {
-            const file = research.reportFile || undefined;
             await card?.(`${cardTitle}\n✅ Done: ${research.sourcesProcessed} sources read. The answer is below.`, true).catch(() => {});
             void import("../notifications/push.js")
                 .then(({ sendPushNotification }) => sendPushNotification("Research ready", topic.substring(0, 180)))
                 .catch(() => {});
-            if (startedOnDesktop(capturedChannelContext) && (await _overlayResult?.(text, id, file).catch(() => false))) return;
-            await sendToOrigin(capturedChannelContext, `📚 Research ready — ${topic.substring(0, 60)}\n\n${text}`, file);
+            await sendAnswer(capturedChannelContext, id, topic, text, research.reportFile || undefined);
+            research.delivered = true;
+            await syncActiveToIndex(research);
         };
         const capturedLLM = _llm!;
 
         // Fire and forget — runs in background
         executeDeepResearch(research, { ...profile, depth, maxSources }, capturedLLM, capturedNotify, startFrom).then(async () => {
-            // Always reflect terminal state to the index (completed | failed | cancelled).
+            // Always reflect terminal state to the index (completed | failed | cancelled). A completed
+            // one counts as undelivered until the follow-up run's answer goes out.
+            if (research.status === "completed") research.delivered = false;
             await syncActiveToIndex(research);
             // A failed run keeps its checkpoint so deep_research({resume_id}) can continue it, and a
             // finished one so a follow-up (builds_on) can reuse its sources; a cancelled one is dropped.
@@ -497,13 +531,13 @@ export const checkDeepResearch: ToolDefinition = {
         type: "function",
         function: {
             name: "check_deep_research",
-            description: "Check status and results of background deep research. Returns full report when complete, progress stats when running. Omit research_id to list all.",
+            description: "Check status and results of background deep research. Returns full report when complete, progress stats when running. Omit research_id to list running researches and those from the last 24h; an older one needs its id.",
             parameters: {
                 type: "object",
                 properties: {
                     research_id: {
                         type: "string",
-                        description: "Research ID. Omit to list all active researches.",
+                        description: "Research ID (any age). Omit to list running researches and those from the last 24h.",
                     },
                 },
                 required: [],

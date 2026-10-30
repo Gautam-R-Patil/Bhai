@@ -1,10 +1,13 @@
 // © 2024-2026 XAGI Labs Private Limited
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { createNotify, setDeepResearchNotifier, setOverlayResearchProgress } from "./index.js";
 import { registerChannelSender } from "../tools/channel-send.js";
+
+const dnd = vi.hoisted(() => ({ on: false }));
+vi.mock("../proactive/dnd.js", () => ({ shouldSuppressMessage: async () => dnd.on }));
 
 const telegram = { channel: "telegram", userId: "1", isOwner: true } as never;
 const overlay = { channel: "overlay", userId: "local", isOwner: true } as never;
@@ -42,6 +45,26 @@ describe("research notifications follow where research was asked", () => {
         expect(channels).toHaveBeenCalledWith("❌ failed");
     });
 
+    it("held by Do Not Disturb on its channel: not sent to every other channel instead", async () => {
+        const channels = vi.fn(async () => {});
+        setDeepResearchNotifier(channels);
+        registerChannelSender("telegram", vi.fn(async () => false));
+        dnd.on = true;
+        await createNotify(telegram)("❌ failed", true);
+        dnd.on = false;
+        expect(channels).not.toHaveBeenCalled();
+    });
+
+    it("asked from no chat (voice, a sub-agent): goes to the computer, not every channel", async () => {
+        const channels = vi.fn(async () => {});
+        const bar = vi.fn(async () => true);
+        setDeepResearchNotifier(channels);
+        registerChannelSender("overlay", bar);
+        await createNotify(undefined)("❌ failed", true);
+        expect(bar).toHaveBeenCalledWith("❌ failed", undefined);
+        expect(channels).not.toHaveBeenCalled();
+    });
+
     it("asked on the computer: an important notice goes to the computer", async () => {
         const channels = vi.fn(async () => {});
         const bar = vi.fn(async () => true);
@@ -70,6 +93,44 @@ describe("boot recovery", () => {
         expect(interrupted.map((e) => e.id)).toEqual(["research_1_1"]);
         vi.unstubAllEnvs();
     });
+
+    it("a running research last updated before the machine booted is interrupted, even if its pid is reused", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "research-reboot-"));
+        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.resetModules();
+        const os = (await import("node:os")).default;
+        const uptime = vi.spyOn(os, "uptime").mockReturnValue(60); // booted a minute ago
+        const before = new Date(Date.now() - 120_000).toISOString();
+        writeFileSync(join(dir, "research-index.json"), JSON.stringify({
+            version: 1,
+            researches: [{ id: "research_4_4", topic: "t", profile: "quick", status: "running", startedAt: before, updatedAt: before, sourcesProcessed: 0, findingsCount: 0, pid: process.ppid }],
+        }));
+        const { recoverInterruptedResearches } = await import("./persistence.js");
+        expect((await recoverInterruptedResearches()).interrupted.map((e) => e.id)).toEqual(["research_4_4"]);
+        uptime.mockRestore();
+        vi.unstubAllEnvs();
+    });
+
+    it("prunes old failed checkpoints and ones the index no longer lists", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "research-prune-"));
+        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.resetModules();
+        const old = new Date(Date.now() - 30 * 86_400_000).toISOString();
+        const now = new Date().toISOString();
+        const entry = (id: string, updatedAt: string) => ({ id, topic: id, profile: "quick", status: "failed", startedAt: updatedAt, updatedAt, sourcesProcessed: 0, findingsCount: 0 });
+        writeFileSync(join(dir, "research-index.json"), JSON.stringify({ version: 1, researches: [entry("research_1_1", old), entry("research_2_2", now)] }));
+        const p = await import("./persistence.js");
+        for (const id of ["research_1_1", "research_2_2", "research_3_3"]) {
+            await p.saveResearchState({
+                research: { id, topic: "t", profile: "quick", status: "failed", depth: 1, maxSources: 5, sourcesProcessed: 0, roundsCompleted: 0, findingsCount: 0, currentPhase: 1, startedAt: now, updatedAt: now, report: "", reportFile: "" },
+                allFindings: [], allSources: [], visitedUrls: [], usedQueries: [], pendingQueries: [], rounds: [], currentRound: 0,
+            });
+        }
+        await p.pruneFinishedStates();
+        // Recent failure kept for resume_id; month-old failure and the unlisted one gone.
+        expect(readdirSync(join(dir, "research")).sort()).toEqual(["research_2_2.state.json"]);
+        vi.unstubAllEnvs();
+    });
 });
 
 describe("auto-resume after a restart", () => {
@@ -94,6 +155,46 @@ describe("auto-resume after a restart", () => {
         // Already tried twice: left interrupted, not restarted.
         expect((await p.loadResearchState(id))?.research.autoResumes).toBe(2);
         expect((await p.getIndexEntry(id))?.status).toBe("interrupted");
+        vi.unstubAllEnvs();
+    });
+
+    it("re-sends the answer of a research that finished just before the restart", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "research-undelivered-"));
+        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.resetModules();
+        const now = new Date().toISOString();
+        writeFileSync(join(dir, "research-index.json"), JSON.stringify({
+            version: 1,
+            researches: [{ id: "research_8_8", topic: "t", profile: "quick", status: "completed", startedAt: now, updatedAt: now, sourcesProcessed: 3, findingsCount: 3, reportFile: "/r.md", delivered: false }],
+        }));
+        const r = await import("./index.js");
+        const card = vi.fn(async () => true);
+        r.setOverlayResearchResult(card);
+        await r.initDeepResearch();
+        await r.resumeInterruptedResearch();
+        expect(card).toHaveBeenCalledWith(expect.stringContaining("/r.md"), "research_8_8", "/r.md");
+        expect((await (await import("./persistence.js")).getIndexEntry("research_8_8"))?.delivered).toBe(true);
+        vi.unstubAllEnvs();
+    });
+
+    it("won't resume a cancelled research (its old run may still be finishing)", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "research-cancelled-"));
+        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.resetModules();
+        const id = "research_9_9";
+        const now = new Date().toISOString();
+        writeFileSync(join(dir, "research-index.json"), JSON.stringify({
+            version: 1,
+            researches: [{ id, topic: "t", profile: "quick", status: "cancelled", startedAt: now, updatedAt: now, sourcesProcessed: 0, findingsCount: 0 }],
+        }));
+        const p = await import("./persistence.js");
+        await p.saveResearchState({
+            research: { id, topic: "t", profile: "quick", status: "cancelled", depth: 1, maxSources: 5, sourcesProcessed: 0, roundsCompleted: 0, findingsCount: 0, currentPhase: 1, startedAt: now, updatedAt: now, report: "", reportFile: "" },
+            allFindings: [], allSources: [], visitedUrls: [], usedQueries: [], pendingQueries: [], rounds: [], currentRound: 0,
+        });
+        const r = await import("./index.js");
+        r.setDeepResearchLLM({} as never);
+        expect(JSON.parse(await r.deepResearch.handler({ resume_id: id })).error).toMatch(/cancelled/);
         vi.unstubAllEnvs();
     });
 });
