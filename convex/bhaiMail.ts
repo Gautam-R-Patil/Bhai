@@ -73,6 +73,8 @@ export const addressFor = internalQuery({
 export const routeInbound = internalMutation({
     args: {
         address: v.string(),
+        /** No one but this Bhai address on To/Cc. */
+        direct: v.optional(v.boolean()),
         from: v.string(),
         fromName: v.string(),
         messageId: v.string(),
@@ -83,7 +85,7 @@ export const routeInbound = internalMutation({
         authenticated: v.optional(v.boolean()),
     },
     returns: v.union(v.literal("queued"), v.literal("unknown"), v.literal("over_cap"), v.literal("duplicate")),
-    handler: async (ctx, { address, from, fromName, messageId, subject, text, automated, authenticated }) => {
+    handler: async (ctx, { address, direct, from, fromName, messageId, subject, text, automated, authenticated }) => {
         const row = await ctx.db
             .query("bhai_mail_addresses")
             .withIndex("by_address", (q) => q.eq("address", address))
@@ -114,6 +116,7 @@ export const routeInbound = internalMutation({
             from: from.toLowerCase(),
             fromName: fromName.slice(0, 120),
             fromOwner,
+            direct: direct === true,
             automated,
             subject: subject.slice(0, 300),
             text: text.slice(0, MAX_TEXT),
@@ -129,6 +132,7 @@ const inboxItem = v.object({
     from: v.string(),
     fromName: v.string(),
     fromOwner: v.boolean(),
+    direct: v.boolean(),
     automated: v.boolean(),
     subject: v.string(),
     text: v.string(),
@@ -149,6 +153,7 @@ export const inboxFor = internalQuery({
             from: r.from ?? "",
             fromName: r.fromName ?? "",
             fromOwner: r.fromOwner ?? false,
+            direct: r.direct ?? false,
             automated: r.automated ?? false,
             subject: r.subject,
             text: r.text,

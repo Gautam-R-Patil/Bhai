@@ -470,6 +470,7 @@ export default defineSchema({
     from: v.optional(v.string()),
     fromName: v.optional(v.string()),
     fromOwner: v.optional(v.boolean()),
+    direct: v.optional(v.boolean()), // no one but this Bhai address on To/Cc
     automated: v.optional(v.boolean()), // newsletter/auto-reply: never answered
     subject: v.string(),
     text: v.string(),

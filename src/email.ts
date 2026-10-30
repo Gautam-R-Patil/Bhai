@@ -41,6 +41,22 @@ export function isPlatformOwner(channel: "email", userId: string): boolean {
     return parseEmailOwners().has(userId.toLowerCase());
 }
 
+/**
+ * Owner mail is private (forget, pins, corrections) only when the owner wrote to Bhai
+ * alone: anyone else on To/Cc saw the request. Bhai only Bcc'd, or an EMAIL_USER that
+ * isn't an address, reads as not private.
+ */
+export function emailChannelContext(
+    sender: { email: string; name: string },
+    recipients: string[],
+    self: string,
+): ChannelContext {
+    const owner = isPlatformOwner("email", sender.email);
+    const me = self.trim().toLowerCase();
+    const alone = !!me && recipients.length > 0 && recipients.every((r) => r.trim().toLowerCase() === me);
+    return { channel: "email", userId: sender.email, userName: sender.name, isOwner: owner, isPrivate: owner && alone };
+}
+
 // Sanitize attacker-controlled inbound text before wrapping in channel
 // delimiters. Strips framing tokens the LLM treats as authoritative.
 export function sanitizeIncomingChannelText(text: string): string {
@@ -374,6 +390,7 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
             senderName: string;
             subject: string;
             messageId: string;
+            recipients: string[];
             bodyText: string;
             rawSource: string;
         }
@@ -381,7 +398,7 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
 
         // Envelopes and sizes first: a stranger's 30 MB attachment (or a backlog of
         // unseen mail) used to be downloaded in full before the whitelist was checked.
-        const heads: Array<{ uid: number; senderEmail: string; senderName: string; subject: string; messageId: string; size: number }> = [];
+        const heads: Array<{ uid: number; senderEmail: string; senderName: string; subject: string; messageId: string; recipients: string[]; size: number }> = [];
         for await (const msg of imapClient.fetch({ seen: false }, { envelope: true, size: true, uid: true })) {
             const envelope = msg.envelope;
             if (!envelope) continue;
@@ -393,6 +410,7 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                 senderName: from?.name || senderEmail,
                 subject: envelope.subject || "(no subject)",
                 messageId: envelope.messageId || "",
+                recipients: [...(envelope.to ?? []), ...(envelope.cc ?? [])].map((a) => a.address ?? ""),
                 size: msg.size ?? 0,
             });
         }
@@ -498,7 +516,12 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                     console.log(`  📊 [email-progress] ${progressMsg}`);
                 };
 
-                const senderIsOwner = isPlatformOwner("email", email.senderEmail);
+                const ctx = emailChannelContext(
+                    { email: email.senderEmail, name: email.senderName },
+                    email.recipients,
+                    config.emailUser ?? "",
+                );
+                const senderIsOwner = ctx.isOwner;
                 const response = await runAgent(
                     llm,
                     agentMessage,
@@ -508,12 +531,7 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                     undefined,
                     undefined,
                     undefined,
-                    {
-                        channel: "email",
-                        userId: email.senderEmail || "",
-                        userName: email.senderName,
-                        isOwner: senderIsOwner,
-                    },
+                    ctx,
                 );
                 const replyText = withStuckReplyLine(response, senderIsOwner);
                 console.log(`   🤖 Agent response: ${replyText.substring(0, 200)}...`);

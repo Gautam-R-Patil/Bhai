@@ -45,6 +45,16 @@ export function isPlatformOwner(channel: "slack", userId: string): boolean {
     return parseSlackOwners().has(userId);
 }
 
+/**
+ * Owner powers and private memory (forget, pins, corrections) only for the owner in a
+ * one-to-one DM with Bhai (an IM channel, id "D…"): a channel, group DM or thread reply
+ * is read by everyone in it.
+ */
+export function slackChannelContext(channel: string, userId: string): ChannelContext {
+    const owner = channel.startsWith("D") && isPlatformOwner("slack", userId);
+    return { channel: "slack", userId, isOwner: owner, isPrivate: owner };
+}
+
 // F7: per-sender inbound rate limit.
 const SLACK_RATE_WINDOW_MS = 60_000;
 const SLACK_RATE_MAX = 20;
@@ -219,10 +229,9 @@ async function handleSlackMessage(
             }
         };
 
-        // Owner powers only in a DM (Slack DM channel ids start with "D"): a channel or
-        // thread reply is read by everyone in it.
-        const senderIsOwner = channel.startsWith("D") && isPlatformOwner("slack", slackUserId || "");
-        const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, { channel: "slack", userId: slackUserId || "", userName: undefined, isOwner: senderIsOwner });
+        const ctx = slackChannelContext(channel, slackUserId || "");
+        const senderIsOwner = ctx.isOwner;
+        const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, ctx);
 
         // Clean the response
         const cleanText = slackStuckReplyText(result, senderIsOwner, channel)

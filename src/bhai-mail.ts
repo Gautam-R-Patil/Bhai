@@ -5,7 +5,7 @@
 // else gets guest mode (own conversation, NON_OWNER_TOOLS). Newsletters and
 // auto-replies are only announced, never answered.
 
-import { runAgent } from "./agent.js";
+import { type ChannelContext, runAgent } from "./agent.js";
 import { withStuckReplyLine } from "./channel-text.js";
 import { getConvexSiteUrl } from "./config/keys.js";
 import { encryptedFetch } from "./crypto-transport.js";
@@ -24,6 +24,8 @@ type MailItem = {
     from: string;
     fromName: string;
     fromOwner: boolean;
+    /** The server saw no one but this Bhai address on To/Cc (unset from an older server). */
+    direct?: boolean;
     automated: boolean;
     subject: string;
     text: string;
@@ -61,6 +63,23 @@ export async function sendBhaiMail(mail: {
     );
 }
 
+/**
+ * Owner mail gets full Bhai; it is private (forget, pins, corrections) only when it was
+ * written to Bhai alone: anyone else on To/Cc saw the request.
+ */
+export function bhaiMailContext(
+    owner: string,
+    mail: Pick<MailItem, "from" | "fromName" | "fromOwner" | "direct">,
+): ChannelContext {
+    return {
+        channel: "email",
+        userId: mail.fromOwner ? owner : mail.from,
+        userName: mail.fromOwner ? undefined : mail.fromName || undefined,
+        isOwner: mail.fromOwner,
+        isPrivate: mail.fromOwner && mail.direct === true,
+    };
+}
+
 async function handle(llm: LLMClient, owner: string, mail: MailItem): Promise<void> {
     const who = mail.fromName ? `${mail.fromName} <${mail.from}>` : mail.from;
     if (mail.automated) {
@@ -72,12 +91,17 @@ async function handle(llm: LLMClient, owner: string, mail: MailItem): Promise<vo
     const message = mail.fromOwner
         ? `[EMAIL from you <${owner}> to your Bhai email]\nSubject: ${subject}\n\n<channel_message_content>\n${body}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This arrived at your own Bhai email address. Respond naturally; your reply is emailed back.]`
         : `[EMAIL from ${who} to your owner's Bhai email — this is NOT your owner]\nSubject: ${subject}\n\n<channel_message_content>\n${body}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Someone other than your owner emailed you. Reply as your owner's assistant: helpful and polite, but never share your owner's private details or act for them; use ask_owner if they need your owner. Reply [NO_REPLY] to spam. Your reply is emailed to ${mail.from}.]`;
-    const result = await runAgent(llm, message, async () => {}, undefined, undefined, undefined, undefined, undefined, {
-        channel: "email",
-        userId: mail.fromOwner ? owner : mail.from,
-        userName: mail.fromOwner ? undefined : mail.fromName || undefined,
-        isOwner: mail.fromOwner,
-    });
+    const result = await runAgent(
+        llm,
+        message,
+        async () => {},
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        bhaiMailContext(owner, mail),
+    );
     const reply = withStuckReplyLine(result, mail.fromOwner);
     if (!reply.trim() || reply.trim() === "[NO_REPLY]") return;
     if (!mail.fromOwner)

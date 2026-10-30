@@ -11,6 +11,7 @@ import {
     Routes,
     EmbedBuilder,
     ChannelType,
+    InteractionContextType,
     type ChatInputCommandInteraction,
     type Message,
     type TextChannel,
@@ -246,9 +247,9 @@ async function runAndReply(
     setLongTaskProgress(progressCallback);
 
     try {
-        // Owner powers only in a DM: in a server channel everyone reads the reply.
-        const senderIsOwner = !interaction.guildId && isPlatformOwner("discord", interaction.user.id);
-        const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
+        const ctx = discordChannelContext(interaction.user, isBotDmInteraction(interaction));
+        const senderIsOwner = ctx.isOwner;
+        const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, ctx);
 
         if (result.text.trim() === "[NO_REPLY]") {
             // Never end on the promise: the reply holds the contract line, so the close goes below it.
@@ -344,9 +345,9 @@ async function runInThread(
     setLongTaskProgress(progressCallback);
 
     try {
-        // Owner powers only in a DM: in a server channel everyone reads the reply.
-        const senderIsOwner = !interaction.guildId && isPlatformOwner("discord", interaction.user.id);
-        const result = await runAgent(llm, message, progressCallback, undefined, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
+        const ctx = discordChannelContext(interaction.user, isBotDmInteraction(interaction));
+        const senderIsOwner = ctx.isOwner;
+        const result = await runAgent(llm, message, progressCallback, undefined, undefined, undefined, modelHint, undefined, ctx);
 
         if (result.text.trim() === "[NO_REPLY]") {
             await thread.send("Completed -- no additional output.");
@@ -472,6 +473,23 @@ function parseDiscordOwners(): Set<string> {
 export function isPlatformOwner(channel: "discord", userId: string): boolean {
     if (channel !== "discord") return false;
     return parseDiscordOwners().has(userId);
+}
+
+/**
+ * A slash command run in Bhai's own DM. No guild alone isn't enough: a user-installed
+ * command can run in a group DM, where everyone in it reads the reply.
+ */
+function isBotDmInteraction(interaction: ChatInputCommandInteraction): boolean {
+    return !interaction.guildId && interaction.context !== InteractionContextType.PrivateChannel;
+}
+
+/**
+ * Owner powers (tools, memory, history) and private memory (forget, pins, corrections)
+ * only for the owner in a DM with Bhai: a channel, thread or group reply is read by everyone in it.
+ */
+export function discordChannelContext(user: { id: string; username: string }, isDM: boolean): ChannelContext {
+    const owner = isDM && isPlatformOwner("discord", user.id);
+    return { channel: "discord", userId: user.id, userName: user.username, isOwner: owner, isPrivate: owner };
 }
 
 // ── Init Discord Bot ─────────────────────────
@@ -749,7 +767,8 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             // Owner powers (tools, memory, history) only in a DM: a channel reply is read by
             // everyone in it. The progress hooks are process-wide and only owner tools use
             // them, so only an owner turn registers them (and always clears them).
-            const senderIsOwner = isDM && isPlatformOwner("discord", message.author.id);
+            const ctx = discordChannelContext(message.author, isDM);
+            const senderIsOwner = ctx.isOwner;
             if (senderIsOwner) {
                 setSwarmProgress(progressCallback);
                 setDeepResearchProgress(progressCallback);
@@ -757,7 +776,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             }
             let result: Awaited<ReturnType<typeof runAgent>>;
             try {
-                result = await runAgent(llm, content, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "discord", userId: message.author.id, userName: message.author.username, isOwner: senderIsOwner });
+                result = await runAgent(llm, content, progressCallback, media, undefined, undefined, undefined, undefined, ctx);
             } finally {
                 if (senderIsOwner) {
                     clearSwarmProgress();

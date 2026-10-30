@@ -50,6 +50,21 @@ export function isPlatformOwner(channel: "matrix", userId: string): boolean {
     return parseMatrixOwners().has(userId);
 }
 
+/**
+ * Owner powers and private memory (forget, pins, corrections) only for the owner in a
+ * room whose joined members are exactly the owner and Bhai: anywhere else the reply is
+ * read by the room.
+ */
+export function matrixChannelContext(sender: string, members: string[], botId: string | null): ChannelContext {
+    const owner =
+        isPlatformOwner("matrix", sender) &&
+        !!botId &&
+        members.length === 2 &&
+        members.includes(botId) &&
+        members.includes(sender);
+    return { channel: "matrix", userId: sender, isOwner: owner, isPrivate: owner };
+}
+
 // F7: per-sender inbound rate limit.
 const MATRIX_RATE_WINDOW_MS = 60_000;
 const MATRIX_RATE_MAX = 20;
@@ -281,13 +296,12 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
     try {
         await setTyping(roomId, true);
 
-        // Owner powers only in the owner's one-to-one room with Bhai: anywhere else the reply
-        // is read by the room.
-        const senderIsOwner = isPlatformOwner("matrix", sender) && (await isOwnerDmRoom(roomId));
+        const ctx = matrixChannelContext(sender, await roomMembers(roomId), botUserId);
+        const senderIsOwner = ctx.isOwner;
         const result = await runAgent(llmClient, body, async (progress) => {
             // Send progress updates as typing indicators
             await setTyping(roomId, true);
-        }, undefined, undefined, undefined, undefined, undefined, { channel: "matrix", userId: sender, userName: undefined, isOwner: senderIsOwner });
+        }, undefined, undefined, undefined, undefined, undefined, ctx);
 
         await setTyping(roomId, false);
 
@@ -374,6 +388,9 @@ async function syncLoop(): Promise<void> {
                         const arr = [...processedEvents];
                         for (let i = 0; i < 1000; i++) processedEvents.delete(arr[i]);
                     }
+
+                    // Someone joined or left: who reads this room changed, so re-read its members.
+                    if (event.type === "m.room.member") membersCache.delete(roomId);
 
                     // Only process text messages
                     if (event.type !== "m.room.message") continue;
