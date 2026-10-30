@@ -64,5 +64,9 @@ it("refuses a second owner turn, and delivers the reply to the chat bar after it
 
     const d = await open();
     expect((await d.next("ready")).busy).toBe(false); // nothing running any more
-    for (const s of [b, c, d]) s.ws.close();
+    // Wait for the server to see them go and stop it: its "disconnected" log landing after
+    // the worker closed failed the whole suite (EnvironmentTeardownError).
+    await Promise.all([b, c, d].map((s) => new Promise((r) => (s.ws.once("close", r), s.ws.close()))));
+    await new Promise((r) => setTimeout(r, 50));
+    chat.closeOverlayChat();
 });
