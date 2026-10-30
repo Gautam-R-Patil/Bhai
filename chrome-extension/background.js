@@ -218,6 +218,14 @@ function connectOverlay() {
 
   overlayWs.onclose = (event) => {
     console.log(`[ATLAS Bridge] Overlay disconnected: code=${event.code} reason=${event.reason}`);
+    // A turn this panel was waiting on can't finish here any more: its events went with the socket.
+    if (draft || awaitingTurn) {
+      if (draft) broadcastTurn({ done: { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length } });
+      draft = null;
+      ownTurn = null;
+      awaitingTurn = false;
+      addChat("error", "Lost the connection mid-answer. Ask me again.");
+    }
     // 4001 = rejected localToken; re-discover to refresh it rather than loop.
     if (event.code === 4001) {
       overlayToken = "";
@@ -540,6 +548,7 @@ function handleOverlayMessage(msg) {
       const worked = msg.worked || { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length };
       broadcastTurn({ done: worked });
       draft = null;
+      ownTurn = null; // a late duplicate reply can't land twice
     }
     awaitingTurn = false;
   }
@@ -2354,7 +2363,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "stop") {
     const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
     if (ok) overlayWs.send(JSON.stringify({ type: "stop" }));
-    sendResponse({ ok });
+    sendResponse({ ok, running: !!draft });
     return true;
   }
   if (msg.type === "send_page" || msg.type === "send_selection" || msg.type === "send_message") {

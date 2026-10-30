@@ -732,11 +732,14 @@ async function sendText() {
 }
 
 // Stop the running turn; it stays busy until the stopped reply (with what was already typed) lands.
+// Nothing running there (or Bhai unreachable): unbusy now, nothing will come back.
 function stop() {
-  send({ type: 'stop' });
-  if (!liveRunning()) return setBusy(false);
-  live.stopping = true;
-  renderLive();
+  if (liveRunning()) { live.stopping = true; renderLive(); }
+  send({ type: 'stop' }).then((resp) => {
+    if (resp?.ok && resp.running) return;
+    liveFinish();
+    setBusy(false);
+  });
 }
 
 function autosize() {
