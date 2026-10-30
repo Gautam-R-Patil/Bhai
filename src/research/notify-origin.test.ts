@@ -33,7 +33,7 @@ describe("research notifications follow where research was asked", () => {
         setOverlayResearchProgress(vi.fn(async () => {}));
         registerChannelSender("telegram", tg);
         await createNotify(telegram)("❌ failed", true);
-        expect(tg).toHaveBeenCalledWith("❌ failed", undefined);
+        expect(tg).toHaveBeenCalledWith("❌ failed", undefined, undefined, undefined, "1");
         expect(channels).not.toHaveBeenCalled();
     });
 
@@ -75,8 +75,15 @@ describe("research notifications follow where research was asked", () => {
         setDeepResearchNotifier(channels);
         registerChannelSender("overlay", bar);
         await createNotify(overlay)("❌ failed", true);
-        expect(bar).toHaveBeenCalledWith("❌ failed", undefined);
+        expect(bar).toHaveBeenCalledWith("❌ failed", undefined, undefined, undefined, "local");
         expect(channels).not.toHaveBeenCalled();
+    });
+
+    it("asked in an owner's Discord DM: the sender is told which owner, so it reaches that DM", async () => {
+        const dc = vi.fn(async () => true);
+        registerChannelSender("discord", dc);
+        await createNotify({ channel: "discord", userId: "B", isOwner: true } as never)("❌ failed", true);
+        expect(dc).toHaveBeenCalledWith("❌ failed", undefined, undefined, undefined, "B");
     });
 });
 

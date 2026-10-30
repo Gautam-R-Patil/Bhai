@@ -229,9 +229,9 @@ export function registerResearchStatusCard(channel: string, factory: StatusCardF
 }
 
 const primaryChannel = () => process.env.PRIMARY_CHANNEL || "telegram";
-async function trySend(channel: string, text: string, file?: string): Promise<boolean> {
+async function trySend(channel: string, text: string, file?: string, to?: string): Promise<boolean> {
     const sender = getChannelSender(channel);
-    return !!sender && (await sender(text, file).catch(() => false)) !== false;
+    return !!sender && (await sender(text, file, undefined, undefined, to).catch(() => false)) !== false;
 }
 
 /** To the channel it was asked on, or the computer when it was asked there. With no origin (voice, or a
@@ -242,7 +242,8 @@ async function trySend(channel: string, text: string, file?: string): Promise<bo
 async function sendToOrigin(origin: ChannelContext | undefined, text: string, file?: string, onlyOrigin = false): Promise<boolean> {
     const routes = !origin ? ["overlay", primaryChannel()] : [startedOnDesktop(origin) ? "overlay" : origin.channel];
     let sent = false;
-    for (const ch of routes) if (await trySend(ch, text, file)) sent = true;
+    // The chat it was asked on goes to the person who asked there (Discord can have more than one owner).
+    for (const ch of routes) if (await trySend(ch, text, file, origin && ch === origin.channel ? origin.userId : undefined)) sent = true;
     if (sent || onlyOrigin) return sent;
     // Held by Do Not Disturb: the other channels stay quiet too (the answer is marked important and passes).
     if (await shouldSuppressMessage(text).catch(() => false)) return false;
