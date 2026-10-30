@@ -9,7 +9,7 @@ describe("isScreenQuery", () => {
         }
     });
     it("leaves plain questions alone", () => {
-        for (const q of ["What's 17 times 23?", "what's the capital of France?", "how are you doing today?", "Write a haiku about monsoon rain.", "what do you think about pizza", "what time is it in Tokyo?", "is it raining in Mumbai?", "what date is it today", "play that song again"]) {
+        for (const q of ["What's 17 times 23?", "what's the capital of France?", "how are you doing today?", "Write a haiku about monsoon rain.", "what do you think about pizza", "what time is it in Tokyo?", "is it raining in Mumbai?", "what date is it today", "play that song again", "how much battery do i have", "how much free disk space do I have?", "what's playing?"]) {
             expect(isScreenQuery(q), q).toBe(false);
         }
     });    it("leaves a stuck report's handoff replies to the agent", () => {

@@ -42,6 +42,7 @@ import {
     getWaitPhrase,
 } from "../alive-ux.js";
 import { setOverlayResearchProgress } from "../tools/index.js";
+import { parseQuickCommand } from "../quick-commands.js";
 import { getWidgetScript, getWidgetPage, validateWidgetToken } from "../widget/widget.js";
 import {
     initPushNotifications,
@@ -866,6 +867,8 @@ function isScreenQuery(msg: string): boolean {
 
     // A stuck report's handoff reply ("retry it", "skip it") is about the task, not the screen.
     if (isStuckReplyPhrase(msg)) return false;
+    // "how much battery do i have" is a quick command, answered without a screenshot or a model.
+    if (parseQuickCommand(msg)) return false;
 
     // 1. Direct keyword match
     if (SCREEN_KEYWORDS.some(kw => lower.includes(kw))) return true;
