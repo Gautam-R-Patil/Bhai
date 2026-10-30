@@ -304,4 +304,47 @@ describe("NoteStreamFilter", () => {
         expect(out).toContain("Looking.");
         expect(out).toContain("Clicking");
     });
+
+    const PEM_BODY = [
+        "MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MaS3VSUxOVi5qkkB",
+        "q9xJ2nP1dYZxD0GkKkLm7hKpRSAz7JmFzGvQxyzR8rYnPKh9b3xCqN6c8hZ8k4m2",
+    ];
+    const SPANNING: [string, string, string[]][] = [
+        [
+            "PEM block",
+            `key:\n-----BEGIN RSA PRIVATE KEY-----\n${PEM_BODY.join("\n")}\n-----END RSA PRIVATE KEY-----\nDone reading.\n`,
+            [PEM_BODY[0].slice(0, 24), PEM_BODY[1].slice(0, 24)],
+        ],
+        ["JSON value on the next line", '{\n  "password":\n    "hunter2Secret!"\n}\n', ["hunter2Secret"]],
+        [
+            "label on the previous line",
+            "aws_secret_access_key:\nwJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
+            ["wJalrXUtnFEMI/K7MDENG"],
+        ],
+    ];
+
+    it("masks credentials that span lines, however the stream is cut", () => {
+        SPANNING.forEach(([name, text, secrets], idx) => {
+            for (const parts of chunkings(text, 2000 + idx, 200)) {
+                const f = new NoteStreamFilter();
+                let out = "";
+                for (const p of parts) out += f.push(p);
+                out += f.flush();
+                for (const s of secrets)
+                    expect(out.includes(s), `${name} leaked ${s} | ${JSON.stringify(parts)}`).toBe(false);
+            }
+        });
+        const f = new NoteStreamFilter();
+        expect(f.push("aws_secret_access_key:\nwJalrXUt")).toBe("aws_secret_access_key:\n");
+        expect(f.push("nFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\nDone")).toBe("[redacted]\n");
+        expect(f.flush()).toBe("Done");
+        const g = new NoteStreamFilter();
+        expect(g.push("password=hunter2Secret!\nok")).toBe("password=[redacted]\n");
+    });
+
+    it("drops an unterminated PEM block at flush", () => {
+        const f = new NoteStreamFilter();
+        const out = f.push(`Found:\n-----BEGIN PRIVATE KEY-----\n${PEM_BODY[0]}\n`) + f.flush();
+        expect(out).toBe("Found:\n");
+    });
 });

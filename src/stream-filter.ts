@@ -226,34 +226,64 @@ export class AnswerStreamFilter {
     }
 }
 
-function maskLines(text: string): string {
-    return text
-        .split("\n")
-        .map((line) => (line ? sanitizeSecrets(protect(line, { credentials: true })).sanitized : line))
-        .join("\n");
+function mask(text: string): string {
+    return sanitizeSecrets(protect(text, { credentials: true })).sanitized;
 }
+
+const PEM_BEGIN = /-----BEGIN [A-Z0-9 ]*-----/;
+const PEM_END = /-----END [A-Z0-9 ]*-----/;
 
 /**
  * Filters streamed thinking/narration: the answer rules, then credential masking and the
- * secrets sanitizer per line (code tools' raw output can reach the model unmasked).
- * Line-buffered: only complete lines go out; the last partial line on flush.
+ * secrets sanitizer (code tools' raw output can reach the model unmasked).
+ * Line-buffered: only complete lines go out; the last partial line on flush. Each line is
+ * masked together with the line before it, so a label there ("aws_secret_access_key:",
+ * '"password":') still masks the value; a PEM block is held to its END line and masked whole.
  */
 export class NoteStreamFilter {
     private readonly answer = new AnswerStreamFilter({ channel: "note" });
     private line = "";
+    private prev = "";
+    private pem: string[] | null = null;
 
     push(delta: string): string {
         this.line += this.answer.push(delta);
         const end = this.line.lastIndexOf("\n");
         if (end < 0) return "";
-        const done = this.line.slice(0, end + 1);
+        const done = this.line.slice(0, end).split("\n");
         this.line = this.line.slice(end + 1);
-        return maskLines(done);
+        return done.map((l) => this.take(l)).join("");
     }
 
     flush(): string {
-        const rest = this.line + this.answer.flush();
+        const lines = (this.line + this.answer.flush()).split("\n");
         this.line = "";
-        return maskLines(rest);
+        const last = lines.pop() as string;
+        let out = lines.map((l) => this.take(l)).join("");
+        // The last partial line goes out without a newline; an unterminated PEM block never shows.
+        if (last) out += this.take(last).slice(0, -1);
+        this.pem = null;
+        return out;
+    }
+
+    /** One complete line in; what may be shown for it (with its newline) out. */
+    private take(line: string): string {
+        if (this.pem) {
+            this.pem.push(line);
+            if (!PEM_END.test(line)) return "";
+            const block = this.pem.join("\n");
+            this.pem = null;
+            this.prev = line;
+            return `${mask(block)}\n`;
+        }
+        if (PEM_BEGIN.test(line) && !PEM_END.test(line)) {
+            this.pem = [line];
+            return "";
+        }
+        const masked = mask(`${this.prev}\n${line}`);
+        this.prev = line;
+        const nl = masked.lastIndexOf("\n");
+        // A mask that swallowed the line break took this line with it.
+        return `${nl < 0 ? "[redacted]" : masked.slice(nl + 1)}\n`;
     }
 }
