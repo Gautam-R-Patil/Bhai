@@ -7,7 +7,8 @@
 // This is middleware — it sits between the agent and the raw tool handlers.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import path, { join } from "node:path";
 import { protect } from "../security/pii-vault.js";
 
 // ═══════════════════════════════════════════════
@@ -417,7 +418,29 @@ const DANGEROUS_SHELL_PATTERNS = [
     /DELETE\s+FROM\s+\w+\s*;?\s*$/i, // SQL delete without WHERE
     /\bgit\s+push\s+.*--force\b/i, // force push
     /\bgit\s+reset\s+--hard\b/i, // hard reset
+    // Something that runs by itself later (a login item, every new terminal, SSH access):
+    // what an injected page would plant to survive the chat.
+    /\blaunchctl\s+(load|bootstrap|enable|submit)\b/i,
+    /\bcrontab\b(?!\s+-l\b)/i, // editing the crontab, not listing it
+    /\bLaunch(Agents|Daemons)\b/,
+    /\bauthorized_keys\b/,
+    />>?\s*["']?[^\s"';|&]*\/\.(zshrc|zprofile|zshenv|zlogin|bashrc|bash_profile|profile)\b/, // > ~/.zshrc
 ];
+
+/** A file that makes code run by itself later: a login item, a shell startup file, SSH access. */
+export function autostartTarget(filePath: string): string | null {
+    const home = homedir();
+    const p = path.resolve(filePath.replace(/^~(?=\/|$)/, home));
+    const rc = [".zshrc", ".zprofile", ".zshenv", ".zlogin", ".bashrc", ".bash_profile", ".profile"];
+    if (rc.some((f) => p === path.join(home, f))) return "a shell startup file (runs in every new terminal)";
+    if (p === path.join(home, ".config", "fish", "config.fish")) return "a shell startup file (runs in every new terminal)";
+    if (/\/Library\/Launch(Agents|Daemons)(\/|$)/.test(p)) return "a login item (runs by itself at login)";
+    if (p === path.join(home, ".ssh", "authorized_keys") || p === path.join(home, ".ssh", "config"))
+        return "SSH access settings";
+    return null;
+}
+
+const FILE_WRITERS = new Set(["write", "edit", "append_file"]);
 
 // ── Destructive hotkeys ──
 // Keyboard tools can quit apps, close windows
@@ -513,6 +536,15 @@ export function requiresConfirmation(
                 };
             }
         }
+    }
+
+    if (FILE_WRITERS.has(toolName) && typeof args.file_path === "string") {
+        const what = autostartTarget(args.file_path);
+        if (what)
+            return {
+                needsConfirmation: true,
+                warningMessage: `⚠️ ${args.file_path} is ${what}. Confirm with the user before changing it.`,
+            };
     }
 
     const hotkey = hotkeysIn(toolName, args).find(isDestructiveHotkey);

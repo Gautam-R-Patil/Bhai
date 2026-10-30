@@ -480,3 +480,4 @@ brag-output/
 !src/tools/web-search-claude-backup.test.ts
 !src/research/finding-filter.test.ts
 !src/research/memorable-findings.test.ts
+!src/tools/autostart-confirm.test.ts
