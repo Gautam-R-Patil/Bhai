@@ -18,6 +18,7 @@ const { spawn, execFile } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const { createRequire } = require("node:module");
 const { autoUpdater } = require("electron-updater");
 
 // ── Protected String Decoder ─────────────────────
@@ -107,6 +108,9 @@ const IS_DEV = !app.isPackaged;
 const BOT_DIR = IS_DEV
     ? path.join(__dirname, "..")
     : path.join(process.resourcesPath, "bot");
+// Baileys (wizard WhatsApp pairing) and imapflow (IMAP test) load from the bot's
+// node_modules: one shipped copy, and the patched Baileys the bot itself runs.
+const botRequire = createRequire(path.join(BOT_DIR, "package.json"));
 const DATA_DIR = IS_DEV
     ? path.join(__dirname, "..", "data")
     : path.join(app.getPath("userData"), "data");
@@ -4921,7 +4925,7 @@ function registerIPC() {
                 if (j.__parseError) return { ok: false, error: `Matrix returned ${j.__parseError}` };
                 if (!j.user_id) return { ok: false, error: j.error || "Matrix rejected token" };
             } else if (type === "email") {
-                const { ImapFlow } = require("imapflow");
+                const { ImapFlow } = botRequire("imapflow");
                 const client = new ImapFlow({
                     host: creds.imapHost,
                     port: creds.imapPort,
@@ -6174,7 +6178,7 @@ ${body}`;
     // Real IMAP login, not just a TLS reachability check: a wrong app password
     // should fail here, not silently after the restart.
     ipcMain.handle("channel:test-email", async (_, { user, password, imapHost, imapPort }) => {
-        const { ImapFlow } = require("imapflow");
+        const { ImapFlow } = botRequire("imapflow");
         const port = Number(imapPort) || 993;
         const client = new ImapFlow({ host: imapHost, port, secure: port === 993, auth: { user, pass: savedOr(password, "EMAIL_PASSWORD") }, logger: false });
         try {
@@ -6296,7 +6300,7 @@ ${body}`;
         try {
             const { startPair, isPairing } = require(path.join(__dirname, "setup", "whatsapp-pair.js"));
             if (isPairing()) return { ok: true, alreadyRunning: true };
-            const baileysFactory = require("@whiskeysockets/baileys");
+            const baileysFactory = botRequire("@whiskeysockets/baileys");
             const send = (payload) => {
                 if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send("whatsapp-qr", payload);
