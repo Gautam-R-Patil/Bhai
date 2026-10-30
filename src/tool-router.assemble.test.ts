@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { assembleToolNames, KEYWORD_BOOSTS } from "./tool-router.js";
+import { assembleToolNames, asksChangingFact, KEYWORD_BOOSTS } from "./tool-router.js";
 
 const OS = ["os_smart_click", "os_inspect", "os_click_id", "os_type", "os_screenshot", "os_click", "os_visual_verify",
     "os_keyboard_shortcuts", "os_context", "apple_script", "os_computer_action", "os_zoom_region", "os_ocr_click", "os_nav"];
@@ -55,5 +55,7 @@ describe("assembleToolNames", () => {
         expect(boosts("Has Node.js 26 become an LTS release yet?")).toContain("web_search");
         expect(boosts("what's the latest on the Artemis launch")).toContain("web_search");
         expect(boosts("thanks bhai, good night")).not.toContain("web_search");
+        expect(asksChangingFact("Has Node.js 26 become an LTS release yet?")).toBe(true);
+        expect(asksChangingFact("I haven't slept yet")).toBe(false); // not a question
     });
 });

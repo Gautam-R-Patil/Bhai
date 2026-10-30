@@ -859,6 +859,9 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
 const CHANGING_FACT =
     /\b(yet|latest|newest|currently|right now|as of (?:now|today)|nowadays|today'?s|this (?:week|month|year)|news|recent(?:ly)?|release date|price of)\b/i;
 
+/** "Has X happened yet?", "what's the latest on Y?": the answer may have changed since anything in context. */
+export const asksChangingFact = (message: string): boolean => /\?\s*$/.test(message) && CHANGING_FACT.test(message);
+
 export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
     // Music / Media
     {
@@ -1864,7 +1867,7 @@ export async function selectTools(opts: {
     // the lane. With no classifier answer at all (timeout), routing stays normal:
     // a guessed chat lane would turn real requests into chat.
     // A question about something that changes needs a search, not the tool-less chat lane.
-    const askingChangingFact = /\?\s*$/.test(opts.message) && CHANGING_FACT.test(opts.message);
+    const askingChangingFact = asksChangingFact(opts.message);
     const chatResult = askingChangingFact
         ? null
         : llmResult?.tier === "chat" && llmResult.confidence >= 0.6

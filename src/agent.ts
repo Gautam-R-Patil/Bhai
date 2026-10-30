@@ -142,6 +142,7 @@ import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./securit
 import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
 import { formatStepStatus, SELF_REPORTING_TOOLS, startStepHeartbeat } from "./step-status.js";
 import {
+    asksChangingFact,
     clearToolRouterState,
     getLastIntent,
     handleToolRequest,
@@ -3101,6 +3102,17 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         turnToolReqKey = reqKey;
         const tools = toolSelection.tools;
         activeCategories = toolSelection.categories;
+        // Re-asked "has X happened yet?", the model repeated its earlier answer from history
+        // with web_search right there. A fresh look is the point of asking.
+        if (
+            iterations === 1 &&
+            asksChangingFact(rawUserMessage) &&
+            tools.some((t) => t.function.name === "web_search")
+        )
+            pushNudge(
+                messages,
+                "This asks about something that may have changed. Check it with web_search now; earlier answers in this conversation may be out of date.",
+            );
 
         // ── Task-context routing (iteration 1) ──
         // The router picked a model from the raw message before anything knew
