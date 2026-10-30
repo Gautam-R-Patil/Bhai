@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { noteFrontAfterStep } from "../screen/frontmost.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import { homedir } from "node:os";
@@ -823,6 +824,8 @@ const NO_PAGE_CHECK = new Set([
 // Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
 const STOPPABLE_TOOLS = new Set(["site_task"]);
 
+/** Tools that move the front app on purpose (os_* tools are matched by prefix). */
+const FOCUS_TOOLS = new Set(["app_manager", "open_in_app", "open_settings", "window_manage", "apple_script", "run_shortcut"]);
 const PATH_ARGS = ["path", "file_path", "filePath", "target", "folder", "directory", "dir", "cwd"];
 /** Path arguments with the home folder resolved (see resolveHomePath); everything else as is. */
 export function withHomePaths(input: Record<string, unknown>): Record<string, unknown> {
@@ -1054,6 +1057,9 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // tool's own timeout; Stop still ends it.
         if (name.startsWith("browser_") && !NO_PAGE_CHECK.has(name)) result = await captchaAfterAction(result, stop);
         const durationMs = Date.now() - startTime;
+
+        // What's in front after a screen step: os_type puts it back if another app takes it.
+        if (process.platform === "darwin" && (/^os_/.test(name) || FOCUS_TOOLS.has(name))) await noteFrontAfterStep();
 
         // Cache the result if eligible; any other call may have changed local state.
         if (isCacheable(name, effectiveInput)) {

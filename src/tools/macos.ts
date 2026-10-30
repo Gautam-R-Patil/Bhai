@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
 import { cursorClick, cursorMove, withCursorHidden, withCursorTyping } from "../screen/agent-cursor.js";
-import { getFrontmostApp } from "../screen/frontmost.js";
+import { getFrontmostApp, restoreFrontIfStolen } from "../screen/frontmost.js";
 import { gridScreenshot } from "../screen/grid-overlay.js";
 import {
     captureRegionToFile,
@@ -525,6 +525,8 @@ export const osType: ToolDefinition = {
         const delayMs = (input.delay_ms as number) || 200;
         const delaySec = delayMs / 1000;
         let script: string;
+        // Another app took the front since Bhai's last step: put Bhai's app back first.
+        const refocused = await restoreFrontIfStolen();
 
         // text "return" alone means the key (gpt-4.1-nano typed the word into Calculator).
         const keyWord = typeof input.text === "string" ? input.text.trim().toLowerCase() : "";
@@ -584,6 +586,7 @@ export const osType: ToolDefinition = {
                     typed_chars: text.length, // not echoed: it may be a secret
                     method,
                     into: into?.name,
+                    ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                     next: "Typed only. To submit or evaluate it (search box, form, calculator =), press os_type key='return'.",
                 });
             } catch (err) {
@@ -602,6 +605,7 @@ export const osType: ToolDefinition = {
                 success: true,
                 ...(typedFirst ? { typed_chars: typedFirst } : {}),
                 pressed: input.key || input.combo,
+                ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                 stdout: (stdout || "").substring(0, 500),
                 stderr: (stderr || "").substring(0, 500),
             });
