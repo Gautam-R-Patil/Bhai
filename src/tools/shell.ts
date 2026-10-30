@@ -14,6 +14,7 @@ import {
     shellArgsTargetProtectedPath,
 } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
+import { shellNamesBhaiState } from "../security/sensitive-paths.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
 import type { ToolDefinition } from "./get-current-time.js";
@@ -318,6 +319,15 @@ export const shellExec: ToolDefinition = {
         if (isGitConfigCall(command, args) || hasGitConfigEnvOverride(process.env)) {
             return JSON.stringify({
                 error: `Blocked: git config / -c flag / GIT_CONFIG_* env overrides are not permitted.`,
+            });
+        }
+
+        // Bhai's own state (memory.db, chat history, the WhatsApp session…): read refuses it, so
+        // the shell must not print it either.
+        const ownState = shellNamesBhaiState(fullCommand);
+        if (ownState) {
+            return JSON.stringify({
+                error: `Blocked: the command reaches into Bhai's own data (${ownState}). Its memory, chats and sessions never go through the shell; the owner can run it in Terminal.`,
             });
         }
 

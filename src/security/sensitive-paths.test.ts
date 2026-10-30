@@ -61,3 +61,26 @@ describe("isSensitivePath — Bhai's own state and other apps' credentials", () 
         expect(isSensitivePath(join(h, "Documents", "notes.txt")).denied).toBe(false);
     });
 });
+
+describe("shellNamesBhaiState", () => {
+    it("catches the data folder however the path is written, not its readable subfolders", async () => {
+        const { homedir } = await import("node:os");
+        const { join } = await import("node:path");
+        const { shellNamesBhaiState } = await import("./sensitive-paths.js");
+        const data = join(homedir(), "Library", "Application Support", "bhai-desktop", "data");
+        const before = process.env.ATLAS_DATA_DIR;
+        process.env.ATLAS_DATA_DIR = data;
+        try {
+            expect(shellNamesBhaiState(`cat "${data}/memory.db"`)).not.toBeNull();
+            expect(shellNamesBhaiState("wc -l ~/Library/Application\\ Support/bhai-desktop/data/chat-history.jsonl")).not.toBeNull();
+            expect(shellNamesBhaiState("tar czf /tmp/x.tgz $HOME/Library/Application\\ Support/bhai-desktop/data/whatsapp-auth")).not.toBeNull();
+            expect(shellNamesBhaiState(`ls "${data}"`)).not.toBeNull();
+            expect(shellNamesBhaiState(`wc -l "${data}/tool-outputs/turn-1/web_read-x.txt"`)).toBeNull();
+            expect(shellNamesBhaiState(`ls "${data}2/notes"`)).toBeNull(); // a sibling folder
+            expect(shellNamesBhaiState("ls ~/Documents")).toBeNull();
+        } finally {
+            if (before === undefined) delete process.env.ATLAS_DATA_DIR;
+            else process.env.ATLAS_DATA_DIR = before;
+        }
+    });
+});

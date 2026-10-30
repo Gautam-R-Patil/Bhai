@@ -132,6 +132,28 @@ export function outboundFileRefusal(filePath: string): string | null {
     return inside ? `Refused: "${filePath}" contains ${inside}, and secrets never leave the machine.` : null;
 }
 
+/**
+ * A shell command that names Bhai's own state (its data or app folder, outside the
+ * readable subfolders): `cat …/data/memory.db` would print what read refuses.
+ * ponytail: a text match, so a wildcard or a variable in the path gets past it;
+ * it stops the plain path a page talked the model into. A real fix is a sandboxed shell.
+ */
+export function shellNamesBhaiState(command: string): string | null {
+    const text = command.replace(/\\ /g, " ").replace(/\$\{?HOME\}?/g, HOME).replace(/(^|[\s"'=:])~(?=\/)/g, `$1${HOME}`);
+    const hay = IS_CASE_INSENSITIVE_FS ? text.toLowerCase() : text;
+    const roots = [getDataDir(), process.env.ATLAS_USER_DATA_DIR].filter((r): r is string => !!r).map((r) => path.resolve(r));
+    for (const root of roots) {
+        const needle = IS_CASE_INSENSITIVE_FS ? root.toLowerCase() : root;
+        for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
+            const rest = hay.slice(i + needle.length);
+            if (/^[\w.-]/.test(rest)) continue; // a sibling like "data2", not this folder
+            const sub = path.relative(getDataDir(), path.join(root, rest.split(/[\s"';|&]/)[0] || "")).split(path.sep)[0];
+            if (!READABLE_DATA_SUBDIRS.includes(sub)) return root;
+        }
+    }
+    return null;
+}
+
 export interface SensitivePathCheck {
     denied: boolean;
     reason?: string;
