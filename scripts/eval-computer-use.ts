@@ -324,7 +324,7 @@ async function chat(messages: unknown[], tools: unknown[]): Promise<{ message: {
 
 // Claude, the way Bhai's proxy calls Haiku on simple desktop turns: adaptive thinking, effort low.
 const anthropicClient = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
-if (!anthropicClient && (ROUTER || MODEL.startsWith("claude"))) {
+if (!anthropicClient && (ROUTER || MODEL.startsWith("claude") || process.env.PLAN === "1")) {
     console.error("This run can pick a Claude model: set ANTHROPIC_API_KEY (npx convex env get ANTHROPIC_API_KEY).");
     process.exit(1);
 }
@@ -384,6 +384,7 @@ setToolRouterLLM(
         : ({ chat: () => new Promise(() => {}) } as never),
 );
 if (ROUTER) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "10000";
+let planCost = 0; // PLAN=1: the planner's own cost, added to the task's
 const only = process.argv.slice(2);
 const results = [];
 for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
@@ -421,7 +422,23 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
         const r = await claudeLoop(SYSTEM, task.prompt, tools, used, trace);
         reply = r.reply;
         iters = r.iters - 1;
-    } else for (; iters < 10; iters++) {
+    } else {
+    // PLAN=1, as Bhai runs a cheap model on multi-step work: a stronger model writes the plan
+    // (the orchestrator), and before "done" the model is sent back over it (the verify gate).
+    const planned = process.env.PLAN === "1" && (task.prompt.length > 70 || /\b(then|and)\b/i.test(task.prompt));
+    if (planned) {
+        const r = await anthropicClient!.messages.create({
+            model: "claude-haiku-5-5",
+            max_tokens: 300,
+            system: `You plan computer tasks for an assistant with these tools: ${tools.map((t) => t.function.name).join(", ")}. Reply with only a numbered list of at most 6 concrete steps (which tool, on what). Include every item the task names, and a last step that checks the result.`,
+            messages: [{ role: "user", content: task.prompt }],
+        });
+        planCost += (r.usage.input_tokens * 0.1 + r.usage.output_tokens * 0.5) / 1e6;
+        const plan = r.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+        messages.push({ role: "user", content: `Plan for this task (do every step, one at a time):\n${plan}` });
+    }
+    let reviewed = false;
+    for (; iters < 12; iters++) {
         const res = await chat(messages, tools);
         const m = res.message;
         messages.push(m);
@@ -430,6 +447,11 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
             if (!acked && ackWithoutAction(reply, used.length)) { // as the agent loop does
                 acked = true;
                 messages.push({ role: "user", content: "You said what you'll do but made no tool call, so nothing has happened yet. Do it now with your tools, then tell me the result." });
+                continue;
+            }
+            if (planned && !reviewed) {
+                reviewed = true;
+                messages.push({ role: "user", content: "Before you finish, go through the plan: is every step done, for every item the task names? Check with a tool where unsure, and do anything missing now. Then reply with the result." });
                 continue;
             }
             break;
@@ -443,11 +465,13 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
             messages.push({ role: "tool", tool_call_id: tc.id, content: out });
         }
     }
+    }
     const ms = Date.now() - t0;
     const ok = await task.check(reply, trace).catch(() => false);
     await task.cleanup?.().catch(() => {});
     const pr = PRICES[model];
-    const cost = pr ? (usage.in * pr[0] + usage.cached * pr[1] + usage.out * pr[2]) / 1e6 : null;
+    const cost = pr ? (usage.in * pr[0] + usage.cached * pr[1] + usage.out * pr[2]) / 1e6 + planCost : null;
+    planCost = 0;
     const row = { model, routed: ROUTER || undefined, task: task.id, ok, tokens: { ...usage }, cost, iters: iters + 1, toolCalls: used.length, used, ms, offered: tools.map((t) => t.function.name).length, reply: reply.slice(0, 160), trace, offeredNames: tools.map((t) => t.function.name) };
     results.push(row);
     // RECORD=1: the result is evidence for the learned router (src/routing/learned-router.ts).

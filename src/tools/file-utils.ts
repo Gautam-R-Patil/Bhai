@@ -259,7 +259,8 @@ export const fileMetadata: ToolDefinition = {
     },
 
     async handler(input) {
-        const action = input.action as string;
+        // Asked with only a path, it reads (gpt-4.1-nano got "Unknown action: undefined" four times).
+        const action = (input.action as string) || "get";
         const filePath = input.path as string;
 
         if (!existsSync(filePath)) {
