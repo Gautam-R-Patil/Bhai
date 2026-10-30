@@ -4731,6 +4731,41 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       grabFocus();
     })();
   </script>
+  <script>
+    // The desktop app sizes its window to this page's content: report the
+    // bottom of the last shown section whenever something changes size (or a
+    // transition/animation ends), once per frame. Absolutely positioned
+    // popovers are ignored, so the window can shrink back.
+    (function () {
+      const bridge = window.atlasOverlay;
+      const c = document.getElementById('container');
+      if (!bridge || !bridge.setHeight || !c || typeof ResizeObserver !== 'function') return;
+      let queued = false;
+      function report() {
+        queued = false;
+        // Layout bottom too, so a section springing in (scaled down) gets its
+        // full height at once instead of when its animation ends.
+        const top = c.getBoundingClientRect().top + c.clientTop;
+        let bottom = 0;
+        for (const k of c.children) {
+          if (getComputedStyle(k).display === 'none') continue;
+          bottom = Math.max(bottom, k.getBoundingClientRect().bottom);
+          if (k.offsetParent === c) bottom = Math.max(bottom, top + k.offsetTop + k.offsetHeight);
+        }
+        bridge.setHeight(Math.ceil(bottom));
+      }
+      function queue() {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(report);
+      }
+      const ro = new ResizeObserver(queue);
+      ro.observe(c);
+      for (const k of c.children) ro.observe(k);
+      c.addEventListener('transitionend', queue);
+      c.addEventListener('animationend', queue);
+    })();
+  </script>
 </body>
 
 </html>

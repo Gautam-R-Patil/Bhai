@@ -170,7 +170,6 @@ function hookOverlayToken(ses) {
         cb({ requestHeaders: details.requestHeaders });
     });
 }
-const OVERLAY_RESIZE_MS = 500;
 const OVERLAY_HIDE_DELAY_MS = 260;
 // macOS 26 Spotlight-style corners; keep in sync with --panel-radius in src/overlay/overlay.html.
 const OVERLAY_CORNER_RADIUS = 26;
@@ -947,7 +946,8 @@ let botProcess = null;
 let mainWindow = null;
 let tray = null;
 let overlayWindow = null;
-let overlayResizeTimer = null;
+// While the overlay is shown, its page reports its content height (overlay:height).
+let overlayFollowsContent = false;
 let botStartTime = null;
 // Messages today: kept per calendar day on disk, so a restart doesn't zero it.
 const MESSAGES_TODAY_FILE = path.join(DATA_DIR, "messages-today.json");
@@ -2270,7 +2270,7 @@ function createOverlayWindow() {
 
     overlayWindow.on("closed", () => {
         overlayWindow = null;
-        stopHeightPolling();
+        overlayFollowsContent = false;
     });
 
     // Click outside → hide (but NOT while the agent is actively working)
@@ -2382,14 +2382,14 @@ function showOverlay() {
         }
     }, 200);
 
-    // Start dynamic height polling
-    startHeightPolling();
+    // Follow the page's content height from now on
+    overlayFollowsContent = true;
 }
 
 function hideOverlay() {
     if (!overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) return;
 
-    stopHeightPolling();
+    overlayFollowsContent = false;
 
     // Inject spring-out animation (matches the Hammerspoon version)
     overlayWindow.webContents.executeJavaScript(`
@@ -2484,31 +2484,14 @@ const OVERLAY_CONTENT_HEIGHT_JS = `(() => {
     return Math.ceil(bottom);
 })()`;
 
-function startHeightPolling() {
-    stopHeightPolling();
-    overlayResizeTimer = setInterval(() => {
-        if (!overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) {
-            stopHeightPolling();
-            return;
-        }
-        overlayWindow.webContents.executeJavaScript(
-            OVERLAY_CONTENT_HEIGHT_JS
-        ).then((scrollHeight) => {
-            if (!overlayWindow || overlayWindow.isDestroyed()) return;
-            const newH = Math.min(Math.max(scrollHeight, OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
-            const [, currentH] = overlayWindow.getContentSize();
-            if (Math.abs(currentH - newH) > 2) {
-                overlayWindow.setContentSize(OVERLAY_WIDTH, newH);
-            }
-        }).catch(() => {});
-    }, OVERLAY_RESIZE_MS);
-}
-
-function stopHeightPolling() {
-    if (overlayResizeTimer) {
-        clearInterval(overlayResizeTimer);
-        overlayResizeTimer = null;
-    }
+// The overlay page (src/overlay/overlay.html) reports its content height from a
+// ResizeObserver; the window follows it while shown.
+function onOverlayHeight(e, h) {
+    if (!overlayFollowsContent || !overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) return;
+    if (e.sender !== overlayWindow.webContents || !Number.isFinite(h)) return;
+    const newH = Math.min(Math.max(Math.round(h), OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
+    const [, currentH] = overlayWindow.getContentSize();
+    if (Math.abs(currentH - newH) > 2) overlayWindow.setContentSize(OVERLAY_WIDTH, newH);
 }
 
 // ── IPC Handlers ──────────────────────────────
@@ -2689,6 +2672,7 @@ function registerIPC() {
         if (path.extname(file).toLowerCase() !== ".md" || path.basename(path.dirname(file)) !== "Research") return null;
         return file;
     };
+    ipcMain.on("overlay:height", onOverlayHeight);
     ipcMain.on("overlay:open-report", (_, filePath) => {
         const file = safeReportPath(filePath);
         if (file) shell.openPath(file);
@@ -7053,7 +7037,7 @@ app.on("window-all-closed", (e) => {
 
 app.on("before-quit", () => {
     isQuitting = true;
-    stopHeightPolling();
+    overlayFollowsContent = false;
     if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow.destroy();
         overlayWindow = null;

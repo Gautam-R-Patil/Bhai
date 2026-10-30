@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld("atlasOverlay", {
     // Open a finished research report (a .md file in the Research folder) in the default app
     openReport: (filePath) => ipcRenderer.send("overlay:open-report", filePath),
 
+    // The page's content height changed: the window follows it.
+    setHeight: (h) => ipcRenderer.send("overlay:height", h),
+
     // Read the user's current theme: "light" | "dark" | "system".
     getTheme: () => ipcRenderer.invoke("overlay:getTheme"),
 
