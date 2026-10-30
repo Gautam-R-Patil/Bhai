@@ -8,7 +8,7 @@ vi.mock("../../screen/frontmost.js", async (orig) => ({
     ...(await orig<object>()),
     pidOfApp: async (name: string) => (name === "Finder" ? 4242 : 0),
 }));
-const { osInspect } = await import("../os-inspect.js");
+const { osInspect, windowTitles } = await import("../os-inspect.js");
 
 describe.skipIf(process.platform !== "darwin")("os_inspect app", () => {
     it("inspects a running app by name, without a pid", async () => {
@@ -18,5 +18,13 @@ describe.skipIf(process.platform !== "darwin")("os_inspect app", () => {
     it("says when the app isn't running", async () => {
         const r = JSON.parse(String(await osInspect.handler({ app: "Nope" })));
         expect(r).toMatchObject({ success: false, error: "Nope isn't running." });
+    });
+});
+
+describe("os_inspect window titles", () => {
+    it("lists the app's window titles, not its buttons", () => {
+        const n = (role: string, label: string, children: unknown[] = []) => ({ role, label, x: 0, y: 0, w: 0, h: 0, focusable: false, enabled: true, children });
+        const root = n("AXApplication", "Finder", [n("AXWindow", "dist", [n("AXButton", "Back")]), n("AXMenuBar", "")]);
+        expect(windowTitles(root as never)).toEqual(["dist"]);
     });
 });

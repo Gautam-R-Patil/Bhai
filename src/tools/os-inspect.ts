@@ -15,6 +15,7 @@
 import {
     AX_PERMISSION_ERROR,
     type AxFlatElement,
+    type AxNode,
     dumpAccessibilityTree,
     flattenInteractive,
     isAxPermissionError,
@@ -77,6 +78,15 @@ export function getLastInspect(): InspectCache | null {
     if (!_lastInspect) return null;
     if (Date.now() - _lastInspect.timestamp > INSPECT_CACHE_TTL_MS) return null;
     return _lastInspect;
+}
+
+const WINDOW_ROLE = /^(AXWindow|Window|window|frame|dialog)$/;
+/** Titles of the app's windows (top two levels of the tree), front first as AX lists them. */
+export function windowTitles(root: AxNode | undefined): string[] {
+    const out: string[] = [];
+    for (const n of [root, ...(root?.children ?? [])])
+        if (n && WINDOW_ROLE.test(n.role ?? "") && n.label) out.push(truncate(n.label, 80));
+    return out.slice(0, 8);
 }
 
 export const osInspect: ToolDefinition = {
@@ -205,6 +215,8 @@ export const osInspect: ToolDefinition = {
                 success: true,
                 app: dump.app,
                 pid: dump.pid,
+                // The elements are buttons and rows; "what's this window called?" needs the titles.
+                windows: windowTitles(dump.root),
                 elapsed_ms: dump.elapsedMs,
                 source: dump.source,
                 element_count: lines.length,
