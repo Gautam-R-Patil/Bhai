@@ -612,6 +612,11 @@ const OUT_OF_CREDITS_REPLY =
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
     browser_navigate: (a) => `🌐 Opening ${((a.url as string) || "").substring(0, 60)}...`,
     web_search: (a) => `🔍 Searching: "${a.query || ""}"`,
+    shell_exec_background: (a) => `⚙️ Starting in the background: ${String(a.command || "").substring(0, 40)}`,
+    shell_wait_process: () => "⏳ Waiting for it to finish",
+    shell_check_process: () => "⏳ Checking on it",
+    app_manager: (a) => (a.action === "list" ? "🪟 Checking which apps are open" : `🪟 ${a.action || "Managing"} ${a.app || "an app"}`),
+    system_info: () => "💻 Checking the Mac's status",
     web_read: (a) => `📖 Reading ${String(a.url || "").replace(/^https?:\/\/(www\.)?/, "").substring(0, 60)}`,
     shell_exec: (a) => `⚙️ Running command: ${((a.command as string) || "").substring(0, 50)}`,
     browser_scan: () => `🔍 Scanning the active browser page DOM...`,

@@ -273,7 +273,7 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
                 success: true,
                 process_id: id,
                 pid: child.pid,
-                command: `${command} ${args.join(" ")}`,
+                command: posixCommandLine(command, args), // as it ran
                 message: `Process started in background. Use shell_check_process with process_id "${id}" to monitor, or shell_wait_process to wait for completion.`,
             });
         } catch (err) {
@@ -331,7 +331,7 @@ export const shellCheckProcess: ToolDefinition = {
 
         return JSON.stringify({
             process_id: bp.id,
-            command: `${bp.command} ${bp.args.join(" ")}`,
+            command: posixCommandLine(bp.command, bp.args),
             status: bp.status,
             pid: bp.pid,
             exit_code: bp.exitCode,
