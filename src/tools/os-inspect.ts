@@ -200,7 +200,7 @@ export const osInspect: ToolDefinition = {
             // --force-renderer-accessibility. Surface this as a hint.
             let hint: string | undefined =
                 query && !elements.length
-                    ? `Nothing matches "${query}". Call os_inspect without query for the full list.`
+                    ? `Nothing matches "${query}" (a query matches element labels, not areas like "sidebar" or "toolbar"). Call os_inspect without query for the full list.`
                     : undefined;
             if (dump.source === "pyatspi" && all.length === 0) {
                 hint =
@@ -210,10 +210,13 @@ export const osInspect: ToolDefinition = {
                 // The walk stops at a 3 s budget (dump_ax.swift). Ran to it: a big window (Finder
                 // on Downloads, ~3000 elements), not a hung app; what's listed is accurate. Said
                 // as "the app stopped answering", the model called even the sidebar it read unverified.
-                hint =
+                const why =
                     dump.elapsedMs >= 2500
                         ? `Big window: the read stopped after ${all.length} elements, so ones further down the tree are missing. Everything listed (and the window titles) is accurate. To find one element, call os_inspect with query="its words".`
                         : "Incomplete list: the app stopped answering mid-read, so some elements are missing. Retry os_inspect, or take a screenshot instead.";
+                // A query that matched nothing keeps its own advice first: "sidebar" labels no element,
+                // and with only the big-window note the model gave up instead of listing everything.
+                hint = hint ? `${hint} ${why}` : why;
             }
 
             return JSON.stringify({

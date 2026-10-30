@@ -41,5 +41,8 @@ describe.skipIf(process.platform !== "darwin")("os_inspect partial reads", () =>
         dump.mockResolvedValueOnce(tree(400));
         const hung = JSON.parse(String(await osInspect.handler({ app: "Finder" })));
         expect(hung.hint).toMatch(/stopped answering/);
+        dump.mockResolvedValueOnce(tree(3050));
+        const q = JSON.parse(String(await osInspect.handler({ app: "Finder", query: "sidebar" })));
+        expect(q.hint).toMatch(/^Nothing matches "sidebar".*without query.*Big window/s);
     });
 });
