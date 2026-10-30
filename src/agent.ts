@@ -81,6 +81,7 @@ import { getLocationSnippet, getTimezone } from "./location/index.js";
 import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
 import { bhaiDidMemory, didLine } from "./memory/bhai-did.js";
 import { buildMemoryCards } from "./memory/cards.js";
+import { syncForgetsFromElsewhere } from "./memory/forget.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
@@ -1502,6 +1503,8 @@ export async function runAgent(
     toolAllowlist?: string[],
     channelContext?: ChannelContext,
 ): Promise<AgentResponse> {
+    // Memories forgotten in the app's Memory screen: drop what this process still caches.
+    syncForgetsFromElsewhere();
     // A non-owner (Slack/Discord guest, widget visitor) runs on a history of their own,
     // never the owner's: forked, so isContactAgent also keeps owner memories out.
     historyFork = historyForCaller(historyFork, channelContext);

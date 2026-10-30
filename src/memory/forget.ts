@@ -408,6 +408,40 @@ function dropCaches(): void {
     clearToolCache(); // memory_search/memory_list/trait_list/identity_view results
 }
 
+let seenForgetId: number | undefined;
+
+/**
+ * The app's Memory screen forgets in its own process: the rows go, but this process
+ * still holds the fact in its caches (a cached answer for 10 minutes) and its vector
+ * index. Every forget logs a row, so a new row since last time means drop them.
+ * Called at the start of each turn; one indexed query.
+ */
+export function syncForgetsFromElsewhere(): void {
+    const raw = getRawDb();
+    if (!raw) return;
+    try {
+        const max = (raw.prepare("SELECT MAX(id) AS m FROM memory_forget_log").get() as { m: number | null })?.m ?? 0;
+        if (seenForgetId === undefined || max <= seenForgetId) {
+            seenForgetId = Math.max(seenForgetId ?? 0, max);
+            return;
+        }
+        const rows = raw
+            .prepare("SELECT original_id FROM memory_forget_log WHERE id > ? AND kind = 'memory'")
+            .all(seenForgetId) as Array<{ original_id: string }>;
+        for (const r of rows) {
+            try {
+                getHNSWIndex().removeVector(Number(r.original_id));
+            } catch {
+                /* not in the index */
+            }
+        }
+        seenForgetId = max;
+        dropCaches();
+    } catch {
+        /* no log table yet */
+    }
+}
+
 /**
  * Step 2: the owner confirmed. `live` holds the in-memory chats, redacted too so the
  * next reflection can't write the fact back. Re-runs the preview's query, so
