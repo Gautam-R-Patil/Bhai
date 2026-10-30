@@ -164,6 +164,7 @@ The reviewers answered most of the original open questions from the Convex and A
 1. `curl -N` a tiny streaming httpAction on the dev deployment and confirm frames arrive spread out over time (the hosted edge in front of convex.site is closed source). **If it buffers:** don't build a database fallback (it would store answers in plaintext on the server and need a new auth path). Ship everything else (live line, steps, Thinking from the agent's own events, mascot, Stop) and let the answer land whole until buffering is solved.
    **Result (2026-10-30):** passed on avid-finch-726. A test route writing a line every 500 ms arrived ~500 ms apart (about 150 ms behind the server's clock), not buffered; on a client disconnect Convex logged "Client disconnected" and the handler stopped. Route removed.
 2. Two identical dev calls with the chosen `display` setting: confirm one cache miss, then `cache_read_input_tokens` hits.
+   **Result (2026-10-30):** passed. After deploying `display: "updates"` at 09:02, live Sonnet turns still read 23-28K cached tokens on follow-up calls (09:07, 09:18), the same pattern as before the change.
 
 ## 7. Existing bugs this project fixes on the way (because streaming depends on them)
 
