@@ -80,6 +80,19 @@ export function getLastInspect(): InspectCache | null {
     return _lastInspect;
 }
 
+/** Elements inside a container (window, outline, group…) whose label matches the query's words. */
+export function elementsInside<T extends { path: number[] }>(root: AxNode | undefined, all: T[], query: string): T[] {
+    if (!root) return [];
+    return all.filter((e) => {
+        let n: AxNode | undefined = root;
+        for (const i of e.path.slice(0, -1)) {
+            n = n?.children[i];
+            if (n?.label && matchElements([{ label: n.label, role: n.role ?? "" }], query).length) return true;
+        }
+        return false;
+    });
+}
+
 const WINDOW_ROLE = /^(AXWindow|Window|window|frame|dialog)$/;
 /** Titles of the app's windows (top two levels of the tree), front first as AX lists them. */
 export function windowTitles(root: AxNode | undefined): string[] {
@@ -162,9 +175,10 @@ export const osInspect: ToolDefinition = {
             // A query returns only the matching elements (ids unchanged, so os_click_id works):
             // a few hundred characters instead of the whole window.
             const query = typeof input.query === "string" ? input.query.trim() : "";
-            const elements = query
-                ? matchElements(all, query).slice(0, Math.min(maxElements, 15))
-                : all.slice(0, maxElements);
+            let elements = query ? matchElements(all, query).slice(0, Math.min(maxElements, 15)) : all.slice(0, maxElements);
+            // "sidebar" labels no element, but Finder's sidebar rows sit inside an AXOutline labelled
+            // "sidebar": with no element match, list what's inside a matching container.
+            if (query && !elements.length) elements = elementsInside(dump.root, all, query).slice(0, maxElements);
 
             _lastInspect = {
                 elements: all, // os_click_id text= can match past the listed cap
@@ -200,7 +214,7 @@ export const osInspect: ToolDefinition = {
             // --force-renderer-accessibility. Surface this as a hint.
             let hint: string | undefined =
                 query && !elements.length
-                    ? `Nothing matches "${query}". Call os_inspect without query for the full list.`
+                    ? `Nothing matches "${query}" (a query matches element labels, not areas like "sidebar" or "toolbar"). Call os_inspect without query for the full list.`
                     : undefined;
             if (dump.source === "pyatspi" && all.length === 0) {
                 hint =
@@ -210,10 +224,13 @@ export const osInspect: ToolDefinition = {
                 // The walk stops at a 3 s budget (dump_ax.swift). Ran to it: a big window (Finder
                 // on Downloads, ~3000 elements), not a hung app; what's listed is accurate. Said
                 // as "the app stopped answering", the model called even the sidebar it read unverified.
-                hint =
+                const why =
                     dump.elapsedMs >= 2500
                         ? `Big window: the read stopped after ${all.length} elements, so ones further down the tree are missing. Everything listed (and the window titles) is accurate. To find one element, call os_inspect with query="its words".`
                         : "Incomplete list: the app stopped answering mid-read, so some elements are missing. Retry os_inspect, or take a screenshot instead.";
+                // A query that matched nothing keeps its own advice first: "sidebar" labels no element,
+                // and with only the big-window note the model gave up instead of listing everything.
+                hint = hint ? `${hint} ${why}` : why;
             }
 
             return JSON.stringify({

@@ -8,7 +8,7 @@ vi.mock("../../screen/frontmost.js", async (orig) => ({
     ...(await orig<object>()),
     pidOfApp: async (name: string) => (name === "Finder" ? 4242 : 0),
 }));
-const { osInspect, windowTitles } = await import("../os-inspect.js");
+const { elementsInside, osInspect, windowTitles } = await import("../os-inspect.js");
 
 describe.skipIf(process.platform !== "darwin")("os_inspect app", () => {
     it("inspects a running app by name, without a pid", async () => {
@@ -41,5 +41,23 @@ describe.skipIf(process.platform !== "darwin")("os_inspect partial reads", () =>
         dump.mockResolvedValueOnce(tree(400));
         const hung = JSON.parse(String(await osInspect.handler({ app: "Finder" })));
         expect(hung.hint).toMatch(/stopped answering/);
+        dump.mockResolvedValueOnce(tree(3050));
+        const q = JSON.parse(String(await osInspect.handler({ app: "Finder", query: "sidebar" })));
+        expect(q.hint).toMatch(/^Nothing matches "sidebar".*without query.*Big window/s);
+    });
+});
+
+describe("os_inspect area queries", () => {
+    it("'sidebar' finds the rows inside the outline labelled sidebar", () => {
+        const n = (role: string, label: string, children: unknown[] = []) => ({ role, label, x: 0, y: 0, w: 0, h: 0, focusable: false, enabled: true, children });
+        const root = n("AXApplication", "Finder", [
+            n("AXWindow", "Downloads", [n("AXOutline", "sidebar", [n("AXRow", "Recents"), n("AXRow", "Applications")]), n("AXButton", "Back")]),
+        ]);
+        const all = [
+            { label: "Recents", path: [0, 0, 0] },
+            { label: "Applications", path: [0, 0, 1] },
+            { label: "Back", path: [0, 1] },
+        ];
+        expect(elementsInside(root as never, all, "sidebar").map((e) => e.label)).toEqual(["Recents", "Applications"]);
     });
 });
