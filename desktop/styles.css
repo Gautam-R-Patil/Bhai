@@ -6314,3 +6314,7 @@ body.hig .settings-foot { display: flex; justify-content: space-between; flex-wr
 body.hig .settings-foot .about-links { color: var(--text-secondary); }
 body.hig .pp-notes-toggle { align-self: flex-start; font-size: 12.5px; padding: 0; color: var(--accent-text, var(--text-secondary)); }
 body.hig .pp-notes-toggle:hover { text-decoration: underline; }
+body.hig .pref-more { margin-left: 8px; padding: 0; font-size: 12px; color: var(--accent-text, var(--text-secondary)); }
+body.hig .pref-more:hover { text-decoration: underline; }
+.pref-items:has(#prefNotifications:not(:checked)) .pref-more { display: none; }
+.pref-subs[hidden] { display: none; }

@@ -289,11 +289,11 @@
                                 </div>
                             </div>
                             <label class="pref-toggle">
-                                <span class="pref-toggle-label">Notifications</span>
+                                <span class="pref-toggle-label">Notifications <button type="button" class="link-like pref-more" id="notifMore" onclick="event.preventDefault(); toggleNotifSubs()">Choose which</button></span>
                                 <input type="checkbox" id="prefNotifications" onchange="setPref('notificationsEnabled', this.checked)">
                                 <span class="pref-toggle-switch"></span>
                             </label>
-                            <div class="pref-subs">
+                            <div class="pref-subs" id="notifSubs" hidden>
                                 <label class="pref-toggle">
                                     <span class="pref-toggle-label">When a task finishes</span>
                                     <input type="checkbox" id="prefNotifyTask" onchange="setPref('notifyOnTask', this.checked)">
@@ -3648,6 +3648,13 @@
         function showPersonalityDesc() {
             const row = document.querySelector('input[name="personality-preset"]:checked')?.closest('.pp-row');
             document.getElementById('ppDescShown').textContent = row ? row.querySelector('.pp-desc').textContent : '';
+        }
+
+        // Which notifications: tucked under the Notifications row until asked for.
+        function toggleNotifSubs() {
+            const subs = document.getElementById('notifSubs');
+            subs.hidden = !subs.hidden;
+            document.getElementById('notifMore').textContent = subs.hidden ? 'Choose which' : 'Hide';
         }
 
         // The instructions box stays tucked away until asked for (open when there are some).
