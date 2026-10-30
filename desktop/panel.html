@@ -282,7 +282,7 @@
                                 <span class="pref-toggle-switch"></span>
                             </label>
                             <div class="pref-shortcut" data-keywords="keyboard shortcut hotkey overlay">
-                                <span class="pref-shortcut-label">Show or hide Bhai</span>
+                                <span class="pref-shortcut-label">Chat bar shortcut</span>
                                 <div class="pref-shortcut-control">
                                     <kbd id="prefHotkeyShow" tabindex="0" title="Click to change" onclick="startHotkeyRecording(this)">Alt + Space</kbd>
                                     <button class="pref-hotkey-reset" id="prefHotkeyReset" onclick="resetOverlayHotkey()" title="Reset to default" style="display:none;">Reset</button>
@@ -305,26 +305,24 @@
                                     <span class="pref-toggle-switch"></span>
                                 </label>
                             </div>
-                            <div class="pref-update-status">
-                                <div>
-                                    <div>Version <span id="settingsVersion"></span></div>
-                                    <small id="prefUpdateStatus" style="color:var(--text-secondary);"></small>
+                            <div class="pref-update-status" data-keywords="workspace folder files save downloads screenshots documents">
+                                <div style="min-width:0;">
+                                    <div>Workspace folder</div>
+                                    <small class="workspace-path" id="settingWorkspace" style="color:var(--text-secondary);"></small>
                                 </div>
-                                <button class="btn btn-sm btn-secondary" id="checkUpdateBtn" onclick="manualCheckUpdate()">Check for updates</button>
+                                <div style="display:flex;gap:6px;flex:none;">
+                                    <button class="btn btn-secondary btn-sm" onclick="atlas.openWorkspace()">Open</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Change…</button>
+                                    <button class="btn btn-secondary btn-sm" id="workspaceResetBtn" onclick="resetWorkspace()" style="display:none;">Use default</button>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- ═════════ PERSONALITY ═════════ -->
+                    <div class="settings-group-heading">Personality</div>
                     <div class="pref-section surface-card">
-                        <div class="pref-section-header">
-                            <span class="pref-section-icon">🗣️</span>
-                            <div>
-                                <h3 class="pref-section-title">Personality</h3>
-                                <p class="pref-section-desc">How Bhai should sound when talking with you</p>
-                            </div>
-                        </div>
-                        <div class="pref-items" style="flex-direction:column;gap:8px;align-items:stretch;">
+                        <div class="pref-items" data-search="personality tone voice style how bhai talks sounds unhinged casual professional warm direct" style="flex-direction:column;gap:8px;align-items:stretch;">
                             <div id="personalityPresets" class="pp-pills" onchange="showPersonalityDesc()">
                                 <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="casual_playful" id="ppPresetCasual" style="margin-top:3px;" onchange="savePersonality()" checked>
@@ -357,17 +355,18 @@
                                 <label class="radio-row pp-row">
                                     <input type="radio" name="personality-preset" value="unhinged" id="ppPresetUnhinged" style="margin-top:3px;" onchange="savePersonality()">
                                     <div style="flex:1;">
-                                        <div style="font-weight:600;margin-bottom:2px;">Unhinged 😈 <span style="font-size:0.8em;font-weight:600;color:var(--text-secondary);border:1px solid var(--border);border-radius:5px;padding:0 5px;margin-left:4px;">18+</span></div>
+                                        <div style="font-weight:600;margin-bottom:2px;">Unhinged <span style="font-size:0.8em;font-weight:600;color:var(--text-secondary);border:1px solid var(--border);border-radius:5px;padding:0 5px;margin-left:4px;">18+</span></div>
                                         <div class="pp-desc">No filter: blunt opinions, swears freely, savage roasts, dirty and very dark jokes. Only with you, never your contacts. Turns serious when it really matters.</div>
                                     </div>
                                 </label>
                             </div>
                             <div id="ppDescShown" class="pp-desc-shown"></div>
-                            <label style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-                                <span style="font-size:0.9em;color:var(--text-secondary);">Anything else? (optional)</span>
+                            <button type="button" class="link-like pp-notes-toggle" id="ppNotesToggle" onclick="showPersonalityNotes(true)">Add your own instructions</button>
+                            <label id="ppNotesBox" style="display:none;flex-direction:column;gap:6px;margin-top:4px;">
+                                <span style="font-size:0.9em;color:var(--text-secondary);">Your instructions for Bhai</span>
                                 <textarea id="personalityNotes" oninput="onPersonalityNotesInput()" rows="2" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
                             </label>
-                            <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);margin-top:4px;min-height:1em;"></div>
+                            <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);min-height:0;"></div>
                         </div>
                     </div>
 
@@ -377,21 +376,21 @@
                     <!-- GitHub Section -->
                     <div class="settings-section">
                         <div class="settings-section-header">
-                            <span class="settings-section-icon">🐙</span>
                             <div style="flex:1;">
                                 <h3 class="settings-section-title">GitHub</h3>
                                 <p class="settings-section-desc">Lets Bhai clone, commit, push and open pull requests on your repos</p>
                             </div>
                             <span class="integration-state" id="ghState">Not connected</span>
+                            <button class="btn btn-secondary btn-sm" id="ghConnectBtn" onclick="openGithubSetup()">Connect</button>
                         </div>
-                        <div class="settings-fields">
+                        <div class="settings-fields" id="ghFields" style="display:none;">
                             <div id="ghConnected" style="display:none;">
                                 <div class="integration-row">
                                     <span id="ghWho"></span>
                                     <button class="btn btn-secondary btn-sm" onclick="disconnectGithub()">Disconnect</button>
                                 </div>
                             </div>
-                            <div id="ghSetup">
+                            <div id="ghSetup" style="display:none;">
                                 <p class="integration-help">Create a token on GitHub (the right permissions are already ticked), copy it, and come back. Bhai picks it up and checks it.</p>
                                 <a class="wizard-link" target="_blank" href="https://github.com/settings/tokens/new?description=Bhai&scopes=repo,workflow,read:org">Create a GitHub token</a>
                                 <div class="input-group" style="margin-top:12px;">
@@ -403,9 +402,8 @@
                     </div>
 
                     <!-- Google Section -->
-                    <div class="settings-section">
+                    <div class="settings-section" id="googleSection">
                         <div class="settings-section-header">
-                            <span class="settings-section-icon">📅</span>
                             <div style="flex:1;">
                                 <h3 class="settings-section-title">Google</h3>
                                 <p class="settings-section-desc">Calendar, Gmail and Tasks</p>
@@ -426,27 +424,6 @@
                                 </button>
                             </div>
                             <div class="channel-test-result" id="googleStatus"></div>
-                        </div>
-                    </div>
-
-                    <!-- Workspace Section -->
-                    <div class="settings-section">
-                        <div class="settings-section-header">
-                            <span class="settings-section-icon">📁</span>
-                            <div style="flex:1;">
-                                <h3 class="settings-section-title">Workspace folder</h3>
-                                <p class="settings-section-desc">Where Bhai saves screenshots, research, documents and code</p>
-                            </div>
-                        </div>
-                        <div class="settings-fields">
-                            <div class="integration-row">
-                                <code id="settingWorkspace" class="workspace-path"></code>
-                                <div style="display:flex;gap:6px;">
-                                    <button class="btn btn-secondary btn-sm" onclick="atlas.openWorkspace()">Open</button>
-                                    <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Change…</button>
-                                    <button class="btn btn-secondary btn-sm" id="workspaceResetBtn" onclick="resetWorkspace()" style="display:none;">Use default</button>
-                                </div>
-                            </div>
                         </div>
                     </div>
 
@@ -517,28 +494,22 @@
                                     <img src="logo.png" alt="" style="width:36px;height:36px;border-radius:8px;">
                                     <div>
                                         <div>Bhai <span id="aboutVersion" style="color:var(--text-secondary);"></span></div>
-                                        <small style="color:var(--text-secondary);">© 2024-2026 XAGI Labs Private Limited</small>
+                                        <small id="prefUpdateStatus" style="color:var(--text-secondary);"></small>
                                     </div>
                                 </div>
-                                <small class="about-links">
-                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
-                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
-                                    <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">All legal</a>
-                                </small>
+                                <button class="btn btn-sm btn-secondary" id="checkUpdateBtn" onclick="manualCheckUpdate()">Check for updates</button>
                             </div>
                         </div>
                     </div>
 
                     <div class="settings-empty" id="settingsEmpty" style="display:none;">No settings match.</div>
 
-                    <div class="settings-note">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="12" y1="16" x2="12" y2="12"></line>
-                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                        </svg>
-                        Everything here saves by itself. Integration changes restart Bhai for a few seconds. Secrets are encrypted with AES-256-GCM.
+                    <div class="settings-note settings-foot">
+                        Changes save as you make them.
+                        <span class="about-links">© 2024-2026 XAGI Labs ·
+                            <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/terms');">Terms</a> ·
+                            <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/privacy');">Privacy</a> ·
+                            <a href="#" onclick="event.preventDefault(); openLegalDoc('https://tryatlasagi.com/legal');">All legal</a></span>
                     </div>
                 </div>
             </div>
@@ -2051,8 +2022,8 @@
                 const head = card.querySelector('.pref-section-header, .settings-section-header');
                 const headHit = !!head && matches(head);
                 let any = false;
-                card.querySelectorAll('.pref-toggle, .pref-select-group, .pref-shortcut, .pref-update-status').forEach(row => {
-                    const hit = headHit || matches(row);
+                card.querySelectorAll('.pref-toggle, .pref-select-group, .pref-shortcut, .pref-update-status, [data-search]').forEach(row => {
+                    const hit = headHit || matches(row) || (row.dataset.search && q && row.dataset.search.includes(q));
                     row.style.display = hit ? '' : 'none';
                     any = any || hit;
                 });
@@ -2116,7 +2087,8 @@
             const info = await atlas.getIntegrations().catch(() => null);
             if (!info) return;
             // Workspace
-            document.getElementById('settingWorkspace').textContent = info.workspace;
+            document.getElementById('settingWorkspace').textContent = String(info.workspace || '').replace(/^\/Users\/[^/]+/, '~');
+            document.getElementById('settingWorkspace').title = info.workspace || '';
             document.getElementById('workspaceResetBtn').style.display = info.workspaceIsDefault ? 'none' : '';
             // GitHub: show whose token is saved
             if (info.githubSaved) {
@@ -2145,17 +2117,29 @@
             }
             document.getElementById('googleConnectLabel').textContent = accounts.length ? 'Add another account' : 'Connect Google';
             document.getElementById('googleConnectBtn').style.display = info.googleAvailable ? '' : 'none';
-            const comingSoon = !info.googleAvailable && !accounts.length;
-            if (comingSoon) document.getElementById('googleState').textContent = 'Coming soon';
-            document.getElementById('googleFields').style.display = comingSoon ? 'none' : '';
+            // Not offered yet and nothing connected: don't show a card that does nothing.
+            document.getElementById('googleSection').style.display = !info.googleAvailable && !accounts.length ? 'none' : '';
         }
 
         // ── GitHub ──
+        // GitHub is one row until Connect opens the token steps (or a saved token needs replacing).
+        let ghSetupOpen = false;
+        function openGithubSetup() {
+            ghSetupOpen = true;
+            document.getElementById('ghSetup').style.display = 'block';
+            document.getElementById('ghFields').style.display = '';
+            document.getElementById('ghConnectBtn').style.display = 'none';
+            document.getElementById('settingGithubToken').focus();
+        }
         function showGithub(user, problem) {
             const state = document.getElementById('ghState');
+            if (problem) ghSetupOpen = true;
             document.getElementById('ghConnected').style.display = user ? 'block' : 'none';
-            document.getElementById('ghSetup').style.display = user ? 'none' : 'block';
+            document.getElementById('ghSetup').style.display = !user && ghSetupOpen ? 'block' : 'none';
+            document.getElementById('ghConnectBtn').style.display = !user && !ghSetupOpen ? '' : 'none';
+            document.getElementById('ghFields').style.display = user || ghSetupOpen ? '' : 'none';
             state.textContent = user ? 'Connected' : 'Not connected';
+            state.style.display = user ? '' : 'none';
             state.classList.toggle('on', !!user);
             if (user) document.getElementById('ghWho').textContent = '@' + user.login + (user.name ? ' (' + user.name + ')' : '');
             setStatus(document.getElementById('ghStatus'), problem ? problem + ' Paste a new token below.' : '', 'error');
@@ -3410,13 +3394,13 @@
             btn.disabled = false;
 
             if (result.isDev) {
-                showToast('ℹ️ Updates disabled in development mode');
+                showToast('Updates are off in development builds');
             } else if (result.available) {
-                showToast(`✅ Update v${result.version} available!`);
+                showToast(`Version ${result.version} is available`);
             } else if (result.error) {
-                showToast('❌ Failed to check: ' + result.error);
+                showToast('Couldn\'t check for updates: ' + result.error, true);
             } else {
-                showToast('✅ You\'re on the latest version!');
+                showToast('You\'re on the latest version');
             }
 
             updateLastCheckDisplay();
@@ -3654,6 +3638,7 @@
                 }
                 const notes = document.getElementById('personalityNotes');
                 if (notes) notes.value = persona.notes || '';
+                showPersonalityNotes(!!(persona.notes || '').trim(), false);
                 showPersonalityDesc();
             } catch (e) {
                 // Non-fatal — leave defaults
@@ -3663,6 +3648,13 @@
         function showPersonalityDesc() {
             const row = document.querySelector('input[name="personality-preset"]:checked')?.closest('.pp-row');
             document.getElementById('ppDescShown').textContent = row ? row.querySelector('.pp-desc').textContent : '';
+        }
+
+        // The instructions box stays tucked away until asked for (open when there are some).
+        function showPersonalityNotes(open, focus = true) {
+            document.getElementById('ppNotesBox').style.display = open ? 'flex' : 'none';
+            document.getElementById('ppNotesToggle').style.display = open ? 'none' : '';
+            if (open && focus) document.getElementById('personalityNotes').focus();
         }
 
         let notesTimer = null;
@@ -4008,7 +4000,6 @@
                 const info = await atlas.getAppInfo();
                 document.getElementById('sidebarVersion').textContent = `v${info.version}`;
                 document.getElementById('aboutVersion').textContent = info.version;
-                document.getElementById('settingsVersion').textContent = info.version;
 
             } catch { /* */ }
 

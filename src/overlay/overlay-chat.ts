@@ -870,9 +870,13 @@ function isScreenQuery(msg: string): boolean {
     // 1. Direct keyword match
     if (SCREEN_KEYWORDS.some(kw => lower.includes(kw))) return true;
 
+    // A question about the outside world ("what time is it in Tokyo", "is it raining")
+    // isn't about the screen, whatever pronoun it uses.
+    const externalRef = /\b(google|youtube|weather|rain(ing)?|news|wikipedia|github|spotify|telegram|file|folder|path|url|http|www|email|calendar|time|date|remind|alarm|music|song|play|search for|find me|look up)\b/i.test(lower);
+
     // 2. ANY short message (≤6 words) containing a deictic pronoun probably refers to screen
     //    e.g. "how to fix this", "what is that", "help me with this", "why is it not working"
-    if (words.length <= 6 && DEICTIC_WORDS.some(d => words.includes(d))) return true;
+    if (words.length <= 6 && !externalRef && DEICTIC_WORDS.some(d => words.includes(d))) return true;
 
     // 3. Short implicit queries starting with a screen-intent verb with no clear object
     //    e.g. "explain", "summarize", "fix it", "debug", "help", "what now".
@@ -888,8 +892,7 @@ function isScreenQuery(msg: string): boolean {
     //    (not every short question: "what's the capital of France?" needs no screenshot)
     if (words.length <= 6 && /^(what|why|how)\b/i.test(lower)) {
         const aboutCurrentWork = /\b(should i|do i|now|next|wrong|happening|happened|going on|fix|broken|stuck|error)\b/i.test(lower);
-        const hasNoExternalRef = !/\b(google|youtube|weather|news|wikipedia|github|spotify|telegram|file|folder|path|url|http|www|email|calendar|time|date|remind|alarm|music|song|play|search for|find me|look up)\b/i.test(lower);
-        if (aboutCurrentWork && hasNoExternalRef) return true;
+        if (aboutCurrentWork && !externalRef) return true;
     }
 
     return false;

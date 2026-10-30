@@ -3409,11 +3409,19 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
             const timeEl = card.querySelector('#live-time');
             const dateEl = card.querySelector('#live-date');
+            // Another place's time ("what time is it in Tokyo"): {"tz": "Asia/Tokyo", "label": "Tokyo"}.
+            // An unknown zone falls back to this Mac's time rather than throwing every second.
+            let zone = {};
+            if (typeof w.tz === 'string') {
+              try { new Intl.DateTimeFormat('en-US', { timeZone: w.tz }); zone = { timeZone: w.tz }; } catch { /* local */ }
+            }
+            const place = zone.timeZone && typeof w.label === 'string' ? w.label.slice(0, 40) : '';
 
             const updateClock = () => {
               const now = new Date();
-              timeEl.textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
-              dateEl.textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+              timeEl.textContent = now.toLocaleTimeString('en-US', { ...zone, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+              const date = now.toLocaleDateString('en-US', { ...zone, weekday: 'long', month: 'long', day: 'numeric' });
+              dateEl.textContent = place ? `${place} · ${date}` : date;
             };
 
             updateClock();
