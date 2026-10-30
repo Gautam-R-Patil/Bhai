@@ -5,6 +5,7 @@
 
 import type { BetaMessageStream } from "@anthropic-ai/sdk/lib/BetaMessageStream";
 import type * as Beta from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import { toOpenAIResponse } from "./claude";
 import type { Frame } from "./streamFrames";
 
 export async function pipeClaudeStream(
@@ -50,4 +51,50 @@ export async function pipeClaudeStream(
 
     if (stopReason === "refusal") emit({ kind: "reset" });
     return stream.finalMessage();
+}
+
+/**
+ * Writes one response as frames: the deltas `run` emits, then a final `done` with the
+ * completion the non-streaming path would return, or a final `error {status, error}` if
+ * `run` throws (a thrown `{status, error}` keeps its values, anything else is a 502).
+ * Frames are written in emit order; once a write fails (client gone) nothing more is
+ * written. `message` is set whenever the provider answered, delivered or not.
+ */
+export async function streamCompletion(
+    write: (line: string) => Promise<void>,
+    run: (emit: (f: Frame) => void) => Promise<Beta.BetaMessage>,
+    encode: (f: Frame, final: boolean) => Promise<string>,
+): Promise<{ ok: boolean; message?: Beta.BetaMessage }> {
+    let broken = false;
+    let chain = Promise.resolve();
+    const send = (f: Frame, final: boolean) => {
+        chain = chain
+            .then(async () => {
+                if (!broken) await write(await encode(f, final));
+            })
+            .catch(() => {
+                broken = true;
+            });
+        return chain;
+    };
+
+    let message: Beta.BetaMessage;
+    let completion: unknown;
+    try {
+        message = await run((f) => void send(f, false));
+        completion = toOpenAIResponse(message);
+    } catch (err) {
+        const e = err as { status?: unknown; error?: unknown } | null;
+        await send(
+            {
+                kind: "error",
+                status: typeof e?.status === "number" ? e.status : 502,
+                error: typeof e?.error === "string" ? e.error : "LLM service temporarily unavailable",
+            },
+            true,
+        );
+        return { ok: false };
+    }
+    await send({ kind: "done", completion }, true);
+    return { ok: !broken, message };
 }

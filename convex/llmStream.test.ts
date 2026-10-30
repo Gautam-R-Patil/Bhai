@@ -2,7 +2,8 @@
 
 import { BetaMessageStream } from "@anthropic-ai/sdk/lib/BetaMessageStream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pipeClaudeStream } from "./llmStream";
+import { toOpenAIResponse } from "./claude";
+import { pipeClaudeStream, streamCompletion } from "./llmStream";
 import type { Frame } from "./streamFrames";
 
 type Ev = Record<string, unknown>;
@@ -188,5 +189,90 @@ describe("pipeClaudeStream", () => {
         expect(message).toEqual(reference);
         expect(message.usage.input_tokens).toBe(100);
         expect(message.usage.cache_read_input_tokens).toBe(50);
+    });
+});
+
+describe("streamCompletion", () => {
+    // encode is the identity on (frame, final) so the written lines are readable.
+    const encode = async (f: Frame, final: boolean) => JSON.stringify({ f, final });
+    const collect = () => {
+        const lines: { f: Frame; final: boolean }[] = [];
+        return { lines, write: async (l: string) => void lines.push(JSON.parse(l)) };
+    };
+    const message = () => toStream([start(), ...textBlock(0, "Hello"), ...end("end_turn")]).finalMessage();
+
+    it("success writes the deltas, then one final done", async () => {
+        const { lines, write } = collect();
+        const msg = await message();
+        const res = await streamCompletion(
+            write,
+            async (emit) => {
+                emit({ kind: "note", text: "Thinking." });
+                emit({ kind: "text", text: "Hello" });
+                return msg;
+            },
+            encode,
+        );
+        expect(res).toEqual({ ok: true, message: msg });
+        expect(lines.map((l) => [l.f.kind, l.final])).toEqual([
+            ["note", false],
+            ["text", false],
+            ["done", true],
+        ]);
+    });
+
+    it("a run that throws after 2 deltas ends in a final error frame", async () => {
+        const { lines, write } = collect();
+        const res = await streamCompletion(
+            write,
+            async (emit) => {
+                emit({ kind: "text", text: "a" });
+                emit({ kind: "text", text: "b" });
+                throw { status: 529, error: "overloaded" };
+            },
+            encode,
+        );
+        expect(res.ok).toBe(false);
+        expect(res.message).toBeUndefined();
+        expect(lines).toEqual([
+            { f: { kind: "text", text: "a" }, final: false },
+            { f: { kind: "text", text: "b" }, final: false },
+            { f: { kind: "error", status: 529, error: "overloaded" }, final: true },
+        ]);
+    });
+
+    it("an unknown failure is a 502", async () => {
+        const { lines, write } = collect();
+        await streamCompletion(write, async () => Promise.reject(new Error("socket hang up")), encode);
+        expect(lines).toEqual([
+            { f: { kind: "error", status: 502, error: "LLM service temporarily unavailable" }, final: true },
+        ]);
+    });
+
+    it("done carries the same completion as the non-streaming path", async () => {
+        const { lines, write } = collect();
+        const msg = await message();
+        await streamCompletion(write, async () => msg, encode);
+        expect(lines.at(-1)?.f.completion).toEqual(JSON.parse(JSON.stringify(toOpenAIResponse(msg))));
+    });
+
+    it("a client that went away stops the writes but keeps the message", async () => {
+        let calls = 0;
+        const write = async () => {
+            calls++;
+            throw new Error("stream closed");
+        };
+        const msg = await message();
+        const res = await streamCompletion(
+            write,
+            async (emit) => {
+                emit({ kind: "text", text: "a" });
+                emit({ kind: "text", text: "b" });
+                return msg;
+            },
+            encode,
+        );
+        expect(res).toEqual({ ok: false, message: msg });
+        expect(calls).toBe(1);
     });
 });

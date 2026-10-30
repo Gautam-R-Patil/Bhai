@@ -7,6 +7,8 @@ import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import Anthropic from "@anthropic-ai/sdk";
 import { toClaudeRequest, toOpenAIResponse } from "./claude";
+import { pipeClaudeStream, streamCompletion } from "./llmStream";
+import { encodeFrame } from "./streamFrames";
 import { callAzure, clientAttemptMs, isAzureModel } from "./grok";
 import { decodeBase64, STT_CREDIT_COST, STT_MAX_AUDIO_BYTES, sttConfigFromEnv, transcribeWithProvider } from "./stt";
 import {
@@ -83,7 +85,7 @@ const _legacyAadByRequest = new WeakMap<Request, true>();
 async function parseRequestBody(
   request: Request,
   sharedKey: string | null,
-): Promise<{ body: any; encrypted: boolean; legacyAad: boolean }> {
+): Promise<{ body: any; encrypted: boolean; legacyAad: boolean; rid?: string }> {
   const isEncrypted = request.headers.get("X-Encryption") === "ecdh-aes-256-gcm";
 
   if (isEncrypted && sharedKey) {
@@ -116,7 +118,7 @@ async function parseRequestBody(
       legacyAad = true;
       _legacyAadByRequest.set(request, true);
     }
-    return { body: JSON.parse(plaintext), encrypted: true, legacyAad };
+    return { body: JSON.parse(plaintext), encrypted: true, legacyAad, rid: envelope.rid };
   }
 
   // Unencrypted fallback
@@ -162,6 +164,14 @@ async function buildResponse(
     headers: { "Content-Type": "application/json" },
   });
 }
+
+// Headers of a framed /api/llm/chat answer (live stream or one final `done` frame).
+const FRAME_HEADERS = {
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache, no-transform",
+  "X-Encryption": "ecdh-aes-256-gcm",
+  "X-Stream": "frames",
+};
 
 // Credit cost table + lookup live in ./credit-cost.ts so the tier
 // mapping is unit-testable without a Convex harness.
@@ -448,10 +458,14 @@ http.route({
     // 3. Parse client request (with E2E decryption if active)
     let body: any;
     let isEncrypted = false;
+    let legacyAad = false;
+    let reqRid: string | undefined;
     try {
       const parsed = await parseRequestBody(request, account.sharedKey);
       body = parsed.body;
       isEncrypted = parsed.encrypted;
+      legacyAad = parsed.legacyAad;
+      reqRid = parsed.rid;
     } catch (err: any) {
       await logCall({
         model: "unknown",
@@ -659,6 +673,94 @@ http.route({
     //    (prompt caching breakpoints are placed by the translator).
     const claudeParams = toClaudeRequest(body, messages);
 
+    // 9b/9c. After a provider answer: per-model usage counter (admin dashboard) and the
+    //        per-call audit row (token totals + latency only, never prompts/responses).
+    //        Both best-effort — they never block or fail the LLM response.
+    const recordSuccess = async (responseData: any) => {
+      try {
+        await ctx.runMutation(internal.llmUsage.incrementModelUsage, {
+          model: String(model),
+          credits: cost,
+        });
+      } catch (err) {
+        console.warn("[HTTP Proxy] usage counter bump failed:", (err as Error).message);
+      }
+      const usage = responseData?.usage ?? {};
+      const cachedTokens = usage.prompt_tokens_details?.cached_tokens;
+      await logCall({
+        model: String(model),
+        status: "success",
+        credits: cost,
+        inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : undefined,
+        outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : undefined,
+        cachedTokens: typeof cachedTokens === "number" ? cachedTokens : undefined,
+        hasMedia,
+      });
+    };
+
+    // 6b. Live frames: only for an encrypted, AAD-bound request that asked for them
+    //     (a legacy no-AAD client gets today's single body). Azure models and the
+    //     LLM_STREAMING_DISABLED switch answer with one final `done` frame (step 10).
+    const frames =
+      body.stream === true && isEncrypted && !legacyAad && reqRid && account.sharedKey
+        ? { rid: reqRid, key: account.sharedKey }
+        : null;
+    if (frames && !isAzureModel(model) && process.env.LLM_STREAMING_DISABLED !== "true") {
+      const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+      const writer = writable.getWriter();
+      const enc = new TextEncoder();
+      const anthropic = new Anthropic({ apiKey: anthropicKey });
+      let seq = 0;
+      // Headers go out now; frames are written from this detached task. Pre-deduction
+      // stands on success and on a client abort (as for an aborted call today); a
+      // provider error refunds before its final `error` frame.
+      void (async () => {
+        try {
+          const res = await streamCompletion(
+            (line) => writer.write(enc.encode(line)),
+            async (emit) => {
+              try {
+                // The stream is piped in the tick it is created, or early events are lost.
+                return await pipeClaudeStream(
+                  anthropic.beta.messages.stream(claudeParams, { signal: request.signal }),
+                  emit,
+                  { coalesceMs: 60 },
+                );
+              } catch (err: any) {
+                if (request.signal.aborted) {
+                  await logCall({
+                    model: String(model),
+                    status: "failed",
+                    credits: cost,
+                    errorType: "client_abort",
+                    errorMessage: "Client left mid-stream",
+                    hasMedia,
+                  });
+                  throw err;
+                }
+                const status = err instanceof Anthropic.APIError && err.status ? err.status : undefined;
+                const errorType = status ? `anthropic_${status}` : "anthropic_network";
+                const snippet = status
+                  ? JSON.stringify(err.error ?? err.message).slice(0, 500)
+                  : (err?.message ?? "Claude request threw");
+                console.error(`[HTTP Proxy] Claude stream error ${status ?? "network"} for ${model}:`, snippet);
+                await refundIfDeducted(errorType);
+                await logCall({ model: String(model), status: "failed", errorType, errorMessage: snippet, hasMedia });
+                throw status ? { status, error: JSON.stringify(err.error ?? { error: err.message }) } : err;
+              }
+            },
+            (f, final) => encodeFrame(f, seq++, final, frames.rid, frames.key),
+          );
+          if (res.message) await recordSuccess(toOpenAIResponse(res.message));
+        } catch (err) {
+          console.error("[HTTP Proxy] stream task failed:", (err as Error)?.message);
+        } finally {
+          await writer.close().catch(() => {});
+        }
+      })();
+      return new Response(readable, { status: 200, headers: FRAME_HEADERS });
+    }
+
     // 7. Call Claude (or an Azure model: Grok, GPT-6; falling back to Claude Sonnet)
     try {
       const anthropic = new Anthropic({ apiKey: anthropicKey });
@@ -698,33 +800,15 @@ http.route({
       // 9. Credits were already deducted atomically at step 3b before the
       //    fetch — the response is on the success path so we keep the
       //    deduction. No post-call deduction needed.
+      await recordSuccess(responseData);
 
-      // 9b. Bump per-model usage counter for the admin dashboard.
-      //     Best-effort — never blocks or fails the LLM response.
-      try {
-        await ctx.runMutation(internal.llmUsage.incrementModelUsage, {
-          model: String(model),
-          credits: cost,
+      // 10. Return the response (encrypted if client uses E2E; one final frame if it asked for frames)
+      if (frames) {
+        return new Response(await encodeFrame({ kind: "done", completion: responseData }, 0, true, frames.rid, frames.key), {
+          status: 200,
+          headers: FRAME_HEADERS,
         });
-      } catch (err) {
-        console.warn("[HTTP Proxy] usage counter bump failed:", (err as Error).message);
       }
-
-      // 9c. Per-call audit row. Pulled out of the response payload so we
-      //     don't keep prompts/responses — just token totals + latency.
-      const usage = responseData?.usage ?? {};
-      const cachedTokens = usage.prompt_tokens_details?.cached_tokens;
-      await logCall({
-        model: String(model),
-        status: "success",
-        credits: cost,
-        inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : undefined,
-        outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : undefined,
-        cachedTokens: typeof cachedTokens === "number" ? cachedTokens : undefined,
-        hasMedia,
-      });
-
-      // 10. Return the response (encrypted if client uses E2E)
       return await buildResponse(responseData, 200, isEncrypted, account.sharedKey, request);
     } catch (err: any) {
       console.error("[HTTP Proxy] Claude request failed:", err.message);
