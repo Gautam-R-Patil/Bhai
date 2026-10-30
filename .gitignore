@@ -86,6 +86,7 @@ desktop/hostinger-upload/
 # Session 2026-10-29: personalization/soul pure-logic fixes
 !src/llm-stream-frames.test.ts
 !src/llm-stream.test.ts
+!src/llm-stream-client.test.ts
 !src/prompts/identity-guard.test.ts
 !src/serious-mode.test.ts
 !src/proactive/timed-quiet.test.ts
