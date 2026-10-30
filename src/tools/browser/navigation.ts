@@ -79,6 +79,15 @@ export const browserNavigate: ToolDefinition = {
             }
             const unsafe = unsafeBrowserUrl(urlRaw);
             if (unsafe) return JSON.stringify({ error: unsafe, url: urlRaw.slice(0, 120) });
+            // Where the time goes (a Wikipedia page took 14s): logged once the result is built.
+            const t0 = Date.now();
+            const lap: string[] = [];
+            let tLast = t0;
+            const mark = (step: string) => {
+                const now = Date.now();
+                lap.push(`${step} ${now - tLast}ms`);
+                tLast = now;
+            };
 
             // Resolve the backend FIRST via getActivePage() (see core.ts getActivePage):
             // calling getBrowser() up front would launch Playwright even when the
@@ -122,7 +131,9 @@ export const browserNavigate: ToolDefinition = {
             invalidateCache();
 
             // Smart wait for the page to stabilize
+            mark("load");
             if (!navError) await waitForPageReady(page);
+            mark("ready");
             // Clear HUD once page is ready
             await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
 
@@ -148,6 +159,7 @@ export const browserNavigate: ToolDefinition = {
             // Login/OTP wall: may import the user's Chrome session and reload — before the scan.
             // Not on a CAPTCHA page: the pipeline gets that one first, after this tool returns.
             const authFields = (await quickCaptchaCheck(page)) ? {} : await checkAuthWall(page);
+            mark("checks");
 
             const title = await page.title();
             const url = page.url();
@@ -159,6 +171,7 @@ export const browserNavigate: ToolDefinition = {
                 getInteractiveElements(page),
             ]);
             setLastElementMap(elementMap);
+            mark("scan");
 
             // Design-tool detection (Figma, Canva, Miro, etc.)
             // These are canvas-based apps where accessibility tree is nearly empty.
@@ -233,7 +246,9 @@ export const browserNavigate: ToolDefinition = {
                     )
                     .catch(() => "");
                 if (text.trim()) result.page_text = text;
+                mark("text");
             }
+            console.log(`  🌐 navigate ${navDomain}: ${lap.join(" · ")} (total ${Date.now() - t0}ms)`);
 
             result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
             addTreeWithinBudget(result, accessibilityTree, 4000);
