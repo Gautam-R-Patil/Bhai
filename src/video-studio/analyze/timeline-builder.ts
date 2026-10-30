@@ -5,7 +5,7 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { ffprobePath } from "../util/ffmpeg-bin.js";
+import { ffprobePathIfAny, probeWithFfmpeg } from "../util/ffmpeg-bin.js";
 import type { KeyframeCaption } from "./frame-describe.js";
 import { describeKeyframes } from "./frame-describe.js";
 import type { Scene } from "./scene-detect.js";
@@ -50,8 +50,13 @@ export interface Timeline {
 export type TimelineMap = Record<string, Timeline>;
 
 export async function probeVideoMetadata(videoPath: string): Promise<VideoMetadata> {
+    const ffprobe = ffprobePathIfAny();
+    if (!ffprobe) {
+        const { duration, fps, width, height } = await probeWithFfmpeg(videoPath);
+        return { duration, fps, resolution: width && height ? `${width}x${height}` : "unknown", width, height };
+    }
     const { stdout } = await execFileP(
-        ffprobePath(),
+        ffprobe,
         [
             "-v",
             "error",
