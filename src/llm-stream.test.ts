@@ -181,6 +181,32 @@ describe("readFrames", () => {
         expect(deltas).toEqual([{ kind: "text", text: "a" }]);
     });
 
+    it("pings before any real frame don't extend the first-frame limit", async () => {
+        // A ping every 10 s, never a real frame: the 25 s first-frame limit still fires.
+        const lines = await encode(
+            Array.from({ length: 8 }, () => ({ kind: "ping" }) as Frame),
+            RID,
+            true,
+        );
+        vi.useFakeTimers();
+        const p = readFrames(framed(timedStream(lines, 10_000)), RID, { ...OPTS, onDelta: () => {} });
+        const check = expect(p).rejects.toMatchObject({ status: 504 });
+        await vi.advanceTimersByTimeAsync(26_000);
+        await check;
+    });
+
+    it("after the first real frame, pings keep a quiet stream alive", async () => {
+        const lines = await encode([
+            { kind: "text", text: "a" },
+            ...Array.from({ length: 6 }, () => ({ kind: "ping" }) as Frame),
+            { kind: "done", completion: COMPLETION },
+        ]);
+        vi.useFakeTimers();
+        const p = readFrames(framed(timedStream(lines, 10_000)), RID, { ...OPTS, onDelta: () => {} });
+        await vi.advanceTimersByTimeAsync(81_000);
+        await expect(p).resolves.toEqual(COMPLETION);
+    });
+
     it("times out when the first frame is late", async () => {
         const lines = await encode([{ kind: "done", completion: COMPLETION }]);
         vi.useFakeTimers();

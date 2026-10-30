@@ -76,7 +76,7 @@ function toDelta(f: Frame): LLMDelta {
  * message}` on an `error` frame, a stream that ends without its final frame,
  * a frame after the final one, a bad/reordered frame, or a timeout (first frame
  * within `firstFrameMs`, then at most `gapMs` between frames, a `ping` counting
- * as a frame; no total deadline). A 2xx without `X-Stream: frames` is accepted only as an old
+ * as a frame once a real one has arrived; no total deadline). A 2xx without `X-Stream: frames` is accepted only as an old
  * server's single encrypted envelope.
  */
 export async function readFrames(response: Response, reqRid: string, opts: ReadOpts): Promise<ChatCompletion> {
@@ -86,6 +86,7 @@ export async function readFrames(response: Response, reqRid: string, opts: ReadO
     const decoder = new TextDecoder("utf-8");
     let buf = "";
     let seq = 0;
+    let seenReal = false;
     let result: { completion: ChatCompletion } | undefined;
     // Bounds the first frame, or the whole of a non-framed body.
     let deadline = Date.now() + opts.firstFrameMs;
@@ -112,8 +113,13 @@ export async function readFrames(response: Response, reqRid: string, opts: ReadO
         if (!line.trim()) return;
         if (result) throw new Error("frame after the final one");
         const { frame, final } = decryptFrame(line, reqRid, seq++);
+        // A ping only moves the deadline once a real frame has arrived: the server
+        // pings from the start, so before that it must not stand in for the first frame.
+        const ping = !final && frame.kind === "ping";
+        if (ping && !seenReal) return;
         deadline = Date.now() + opts.gapMs;
-        if (!final && frame.kind === "ping") return; // heartbeat: it only moved the deadline
+        if (ping) return; // heartbeat: it only moved the deadline
+        seenReal = true;
         if (!final) return opts.onDelta(toDelta(frame));
         if (frame.kind === "done") result = { completion: frame.completion as ChatCompletion };
         else if (frame.kind === "error") {

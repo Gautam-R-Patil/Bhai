@@ -604,8 +604,9 @@ export function createLLMClient(config: Config): LLMClient {
                         const errMsg = (err as Error).message || "";
                         // A streamed attempt's failure gets the line the plain path writes for a bad status.
                         if (stream && status) {
+                            const { sanitizeSecrets } = await import("./security/secrets-sanitizer.js");
                             console.error(
-                                `  ❌ ${MODEL_DISPLAY[currentModel] || currentModel} failed (${status}): ${errMsg.slice(0, 200)}`,
+                                `  ❌ ${MODEL_DISPLAY[currentModel] || currentModel} failed (${status}): ${sanitizeSecrets(errMsg).sanitized.slice(0, 200)}`,
                             );
                         }
                         const isNetworkError =
