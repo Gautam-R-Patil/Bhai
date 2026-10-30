@@ -378,6 +378,11 @@ describe("NoteStreamFilter", () => {
             KEY_BITS,
         ],
         [
+            "a key whose BEGIN line is hidden by the answer rules",
+            `Reading it.\n[Tool Result read_file]: -----BEGIN RSA PRIVATE KEY-----\n${PEM_BODY.join("\n")}\n-----END RSA PRIVATE KEY-----\nDone.\n`,
+            KEY_BITS,
+        ],
+        [
             "label two lines up across a blank line",
             "aws_secret_access_key:\n\nwJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
             ["wJalrXUtnFEMI/K7MDENG"],
@@ -410,6 +415,14 @@ describe("NoteStreamFilter", () => {
         for (let i = 0; i < 50; i++) out += f.push(`step ${i} of the plan\n`);
         out += f.flush();
         expect(out).toBe("Reading the config.\n[redacted]");
+    });
+
+    it("latches on a BEGIN the answer rules hid, split across pushes", () => {
+        const f = new NoteStreamFilter();
+        let out = f.push("Reading it.\n[Tool Result read_file]: -----BE");
+        out += f.push(`GIN RSA PRIVATE KEY-----\n${PEM_BODY.join("\n")}\n-----END RSA PRIVATE KEY-----\nDone.\n`);
+        out += f.flush();
+        expect(out).toBe("Reading it.\n[redacted]");
     });
 
     it("text before the marker on the same line is still emitted (masked)", () => {

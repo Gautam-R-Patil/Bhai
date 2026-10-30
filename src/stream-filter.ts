@@ -242,15 +242,29 @@ const KEY_BLOCK = /-----BEGIN /i;
  * The first `-----BEGIN ` latches: the text before it goes out masked, then `[redacted]`,
  * then nothing more, ever (no END releases it). Notes are optional progress extras, so
  * losing the rest of a turn's notes after a key shows up is the accepted cost.
+ * The raw deltas are watched too: a marker the answer rules hide (inside a `[Tool Result …]:`
+ * that ends at the BEGIN line) would otherwise let the key body after it stream.
  */
 export class NoteStreamFilter {
     private readonly answer = new AnswerStreamFilter({ channel: "note" });
     private line = "";
     private prev = "";
     private latched = false;
+    private rawTail = ""; // the last raw chars, so a marker split across pushes is caught
 
     push(delta: string): string {
         if (this.latched) return "";
+        const seen = this.rawTail + delta;
+        const k = seen.search(KEY_BLOCK);
+        if (k >= 0) {
+            const tailLen = this.rawTail.length;
+            // The text before the marker goes out as usual; the marker part already pushed is dropped.
+            this.line += this.answer.push(delta.slice(0, Math.max(0, k - tailLen))) + this.answer.flush();
+            const pushed = seen.slice(k, tailLen).toLowerCase();
+            if (pushed && this.line.toLowerCase().endsWith(pushed)) this.line = this.line.slice(0, -pushed.length);
+            return this.drain(true, true);
+        }
+        this.rawTail = seen.slice(-16);
         this.line += this.answer.push(delta);
         return this.drain(false);
     }
@@ -262,9 +276,10 @@ export class NoteStreamFilter {
     }
 
     /** Emit the complete lines buffered so far (all of it when final), stopping at a key block. */
-    private drain(final: boolean): string {
+    private drain(final: boolean, rawKey = false): string {
         // The buffer holds the whole unsent line, so a marker split across deltas is whole here.
-        const key = this.line.search(KEY_BLOCK);
+        let key = this.line.search(KEY_BLOCK);
+        if (key < 0 && rawKey) key = this.line.length;
         const lines = (key < 0 ? this.line : this.line.slice(0, key)).split("\n");
         const last = lines.pop() as string;
         const out = lines.map((l) => `${this.maskLine(l)}\n`).join("");
