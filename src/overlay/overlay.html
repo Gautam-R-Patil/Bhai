@@ -368,6 +368,8 @@
     .turn-step.running::before { width: 8px; height: 8px; margin: 0 3px; border-radius: 50%; background: var(--accent); animation: turnPulse 1.2s ease-in-out infinite; }
     .turn-caret { display: inline-block; width: 2px; height: 1em; margin-left: 1px; vertical-align: -2px; background: var(--accent); animation: turnBlink 1s steps(2) infinite; }
     .turn-view.done .turn-dot, .turn-view.done .turn-bar { display: none; }
+    /* A quick turn shows no working line or ripple (SHOW_LIVE_AFTER_MS): just its answer */
+    .turn-view.quiet, .icon.thinking.quiet::after { display: none; }
     .turn-view.done .turn-live { font-size: 12.5px; }
     .turn-view.done .turn-now { animation: none; background: none; color: var(--text-muted); }
     /* Bhai busy: a soft ripple around the mascot */
@@ -3093,7 +3095,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       function panelPref() { try { return localStorage.getItem(PANEL_KEY) === '1'; } catch { return false; } }
       function savePanelPref(open) { try { localStorage.setItem(PANEL_KEY, open ? '1' : '0'); } catch { /* storage off */ } }
       const plainStatus = (t) => String(t || '').replace(/^[\p{Extended_Pictographic}\u200d\ufe0f\s]+/u, '');
-      // { state (turnView), el, start, statusAt, fallback, shown, frame, tick, stopping, done }
+      // A turn quicker than this shows no live line, mood or ripple and leaves no "Worked for" line.
+      const SHOW_LIVE_AFTER_MS = 15000;
+      // { state (turnView), el, start, statusAt, fallback, shown, frame, tick, stopping, quiet, done }
       let live = null;
 
       function liveStart(turn, text) {
@@ -3101,7 +3105,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         replyArriving('Message from Bhai'); // once per turn; the final response won't call it again
         const root = document.createElement('div');
         const open = panelPref();
-        root.className = open ? 'turn-view open' : 'turn-view';
+        root.className = open ? 'turn-view quiet open' : 'turn-view quiet';
         root.innerHTML = '<button type="button" class="turn-live" aria-expanded="false" title="Show what Bhai is doing">'
           + '<span class="turn-dot" aria-hidden="true"></span><span class="turn-now"></span>'
           + '<span class="turn-meta"><span class="turn-count"></span><span class="turn-chev" aria-hidden="true">▾</span></span></button>'
@@ -3118,19 +3122,39 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         live = {
           state: { turn, seq: 0, status: null, steps: [], notes: [], answer: '', attempt: 0, open },
           el: { root, answer, now: q('.turn-now'), count: q('.turn-count'), empty: q('.turn-empty'), notes: q('.turn-notes'), steps: q('.turn-steps') },
-          start: Date.now(), statusAt: 0, fallback: plainStatus(text) || 'Thinking…', shown: '', stepsShown: null, frame: 0, tick: 0, stopping: false, done: false,
+          start: Date.now(), statusAt: 0, fallback: plainStatus(text) || 'Thinking…', shown: '', stepsShown: null, frame: 0, tick: 0, stopping: false, quiet: true, done: false,
         };
         setPanelOpen(root, open);
         live.tick = setInterval(liveCount, 1000);
-        icon.classList.add('thinking');
+        icon.classList.add('thinking', 'quiet');
         setAgentBusy(true);
         waiting = true;
         input.disabled = true;
         progress.classList.remove('visible');
         progress.innerHTML = '';
+        renderLive();
+      }
+
+      // The reply box comes up with the first answer text, or with the live line.
+      function showLiveBox() {
+        if (replyBox.classList.contains('visible')) return;
         replyBox.classList.add('visible');
         replyBox.scrollTop = Math.max(0, replyText.offsetTop - 16);
-        renderLive();
+      }
+
+      // Bhai's face for where the turn is now.
+      function liveMood() {
+        const running = live.state.steps.filter((x) => x.state === 'running').pop();
+        return live.state.answer ? 'typing' : running ? moodFromProgress(running.text) : 'thinking';
+      }
+
+      // The turn ran long: its line shows with everything it has by now.
+      function liveReveal() {
+        live.quiet = false;
+        live.el.root.classList.remove('quiet');
+        icon.classList.remove('quiet');
+        setMood(liveMood());
+        showLiveBox();
       }
 
       function flatLine(btn) {
@@ -3170,8 +3194,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       function liveCount() {
         if (!live || live.done) return;
         const s = live.state.status;
-        const secs = Math.floor(s ? s.elapsed + (Date.now() - live.statusAt) / 1000 : (Date.now() - live.start) / 1000);
-        live.el.count.textContent = (s && s.step > 0 ? `step ${s.step} · ` : '') + `${secs}s`;
+        const secs = s ? s.elapsed + (Date.now() - live.statusAt) / 1000 : (Date.now() - live.start) / 1000;
+        if (live.quiet && secs * 1000 >= SHOW_LIVE_AFTER_MS) liveReveal();
+        live.el.count.textContent = (s && s.step > 0 ? `step ${s.step} · ` : '') + `${Math.floor(secs)}s`;
       }
 
       function renderLive() {
@@ -3195,6 +3220,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (!live.done && s.answer !== live.shown) {
           live.shown = s.answer;
           el.answer.innerHTML = s.answer ? `${renderStreamingMd(s.answer)}<span class="turn-caret" aria-hidden="true"></span>` : '';
+          if (s.answer) showLiveBox();
         }
       }
 
@@ -3207,24 +3233,34 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         live.state = turnView(prev, msg);
         if (live.state === prev) return;
         if (msg.type === 'turn_status' || (msg.type === 'turn_snapshot' && msg.status)) live.statusAt = Date.now();
-        // Bhai's face follows the work: thinking on notes, looking/working on steps, typing on the answer.
-        const running = live.state.steps.filter((x) => x.state === 'running').pop();
-        if (msg.type === 'turn_note') setMood('thinking');
-        else if (msg.type === 'turn_answer') setMood('typing');
-        else if (msg.type === 'turn_step' && msg.state === 'running') setMood(moodFromProgress(msg.text));
-        else if (msg.type === 'turn_step' && msg.state === 'done' && window.BhaiMascot) window.BhaiMascot.react(icon, 'nod');
-        else if (msg.type === 'turn_snapshot') setMood(live.state.answer ? 'typing' : running ? moodFromProgress(running.text) : 'thinking');
+        if (live.quiet) liveCount(); // a rejoin already past SHOW_LIVE_AFTER_MS shows the line at once
+        // Once the line shows, Bhai's face follows the work: thinking on notes, looking/working on
+        // steps, typing on the answer. A quick turn leaves the face as it is.
+        if (!live.quiet) {
+          if (msg.type === 'turn_note') setMood('thinking');
+          else if (msg.type === 'turn_answer') setMood('typing');
+          else if (msg.type === 'turn_step' && msg.state === 'running') setMood(moodFromProgress(msg.text));
+          else if (msg.type === 'turn_step' && msg.state === 'done' && window.BhaiMascot) window.BhaiMascot.react(icon, 'nod');
+          else if (msg.type === 'turn_snapshot') setMood(liveMood());
+        }
         // At most one render per frame, however fast the deltas come.
         if (!live.frame) live.frame = requestAnimationFrame(renderLive);
       }
 
       // The turn ended: the live line becomes "Worked for {N}s · {K} steps ▾" (just "Worked for
-      // {N}s", not a toggle, when there's nothing behind it). Returns the element the reply goes into.
+      // {N}s", not a toggle, when there's nothing behind it); a quick turn whose line never showed
+      // leaves just its reply. Returns the element the reply goes into.
       function liveFinish(worked) {
         renderLive();
         clearInterval(live.tick);
         live.done = true;
         const { root, now, count, answer } = live.el;
+        icon.classList.remove('quiet');
+        if (live.quiet) {
+          root.remove();
+          answer.querySelectorAll('.turn-caret').forEach((c) => c.remove());
+          return answer;
+        }
         const line = workedLine(live.state, worked, live.start);
         root.classList.add('done');
         setPanelOpen(root, false);
@@ -3544,14 +3580,14 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
         if (msg.type === 'thinking') {
           icon.classList.add('thinking');
-          setMood('thinking');
+          if (!msg.turn) setMood('thinking'); // a live turn's face follows its line
           setAgentBusy(true);
           replyBox.classList.remove('visible');
           progress.classList.remove('visible');
           progress.innerHTML = '';
           contract.textContent = ''; // a new turn: the last turn's contract no longer applies
           clearInteractive();
-          if (msg.turn) liveStart(msg.turn, msg.text); // a bot that streams: the live line shows at once
+          if (msg.turn) liveStart(msg.turn, msg.text); // a bot that streams: the live line shows once the turn runs long
         }
         else if (typeof msg.type === 'string' && msg.type.startsWith('turn_')) {
           onTurnEvent(msg);

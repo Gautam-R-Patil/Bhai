@@ -1810,13 +1810,15 @@
         // a Notes/Steps panel one click away, and the answer typing itself in. Only the final reply
         // is saved with the chat; this view lives in the page.
         const TURN_PANEL_KEY = 'bhai.turnPanelOpen';
+        // A turn quicker than this shows no live line (face, status, seconds, bar) and leaves no "Worked for" line.
+        const SHOW_LIVE_AFTER_MS = 15000;
         const turnPanelPref = () => { try { return localStorage.getItem(TURN_PANEL_KEY) === '1'; } catch { return false; } };
         const cleanStatus = (t) => String(t || '').replace(/^[^\p{L}\p{N}]+/u, '');
         const CHEVRON = '<svg class="turn-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
         function liveChatView() {
             const root = document.createElement('div');
-            root.className = 'chats-turn';
+            root.className = 'chats-turn quiet';
             root.setAttribute('aria-busy', 'true');
             root.innerHTML = '<button type="button" class="turn-live" aria-expanded="false" title="Show what Bhai is doing">'
                 + '<span class="turn-face" aria-hidden="true"></span><span class="turn-now"></span>'
@@ -1839,9 +1841,10 @@
             root.querySelector('.turn-live').setAttribute('aria-expanded', String(open));
             root.querySelector('.turn-panel').setAttribute('aria-hidden', String(!open));
         }
-        // Bhai himself on the line; re-mounted when the thread is rebuilt (a detached mascot stops).
+        // Bhai himself on the line; re-mounted when the thread is rebuilt (a detached mascot stops)
+        // and once a quiet line shows.
         function mountTurnFace(face) {
-            if (window.BhaiMascot && face.isConnected) window.BhaiMascot.mount(face, face.dataset.mood);
+            if (window.BhaiMascot && face.isConnected && !face.closest('.quiet')) window.BhaiMascot.mount(face, face.dataset.mood);
         }
         function faceMood(mood) {
             const face = liveChat?.el.face;
@@ -1863,6 +1866,10 @@
         function liveChatCount() {
             const lc = liveChat;
             if (!lc) return;
+            if (lc.working.classList.contains('quiet') && Date.now() - lc.start >= SHOW_LIVE_AFTER_MS) {
+                lc.working.classList.remove('quiet'); // the turn ran long: its line shows with all it has
+                mountTurnFace(lc.el.face);
+            }
             const step = lc.state?.status?.step || 0;
             lc.el.count.textContent = `${step > 0 ? `step ${step} · ` : ''}${Math.max(0, Math.floor((Date.now() - lc.start) / 1000))}s`;
         }
@@ -1933,6 +1940,7 @@
 
         // The turn ended: the live line becomes "Worked for {N}s · {K} steps" (still opens the panel;
         // just "Worked for {N}s", not a toggle, when there's nothing behind it); the reply lands under it.
+        // A quick turn whose line never showed leaves just the reply.
         function finishLiveChat(text, isError, worked) {
             const lc = liveChat;
             if (!lc) return;
@@ -1941,19 +1949,22 @@
             clearInterval(lc.tick);
             const { id, working, el } = lc;
             const s = lc.state || { steps: [], notes: [] };
-            el.answerRow.remove();
-            el.face.remove();
-            working.removeAttribute('aria-busy');
-            const line = workedLine(s, worked, lc.start);
-            working.classList.add('done');
-            setTurnPanel(working, false);
-            el.now.textContent = line.text;
-            el.count.textContent = '';
-            if (!line.toggle) {
-                const btn = working.querySelector('.turn-live');
-                btn.disabled = true;
-                btn.removeAttribute('aria-expanded');
-                btn.removeAttribute('title');
+            if (working.classList.contains('quiet')) working.remove();
+            else {
+                el.answerRow.remove();
+                el.face.remove();
+                working.removeAttribute('aria-busy');
+                const line = workedLine(s, worked, lc.start);
+                working.classList.add('done');
+                setTurnPanel(working, false);
+                el.now.textContent = line.text;
+                el.count.textContent = '';
+                if (!line.toggle) {
+                    const btn = working.querySelector('.turn-live');
+                    btn.disabled = true;
+                    btn.removeAttribute('aria-expanded');
+                    btn.removeAttribute('title');
+                }
             }
             setComposerBusy(false);
             const thread = document.getElementById('chatsThread');

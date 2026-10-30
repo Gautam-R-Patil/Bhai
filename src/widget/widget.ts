@@ -358,7 +358,9 @@ export function getWidgetScript(wsUrl: string): string {
     return running && msg.type !== "turn_snapshot" ? "ignore" : "start";
   }
 
-  var live = null; // { state, bubble, start, statusAt, frame, tick, stepsShown, done }
+  // A turn quicker than this shows no live line, steps bar or "..." and leaves no "Worked for" line.
+  var SHOW_LIVE_AFTER_MS = 15000;
+  var live = null; // { state, bubble, start, statusAt, frame, tick, stepsShown, quiet, done }
 
   function liveRunning() { return !!live && !live.done; }
 
@@ -367,9 +369,11 @@ export function getWidgetScript(wsUrl: string): string {
     if (!currentAgentMsg) currentAgentMsg = addMessage("...", "agent");
     live = {
       state: { turn: turn, seq: 0, status: null, steps: [], answer: "", attempt: 0 },
-      bubble: currentAgentMsg, start: Date.now(), statusAt: 0, frame: 0, tick: 0, stepsShown: null, shown: "", done: false
+      bubble: currentAgentMsg, start: Date.now(), statusAt: 0, frame: 0, tick: 0, stepsShown: null, shown: "", quiet: true, done: false
     };
     live.tick = setInterval(liveLine, 1000);
+    live.bubble.style.display = "none"; // until the answer's first words, or the line shows
+    statusEl.textContent = "Online";
     stepsBar.hidden = true;
     stepsList.hidden = true;
     stepsToggle.setAttribute("aria-expanded", "false");
@@ -378,11 +382,17 @@ export function getWidgetScript(wsUrl: string): string {
     liveLine();
   }
 
-  // The live line in the header: "Searching the web · step 2 · 14s".
+  // The live line in the header: "Searching the web · step 2 · 14s", once the turn runs long.
   function liveLine() {
     if (!liveRunning()) return;
     var st = live.state.status;
     var secs = Math.floor(st ? st.elapsed + (Date.now() - live.statusAt) / 1000 : (Date.now() - live.start) / 1000);
+    if (live.quiet) {
+      if (secs * 1000 < SHOW_LIVE_AFTER_MS) return;
+      live.quiet = false; // the turn ran long: the line, steps and "..." show with all they have
+      live.stepsShown = null;
+      liveRender();
+    }
     var text = st && st.text ? String(st.text).substring(0, 40) : "Thinking...";
     statusEl.textContent = (text || "Thinking...") + " · " + (st && st.step > 0 ? "step " + st.step + " · " : "") + secs + "s";
   }
@@ -396,9 +406,10 @@ export function getWidgetScript(wsUrl: string): string {
       live.shown = s.answer;
       live.bubble.innerHTML = s.answer ? renderMarkdown(s.answer) : "...";
     }
+    live.bubble.style.display = live.quiet && !s.answer ? "none" : "";
     if (s.steps !== live.stepsShown) {
       live.stepsShown = s.steps;
-      stepsBar.hidden = !s.steps.length;
+      stepsBar.hidden = live.quiet || !s.steps.length;
       stepsList.textContent = "";
       s.steps.forEach(function(x) {
         var row = document.createElement("div");
@@ -416,8 +427,10 @@ export function getWidgetScript(wsUrl: string): string {
     cancelAnimationFrame(live.frame);
     clearInterval(live.tick);
     live.done = true;
+    live.bubble.style.display = "";
     var n = live.state.steps.length;
-    if (worked) { // the turn's own reply: "Worked for…" stays, a toggle only when there are steps
+    if (live.quiet) stepsBar.hidden = true; // a quick turn: just its reply
+    else if (worked) { // the turn's own reply: "Worked for…" stays, a toggle only when there are steps
       stepsBar.hidden = false;
       stepsToggle.textContent = "Worked for " + worked.secs + "s" + (worked.steps ? " · " + worked.steps + (worked.steps === 1 ? " step" : " steps") : "");
       stepsToggle.disabled = !n;

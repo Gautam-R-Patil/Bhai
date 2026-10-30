@@ -167,6 +167,9 @@
     .turn.done .face, .turn.done .turn-bar { display: none; }
     .turn.done .turn-live { font-size: 12.5px; }
     .turn.done .turn-now { animation: none; background: none; color: var(--ink-3); }
+    /* A quick turn (under SHOW_LIVE_AFTER_MS in sidepanel.js) shows only its answer */
+    .turn.quiet > :not(.turn-answer) { display: none; }
+    .turn.quiet .turn-answer { margin-top: 0; }
     /* Bhai's face, alive: bobs, blinks, glances, with a soft ripple while he works */
     .face { position: relative; flex: none; width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #f5b16b, #c2570f); animation: faceBob 1.6s ease-in-out infinite; }
     .face::before, .face::after { content: ""; position: absolute; top: 8px; width: 3px; height: 4px; border-radius: 2px; background: #fff; animation: faceBlink 3.2s infinite, faceLook 2.4s ease-in-out infinite; }

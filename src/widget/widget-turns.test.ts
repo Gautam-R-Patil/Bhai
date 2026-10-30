@@ -2,7 +2,7 @@
 // The web widget shows a turn live (status line, steps, the answer typing into its bubble).
 // The served script runs against a minimal DOM stub; same contract as the overlay's turnView.
 import vm from "node:vm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getWidgetScript } from "./widget.js";
 
 type Fake = {
@@ -116,7 +116,7 @@ class FakeWS {
 let win: Fake;
 let frames: Array<() => void>;
 
-function boot() {
+function boot(timers: Record<string, unknown> = {}) {
     const created: Fake[] = [];
     frames = [];
     const doc = {
@@ -146,6 +146,7 @@ function boot() {
         clearInterval: () => {},
         requestAnimationFrame: (f: () => void) => frames.push(f),
         cancelAnimationFrame: () => {},
+        ...timers,
     };
     sandbox.window = sandbox;
     vm.runInNewContext(getWidgetScript("ws://x"), sandbox);
@@ -188,6 +189,7 @@ describe("widget live turns", () => {
 
     it("response replaces streamed text", () => {
         send({ type: "thinking", turn: "t1" });
+        send({ type: "turn_status", turn: "t1", text: "Working", step: 0, elapsed: 20 }); // a long turn
         send({ type: "turn_step", turn: "t1", seq: 1, id: "a", text: "Open page", state: "done" });
         send({ type: "turn_step", turn: "t1", seq: 2, id: "b", text: "Read it", state: "done" });
         send({ type: "turn_answer", turn: "t1", seq: 3, attempt: 0, text: "Streamed [OTP_1]" });
@@ -203,6 +205,7 @@ describe("widget live turns", () => {
 
     it("one step reads 1 step", () => {
         send({ type: "thinking", turn: "t1" });
+        send({ type: "turn_status", turn: "t1", text: "Working", step: 0, elapsed: 20 });
         send({ type: "turn_step", turn: "t1", seq: 1, id: "a", text: "Open page", state: "done" });
         send({ type: "response", turn: "t1", text: "Done", worked: { secs: 3, steps: 1 } });
         expect(win.querySelector("#atlas-widget-steps-toggle").textContent).toBe("Worked for 3s · 1 step");
@@ -210,6 +213,7 @@ describe("widget live turns", () => {
 
     it("a plain or stopped answer keeps its Worked for line, with nothing to open", () => {
         send({ type: "thinking", turn: "t1" });
+        send({ type: "turn_status", turn: "t1", text: "Working", step: 0, elapsed: 20 });
         send({ type: "turn_answer", turn: "t1", seq: 1, attempt: 0, text: "Hi th" });
         flush();
         send({ type: "response", turn: "t1", text: "Hi th\n\nStopped.", stopped: true, worked: { secs: 4, steps: 0 } });
@@ -219,6 +223,7 @@ describe("widget live turns", () => {
         expect(toggle.disabled).toBe(true);
         // The next turn with steps can open its list again.
         send({ type: "thinking", turn: "t2" });
+        send({ type: "turn_status", turn: "t2", text: "Working", step: 0, elapsed: 20 });
         send({ type: "turn_step", turn: "t2", seq: 1, id: "a", text: "Open page", state: "done" });
         send({ type: "response", turn: "t2", text: "Done", worked: { secs: 3, steps: 1 } });
         expect(toggle.textContent).toBe("Worked for 3s · 1 step");
@@ -227,7 +232,7 @@ describe("widget live turns", () => {
 
     it("shows the live line with its step count and the steps as text only", () => {
         send({ type: "thinking", turn: "t1" });
-        send({ type: "turn_status", turn: "t1", seq: 1, text: "Searching the web", step: 2, elapsed: 7 });
+        send({ type: "turn_status", turn: "t1", seq: 1, text: "Searching the web", step: 2, elapsed: 17 });
         send({
             type: "turn_step",
             turn: "t1",
@@ -292,5 +297,80 @@ describe("widget live turns", () => {
         send({ type: "response", text: "plain" });
         expect(agents()).toHaveLength(1);
         expect(agents()[0].innerHTML).toBe("plain");
+    });
+});
+
+describe("widget live line waits for a long turn", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+    const bar = () => win.querySelector("#atlas-widget-steps-bar");
+    const timed = () => {
+        vi.useFakeTimers();
+        boot({ Date, setInterval, clearInterval });
+    };
+
+    it("a quick turn shows no live line, no dots and no Worked for line", () => {
+        timed();
+        send({ type: "thinking", turn: "t1" });
+        send({ type: "turn_status", turn: "t1", seq: 1, text: "Thinking", step: 0, elapsed: 0 });
+        flush();
+        expect(status().textContent).toBe("Online");
+        expect(agents()[0].style.display).toBe("none"); // no "..." bubble
+        send({ type: "turn_answer", turn: "t1", seq: 2, attempt: 0, text: "Hi" });
+        flush();
+        expect(agents()[0].style.display).toBe(""); // the answer streams at once
+        vi.advanceTimersByTime(2000);
+        expect(status().textContent).toBe("Online");
+        send({ type: "response", turn: "t1", text: "Hi there", worked: { secs: 2, steps: 0 } });
+        expect(agents()[0].innerHTML).toBe("Hi there");
+        expect(bar().hidden).toBe(true);
+    });
+
+    it("a long turn shows its line and steps at 15 s, then its Worked for line", () => {
+        timed();
+        send({ type: "thinking", turn: "t1" });
+        send({ type: "turn_status", turn: "t1", seq: 1, text: "Searching the web", step: 1, elapsed: 0 });
+        send({ type: "turn_step", turn: "t1", seq: 2, id: "a", text: "Search", state: "running" });
+        flush();
+        vi.advanceTimersByTime(14_000);
+        expect(status().textContent).toBe("Online");
+        expect(bar().hidden).toBe(true);
+        vi.advanceTimersByTime(1000);
+        expect(status().textContent).toBe("Searching the web · step 1 · 15s");
+        expect(bar().hidden).toBe(false);
+        expect(win.querySelector("#atlas-widget-steps").children.at(-1)?.textContent).toBe("Search");
+        expect(agents()[0].style.display).toBe("");
+        send({ type: "response", turn: "t1", text: "Found it", worked: { secs: 18, steps: 1 } });
+        expect(win.querySelector("#atlas-widget-steps-toggle").textContent).toBe("Worked for 18s · 1 step");
+    });
+
+    it("a rejoin snapshot past 15 s shows the line at once", () => {
+        timed();
+        send({
+            type: "turn_snapshot",
+            turn: "t1",
+            seq: 5,
+            status: { text: "Comparing flights", step: 3, elapsed: 21 },
+            steps: [{ id: 1, text: "Search flights", state: "done" }],
+            answer: "",
+        });
+        expect(status().textContent).toBe("Comparing flights · step 3 · 21s");
+        expect(bar().hidden).toBe(false);
+    });
+
+    it("a rejoin snapshot under 15 s shows the line when the turn reaches 15 s", () => {
+        timed();
+        send({
+            type: "turn_snapshot",
+            turn: "t1",
+            seq: 5,
+            status: { text: "Reading", step: 1, elapsed: 10 },
+            steps: [],
+            answer: "",
+        });
+        expect(status().textContent).toBe("Online");
+        vi.advanceTimersByTime(5000);
+        expect(status().textContent).toBe("Reading · step 1 · 15s");
     });
 });

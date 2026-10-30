@@ -6108,6 +6108,9 @@ body.hig .turn-caret { display: inline-block; width: 2px; height: 1em; margin-le
 body.hig .chats-turn.done .turn-bar { display: none; }
 body.hig .chats-turn.done .turn-live { font-size: 12.5px; }
 body.hig .chats-turn.done .turn-now { animation: none; background: none; color: var(--text-muted); }
+/* A quick turn (under SHOW_LIVE_AFTER_MS in panel.html) shows only its answer */
+.chats-turn.quiet > :not(.turn-answer) { display: none; }
+body.hig .chats-turn.quiet .turn-answer { margin-top: 0; }
 @keyframes turnPulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
 @keyframes turnShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @keyframes turnSlide { from { margin-left: -40%; } to { margin-left: 100%; } }

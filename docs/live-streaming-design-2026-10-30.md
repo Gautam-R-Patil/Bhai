@@ -15,6 +15,7 @@ All of these came from the owner in the brainstorm (mockups in `.superpowers/bra
 3. **The answer types itself in** word by word under the live line, with a blinking caret, instead of landing whole.
 4. **Animation: Bhai's face, alive** (option C). Bhai's character visibly works (bobs, blinks, glances, a soft ripple) so you can tell from the corner of your eye that something is happening. Minimal, but good, "like Gemini".
 5. **All surfaces:** the desktop overlay, the desktop app's in-app chat (Chats tab, added by the owner during the build), the Chrome extension side panel, and the web widget.
+6. **Quick turns stay quiet** (owner, 2026-10-31): the live line and every working animation show only once a turn has run 15 s (`SHOW_LIVE_AFTER_MS` per surface; a rejoin snapshot already past it shows at once). A quicker turn shows just its streaming answer, with no "Worked for" line.
 
 ## 3. Goals, non-goals, anti-goals
 
@@ -119,7 +120,7 @@ Every `answer` and `thought` delta passes through one streaming filter **in the 
 ### 4.7 Surfaces
 
 **Desktop overlay (`src/overlay/overlay.html`)**
-- During a turn: reply box visible with the live line (dot, shimmering text, `step N · Ns`, chevron) and the thin moving bar; panel closed by default; panel open/closed state remembered (my call) in `localStorage`.
+- During a turn that has run 15 s (§2.6): reply box visible with the live line (dot, shimmering text, `step N · Ns`, chevron) and the thin moving bar; panel closed by default; panel open/closed state remembered (my call) in `localStorage`.
 - Answer: append to an accumulator, re-render with `renderMd` at most once per animation frame (it's pure and safe to call repeatedly). Call `replyArriving()` **once** per turn (it isn't idempotent). Don't re-run the bubble spring, input clear, `waiting=false` or quick-action rebuild per delta; those run on the final `response`.
 - Partial markdown: avoid ugly flips (e.g. don't render an unclosed code fence as plain text; hold it as a code block until closed). Builder's call how.
 - `answer_reset`: clear the streamed answer back to the live line (no history entry).

@@ -337,19 +337,31 @@ function renderChat(chat) {
 }
 
 let lastProgress = 0;
+// A turn quicker than this shows no working row or live line and leaves no "Worked for" line.
+const SHOW_LIVE_AFTER_MS = 15000;
+let busySince = 0;
+let busyTimer = 0;
 const cleanProgress = (t) => (t || '')
   .replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '')
   .replace(/^step\s+\d+\s*·\s*/i, '')
   .replace(/\s*·\s*\d+\s*s$/i, '')
   .trim();
 function setBusy(on, text) {
+  if (on && !busy) busySince = Date.now();
   busy = on;
   lastProgress = Date.now();
   sendBtn.classList.toggle('busy', on);
   sendBtn.title = on ? 'Stop' : 'Send';
   sendBtn.setAttribute('aria-label', sendBtn.title);
   let row = $('workingRow');
+  clearTimeout(busyTimer);
   if (!on || liveRunning()) { row?.remove(); updateSendState(); return; } // a live turn has its own line
+  const wait = SHOW_LIVE_AFTER_MS - (Date.now() - busySince);
+  if (!row && wait > 0) { // a quick reply needs no "Thinking…" row
+    busyTimer = setTimeout(() => { if (busy) setBusy(true, text); }, wait);
+    updateSendState();
+    return;
+  }
   if (!row) {
     row = document.createElement('div');
     row.id = 'workingRow';
@@ -386,7 +398,7 @@ function liveStart(state, start, text) {
   if (live && !live.done) { cancelAnimationFrame(live.frame); clearInterval(live.tick); live.root.remove(); }
   $('workingRow')?.remove();
   const root = document.createElement('div');
-  root.className = 'msg turn';
+  root.className = 'msg turn quiet';
   root.id = 'liveTurn';
   root.setAttribute('aria-busy', 'true');
   root.innerHTML = '<button type="button" class="turn-live" aria-expanded="false" title="Show what Bhai is doing">'
@@ -426,6 +438,8 @@ function workedLine(s, worked, start) {
 
 function liveCount() {
   if (!liveRunning()) return;
+  // The turn ran long (or was already long when this panel opened): its line shows with all it has.
+  if (Date.now() - live.start >= SHOW_LIVE_AFTER_MS) live.root.classList.remove('quiet');
   const step = live.state.status?.step || 0;
   live.el.count.textContent = `${step > 0 ? `step ${step} · ` : ''}${Math.max(0, Math.floor((Date.now() - live.start) / 1000))}s`;
 }
@@ -480,6 +494,7 @@ function onTurnUpdate(m) {
 
 // The turn ended: the live line becomes "Worked for {N}s · {K} steps" (which still opens the
 // panel; just "Worked for {N}s", not a toggle, when there's nothing behind it). The reply lands under it.
+// A quick turn whose line never showed leaves just the reply.
 function liveFinish(worked) {
   if (!liveRunning()) return;
   renderLive();
@@ -490,6 +505,7 @@ function liveFinish(worked) {
   root.removeAttribute('aria-busy');
   root.querySelector('.turn-answer').remove();
   typedIn = !!state.answer;
+  if (root.classList.contains('quiet')) return root.remove();
   const line = workedLine(state, worked, live.start);
   root.classList.add('done');
   setPanelOpen(root, false);
