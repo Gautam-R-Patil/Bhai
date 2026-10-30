@@ -741,6 +741,8 @@ export interface AgentResponse {
     memoryUndo?: { id: number; at: number };
     /** The filtered answer streamed so far, when the turn was stopped (onTurnEvent turns only). */
     partialText?: string;
+    /** The owner's Stop ended this turn (a Stop that lands after the answer leaves it unset). */
+    stopped?: boolean;
 }
 
 export interface ChannelContext {
@@ -2117,6 +2119,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         return {
             text: `✅ Task stopped. (${stats.creditsUsed} credits used)`,
             toolCalls: totalToolCalls,
+            stopped: true,
             ...(partialText && { partialText }),
         };
     };

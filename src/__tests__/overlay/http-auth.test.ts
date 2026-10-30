@@ -219,7 +219,7 @@ describe("F3: WS owner-distinguishing", () => {
             seenSignal = args[4] as AbortSignal;
             // A long turn that only ends when aborted.
             return new Promise((resolve) =>
-                seenSignal?.addEventListener("abort", () => resolve({ text: "✅ Task stopped.", toolCalls: 0 })),
+                seenSignal?.addEventListener("abort", () => resolve({ text: "✅ Task stopped.", toolCalls: 0, stopped: true })),
             );
         }) as never);
         const ws = await connectWS(`localToken=${localToken}`);

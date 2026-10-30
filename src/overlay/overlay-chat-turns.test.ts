@@ -159,10 +159,24 @@ it("stop sends the partial answer plus Stopped.", async () => {
     emit({ type: "answer", attempt: 0, text: "Here is the par" });
     await bar.next("turn_answer");
     c.signal.addEventListener("abort", () =>
-        c.resolve({ text: "✅ Task stopped. (1 credits used)", toolCalls: 0, partialText: "Here is the par" }),
+        c.resolve({ text: "✅ Task stopped. (1 credits used)", toolCalls: 0, partialText: "Here is the par", stopped: true }),
     );
     bar.send({ type: "stop" });
     const res = await bar.next("response");
     expect(res).toMatchObject({ text: "Here is the par\n\nStopped.", stopped: true });
+    bar.ws.close();
+});
+
+it("stop after the answer finished still delivers the answer", async () => {
+    const { bar, c, emit } = await startTurn("bar-5");
+    emit({ type: "answer", attempt: 0, text: "All done: 3 unread" });
+    emit({ type: "end" });
+    await bar.next("turn_answer");
+    // Stop lands during post-answer work; the agent already has its answer and returns it.
+    c.signal.addEventListener("abort", () => c.resolve({ text: "All done: 3 unread", toolCalls: 0 }));
+    bar.send({ type: "stop" });
+    const res = await bar.next("response");
+    expect(res.text).toBe("All done: 3 unread");
+    expect(res.stopped).toBeUndefined();
     bar.ws.close();
 });

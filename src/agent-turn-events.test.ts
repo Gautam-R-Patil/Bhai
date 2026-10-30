@@ -179,6 +179,7 @@ describe("turn events", () => {
         const f = new AnswerStreamFilter({ channel: "overlay" });
         const expected = deltas.map((d) => f.push((d as { text: string }).text)).join("") + f.flush();
         expect(res.partialText).toBe(expected);
+        expect(res.stopped).toBe(true);
         const last = getConversationHistory().at(-1);
         expect(last).toEqual({ role: "assistant", content: `${expected} [stopped]` });
         expect(events.some((e) => e.type === "answer_reset")).toBe(false);

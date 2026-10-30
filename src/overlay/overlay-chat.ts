@@ -1076,7 +1076,9 @@ async function runTurn(
     turnAborts.set(ws, ac);
     if (wsIsOwner(ws)) ownerTurn = live;
     try {
-        return { result: await run(ac.signal), stopped: ac.signal.aborted };
+        // The agent says whether Stop ended the turn: a late Stop still delivers the finished answer.
+        const result = await run(ac.signal);
+        return { result, stopped: !!result.stopped };
     } finally {
         if (turnAborts.get(ws) === ac) turnAborts.delete(ws);
         if (ownerTurn === live) ownerTurn = null;
