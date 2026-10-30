@@ -102,7 +102,9 @@ What the config actually does today (`desktop/package.json` → `build.mac`):
 - `build:mac` (local dev DMG) additionally runs `build/resign-local.sh`, which
   re-signs with a stable self-made "Bhai Local Signing" identity if present
   (`scripts/make-signing-cert.sh`) so macOS keeps Screen Recording /
-  Accessibility grants across updates. `build:mac:release` does NOT run it.
+  Accessibility grants across updates. Every mac build now runs it from the
+  `afterSign` hook (`build/after-sign.js`), but only while `mac.identity` is
+  `"-"`: a Developer ID build keeps its signature and notarization.
 - `desktop/build/check-signing.js` documents the env vars for real signing
   (`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
   `APPLE_TEAM_ID`; `SKIP_SIGNING_CHECK=true` to skip). Windows uses

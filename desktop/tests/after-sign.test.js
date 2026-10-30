@@ -7,10 +7,10 @@ import { describe, expect, it } from "vitest";
 
 const afterSign = require("../build/after-sign.js").default;
 
-const context = (platform) => ({
+const context = (platform, mac = { identity: "-" }) => ({
     electronPlatformName: platform,
     appOutDir: "/out/mac-arm64",
-    packager: { appInfo: { productFilename: "Bhai" } },
+    packager: { appInfo: { productFilename: "Bhai" }, platformSpecificBuildOptions: mac },
 });
 
 describe("afterSign", () => {
@@ -22,6 +22,15 @@ describe("afterSign", () => {
         expect(cmd).toBe("bash");
         expect(args).toEqual([path.join(__dirname, "..", "build", "resign-local.sh"), "/out/mac-arm64/Bhai.app"]);
         expect(opts.cwd).toBe(path.join(__dirname, ".."));
+    });
+
+    it("leaves a Developer ID (or keychain-picked) signature and its notarization alone", async () => {
+        const calls = [];
+        const record = (...args) => calls.push(args);
+        await afterSign(context("darwin", { identity: "Developer ID Application: XAGI Labs (TEAMID)", notarize: true }), record);
+        await afterSign(context("darwin", {}), record); // electron-builder picks the keychain's identity
+        await afterSign(context("darwin", { identity: null }), record); // not signed at all
+        expect(calls).toHaveLength(0);
     });
 
     it("does nothing on other platforms", async () => {
