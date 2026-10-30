@@ -5,7 +5,7 @@
 // Also provides overlay bridge: context menus, page capture, and
 // forwarding user messages/selections/page context to the Bhai overlay chat.
 
-import { turnRoute, turnView } from "./turn-view.js";
+import { emptyView, isAwaiting, restorePanelTurn, turnRoute, turnView } from "./turn-view.js";
 
 // ── State ────────────────────────────────────
 
@@ -45,13 +45,24 @@ function addChat(role, text, meta = null) {
   chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
 }
 
-// The side panel's running turn, in memory only (thinking and steps never reach storage).
-// Only a turn this extension started shows here: after a send, the bot's `thinking` names the
-// turn. The server's one-owner fallback can deliver another surface's turn to this socket.
-let awaitingTurn = false; // sent something; its turn (or its reply) hasn't come yet
+// The side panel's running turn. Only a turn this extension started shows here: after a send,
+// the bot's `thinking` names the turn. The server's one-owner fallback can deliver another
+// surface's turn to this socket. Which turn is ours (never its thinking or steps) is kept in
+// chrome.storage.session, memory-only, so a worker restart mid-turn still takes its reply.
+let awaitingSince = 0; // when we sent something whose turn hasn't started yet (0 = nothing)
 let ownTurn = null;
 let draft = null; // turnView state while ownTurn runs
 let draftStart = 0;
+const awaitingTurn = () => isAwaiting(awaitingSince, Date.now());
+function savePanelTurn() {
+  chrome.storage.session?.set({ panelTurn: { awaitingSince, ownTurn, draftStart } }).catch(() => {});
+}
+const turnReady = (chrome.storage.session?.get("panelTurn") ?? Promise.resolve({}))
+  .then((r) => {
+    if (awaitingSince || ownTurn) return; // something newer already happened in this worker
+    ({ awaitingSince, ownTurn, draft, draftStart } = restorePanelTurn(r.panelTurn, Date.now()));
+  })
+  .catch(() => {});
 function broadcastTurn(extra = {}) {
   chrome.runtime.sendMessage({ type: "turn_update", state: draft, start: draftStart, ...extra }).catch(() => { /* panel closed */ });
 }
@@ -209,23 +220,29 @@ function connectOverlay() {
   };
 
   overlayWs.onmessage = (event) => {
+    let msg;
     try {
-      handleOverlayMessage(JSON.parse(event.data));
+      msg = JSON.parse(event.data);
     } catch (err) {
       console.error("[ATLAS Bridge] Invalid overlay message:", err);
+      return;
     }
+    // After the saved turn is back, in arrival order.
+    turnReady.then(() => handleOverlayMessage(msg));
   };
 
   overlayWs.onclose = (event) => {
     console.log(`[ATLAS Bridge] Overlay disconnected: code=${event.code} reason=${event.reason}`);
     // A turn this panel was waiting on can't finish here any more: its events went with the socket.
-    if (draft || awaitingTurn) {
+    turnReady.then(() => {
+      if (!draft && !awaitingTurn()) return;
       if (draft) broadcastTurn({ done: { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length } });
       draft = null;
       ownTurn = null;
-      awaitingTurn = false;
+      awaitingSince = 0;
+      savePanelTurn();
       addChat("error", "Lost the connection mid-answer. Ask me again.");
-    }
+    });
     // 4001 = rejected localToken; re-discover to refresh it rather than loop.
     if (event.code === 4001) {
       overlayToken = "";
@@ -364,7 +381,8 @@ function sendToAtlas(text, meta = {}, image = null) {
   if (image) payload.image = image;
 
   overlayWs.send(JSON.stringify(payload));
-  awaitingTurn = true;
+  awaitingSince = Date.now();
+  savePanelTurn();
   console.log(`[ATLAS Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
   return true;
 }
@@ -525,11 +543,12 @@ function handleOverlayMessage(msg) {
 
   // A turn started: ours only if we just sent something.
   if (msg.type === "thinking" && msg.turn) {
-    if (!awaitingTurn) return;
-    awaitingTurn = false;
+    if (!awaitingTurn()) return;
+    awaitingSince = 0;
     ownTurn = msg.turn;
-    draft = { turn: msg.turn, seq: 0, status: null, steps: [], notes: [], answer: "", attempt: 0, open: false };
+    draft = emptyView(msg.turn);
     draftStart = Date.now();
+    savePanelTurn();
     broadcastTurn({ text: msg.text || "" });
     return;
   }
@@ -543,14 +562,15 @@ function handleOverlayMessage(msg) {
 
   if (msg.type === "response" || msg.type === "error") {
     // Not ours: the reply to another surface's turn, or anything we never asked for.
-    if (msg.turn ? msg.turn !== ownTurn : !draft && !awaitingTurn) return;
+    if (msg.turn ? msg.turn !== ownTurn : !draft && !awaitingTurn()) return;
     if (turnRoute(ownTurn, !!draft, msg) === "finish") {
       const worked = msg.worked || { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length };
       broadcastTurn({ done: worked });
       draft = null;
       ownTurn = null; // a late duplicate reply can't land twice
     }
-    awaitingTurn = false;
+    awaitingSince = 0;
+    savePanelTurn();
   }
 
   if (msg.type === "response") {
@@ -576,7 +596,7 @@ function handleOverlayMessage(msg) {
 
   if (msg.type === "progress" || msg.type === "contract" || msg.type === "thinking" || msg.type === "thinking_content") {
     // Research running in the background, or another surface's turn: not this panel's work.
-    if (msg.background || (!draft && !awaitingTurn)) return;
+    if (msg.background || (!draft && !awaitingTurn())) return;
     chrome.runtime.sendMessage({
       type: "atlas_progress",
       text: msg.text || "",
@@ -2311,7 +2331,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === "get_chat") {
-    chatReady.then(() => sendResponse({ chat: _chat, turn: draft && { state: draft, start: draftStart }, waiting: awaitingTurn }));
+    Promise.all([chatReady, turnReady]).then(() =>
+      sendResponse({ chat: _chat, turn: draft && { state: draft, start: draftStart }, waiting: awaitingTurn() }),
+    );
     return true;
   }
   if (msg.type === "clear_chat") {
@@ -2353,7 +2375,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
     if (ok) {
       overlayWs.send(JSON.stringify({ type: "quick_action", text: msg.action }));
-      awaitingTurn = true;
+      awaitingSince = Date.now();
+      savePanelTurn();
       if (!msg.action.startsWith("feedback:")) addChat("you", msg.label || msg.action);
     }
     sendResponse({ ok });

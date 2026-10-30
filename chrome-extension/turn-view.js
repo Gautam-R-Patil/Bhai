@@ -66,3 +66,31 @@ export function turnRoute(liveTurn, running, msg) {
     if (liveTurn !== null && msg.turn === liveTurn) return "apply";
     return running && msg.type !== "turn_snapshot" ? "ignore" : "start";
 }
+
+// The side panel's own turn is kept in chrome.storage.session ({awaitingSince, ownTurn,
+// draftStart}) so an MV3 worker restart mid-turn doesn't drop its reply. A send whose
+// `thinking` never came stops counting after AWAIT_TURN_MS, so a later reconnect can't
+// mistake it for a turn cut off mid-answer.
+export const AWAIT_TURN_MS = 60_000;
+
+export function isAwaiting(since, now) {
+    return since > 0 && now - since < AWAIT_TURN_MS;
+}
+
+export function emptyView(turn) {
+    return { turn, seq: 0, status: null, steps: [], notes: [], answer: "", attempt: 0, open: false };
+}
+
+// The saved turn back as live state: a fresh view of the running turn (its snapshot or next
+// events fill it in), or a send still waiting for its turn.
+export function restorePanelTurn(saved, now) {
+    const s = saved && typeof saved === "object" ? saved : {};
+    const ownTurn = typeof s.ownTurn === "string" && s.ownTurn ? s.ownTurn : null;
+    const since = typeof s.awaitingSince === "number" ? s.awaitingSince : 0;
+    return {
+        awaitingSince: isAwaiting(since, now) ? since : 0,
+        ownTurn,
+        draft: ownTurn ? emptyView(ownTurn) : null,
+        draftStart: ownTurn ? (typeof s.draftStart === "number" ? s.draftStart : now) : 0,
+    };
+}

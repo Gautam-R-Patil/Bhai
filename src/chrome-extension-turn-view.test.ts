@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 // A variable specifier: the extension's plain JS stays outside the TS project.
 const modUrl = new URL("../chrome-extension/turn-view.js", import.meta.url).href;
-const { turnView, turnRoute } = await import(modUrl);
+const { turnView, turnRoute, isAwaiting, restorePanelTurn, AWAIT_TURN_MS } = await import(modUrl);
 // The side panel's own render helpers (a classic script), pulled out the way the overlay's are.
 const sidepanel = fs.readFileSync(new URL("../chrome-extension/sidepanel.js", import.meta.url), "utf8");
 const panelFn = (name: string) =>
@@ -171,5 +171,37 @@ describe("the Worked for line", () => {
         });
         // No count from the bot: timed from the turn's start.
         expect(panel.workedLine(s(0), null, Date.now() - 5000).text).toBe("Worked for 5s");
+    });
+});
+
+describe("the panel's own turn across a worker restart", () => {
+    const now = 1_000_000;
+
+    it("a send waits for its thinking only so long", () => {
+        expect(AWAIT_TURN_MS).toBe(60_000);
+        expect(isAwaiting(0, now)).toBe(false);
+        expect(isAwaiting(now - 5_000, now)).toBe(true);
+        expect(isAwaiting(now - 61_000, now)).toBe(false);
+    });
+
+    it("restores the running turn as a fresh view, and a fresh wait", () => {
+        expect(restorePanelTurn({ awaitingSince: 0, ownTurn: "t1", draftStart: now - 9_000 }, now)).toEqual({
+            awaitingSince: 0,
+            ownTurn: "t1",
+            draftStart: now - 9_000,
+            draft: { turn: "t1", seq: 0, status: null, steps: [], notes: [], answer: "", attempt: 0, open: false },
+        });
+        expect(restorePanelTurn({ awaitingSince: now - 5_000, ownTurn: null, draftStart: 0 }, now)).toMatchObject({
+            awaitingSince: now - 5_000,
+            ownTurn: null,
+            draft: null,
+        });
+    });
+
+    it("drops a stale wait and anything malformed", () => {
+        const empty = { awaitingSince: 0, ownTurn: null, draft: null, draftStart: 0 };
+        expect(restorePanelTurn({ awaitingSince: now - 61_000, ownTurn: null }, now)).toEqual(empty);
+        for (const bad of [undefined, null, "x", { ownTurn: 5, awaitingSince: "1" }])
+            expect(restorePanelTurn(bad, now)).toEqual(empty);
     });
 });
