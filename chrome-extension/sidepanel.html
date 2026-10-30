@@ -20,8 +20,11 @@
       --accent-ink: #ffffff;
       --ok: #2f8a4c;
       --bad: #c2453b;
-      --shadow: 0 1px 2px rgba(74, 42, 16, .06), 0 6px 20px rgba(74, 42, 16, .08);
-      --r-lg: 14px;
+      --shadow: 0 1px 2px rgba(74, 42, 16, .04), 0 4px 16px rgba(74, 42, 16, .04);
+      --tag-draw: #fbf3db; --tag-draw-ink: #8a5d00;
+      --tag-sel: #e6f0f8; --tag-sel-ink: #245d86;
+      --tag-tab: #edf3ec; --tag-tab-ink: #346538;
+      --r-lg: 12px;
       --r-md: 9px;
       --r-sm: 6px;
     }
@@ -38,7 +41,10 @@
         --accent: #e07b42;
         --ok: #5bc27c;
         --bad: #ec6f63;
-        --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
+        --shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 6px 18px rgba(0, 0, 0, .2);
+        --tag-draw: #3a3017; --tag-draw-ink: #e8c46a;
+        --tag-sel: #1d2c38; --tag-sel-ink: #8cc0e6;
+        --tag-tab: #1f2c20; --tag-tab-ink: #93c79a;
       }
     }
 
@@ -57,9 +63,8 @@
     svg { flex: none; }
 
     /* ── Header ─────────────────────────────── */
-    .top { display: flex; align-items: center; gap: 9px; padding: 11px 12px 11px 14px; }
-    .top img { width: 22px; height: 22px; border-radius: 6px; }
-    .name { font-weight: 600; letter-spacing: -.01em; }
+    .top { display: flex; align-items: center; gap: 8px; padding: 6px 10px 2px 16px; min-height: 40px; }
+    .status-text { font-size: 12px; color: var(--ink-2); }
     .status { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); transition: background .3s; }
     .status[data-state="on"] { background: var(--ok); }
     .status[data-state="off"] { background: var(--bad); }
@@ -77,8 +82,20 @@
     .attach { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
     .tag { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; font-size: 12px; color: var(--ink-2); padding: 2px 8px 2px 6px; border-radius: var(--r-sm); background: var(--sunk); }
     .tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag.draw { background: var(--tag-draw); color: var(--tag-draw-ink); }
+    .tag.sel { background: var(--tag-sel); color: var(--tag-sel-ink); }
+    .tag.tab { background: var(--tag-tab); color: var(--tag-tab-ink); }
 
-    .bhai { max-width: 100%; word-wrap: break-word; text-wrap: pretty; }
+    .bhai { max-width: 100%; overflow-wrap: anywhere; text-wrap: pretty; }
+    .you .bubble { overflow-wrap: anywhere; }
+    .bhai pre { position: relative; }
+    .code-copy { position: absolute; top: 4px; right: 4px; font: 500 11px/1 -apple-system, sans-serif; color: var(--ink-2); padding: 4px 7px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); opacity: 0; transition: opacity .15s; }
+    .bhai pre:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
+    .bhai .table-wrap { overflow-x: auto; }
+    .bhai table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+    .bhai th, .bhai td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .bhai th { font-weight: 600; color: var(--ink-2); }
+    .thread { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
     .bhai > div > * + * { margin-top: 10px; }
     .bhai h3 { font-size: 14px; font-weight: 600; }
     .bhai ul, .bhai ol { padding-left: 20px; }
@@ -115,8 +132,8 @@
 
     /* ── Welcome ────────────────────────────── */
     .welcome { margin-top: auto; padding: 0 2px 6px; animation: rise .25s ease-out both; }
-    .welcome h1 { font-size: 19px; line-height: 1.3; font-weight: 600; letter-spacing: -.015em; text-wrap: balance; }
-    .welcome h1 b { font-weight: 600; color: var(--accent); }
+    .welcome h1 { font: 500 23px/1.18 ui-serif, "New York", Georgia, serif; letter-spacing: -.02em; text-wrap: balance; }
+    .welcome h1 b { font-weight: 500; color: var(--accent); }
     .welcome p { color: var(--ink-2); margin-top: 4px; }
     .suggest { list-style: none; margin-top: 16px; border-top: 1px solid var(--line); }
     .suggest button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 2px; border-bottom: 1px solid var(--line); text-align: left; color: var(--ink); transition: color .15s, padding .15s; }
@@ -124,6 +141,9 @@
     .suggest button:hover:not(:disabled) { padding-left: 6px; }
     .suggest button:hover:not(:disabled) svg { color: var(--accent); }
     .suggest button:disabled { opacity: .45; cursor: default; }
+    .suggest li { animation: rise .35s cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(var(--i, 0) * 60ms + 80ms); }
+    .shortcut { margin-top: 14px; font-size: 12px; color: var(--ink-3); }
+    kbd { font: 11px/1 ui-monospace, "SF Mono", Menlo, monospace; padding: 2px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--raised); color: var(--ink-2); }
 
     .notice { border-left: 2px solid var(--bad); padding: 2px 0 2px 12px; font-size: 13px; }
     .notice strong { font-weight: 600; display: block; }
@@ -147,12 +167,12 @@
     .tool:active:not(:disabled) { transform: scale(.95); }
     .tool:disabled { opacity: .4; cursor: default; }
     .tool.at { font-weight: 600; font-size: 14px; }
-    .send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); transition: transform .1s, opacity .15s, background .15s; }
-    .send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, black); }
+    .send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--bg); transition: transform .1s, opacity .15s, background .15s; }
+    .send:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 82%, var(--bg)); }
     .send:active:not(:disabled) { transform: scale(.92); }
     .send:disabled { opacity: .35; cursor: default; }
     .send .stop-icon { display: none; }
-    .send.busy { background: var(--ink); color: var(--bg); }
+    .send.busy { background: var(--accent); color: #fff; }
     .send.busy .send-icon { display: none; }
     .send.busy .stop-icon { display: block; }
     .hint { font-size: 12px; color: var(--bad); padding: 0 4px; }
@@ -217,9 +237,8 @@
   </svg>
 
   <header class="top">
-    <img src="icons/icon48.png" alt="">
-    <span class="name">Bhai</span>
     <span class="status" id="status" role="status" title="Connecting…"></span>
+    <span class="status-text" id="statusText"></span>
     <span class="grow"></span>
     <button class="icon-btn" id="btnNew" title="New chat" aria-label="New chat"><svg width="17" height="17"><use href="#i-plus"/></svg></button>
   </header>
@@ -234,6 +253,7 @@
       <h1 id="welcomeTitle">Hey, I'm right here with you.</h1>
       <p>Ask about this page, or tell me what to do in it.</p>
       <ul class="suggest" id="suggest"></ul>
+      <p class="shortcut" id="shortcutHint">Open Bhai from any tab with <kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>B</kbd></p>
     </section>
   </main>
 

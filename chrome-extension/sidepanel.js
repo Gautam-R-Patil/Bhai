@@ -63,7 +63,12 @@ function renderMarkdown(text) {
     for (const block of part.split(/\n{2,}/)) {
       const lines = block.split('\n').filter((l) => l.trim());
       if (!lines.length) continue;
-      if (lines.length === 1 && /^#{1,4}\s+/.test(lines[0])) {
+      if (lines.length >= 2 && lines.every((l) => /^\s*\|.*\|\s*$/.test(l)) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[1])) {
+        const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim()));
+        const head = cells(lines[0]).map((c) => `<th>${c}</th>`).join('');
+        const body = lines.slice(2).map((l) => `<tr>${cells(l).map((c) => `<td>${c}</td>`).join('')}</tr>`).join('');
+        html += `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+      } else if (lines.length === 1 && /^#{1,4}\s+/.test(lines[0])) {
         html += `<h3>${inline(lines[0].replace(/^#{1,4}\s+/, ''))}</h3>`;
       } else if (lines.every((l) => /^\s*[-*•]\s+/.test(l))) {
         html += `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*•]\s+/, ''))}</li>`).join('')}</ul>`;
@@ -81,9 +86,9 @@ function renderMarkdown(text) {
 
 // ── Thread ───────────────────────────────────
 
-function tag(name, text) {
+function tag(name, text, kind) {
   const t = document.createElement('span');
-  t.className = 'tag';
+  t.className = `tag ${kind}`;
   const label = document.createElement('span');
   label.textContent = text;
   t.append(icon(name, 12), label);
@@ -108,10 +113,10 @@ function messageEl(m) {
     el.append(bubble);
     const meta = m.meta || {};
     const tags = [];
-    if (meta.drew) tags.push(tag('pen', 'Your drawing'));
-    else if (meta.shared) tags.push(tag('tab', 'This tab'));
-    if (meta.selection) tags.push(tag('quote', `“${meta.selection}”`));
-    for (const t of meta.tabs || []) tags.push(tag('tab', t));
+    if (meta.drew) tags.push(tag('pen', 'Your drawing', 'draw'));
+    if (meta.pasted) tags.push(tag('image', 'Image', 'draw'));
+    if (meta.selection) tags.push(tag('quote', `“${meta.selection}”`, 'sel'));
+    for (const t of meta.tabs || []) tags.push(tag('tab', t, 'tab'));
     if (tags.length) {
       const row = document.createElement('div');
       row.className = 'attach';
@@ -121,6 +126,17 @@ function messageEl(m) {
   } else if (m.role === 'bhai') {
     const body = document.createElement('div');
     body.innerHTML = renderMarkdown(m.text);
+    for (const pre of body.querySelectorAll('pre')) {
+      const b = document.createElement('button');
+      b.className = 'code-copy';
+      b.textContent = 'Copy';
+      b.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(pre.querySelector('code')?.textContent || '').catch(() => {});
+        b.textContent = 'Copied';
+        setTimeout(() => { b.textContent = 'Copy'; }, 1200);
+      });
+      pre.append(b);
+    }
     const tools = document.createElement('div');
     tools.className = 'reply-tools';
     const copy = document.createElement('button');
@@ -220,15 +236,29 @@ function renderChat(chat) {
   lastChat = chat;
   if (chat.length < rendered) { thread.querySelectorAll('.msg').forEach((el) => el.remove()); rendered = 0; }
   const working = $('workingRow');
-  for (const m of chat.slice(rendered)) thread.insertBefore(messageEl(m), working || null);
+  const arriving = rendered > 0 && chat.length - rendered === 1; // one new message, not the first load
+  let newest = null;
+  for (const m of chat.slice(rendered)) {
+    newest = messageEl(m);
+    thread.insertBefore(newest, working || null);
+  }
   rendered = chat.length;
   const rows = thread.querySelectorAll('.bhai .followups');
   rows.forEach((r, i) => { r.hidden = i !== rows.length - 1 || chat[chat.length - 1]?.role !== 'bhai'; });
   $('welcome').hidden = chat.length > 0;
-  thread.scrollTop = thread.scrollHeight;
+  if (arriving && newest?.classList.contains('bhai') && newest.offsetHeight > thread.clientHeight * 0.6) {
+    thread.scrollTop = newest.offsetTop - 12;
+  } else {
+    thread.scrollTop = thread.scrollHeight;
+  }
 }
 
 let lastProgress = 0;
+const cleanProgress = (t) => (t || '')
+  .replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '')
+  .replace(/^step\s+\d+\s*·\s*/i, '')
+  .replace(/\s*·\s*\d+\s*s$/i, '')
+  .trim();
 function setBusy(on, text) {
   busy = on;
   lastProgress = Date.now();
@@ -244,7 +274,7 @@ function setBusy(on, text) {
     row.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span></span>';
     thread.append(row);
   }
-  row.lastElementChild.textContent = text || 'Thinking…';
+  row.lastElementChild.textContent = cleanProgress(text) || 'Thinking…';
   thread.scrollTop = thread.scrollHeight;
   updateSendState();
 }
@@ -258,6 +288,7 @@ function renderStatus(resp) {
   const dot = $('status');
   dot.dataset.state = canChat ? 'on' : searching ? '' : 'off';
   dot.title = canChat ? 'Connected to Bhai' : searching ? 'Connecting…' : browserOn ? 'Chat is reconnecting…' : "Bhai isn't running";
+  $('statusText').textContent = canChat ? 'Connected' : searching ? 'Connecting…' : browserOn ? 'Reconnecting…' : 'Offline';
   $('offline').hidden = browserOn || searching;
   for (const b of document.querySelectorAll('.suggest button, #btnDraw, #btnAt')) b.disabled = !canChat;
   document.querySelectorAll('.followups button').forEach((b) => { b.disabled = !canChat; });
@@ -405,8 +436,9 @@ function suggestionsFor(tab) {
 function renderSuggestions() {
   const list = $('suggest');
   list.replaceChildren();
-  for (const sgt of suggestionsFor(activeTab)) {
+  for (const [i, sgt] of suggestionsFor(activeTab).entries()) {
     const li = document.createElement('li');
+    li.style.setProperty('--i', i);
     const b = document.createElement('button');
     b.append(icon(sgt.ic, 17), document.createTextNode(sgt.label));
     b.disabled = !canChat;
@@ -700,6 +732,18 @@ chrome.tabs.onUpdated.addListener((id, info) => { if (id === activeTab?.id && (i
 async function refresh() {
   renderStatus(await send({ type: 'get_status' }));
 }
+
+chrome.commands?.getAll?.().then((cmds) => {
+  const keys = cmds?.find((c) => c.name === '_execute_action')?.shortcut || '';
+  const hint = $('shortcutHint');
+  if (!keys) { hint.hidden = true; return; }
+  hint.replaceChildren('Open Bhai from any tab with ');
+  for (const k of keys.includes('+') ? keys.split('+') : [...keys]) {
+    const kbd = document.createElement('kbd');
+    kbd.textContent = k;
+    hint.append(kbd, ' ');
+  }
+}).catch(() => {});
 
 send({ type: 'get_chat' }).then((resp) => renderChat(resp?.chat || []));
 refreshTab();
