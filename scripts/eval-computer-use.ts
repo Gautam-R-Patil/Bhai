@@ -48,7 +48,7 @@ const ALLOWED = new Set([
     "find_files", "open_in_app", "app_manager", "window_manage", "os_smart_click", "os_inspect", "os_click_id",
     "os_type", "os_screenshot", "os_click", "os_visual_verify", "os_keyboard_shortcuts", "os_context",
     "list_directory", "glob", "get_current_time", "bluetooth_control", "wifi_control",
-    "write", "append_file", "compress_files", "file_manage", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
+    "write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
     "browser_navigate", "browser_extract", "browser_extract_article", "browser_scan", "browser_click", "browser_type",
     "browser_scroll", "browser_wait", "browser_back", "browser_close",
 ]);
@@ -60,7 +60,7 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
     if ((name === "wifi_control" || name === "bluetooth_control") && args.action !== "status")
         return JSON.stringify({ error: "only status is allowed in this test" });
     // Writes stay in the sandbox folder; nothing is deleted.
-    if (["write", "append_file", "compress_files", "file_manage"].includes(name)) {
+    if (["write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit"].includes(name)) {
         const paths = JSON.stringify(args).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
         // Resolved as Bhai resolves them (a placeholder home is the real one).
         if (!paths.length || paths.some((p) => !resolveHomePath(p).startsWith(EVAL_DIR)))
@@ -228,6 +228,22 @@ const TASKS: Task[] = [
     { id: "wiki_two_facts", prompt: "Open the Wikipedia page for Ada Lovelace and tell me the year she was born and the year she died",
       check: async (reply, trace) => readPage(trace) && /\b1815\b/.test(reply) && /\b1852\b/.test(reply),
       cleanup: async () => void (await guardedExec("browser_close", {})) },
+    // ── Images, PDFs, archives ──
+    { id: "image_convert", prompt: "Convert photo.png in the BhaiEval folder on my Desktop to a JPG",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); await (await import("sharp")).default({ create: { width: 400, height: 200, channels: 3, background: "#3366ff" } }).png().toFile(join(EVAL_DIR, "photo.png")); },
+      check: async () => readdirSync(EVAL_DIR).some((f) => /\.jpe?g$/i.test(f) && readFileSync(join(EVAL_DIR, f)).subarray(0, 2).equals(Buffer.from([0xff, 0xd8]))) },
+    { id: "image_resize", prompt: "Make photo.png in the BhaiEval folder on my Desktop 100 pixels wide",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); await (await import("sharp")).default({ create: { width: 400, height: 200, channels: 3, background: "#3366ff" } }).png().toFile(join(EVAL_DIR, "photo.png")); },
+      check: async () => { const sharp = (await import("sharp")).default; for (const f of readdirSync(EVAL_DIR)) if (/\.(png|jpe?g)$/i.test(f) && (await sharp(join(EVAL_DIR, f)).metadata()).width === 100) return true; return false; } },
+    { id: "pdf_merge", prompt: "Combine a.pdf and b.pdf in the BhaiEval folder on my Desktop into one PDF called both.pdf",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); const { PDFDocument } = await import("pdf-lib"); for (const [n, k] of [["a.pdf", 2], ["b.pdf", 3]] as const) { const d = await PDFDocument.create(); for (let i = 0; i < k; i++) d.addPage(); writeFileSync(join(EVAL_DIR, n), await d.save()); } },
+      check: async () => { try { const { PDFDocument } = await import("pdf-lib"); return (await PDFDocument.load(readFileSync(join(EVAL_DIR, "both.pdf")))).getPageCount() === 5; } catch { return false; } } },
+    { id: "pdf_pages", prompt: "How many pages does b.pdf in the BhaiEval folder on my Desktop have?",
+      setup: async () => { mkdirSync(EVAL_DIR, { recursive: true }); const { PDFDocument } = await import("pdf-lib"); const d = await PDFDocument.create(); for (let i = 0; i < 3; i++) d.addPage(); writeFileSync(join(EVAL_DIR, "b.pdf"), await d.save()); },
+      check: async (reply) => /\b(3|three)\b/i.test(reply) },
+    { id: "unzip", prompt: "Unzip pack.zip in the BhaiEval folder on my Desktop",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(join(EVAL_DIR, "pack"), { recursive: true }); writeFileSync(join(EVAL_DIR, "pack", "hello.txt"), "hi"); await ex("ditto", ["-c", "-k", "--keepParent", join(EVAL_DIR, "pack"), join(EVAL_DIR, "pack.zip")]); rmSync(join(EVAL_DIR, "pack"), { recursive: true }); },
+      check: async () => { const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : [e.name]); return walk(EVAL_DIR).includes("hello.txt"); } },
     { id: "calc_to_clipboard", prompt: "Use the Calculator app to work out 42 times 3, then copy the result to my clipboard",
       setup: async () => { await as('tell application "Calculator" to quit'); await as('set the clipboard to ""'); await sleep(600); },
       check: async () => /\b126\b/.test((await ex("pbpaste", [])).stdout),

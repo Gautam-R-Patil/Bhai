@@ -466,6 +466,11 @@ export const compressFiles: ToolDefinition = {
             if (action === "zip") {
                 const paths = input.paths as string[];
                 if (!paths || paths.length === 0) return JSON.stringify({ error: "Provide 'paths' to compress." });
+                // "Unzip pack.zip": gpt-4.1-nano zipped it first (pack.zip.zip).
+                if (paths.length === 1 && /\.zip$/i.test(paths[0]))
+                    return JSON.stringify({
+                        error: `${basename(paths[0])} is already a zip. To extract it: action "unzip", archive_path "${paths[0]}".`,
+                    });
 
                 // Verify all paths exist, and none is (or holds) a secret: the archive is
                 // an ordinary file that send_file would happily send.

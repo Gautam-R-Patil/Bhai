@@ -109,7 +109,10 @@ export const listDirectory: ToolDefinition = {
 // overwrites: an existing destination is refused, so nothing is lost.
 
 /** Why a path may not be moved/copied/created, or undefined. */
-function manageRefusal(p: string, source: boolean): string | undefined {
+/** Formats whose bytes differ: a new extension alone doesn't make one into another. */
+const CONVERTIBLE = new Set(["png", "jpg", "jpeg", "heic", "tiff", "tif", "gif", "bmp", "webp", "pdf"]);
+
+export function manageRefusal(p: string, source: boolean): string | undefined {
     if (!isPathAllowed(p)) return getPathBlockedReason(p) ?? `Path not allowed: ${p}`;
     if (isProtectedPath(p)) return `"${p}" is part of Bhai's own code and is write-protected.`;
     const sensitive = source ? isSensitivePath(p) : { denied: false, reason: "" };
@@ -152,6 +155,9 @@ export const fileManage: ToolDefinition = {
             zip: "compress_files",
             unzip: "compress_files",
             delete: "trash_manager (recoverable) or delete_file",
+            merge: "pdf_edit",
+            convert: "image_edit",
+            resize: "image_edit",
         };
         if (elsewhere[action])
             return JSON.stringify({ success: false, error: `file_manage doesn't ${action}: use ${elsewhere[action]}.` });
@@ -194,6 +200,13 @@ export const fileManage: ToolDefinition = {
         // Everything is checked before anything moves.
         for (const [i, src] of paths.entries()) {
             const to = targets[i];
+            // "Convert photo.png to a JPG": gpt-4.1-nano renamed it photo.jpg, PNG bytes inside.
+            const [from, into] = [path.extname(src), path.extname(to)].map((e) => e.slice(1).toLowerCase());
+            if (from !== into && CONVERTIBLE.has(from) && CONVERTIBLE.has(into))
+                return JSON.stringify({
+                    success: false,
+                    error: `Renaming .${from} to .${into} doesn't convert it: use image_edit (action convert) for images.`,
+                });
             if (!fs.existsSync(src)) return JSON.stringify({ success: false, error: `Not found: ${src}` });
             const refused = manageRefusal(src, true) ?? manageRefusal(to, false);
             if (refused) return JSON.stringify({ success: false, error: refused });

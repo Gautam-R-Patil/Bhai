@@ -139,6 +139,7 @@ import {
     trashManager,
 } from "./file-utils.js";
 import { deleteFile, fileManage, listDirectory } from "./files.js";
+import { imageEdit, pdfEdit } from "./media-files.js";
 import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { generateImage } from "./generate-image.js";
 import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
@@ -506,6 +507,8 @@ registry.set(glob.schema.function.name, glob);
 registry.set(listDirectory.schema.function.name, listDirectory);
 registry.set(deleteFile.schema.function.name, deleteFile);
 registry.set(fileManage.schema.function.name, fileManage);
+registry.set(imageEdit.schema.function.name, imageEdit);
+registry.set(pdfEdit.schema.function.name, pdfEdit);
 
 // Plan mode tools
 registry.set(enterPlanModeTool.schema.function.name, enterPlanModeTool);

@@ -61,6 +61,8 @@ vi.mock("./tools/index.js", () => ({
             "trash_manager",
             "file_manage",
             "apple_notes",
+            "image_edit",
+            "pdf_edit",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -102,6 +104,10 @@ const CASES: [string, string][] = [
     ["rename the report file to final report", "file_manage"],
     ["make a new folder called Reports on my desktop", "file_manage"],
     ["Create a note in Apple Notes titled 'Bhai eval note' with the text 'it works'", "apple_notes"],
+    ["convert this heic photo to a jpg", "image_edit"],
+    ["make photo.png 100 pixels wide and resize the image", "image_edit"],
+    ["combine these two pdfs into one", "pdf_edit"],
+    ["how many pages does the report pdf have", "pdf_edit"],
 ];
 
 describe("computer-use routing without the classifier", () => {

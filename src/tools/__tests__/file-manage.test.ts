@@ -71,6 +71,18 @@ describe("file_manage", () => {
     it("points other jobs at their tool", async () => {
         expect((await run({ action: "write", file_path: join(dir, "t.txt") })).error).toMatch(/use write/);
         expect((await run({ action: "zip", paths: [dir] })).error).toMatch(/compress_files/);
+        expect((await run({ action: "merge", paths: [dir] })).error).toMatch(/pdf_edit/);
+    });
+
+    // From the media eval: "convert photo.png to a JPG" done as a rename.
+    it("won't pass a rename off as a conversion", async () => {
+        writeFileSync(join(dir, "pic.png"), "png bytes");
+        const r = await run({ action: "rename", paths: [join(dir, "pic.png")], destination: "pic.jpg" });
+        expect(r.error).toMatch(/image_edit/);
+        expect(existsSync(join(dir, "pic.png"))).toBe(true);
+        // Text formats rename freely.
+        writeFileSync(join(dir, "n.txt"), "n");
+        expect((await run({ action: "rename", paths: [join(dir, "n.txt")], destination: "n.md" })).success).toBe(true);
     });
 
     // From the 35-task nano run: ditto replaced an existing BhaiEval.zip without a word.
@@ -85,6 +97,9 @@ describe("file_manage", () => {
         // Named after the folder, in output_dir.
         const r2 = JSON.parse(await compressFiles.handler({ action: "zip", paths: [src], output_dir: src }));
         expect(r2.archive).toBe(join(src, "zipme.zip"));
+        // Zipping a zip is a mistaken unzip.
+        const z = JSON.parse(await compressFiles.handler({ action: "zip", paths: [join(dir, "zipme.zip")] }));
+        expect(z.error).toMatch(/already a zip/);
     });
 
     // From the harder eval: asked to count the .txt files, gpt-4.1-nano counted every file.

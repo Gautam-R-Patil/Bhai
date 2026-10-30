@@ -145,6 +145,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "file_metadata",
             "compress_files",
             "trash_manager",
+            "image_edit",
+            "pdf_edit",
         ],
     },
     coding: {
@@ -693,6 +695,16 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
     },
     { pattern: /\b(empty|clear)\b.{0,12}\b(the |my )?(trash|bin)\b/i, tool: "trash_manager", category: "file_system" },
     { pattern: /\bapple notes\b|\bnotes app\b|\b(a|new) note\b/i, tool: "apple_notes", category: "scheduling" },
+    {
+        pattern: /\b(convert|resize|scale|shrink|make)\b.*\b(images?|photos?|pictures?|png|jpe?g|heic|tiff|gif|webp)\b|\b(dimensions|resolution)\b.*\b(images?|photos?|pictures?|png|jpe?g)\b/i,
+        tool: "image_edit",
+        category: "file_system",
+    },
+    {
+        pattern: /\b(merge|combine|join|split|extract)\b.*\bpdfs?\b|\bpages?\b.*\bpdfs?\b|\bpdfs?\b.*\bpages?\b/i,
+        tool: "pdf_edit",
+        category: "file_system",
+    },
     // "copy its name to my clipboard" is the clipboard's.
     {
         pattern:
