@@ -18,4 +18,24 @@ function updateFeedUrl(
     return query ? `${base}?${query}` : base;
 }
 
-module.exports = { updateFeedUrl };
+/** Nothing published for this app (the feed answers 404), or the feed is off (401/403). */
+function isFeedMissing(err) {
+    const msg = err?.message || "";
+    return (
+        err?.code === "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND" ||
+        ["404", "Not Found", "ERR_UPDATER_LATEST_VERSION_NOT_FOUND", "401", "403"].some((s) => msg.includes(s))
+    );
+}
+
+/** "Check for updates" in Settings: a feed with nothing published is "up to date", and a fetched
+ * feed is an update only when electron-updater says so (it returns updateInfo either way). */
+async function checkResult(check) {
+    try {
+        const r = await check();
+        return { available: !!r?.isUpdateAvailable, version: r?.updateInfo?.version };
+    } catch (err) {
+        return isFeedMissing(err) ? { available: false } : { error: err.message };
+    }
+}
+
+module.exports = { updateFeedUrl, isFeedMissing, checkResult };

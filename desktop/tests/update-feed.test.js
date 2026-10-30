@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { updateFeedUrl } from "../update-feed.js";
+import { checkResult, updateFeedUrl } from "../update-feed.js";
 
 const BASE = "https://x.convex.site/api/updates";
 const intel = {
@@ -29,5 +29,33 @@ describe("update feed URL", () => {
         expect(updateFeedUrl(BASE, "beta", { platform: "linux", arch: "x64", osVersion: "#1 SMP" })).toBe(
             `${BASE}?channel=beta`,
         );
+    });
+});
+
+describe("Check for updates", () => {
+    it("reads a feed with nothing published (404) as up to date, not as an error", async () => {
+        const missing = Object.assign(
+            new Error('Cannot find channel "stable-mac.yml" update info: HttpError: 404 Not Found'),
+            {
+                code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
+            },
+        );
+        expect(await checkResult(() => Promise.reject(missing))).toEqual({ available: false });
+        expect(await checkResult(() => Promise.reject(new Error("net::ERR_INTERNET_DISCONNECTED")))).toEqual({
+            error: "net::ERR_INTERNET_DISCONNECTED",
+        });
+    });
+
+    it("offers a version only when electron-updater says it is an update", async () => {
+        const info = { version: "0.2.1" };
+        expect(await checkResult(async () => ({ isUpdateAvailable: false, updateInfo: info }))).toEqual({
+            available: false,
+            version: "0.2.1",
+        });
+        expect(await checkResult(async () => ({ isUpdateAvailable: true, updateInfo: { version: "0.2.2" } }))).toEqual({
+            available: true,
+            version: "0.2.2",
+        });
+        expect(await checkResult(async () => null)).toEqual({ available: false, version: undefined });
     });
 });

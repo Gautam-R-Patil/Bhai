@@ -345,7 +345,7 @@ async function convexSiteRequest(method, urlPath, bodyObj) {
 // Channels: users on the "beta" channel get the BETA feed. Switch via
 // store.set("updateChannel", "beta" | "stable" | "canary").
 const UPDATE_FEED_BASE = `${CONVEX_SITE_URL}/api/updates`;
-const { updateFeedUrl } = require("./update-feed");
+const { updateFeedUrl, isFeedMissing, checkResult } = require("./update-feed");
 
 function getUpdateChannel() {
     const ch = (store.get("updateChannel") || "stable").toString().toLowerCase();
@@ -1177,11 +1177,7 @@ function setupAutoUpdater() {
         const msg = err.message || "";
         // 404 is expected when the server hasn't published a release yet
         // (or none for an Intel Mac). Don't spam retries for those.
-        const isMissing =
-            msg.includes("404") ||
-            msg.includes("Not Found") ||
-            msg.includes("ERR_UPDATER_LATEST_VERSION_NOT_FOUND");
-        if (msg.includes("401") || msg.includes("403") || isMissing) {
+        if (isFeedMissing(err)) {
             console.error("[Updater] endpoint unavailable:", msg);
             return; // nothing published / feed off — not worth a toast
         }
@@ -5111,16 +5107,13 @@ function registerIPC() {
     // ── Auto-Updater IPC ─────────────────────────
     ipcMain.handle("update:check", async () => {
         if (IS_DEV) return { available: false, isDev: true };
-        try {
+        return checkResult(() => {
             // Guarantee the feed URL is set before electron-updater fetches.
             // Without this, a fresh install with no app-update.yml falls back
             // to the default GitHub provider and 404s on a stale repo.
             configureAutoUpdater();
-            const result = await autoUpdater.checkForUpdates();
-            return { available: !!result?.updateInfo, version: result?.updateInfo?.version };
-        } catch (err) {
-            return { error: err.message };
-        }
+            return autoUpdater.checkForUpdates();
+        });
     });
 
     ipcMain.handle("update:download", async () => {
