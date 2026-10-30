@@ -230,7 +230,7 @@ beforeAll(async () => {
     process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
     process.env.ATLAS_DATA_DIR = tmp(); // run log, fixtures: never the repo's data/
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;

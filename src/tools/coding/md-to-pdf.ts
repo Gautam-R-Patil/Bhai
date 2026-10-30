@@ -110,7 +110,7 @@ export const mdToPdfTool: ToolDefinition = {
 
         // Playwright → PDF
         try {
-            const pw = await import("playwright");
+            const pw = await import("playwright-core");
             const browser = await pw.chromium.launch({ headless: true });
             try {
                 const ctx = await browser.newContext();

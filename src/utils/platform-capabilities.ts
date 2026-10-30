@@ -142,7 +142,7 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilities> {
     let playwrightAvailable = false;
     try {
         // Resolve, don't load: importing Playwright costs ~27 MB just to set a flag.
-        createRequire(import.meta.url).resolve("playwright");
+        createRequire(import.meta.url).resolve("playwright-core");
         playwrightAvailable = true;
     } catch {
         /* not installed */

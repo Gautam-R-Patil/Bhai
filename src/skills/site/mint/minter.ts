@@ -767,7 +767,7 @@ export async function mintSiteSkill(job: MintJob): Promise<MintResult> {
     const replay = async (): Promise<ReplayReport> => {
         if (!written) throw new Error("nothing written");
         if (replayed?.seq === written.seq) return replayed.report;
-        browser ??= await (await import("playwright")).chromium.launch({ headless: true });
+        browser ??= await (await import("playwright-core")).chromium.launch({ headless: true });
         const run = (trace: LoadedTrace, input: Record<string, unknown>, phase?: "search" | "select") =>
             replaySkill(path.join(stage, "skill.cjs"), trace, {
                 input,

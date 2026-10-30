@@ -68,7 +68,7 @@
         "pdf-lib": "^1.17.1",
         "pdf-parse": "^1.1.1",
         "pizzip": "^3.2.0",
-        "playwright": "^1.51.0",
+        "playwright-core": "^1.58.2",
         "pptxgenjs": "^4.0.1",
         "proper-lockfile": "^4.1.2",
         "psl": "^1.15.0",

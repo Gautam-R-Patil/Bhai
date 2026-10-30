@@ -69,7 +69,7 @@ beforeAll(async () => {
     // These time the page's own outcomes; Bhai's cursor glide would pad them (agent-cursor.test covers it).
     process.env.ATLAS_NO_AGENT_CURSOR = "true";
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;

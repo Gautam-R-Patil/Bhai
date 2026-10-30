@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Browser } from "playwright";
+import type { Browser } from "playwright-core";
 import { renderTemplate } from "../placeholders.js";
 import { readTemplateSource, readTemplateStyles, type TemplateMeta } from "../templates.js";
 
@@ -39,7 +39,7 @@ let browserStartup: Promise<Browser> | null = null;
 async function getBrowser(): Promise<Browser> {
     if (sharedBrowser?.isConnected()) return sharedBrowser;
     if (browserStartup) return browserStartup;
-    const { chromium } = await import("playwright");
+    const { chromium } = await import("playwright-core");
     browserStartup = chromium
         .launch({ headless: true, args: ["--disable-web-security", "--no-sandbox"] })
         .then((b) => {

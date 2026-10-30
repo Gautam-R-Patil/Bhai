@@ -29,7 +29,7 @@ describe("detectAuthWall (in-page signals)", () => {
     it("sees password, split OTP boxes and nothing on a plain page", async (ctx) => {
         let browser: { newPage: () => Promise<any>; close: () => Promise<void> } | null = null;
         try {
-            browser = await (await import("playwright")).chromium.launch({ headless: true });
+            browser = await (await import("playwright-core")).chromium.launch({ headless: true });
         } catch {
             return ctx.skip();
         }

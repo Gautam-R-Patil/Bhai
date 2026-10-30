@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rmSync } from "node:fs";
 import path from "node:path";
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
 
 const APP_BIN  = "/Applications/Bhai.app/Contents/MacOS/Bhai";
 const USER_DATA = "/tmp/atlas-cdp-w3-packaged";

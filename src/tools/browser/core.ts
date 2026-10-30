@@ -223,7 +223,7 @@ export async function getBrowser(): Promise<BrowserContext> {
 
     _browserInitPromise = (async (): Promise<BrowserContext> => {
         if (!pw) {
-            pw = await import("playwright");
+            pw = await import("playwright-core");
         }
         // Ensure profile directory exists
         if (!fs.existsSync(BROWSER_PROFILE_DIR)) {

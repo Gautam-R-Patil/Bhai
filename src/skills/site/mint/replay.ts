@@ -186,7 +186,7 @@ export async function replaySkill(
     let calls = 0;
 
     const own = !opts.browser;
-    const browser = opts.browser ?? (await (await import("playwright")).chromium.launch({ headless: true }));
+    const browser = opts.browser ?? (await (await import("playwright-core")).chromium.launch({ headless: true }));
     const context = await browser.newContext({ javaScriptEnabled: false });
     await context.route("**", (r: { abort(): Promise<void> }) => r.abort());
     const page = await context.newPage();

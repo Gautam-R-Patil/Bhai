@@ -22,7 +22,7 @@ let shopRoute: (c: any) => Promise<any> = async (c) => c;
 beforeAll(async () => {
     process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // 100 orders × ₹249 would hit the real ₹10k/day cap
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         // Locally a missing Chromium skips; in CI it must fail, not pass silently.

@@ -40,7 +40,7 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
       # Site Skill tests drive a real headless Chromium.
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright-core install --with-deps chromium
       - run: npm run test:hermetic
         env:
           # macOS has a committed binary: fail loudly if it stops loading.

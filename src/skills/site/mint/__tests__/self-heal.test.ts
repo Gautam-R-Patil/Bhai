@@ -180,7 +180,7 @@ async function mintAndApprove(store: string): Promise<string> {
 beforeAll(async () => {
     process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;

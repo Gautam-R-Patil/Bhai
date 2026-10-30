@@ -5,8 +5,8 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 // biome-ignore lint/suspicious/noExplicitAny: Playwright objects
 let browser: any = null;
 // getBrowser()'s persistent (headed) profile → a throwaway headless context.
-vi.mock("playwright", async () => {
-    const real = await vi.importActual<typeof import("playwright")>("playwright");
+vi.mock("playwright-core", async () => {
+    const real = await vi.importActual<typeof import("playwright-core")>("playwright-core");
     return {
         ...real,
         chromium: {
