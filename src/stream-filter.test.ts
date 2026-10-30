@@ -309,6 +309,7 @@ describe("NoteStreamFilter", () => {
         "MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MaS3VSUxOVi5qkkB",
         "q9xJ2nP1dYZxD0GkKkLm7hKpRSAz7JmFzGvQxyzR8rYnPKh9b3xCqN6c8hZ8k4m2",
     ];
+    const KEY_BITS = [PEM_BODY[0].slice(0, 24), PEM_BODY[1].slice(0, 24)];
     const SPANNING: [string, string, string[]][] = [
         [
             "PEM block",
@@ -319,6 +320,39 @@ describe("NoteStreamFilter", () => {
         [
             "label on the previous line",
             "aws_secret_access_key:\nwJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
+            ["wJalrXUtnFEMI/K7MDENG"],
+        ],
+        // Fix round 2 probes.
+        [
+            "END then BEGIN on one line",
+            `-----END CERTIFICATE----------BEGIN RSA PRIVATE KEY-----\n${PEM_BODY.join("\n")}\n-----END RSA PRIVATE KEY-----\n`,
+            KEY_BITS,
+        ],
+        [
+            "END then BEGIN in prose",
+            `See -----END RSA PRIVATE KEY----- then -----BEGIN RSA PRIVATE KEY-----\n${PEM_BODY.join("\n")}\n-----END RSA PRIVATE KEY-----\n`,
+            KEY_BITS,
+        ],
+        [
+            "a single-line pair before the real BEGIN",
+            `-----BEGIN RSA PRIVATE KEY----- x -----BEGIN CERTIFICATE-----MIIC-----END CERTIFICATE-----\n${PEM_BODY.join("\n")}\n-----END RSA PRIVATE KEY-----\n`,
+            KEY_BITS,
+        ],
+        [
+            "an END with another label inside the block",
+            `-----BEGIN RSA PRIVATE KEY-----\n${PEM_BODY[0]}\n-----END CERTIFICATE-----\n${PEM_BODY[1]}\n-----END RSA PRIVATE KEY-----\n`,
+            KEY_BITS,
+        ],
+        [
+            "indented, CRLF",
+            `key: |\r\n  -----BEGIN OPENSSH PRIVATE KEY-----\r\n  ${PEM_BODY.join("\r\n  ")}\r\n  -----END OPENSSH PRIVATE KEY-----\r\nok\r\n`,
+            KEY_BITS,
+        ],
+        ["JSON value after a blank line", '{\n  "password":\n\n    "hunter2Secret!"\n}\n', ["hunter2Secret"]],
+        ["JSON value after a whitespace line", '{\n  "password":\n  \n    "hunter2Secret!"\n}\n', ["hunter2Secret"]],
+        [
+            "label two lines up across a blank line",
+            "aws_secret_access_key:\n\nwJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
             ["wJalrXUtnFEMI/K7MDENG"],
         ],
     ];
@@ -340,6 +374,18 @@ describe("NoteStreamFilter", () => {
         expect(f.flush()).toBe("Done");
         const g = new NoteStreamFilter();
         expect(g.push("password=hunter2Secret!\nok")).toBe("password=[redacted]\n");
+    });
+
+    it("bounds the PEM hold: a BEGIN in prose can't swallow the rest of the turn", () => {
+        const f = new NoteStreamFilter();
+        let out = f.push("Look for -----BEGIN RSA PRIVATE KEY----- in the file.\n");
+        for (let i = 0; i < 400; i++) out += f.push(`step ${i} of the plan\n`);
+        out += f.flush();
+        // Held lines are dropped, never released; one [redacted] marks them; later lines stream.
+        expect(out.match(/\[redacted\]/g)?.length).toBe(1);
+        expect(out).toContain("Look for ");
+        expect(out).not.toContain("step 0 of");
+        expect(out).toContain("step 399 of the plan");
     });
 
     it("drops an unterminated PEM block at flush", () => {

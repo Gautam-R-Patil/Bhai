@@ -230,21 +230,26 @@ function mask(text: string): string {
     return sanitizeSecrets(protect(text, { credentials: true })).sanitized;
 }
 
-const PEM_BEGIN = /-----BEGIN [A-Z0-9 ]*-----/;
-const PEM_END = /-----END [A-Z0-9 ]*-----/;
+const PEM_BEGIN = /-----BEGIN ([A-Z0-9 ]+)-----/g;
+// A held PEM block past this is prose that mentioned a BEGIN: drop it, stop holding.
+// A 4096-bit RSA key is ~50 lines, a 4096-bit PGP secret key block ~110.
+const PEM_HOLD_MAX_LINES = 200;
+const PEM_HOLD_MAX_CHARS = 16 * 1024;
 
 /**
  * Filters streamed thinking/narration: the answer rules, then credential masking and the
  * secrets sanitizer (code tools' raw output can reach the model unmasked).
  * Line-buffered: only complete lines go out; the last partial line on flush. Each line is
- * masked together with the line before it, so a label there ("aws_secret_access_key:",
- * '"password":') still masks the value; a PEM block is held to its END line and masked whole.
+ * masked together with the last non-blank line before it, so a label there
+ * ("aws_secret_access_key:", '"password":') still masks the value. A PEM block is held from
+ * its BEGIN to the END with the same label and shown as [redacted]; unterminated at flush,
+ * or past the hold bound, it is dropped, never released.
  */
 export class NoteStreamFilter {
     private readonly answer = new AnswerStreamFilter({ channel: "note" });
     private line = "";
     private prev = "";
-    private pem: string[] | null = null;
+    private pem: { label: string; lines: number; chars: number } | null = null;
 
     push(delta: string): string {
         this.line += this.answer.push(delta);
@@ -261,29 +266,46 @@ export class NoteStreamFilter {
         const last = lines.pop() as string;
         let out = lines.map((l) => this.take(l)).join("");
         // The last partial line goes out without a newline; an unterminated PEM block never shows.
-        if (last) out += this.take(last).slice(0, -1);
+        if (last) out += this.take(last).replace(/\n$/, "");
         this.pem = null;
         return out;
     }
 
-    /** One complete line in; what may be shown for it (with its newline) out. */
+    /** One complete line in; what may be shown for it out. */
     private take(line: string): string {
-        if (this.pem) {
-            this.pem.push(line);
-            if (!PEM_END.test(line)) return "";
-            const block = this.pem.join("\n");
+        if (!this.pem) return this.open(line);
+        const endTag = `-----END ${this.pem.label}-----`;
+        const end = line.indexOf(endTag);
+        if (end < 0) {
+            this.pem.lines++;
+            this.pem.chars += line.length + 1;
+            if (this.pem.lines <= PEM_HOLD_MAX_LINES && this.pem.chars <= PEM_HOLD_MAX_CHARS) return "";
             this.pem = null;
-            this.prev = line;
-            return `${mask(block)}\n`;
+            return "[redacted]\n";
         }
-        if (PEM_BEGIN.test(line) && !PEM_END.test(line)) {
-            this.pem = [line];
-            return "";
+        this.pem = null;
+        return `[redacted]${this.open(line.slice(end + endTag.length))}`;
+    }
+
+    /**
+     * Text outside a held block. The first BEGIN with no END of its label after it on this line
+     * opens a hold: the text before it goes out now, the block's [redacted] follows later.
+     */
+    private open(text: string): string {
+        for (const m of text.matchAll(PEM_BEGIN)) {
+            if (text.includes(`-----END ${m[1]}-----`, m.index + m[0].length)) continue;
+            this.pem = { label: m[1], lines: 0, chars: 0 };
+            return this.maskLine(text.slice(0, m.index));
         }
-        const masked = mask(`${this.prev}\n${line}`);
-        this.prev = line;
+        return `${this.maskLine(text)}\n`;
+    }
+
+    private maskLine(text: string): string {
+        if (!text.trim()) return text; // a blank line keeps the label above it as context
+        const masked = mask(`${this.prev}\n${text}`);
+        this.prev = text;
         const nl = masked.lastIndexOf("\n");
         // A mask that swallowed the line break took this line with it.
-        return `${nl < 0 ? "[redacted]" : masked.slice(nl + 1)}\n`;
+        return nl < 0 ? "[redacted]" : masked.slice(nl + 1);
     }
 }
