@@ -27,18 +27,19 @@ let connectionAttempts = 0;
 let discoveryAttempts = 0;
 let lastAtlasResponse = "";
 
-// The side panel's conversation. Session storage keeps it while the service
-// worker sleeps and the panel is closed; it's gone when Chrome quits.
+// The side panel's conversation, kept in this Chrome profile so it survives the
+// worker sleeping, the panel closing and Chrome restarting. Text only: the
+// screenshots and pasted images are never stored.
 const MAX_CHAT = 60;
 let _chat = [];
-const chatReady = chrome.storage.session.get("chat")
+const chatReady = chrome.storage.local.get("chat")
   .then((r) => { if (Array.isArray(r.chat)) _chat = r.chat; })
   .catch(() => {});
 function addChat(role, text, meta = null) {
   if (!text) return;
   _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now(), ...(meta ? { meta } : {}) });
   if (_chat.length > MAX_CHAT) _chat = _chat.slice(-MAX_CHAT);
-  chrome.storage.session.set({ chat: _chat }).catch(() => {});
+  chrome.storage.local.set({ chat: _chat }).catch(() => {});
   chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
 }
 
@@ -270,11 +271,18 @@ function stopHeartbeat() {
 
 // ── Badge / Status ───────────────────────────
 
+// Replies that came in while the side panel was closed.
+let unread = 0;
+let panelsOpen = 0;
+
 function updateBadge(connected) {
-  const color = connected ? "#22c55e" : "#ef4444";
-  const text = connected ? "ON" : "";
-  chrome.action.setBadgeBackgroundColor({ color });
-  chrome.action.setBadgeText({ text });
+  if (unread > 0) {
+    chrome.action.setBadgeBackgroundColor({ color: "#cf6a33" });
+    chrome.action.setBadgeText({ text: String(Math.min(unread, 9)) });
+    return;
+  }
+  chrome.action.setBadgeBackgroundColor({ color: "#8a7f76" });
+  chrome.action.setBadgeText({ text: connected ? "" : "off" });
 }
 
 let _badgeActivityTimer = null;
@@ -284,7 +292,7 @@ const _badgeFrames = ['⬤', '○'];   // Pulse between filled/hollow
 function setBadgeActive(active) {
   if (active) {
     if (_badgeActivityTimer) return;
-    chrome.action.setBadgeBackgroundColor({ color: "#3b82f6" });
+    chrome.action.setBadgeBackgroundColor({ color: "#cf6a33" });
     _badgeFrameIdx = 0;
     _badgeActivityTimer = setInterval(() => {
       chrome.action.setBadgeText({ text: _badgeFrames[_badgeFrameIdx % 2] });
@@ -503,6 +511,10 @@ function handleOverlayMessage(msg) {
       .map((a) => ({ label: a.label.slice(0, 80), action: a.action.slice(0, 300) }));
     const links = (Array.isArray(msg.links) ? msg.links : []).filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 6);
     addChat("bhai", lastAtlasResponse, actions.length || links.length ? { actions, links } : null);
+    if (!panelsOpen) {
+      unread++;
+      if (!_badgeActivityTimer) updateBadge(authenticated);
+    }
     chrome.runtime.sendMessage({
       type: "atlas_response",
       text: lastAtlasResponse,
@@ -532,27 +544,58 @@ function handleOverlayMessage(msg) {
 // Closing the side panel takes any drawing off the page: it was only for Bhai.
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "sidepanel") return;
-  port.onDisconnect.addListener(() => { for (const id of [...drawnTabs]) removeDrawing(id); });
+  panelsOpen++;
+  unread = 0;
+  if (!_badgeActivityTimer) updateBadge(authenticated);
+  port.onDisconnect.addListener(() => {
+    panelsOpen = Math.max(0, panelsOpen - 1);
+    for (const id of [...drawnTabs]) removeDrawing(id);
+  });
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   // Remove existing menus first to avoid duplicates
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: "atlas-ask-page",
-      title: "Ask Bhai about this page",
-      contexts: ["page"],
-    });
-
-    chrome.contextMenus.create({
-      id: "atlas-ask-selection",
-      title: "Ask Bhai about this",
-      contexts: ["selection"],
-    });
-
-    console.log("[ATLAS Bridge] Context menus registered");
+    chrome.contextMenus.create({ id: "atlas-ask-page", title: "Ask Bhai about this page", contexts: ["page"] });
+    chrome.contextMenus.create({ id: "atlas-ask-image", title: "Ask Bhai about this image", contexts: ["image"] });
+    // Text gets one "Bhai" submenu so the right-click menu doesn't fill up.
+    chrome.contextMenus.create({ id: "atlas-text", title: "Bhai", contexts: ["selection"] });
+    for (const [id, title] of [
+      ["atlas-ask-selection", "Ask about this"],
+      ["atlas-explain", "Explain"],
+      ["atlas-summarize", "Summarize"],
+      ["atlas-translate", "Translate to English"],
+    ]) {
+      chrome.contextMenus.create({ id, parentId: "atlas-text", title, contexts: ["selection"] });
+    }
   });
 });
+
+const TEXT_ASKS = {
+  "atlas-ask-selection": ["What can you tell me about this?", "About"],
+  "atlas-explain": ["Explain this simply.", "Explain"],
+  "atlas-summarize": ["Summarize this in a few lines.", "Summarize"],
+  "atlas-translate": ["Translate this to English. Keep the meaning and tone.", "Translate"],
+};
+
+// A page image as a ≤1600px JPEG data part; null if the site won't let us fetch it.
+async function fetchImage(src) {
+  try {
+    if (!/^https?:/.test(src || "")) return null;
+    const blob = await (await fetch(src, { credentials: "include" })).blob();
+    if (!blob.type.startsWith("image/") || blob.size > 15_000_000) return null;
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(bmp.width * scale)), Math.max(1, Math.round(bmp.height * scale)));
+    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const jpeg = new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.85 })).arrayBuffer());
+    let bin = "";
+    for (let k = 0; k < jpeg.length; k += 0x8000) bin += String.fromCharCode(...jpeg.subarray(k, k + 0x8000));
+    return { mimeType: "image/jpeg", base64: btoa(bin) };
+  } catch {
+    return null;
+  }
+}
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
@@ -567,10 +610,23 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (sendToAtlas(message, { url, title, action: "ask_page" })) addChat("you", `About this page: ${title}`);
   }
 
-  if (info.menuItemId === "atlas-ask-selection") {
-    const selectedText = info.selectionText || "";
-    const message = `[From browser: ${url}] User asks about: "${selectedText}"`;
-    if (sendToAtlas(message, { url, title, selectedText, action: "ask_selection" })) addChat("you", `About: "${selectedText.slice(0, 200)}"`);
+  if (TEXT_ASKS[info.menuItemId]) {
+    const [ask, label] = TEXT_ASKS[info.menuItemId];
+    const selectedText = (info.selectionText || "").slice(0, 4000);
+    const message = `[From browser: ${url}] User selected: "${selectedText}"\n\n${ask}`;
+    if (sendToAtlas(message, { url, title, selectedText, action: "ask_selection" })) {
+      addChat("you", label, { selection: selectedText.slice(0, 140) });
+    }
+  }
+
+  if (info.menuItemId === "atlas-ask-image") {
+    const image = await fetchImage(info.srcUrl);
+    const message = image
+      ? `[From browser: ${url}] What can you tell me about this image?`
+      : `[From browser: ${url}] What can you tell me about the image at ${info.srcUrl}?`;
+    if (sendToAtlas(message, { url, title, action: "ask_image", imageKind: "pasted" }, image)) {
+      addChat("you", "About this image", image ? { pasted: true } : null);
+    }
   }
 });
 
@@ -2207,7 +2263,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "clear_chat") {
     _chat = [];
     lastAtlasResponse = "";
-    chrome.storage.session.set({ chat: [] }).catch(() => {});
+    chrome.storage.local.set({ chat: [] }).catch(() => {});
     sendResponse({ ok: true });
     return true;
   }

@@ -191,7 +191,7 @@
                     </div>
 
                     <!-- Connection Status -->
-                    <div class="connection-status" id="connectionStatus" style="display: none;">
+                    <div class="connection-status" id="connectionStatus" style="display: none;" onclick="switchTab('channels')" title="Channels">
                         <div class="connection-item" id="connTelegram">
                             <span class="connection-dot"></span>
                             <span class="connection-label">Telegram</span>
@@ -200,31 +200,19 @@
                             <span class="connection-dot"></span>
                             <span class="connection-label">Email</span>
                         </div>
-                        <div class="connection-item" id="connOverlay">
-                            <span class="connection-dot"></span>
-                            <span class="connection-label">Chat window</span>
-                        </div>
                     </div>
 
                     <!-- Live Stats -->
                     <div class="stats-grid" id="statsGrid" style="display: none;">
                         <div class="stat-card surface-card">
-                            <div class="stat-value" id="statUptime">0h 0m</div>
-                            <div class="stat-label">Uptime</div>
-                        </div>
-                        <div class="stat-card surface-card">
                             <div class="stat-value" id="statMessages">0</div>
-                            <div class="stat-label" title="Messages today" aria-label="Messages today">Messages</div>
+                            <div class="stat-label">Messages today</div>
                         </div>
-                        <div class="stat-card surface-card">
+                        <div class="stat-card surface-card stat-link" onclick="switchTab('memory')" title="Open Memory">
                             <div class="stat-value" id="statMemories">0</div>
                             <div class="stat-label">Memories</div>
                         </div>
-                        <div class="stat-card surface-card">
-                            <div class="stat-value" id="statTools">0</div>
-                            <div class="stat-label">Tools</div>
-                        </div>
-                        <div class="stat-card surface-card credit-stat-card" id="creditStatCard" style="display: none;">
+                        <div class="stat-card surface-card credit-stat-card stat-link" id="creditStatCard" style="display: none;" onclick="if (!event.target.closest('button')) switchTab('account')" title="Open Account">
                             <div class="stat-value" id="statCredits">—</div>
                             <div class="stat-label">AI Credits</div>
                             <button class="credit-refresh-btn" onclick="refreshCredits()" title="Refresh credits">
@@ -237,32 +225,11 @@
                         </div>
                     </div>
 
-                    <div class="info-cards">
-                        <button type="button" class="info-card" onclick="switchTab('settings')">
-                            <span class="info-card-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"></path></svg></span>
-                            <span class="info-card-text">
-                                <span class="info-card-label">Settings</span>
-                                <span class="info-card-desc">Workspace, shortcuts, theme</span>
-                            </span>
-                            <svg class="info-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
-                        </button>
-                        <button type="button" class="info-card" onclick="atlas.openDataDir()">
-                            <span class="info-card-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg></span>
-                            <span class="info-card-text">
-                                <span class="info-card-label">Data</span>
-                                <span class="info-card-desc">Open data directory</span>
-                            </span>
-                            <svg class="info-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
-                        </button>
-                        <button type="button" class="info-card" onclick="atlas.openLogsDir()">
-                            <span class="info-card-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="14 3 14 9 20 9"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="13" y2="17"></line></svg></span>
-                            <span class="info-card-text">
-                                <span class="info-card-label">Logs</span>
-                                <span class="info-card-desc">View system logs</span>
-                            </span>
-                            <svg class="info-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
-                        </button>
-                    </div>
+                    <section class="recent-chats" id="recentChats" hidden>
+                        <div class="recent-head"><span>Recent chats</span><button class="link-like" onclick="switchTab('chats')">See all</button></div>
+                        <div id="recentList"></div>
+                    </section>
+
                 </div>
             </div>
 
@@ -1061,6 +1028,7 @@
                                 <h3 class="auth-title">Sign in to Bhai</h3>
                                 <p class="auth-subtitle">Use your phone number or Google account to sign in securely</p>
                                 <p class="auth-device-removed" id="authDeviceRemoved" style="display:none;">This Mac was removed from your account on another device. Sign in again to use Bhai here.</p>
+                                <p class="auth-device-removed" id="authSignInAgain" style="display:none;">For your account's safety, Bhai now checks each device at sign-in. Sign in once more to keep using Bhai here.</p>
                             </div>
                             <div style="margin-top:24px;">
                                 <button class="btn btn-primary auth-submit-btn" id="signInBtn" onclick="openSignIn()" style="font-size:15px;padding:14px;">
@@ -1526,6 +1494,31 @@
             const sameYear = d.getFullYear() === now.getFullYear();
             return `${d.toLocaleDateString([], { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' })}, ${time}`;
         }
+        // Dashboard: the last three chats, one click to open.
+        async function loadRecentChats() {
+            try {
+                const chats = (await atlas.listChats()) || [];
+                const box = document.getElementById('recentChats');
+                const list = document.getElementById('recentList');
+                box.hidden = chats.length === 0;
+                list.replaceChildren();
+                for (const c of chats.slice(0, 3)) {
+                    const row = document.createElement('button');
+                    row.className = 'recent-row';
+                    const title = document.createElement('span');
+                    title.className = 'recent-title';
+                    title.textContent = c.title || 'Untitled chat';
+                    const when = document.createElement('span');
+                    when.className = 'recent-when';
+                    const mins = Math.round((Date.now() - c.end) / 60000);
+                    when.textContent = mins < 1 ? 'now' : mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : new Date(c.end).toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    row.append(title, when);
+                    row.addEventListener('click', () => { switchTab('chats'); openChat(c.id); });
+                    list.append(row);
+                }
+            } catch { /* non-fatal */ }
+        }
+
         async function loadChats() {
             const list = document.getElementById('chatsList');
             const thread = document.getElementById('chatsThread');
@@ -1629,40 +1622,40 @@
         const ALIVE_LINES = {
             "online": {
                 "morning": [
-                    "Morning! Bhai's up ☕",
-                    "Team chai, reporting in ☕",
-                    "Fresh day, shades on 😎",
-                    "Chalo, new day ☕"
+                    "Morning! Bhai's up",
+                    "Team chai, reporting in",
+                    "Fresh day, shades on",
+                    "Chalo, new day"
                 ],
                 "afternoon": [
                     "Afternoon. Bhai's locked in",
                     "Peak hours. All systems chill",
-                    "Midday, shades still on 😎",
+                    "Midday, shades still on",
                     "Afternoon. Tabs under control?"
                 ],
                 "evening": [
                     "Evening. Bhai's still around",
-                    "Golden hour, shades justified 😎",
+                    "Golden hour, shades justified",
                     "Winding down? Bhai's around",
                     "Evening. Let's close it out"
                 ],
                 "night": [
-                    "Late one? Bhai's here 🌙",
+                    "Late one? Bhai's here",
                     "Night mode. Still sharp",
                     "Quiet hours. Bhai's around",
-                    "Night owl hours 🌙"
+                    "Night owl hours"
                 ],
                 "late": [
-                    "Still up? So is Bhai 🌙",
+                    "Still up? So is Bhai",
                     "Wee hours. Bhai's here",
-                    "Quick one, then sleep? 🌙",
+                    "Quick one, then sleep?",
                     "Lights low, shades on"
                 ]
             },
             "offline": [
-                "Bhai is napping 💤",
+                "Bhai is napping",
                 "Shades folded. Napping",
-                "Bhai's recharging 🔋"
+                "Bhai's recharging"
             ],
             "starting": [
                 "Waking Bhai up…",
@@ -1786,10 +1779,11 @@
                 const mins = Math.floor(stats.uptimeMs / 60000);
                 const hrs = Math.floor(mins / 60);
                 const rem = mins % 60;
-                document.getElementById('statUptime').textContent = hrs > 0 ? `${hrs}h ${rem}m` : `${rem}m`;
+                const chip = document.getElementById('statusChipText');
+                if (chip.textContent.startsWith('Online')) chip.textContent = `Online · ${hrs > 0 ? `${hrs}h ${rem}m` : `${rem}m`}`;
                 countTo(document.getElementById('statMessages'), stats.messagesHandled);
                 countTo(document.getElementById('statMemories'), stats.memoryCount);
-                countTo(document.getElementById('statTools'), stats.toolCount);
+                loadRecentChats();
             } catch { /* stats not available yet */ }
         }
 
@@ -2962,6 +2956,7 @@
 
         function friendlyError(raw) {
             const m = raw.toLowerCase();
+            if (m.includes('sign in again')) return 'This Mac needs to sign in again. Open Account to sign in.';
             if (m.includes('session') && (m.includes('401') || m.includes('not_validated') || m.includes('auth'))) return 'Bhai couldn\'t sign in. Open Account and sign in again.';
             if (m.includes('credit') || m.includes('402')) return 'You\'re out of AI credits. Reach the XAGI Labs team at xagilab.com for more.';
             if (m.includes('enotfound') || m.includes('econnrefused') || m.includes('network') || m.includes('timed out')) return 'Bhai can\'t reach the internet right now. It will retry.';
@@ -3044,6 +3039,7 @@
                     document.getElementById('accountAuthView').style.display = 'block';
                     document.getElementById('accountProfileView').style.display = 'none';
                     document.getElementById('authDeviceRemoved').style.display = info && info.deviceRemoved ? '' : 'none';
+                    document.getElementById('authSignInAgain').style.display = info && info.signInAgain && !info.deviceRemoved ? '' : 'none';
                     return;
                 }
 
@@ -3848,7 +3844,7 @@
                 const em = document.getElementById('connEmail');
                 em.style.display = connections.email ? '' : 'none';
                 em.classList.toggle('connected', connections.email);
-                document.getElementById('connOverlay').classList.toggle('connected', connections.overlay);
+                container.style.display = connections.telegramConfigured || connections.email ? 'flex' : 'none';
 
                 const live = [connections.telegram && 'Telegram', connections.email && 'email'].filter(Boolean);
                 document.getElementById('statusOnlineSub').textContent =

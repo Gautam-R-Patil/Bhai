@@ -64,14 +64,14 @@ describe("dynamic tool sandbox", () => {
 // that never writes to stdout (the forge child's IPC channel).
 describe("persisted handler contract", () => {
     it("matches the session sandbox", async () => {
-        const { wrapPersistedHandler } = await import("../forge/sandbox-supervisor.js");
+        const { wrapHandler } = await import("../forge/sandbox-supervisor.js");
         const dir = fs.mkdtempSync(path.join(tmpdir(), "persisted-"));
         const file = path.join(dir, "a.txt");
         fs.writeFileSync(file, "x\ny");
         const code = `console.log("noise");
             return { lines: (await utils.fs.readFile(input.file)).split("\\n").length,
                 sync: require("fs").readFileSync(input.file).length, platform: utils.require("os").platform };`;
-        fs.writeFileSync(path.join(dir, "handler.js"), wrapPersistedHandler(code));
+        fs.writeFileSync(path.join(dir, "handler.js"), wrapHandler(code));
         const handler = createRequire(import.meta.url)(path.join(dir, "handler.js"));
         const write = vi.spyOn(process.stdout, "write");
         try {
@@ -84,4 +84,14 @@ describe("persisted handler contract", () => {
             fs.rmSync(dir, { recursive: true, force: true });
         }
     });
+});
+
+describe("timer callbacks", () => {
+    it("a busy-looping setTimeout callback is cut off instead of freezing the bot", async () => {
+        const out = await buildHandler(`setTimeout(() => { for (;;) {} }, 0); return "started";`)({});
+        expect(out).toContain("started");
+        const t0 = Date.now();
+        await new Promise((r) => setTimeout(r, 50)); // the host loop must come back
+        expect(Date.now() - t0).toBeLessThan(8000); // ≤ the 5 s re-entry timeout, not forever
+    }, 15_000);
 });

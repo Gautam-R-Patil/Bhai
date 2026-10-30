@@ -192,7 +192,9 @@ export async function invokePersistedTool(
 // contract as session tools (create-tool's SANDBOX_API), with callSync done
 // in-process like create-tool's sandboxBridge; the kernel caps fence the reads.
 // console is a no-op: stdout is the shim's IPC channel and stderr is not drained.
-export function wrapPersistedHandler(handlerCode: string): string {
+// These are the exact bytes of handler.js, so the manifest's handlerHash is taken
+// over them (a hash of the bare code failed every tamper check).
+export function wrapHandler(handlerCode: string): string {
     return `const __fs = require("fs"), __path = require("path");
 const callSync = (name, a) => {
     const [op, fn] = name.split(".");
@@ -238,7 +240,7 @@ export async function installPersistedTool(
     }
     // Write handler.js: the handler body gets the same (input, utils, console)
     // contract as session tools; the kernel sandbox enforces the capabilities.
-    const wrappedHandler = wrapPersistedHandler(handlerCode);
+    const wrappedHandler = wrapHandler(handlerCode);
     // The manifest pins the bytes actually written (invoke and boot re-hash them).
     manifest = { ...manifest, handlerHash: createHash("sha256").update(wrappedHandler).digest("hex").substring(0, 16) };
     const handlerPath = path.join(dir, "handler.js");

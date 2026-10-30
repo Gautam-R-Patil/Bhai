@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Connect step: while setup installs in the background, the user adds the
-// Bhai Bridge extension to Chrome. Once install is done the bot starts, and the
+// Bhai extension to Chrome. Once install is done the bot starts, and the
 // screen moves on by itself when the extension says hello. Skippable: the
 // built-in browser works without it.
 (function () {
@@ -25,7 +25,7 @@
         section.appendChild(eyebrow);
         section.appendChild(el("h1", "step-title", "Let Bhai use your Chrome."));
         section.appendChild(
-            el("p", "step-sub", "Add the Bhai Bridge extension so Bhai can work in the browser you're signed in to. You can skip this and add it later."),
+            el("p", "step-sub", "Add the Bhai extension so Bhai can work in the browser you're signed in to. You can skip this and add it later."),
         );
 
         const steps = el("ol", "connect-steps");
@@ -38,7 +38,7 @@
         const openBtn = el("button", "btn btn-primary", "Open Chrome extensions");
         openBtn.type = "button";
         openBtn.addEventListener("click", function () { if (atlas.extensionOpen) atlas.extensionOpen("chrome"); });
-        const folderBtn = el("button", "btn", "Show Bhai Bridge folder");
+        const folderBtn = el("button", "btn", "Show the Bhai extension folder");
         folderBtn.type = "button";
         folderBtn.addEventListener("click", function () { if (atlas.extensionOpen) atlas.extensionOpen("folder"); });
         const copyBtn = el("button", "btn", "Copy folder path");

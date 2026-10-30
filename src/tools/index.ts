@@ -2,12 +2,21 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { noteFrontAfterStep } from "../screen/frontmost.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
-import { currentSwarmRun, currentSwarmStep, isPaymentCall, outsideSwarm, shellText, swarmGate } from "../agents/swarm-context.js";
+import {
+    currentSwarmRun,
+    currentSwarmStep,
+    isExternalSideEffect,
+    isPaymentCall,
+    outsideSwarm,
+    shellText,
+    swarmGate,
+} from "../agents/swarm-context.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { checkConsent } from "../security/consent.js";
@@ -103,7 +112,7 @@ import { write } from "./coding/write.js";
 import { coldOutreach } from "./cold-outreach.js";
 import { createTool, listDynamicTools, setRegistryRef } from "./create-tool.js";
 import { credentialSetup } from "./credential-setup.js";
-import { cronTool } from "./cron-tool.js";
+import { cronTool, isNoOutwardCaller } from "./cron-tool.js";
 import {
     cancelDeepResearch,
     checkDeepResearch,
@@ -119,7 +128,16 @@ import {
 } from "./deep-research.js";
 import { documentTools, initDocumentTools } from "./document.js";
 import { emailSend } from "./email-tool.js";
-import { compressFiles, fileMetadata, findFiles, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
+import {
+    compressFiles,
+    fileMetadata,
+    findFiles,
+    openInApp,
+    resolveHomePath,
+    runShortcut,
+    screenRecord,
+    trashManager,
+} from "./file-utils.js";
 import { deleteFile, listDirectory } from "./files.js";
 import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { generateImage } from "./generate-image.js";
@@ -801,6 +819,21 @@ const NO_PAGE_CHECK = new Set([
 // Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
 const STOPPABLE_TOOLS = new Set(["site_task"]);
 
+/** Tools that move the front app on purpose (os_* tools are matched by prefix). */
+const FOCUS_TOOLS = new Set(["app_manager", "open_in_app", "open_settings", "window_manage", "apple_script", "run_shortcut"]);
+const PATH_ARGS = ["path", "file_path", "filePath", "target", "folder", "directory", "dir", "cwd"];
+/** Path arguments with the home folder resolved (see resolveHomePath); everything else as is. */
+export function withHomePaths(input: Record<string, unknown>): Record<string, unknown> {
+    let out = input;
+    for (const k of PATH_ARGS) {
+        const v = input[k];
+        if (typeof v !== "string" || !/^(~|\/Users\/|\/home\/|[A-Za-z]:[\\/]Users)/.test(v)) continue;
+        const fixed = resolveHomePath(v);
+        if (fixed !== v) out = { ...out, [k]: fixed };
+    }
+    return out;
+}
+
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
     const timeout = getToolTimeout(name);
@@ -879,6 +912,15 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         return JSON.stringify({ error: rateCheck.reason });
     }
 
+    // A run steered by unvetted content (the research follow-up) never acts outside the
+    // machine: the prompt asked it to check with the owner first, but only this enforces it.
+    if (isNoOutwardCaller() && isExternalSideEffect(name, input)) {
+        auditLog({ tool: name, args: input, success: false, cached: false, durationMs: 0, error: "no_outward_run" });
+        return JSON.stringify({
+            error: "This background run can't send, post, buy, book or delete anything. Put what you'd do in your final message; the owner can say go.",
+        });
+    }
+
     // Irreversible actions need the owner's OK first (security/consent.ts):
     // refused and recorded the first time; allowed when the same call returns
     // with confirmed: true after the owner said yes in a new message.
@@ -902,7 +944,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // an unrelated "ok" mid-run grant a sub-agent's confirmed retry.
         (currentSwarmRun()
             ? isPaymentCall(name, actionArgs)
-            : checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted")
+            : checkConsent(consentKey(name, actionArgs), confirmed === true, {
+                  // Money: the yes must answer this very ask, not a later "ok" about something else.
+                  nextTurnOnly: isPaymentCall(name, actionArgs),
+              }) !== "granted")
     ) {
         console.log(`  ⚠️  ${name} needs the owner's OK first`);
         auditLog({
@@ -935,6 +980,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         });
     }
     if (confirmCheck.needsConfirmation) input = actionArgs;
+
+    // "~/Downloads" or "/Users/your_username/…" from a model: each tool path.resolve()s
+    // its path, so "~" became "<cwd>/~/Downloads". Resolve the home once, for all of them.
+    input = withHomePaths(input);
 
     // Zod schema validation — validate input before execution
     const validation = validateToolInput(name, input);
@@ -1003,6 +1052,9 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // tool's own timeout; Stop still ends it.
         if (name.startsWith("browser_") && !NO_PAGE_CHECK.has(name)) result = await captchaAfterAction(result, stop);
         const durationMs = Date.now() - startTime;
+
+        // What's in front after a screen step: os_type puts it back if another app takes it.
+        if (process.platform === "darwin" && (/^os_/.test(name) || FOCUS_TOOLS.has(name))) await noteFrontAfterStep();
 
         // Cache the result if eligible; any other call may have changed local state.
         if (isCacheable(name, effectiveInput)) {

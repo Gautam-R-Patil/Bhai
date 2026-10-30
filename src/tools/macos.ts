@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
 import { cursorClick, cursorMove, withCursorHidden, withCursorTyping } from "../screen/agent-cursor.js";
-import { getFrontmostApp } from "../screen/frontmost.js";
+import { getFrontmostApp, restoreFrontIfStolen } from "../screen/frontmost.js";
 import { gridScreenshot } from "../screen/grid-overlay.js";
 import {
     captureRegionToFile,
@@ -525,6 +525,14 @@ export const osType: ToolDefinition = {
         const delayMs = (input.delay_ms as number) || 200;
         const delaySec = delayMs / 1000;
         let script: string;
+        // Another app took the front since Bhai's last step: put Bhai's app back first.
+        const refocused = await restoreFrontIfStolen();
+
+        // text "return" alone means the key (gpt-4.1-nano typed the word into Calculator).
+        const keyWord = typeof input.text === "string" ? input.text.trim().toLowerCase() : "";
+        if (!input.key && !input.combo && /^(return|enter|escape|esc|tab)$/.test(keyWord)) {
+            input = { ...input, key: keyWord === "esc" ? "escape" : keyWord, text: undefined };
+        }
 
         // text plus key/combo in one call ("45*12" then return): type, then press.
         // Taking only the key dropped the text while reporting success.
@@ -578,6 +586,7 @@ export const osType: ToolDefinition = {
                     typed_chars: text.length, // not echoed: it may be a secret
                     method,
                     into: into?.name,
+                    ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                     next: "Typed only. To submit or evaluate it (search box, form, calculator =), press os_type key='return'.",
                 });
             } catch (err) {
@@ -596,6 +605,7 @@ export const osType: ToolDefinition = {
                 success: true,
                 ...(typedFirst ? { typed_chars: typedFirst } : {}),
                 pressed: input.key || input.combo,
+                ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                 stdout: (stdout || "").substring(0, 500),
                 stderr: (stderr || "").substring(0, 500),
             });
@@ -1545,13 +1555,18 @@ export const osVisualVerify: ToolDefinition = {
                 verifyDims?.focusedWindow,
                 (verifyDims?.originY ?? 0) + 25,
             );
-            const pass = !!found;
+            // OCR misses some text (Calculator's large thin digits read as nothing, and a
+            // model then re-pressed "=" to check). The front app's accessibility text is
+            // exact: a hit there counts. Only found/not-found comes back, never a field's text.
+            const inAx = !found && (await frontAppHasText(expectText));
+            const pass = !!found || inAx;
             results.expect_text = {
                 query: expectText,
                 found: pass,
-                matched: found?.element.text ?? null,
-                score: found ? Number(found.score.toFixed(3)) : null,
+                matched: found?.element.text ?? (inAx ? expectText : null),
+                score: found ? Number(found.score.toFixed(3)) : inAx ? 1 : null,
                 position: found ? { x: found.element.cx_screen, y: found.element.cy_screen } : null,
+                ...(inAx ? { source: "accessibility" } : {}),
             };
             if (!pass) overallSuccess = false;
         }
@@ -1576,6 +1591,23 @@ export const osVisualVerify: ToolDefinition = {
         return JSON.stringify(results);
     },
 };
+
+/** Whether the frontmost app's accessibility tree shows `text` (labels and values, case and spacing ignored). */
+async function frontAppHasText(text: string): Promise<boolean> {
+    const flat = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+    const want = flat(text);
+    if (!want) return false;
+    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+    const dump = await dumpAccessibilityTree({ depth: 20, timeoutMs: 3000 }).catch(() => null);
+    if (!dump || dump.error) return false;
+    const stack = [dump.root];
+    while (stack.length) {
+        const n = stack.pop()!;
+        for (const t of [n.label, n.value]) if (t && t !== "[secure]" && flat(t).includes(want)) return true;
+        stack.push(...n.children);
+    }
+    return false;
+}
 
 // ── OS Context Tool (App Awareness) ───────────
 

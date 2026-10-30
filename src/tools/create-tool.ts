@@ -311,6 +311,13 @@ export const createTool: ToolDefinition = {
             });
         }
 
+        // Never a built-in's name, on any route: a forge tool named shell_exec or
+        // send_message replaced the real one after approval (the check used to sit after
+        // the forge routes had already returned).
+        if (isBuiltinToolName(name)) {
+            return JSON.stringify({ error: `Cannot override built-in tool "${name}". Choose a different name.` });
+        }
+
         // ── FORGE Phase 3: route through verifier when ready ──
         if (process.env.ATLAS_NO_FORGE_VERIFIER !== "true") {
             try {
@@ -380,11 +387,6 @@ export const createTool: ToolDefinition = {
             } catch (err) {
                 console.warn("[forge] synthesis route failed:", (err as Error).message);
             }
-        }
-
-        // Check for conflicts with built-in tools
-        if (isBuiltinToolName(name)) {
-            return JSON.stringify({ error: `Cannot override built-in tool "${name}". Choose a different name.` });
         }
 
         // Static-only validation: confirm the handler syntactically parses.

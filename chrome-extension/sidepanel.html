@@ -20,8 +20,11 @@
       --accent-ink: #ffffff;
       --ok: #2f8a4c;
       --bad: #c2453b;
-      --shadow: 0 1px 2px rgba(74, 42, 16, .06), 0 6px 20px rgba(74, 42, 16, .08);
-      --r-lg: 14px;
+      --shadow: 0 1px 2px rgba(74, 42, 16, .04), 0 4px 16px rgba(74, 42, 16, .04);
+      --tag-draw: #fbf3db; --tag-draw-ink: #8a5d00;
+      --tag-sel: #e6f0f8; --tag-sel-ink: #245d86;
+      --tag-tab: #edf3ec; --tag-tab-ink: #346538;
+      --r-lg: 12px;
       --r-md: 9px;
       --r-sm: 6px;
     }
@@ -38,7 +41,10 @@
         --accent: #e07b42;
         --ok: #5bc27c;
         --bad: #ec6f63;
-        --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
+        --shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 6px 18px rgba(0, 0, 0, .2);
+        --tag-draw: #3a3017; --tag-draw-ink: #e8c46a;
+        --tag-sel: #1d2c38; --tag-sel-ink: #8cc0e6;
+        --tag-tab: #1f2c20; --tag-tab-ink: #93c79a;
       }
     }
 
@@ -57,9 +63,10 @@
     svg { flex: none; }
 
     /* ── Header ─────────────────────────────── */
-    .top { display: flex; align-items: center; gap: 9px; padding: 11px 12px 11px 14px; }
-    .top img { width: 22px; height: 22px; border-radius: 6px; }
-    .name { font-weight: 600; letter-spacing: -.01em; }
+    .top { display: flex; align-items: center; gap: 8px; padding: 6px 10px 2px 16px; min-height: 40px; }
+    .status-text { font-size: 12px; color: var(--ink-2); }
+    .status[data-state="on"], .status[data-state="on"] + .status-text { display: none; }
+    .top { min-height: 34px; }
     .status { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); transition: background .3s; }
     .status[data-state="on"] { background: var(--ok); }
     .status[data-state="off"] { background: var(--bad); }
@@ -71,14 +78,29 @@
     /* ── Thread ─────────────────────────────── */
     .thread { flex: 1; overflow-y: auto; padding: 8px 16px 20px; display: flex; flex-direction: column; gap: 18px; scroll-behavior: smooth; }
     .msg { animation: rise .18s ease-out both; }
+    .bhai.reveal { animation: none; }
+    .bhai.reveal > div:first-child > * { animation: rise .4s cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(var(--d, 0) * 70ms); }
+    .reply-tools .icon-btn[aria-pressed="true"] { color: var(--accent); }
     @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
     .you { align-self: flex-end; max-width: 88%; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
     .you .bubble { background: var(--bubble); padding: 8px 13px; border-radius: 16px 16px 5px 16px; white-space: pre-wrap; word-wrap: break-word; }
     .attach { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
     .tag { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; font-size: 12px; color: var(--ink-2); padding: 2px 8px 2px 6px; border-radius: var(--r-sm); background: var(--sunk); }
     .tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag.draw { background: var(--tag-draw); color: var(--tag-draw-ink); }
+    .tag.sel { background: var(--tag-sel); color: var(--tag-sel-ink); }
+    .tag.tab { background: var(--tag-tab); color: var(--tag-tab-ink); }
 
-    .bhai { max-width: 100%; word-wrap: break-word; text-wrap: pretty; }
+    .bhai { max-width: 100%; overflow-wrap: anywhere; text-wrap: pretty; }
+    .you .bubble { overflow-wrap: anywhere; }
+    .bhai pre { position: relative; }
+    .code-copy { position: absolute; top: 4px; right: 4px; font: 500 11px/1 -apple-system, sans-serif; color: var(--ink-2); padding: 4px 7px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); opacity: 0; transition: opacity .15s; }
+    .bhai pre:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
+    .bhai .table-wrap { overflow-x: auto; }
+    .bhai table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+    .bhai th, .bhai td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .bhai th { font-weight: 600; color: var(--ink-2); }
+    .thread { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
     .bhai > div > * + * { margin-top: 10px; }
     .bhai h3 { font-size: 14px; font-weight: 600; }
     .bhai ul, .bhai ol { padding-left: 20px; }
@@ -107,6 +129,8 @@
 
     .working { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: 13px; animation: rise .18s ease-out both; }
     .working span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .working > span:last-child { background: linear-gradient(90deg, var(--ink-2) 0%, var(--ink-2) 40%, var(--ink) 50%, var(--ink-2) 60%, var(--ink-2) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 2.2s linear infinite; }
+    @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
     .dots { display: flex; gap: 3px; }
     .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite ease-in-out; }
     .dots i:nth-child(2) { animation-delay: .15s; }
@@ -114,15 +138,21 @@
     @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 
     /* ── Welcome ────────────────────────────── */
-    .welcome { margin-top: auto; padding: 0 2px 6px; animation: rise .25s ease-out both; }
-    .welcome h1 { font-size: 19px; line-height: 1.3; font-weight: 600; letter-spacing: -.015em; text-wrap: balance; }
-    .welcome h1 b { font-weight: 600; color: var(--accent); }
-    .welcome p { color: var(--ink-2); margin-top: 4px; }
-    .suggest { list-style: none; margin-top: 16px; border-top: 1px solid var(--line); }
-    .suggest button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 2px; border-bottom: 1px solid var(--line); text-align: left; color: var(--ink); transition: color .15s, padding .15s; }
-    .suggest button svg { color: var(--ink-3); transition: color .15s; }
-    .suggest button:hover:not(:disabled) { padding-left: 6px; }
-    .suggest button:hover:not(:disabled) svg { color: var(--accent); }
+    .welcome { flex: 1; display: flex; flex-direction: column; }
+    .hello { margin: auto 0; text-align: center; animation: rise .3s ease-out both; }
+    .hello img { width: 30px; height: 30px; border-radius: 8px; animation: float 4.5s ease-in-out infinite; }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    .hello h1 { animation: rise .4s cubic-bezier(.16, 1, .3, 1) .05s both; }
+    .tip { margin-top: 8px; font-size: 12.5px; color: var(--ink-3); animation: rise .4s cubic-bezier(.16, 1, .3, 1) .2s both; }
+    .tip:empty { display: none; }
+    .you { position: relative; }
+    .you .edit { position: absolute; left: -32px; top: 4px; opacity: 0; transition: opacity .15s; width: 26px; height: 26px; }
+    .you:hover .edit, .you .edit:focus-visible { opacity: 1; }
+    .hello h1 { margin-top: 10px; font: 500 21px/1.25 ui-serif, "New York", Georgia, serif; letter-spacing: -.015em; color: var(--ink); }
+    .suggest { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-bottom: 2px; }
+    .suggest button { font-size: 13px; padding: 6px 12px; border-radius: var(--r-md); background: var(--sunk); color: var(--ink); transition: background .15s, transform .1s; animation: rise .35s cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(var(--i, 0) * 60ms + 80ms); }
+    .suggest button:hover:not(:disabled) { background: var(--bubble); transform: translateY(-1px); }
+    .suggest button:active:not(:disabled) { transform: scale(.98); }
     .suggest button:disabled { opacity: .45; cursor: default; }
 
     .notice { border-left: 2px solid var(--bad); padding: 2px 0 2px 12px; font-size: 13px; }
@@ -132,7 +162,9 @@
     .link-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
 
     /* ── Dock ───────────────────────────────── */
-    .dock { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .dock { position: relative; padding: 0 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .jump { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 5px 11px; border-radius: var(--r-md); background: var(--raised); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--ink-2); animation: rise .2s ease-out both; }
+    .jump:hover { color: var(--ink); }
     .pending { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); padding: 0 4px; animation: rise .15s ease-out both; }
     .pending .quote { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pending .link-btn { font-size: 12.5px; }
@@ -147,14 +179,20 @@
     .tool:active:not(:disabled) { transform: scale(.95); }
     .tool:disabled { opacity: .4; cursor: default; }
     .tool.at { font-weight: 600; font-size: 14px; }
-    .send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); transition: transform .1s, opacity .15s, background .15s; }
-    .send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, black); }
+    .tabtoggle img, .tabtoggle svg { width: 15px; height: 15px; border-radius: 3px; }
+    .tabtoggle[aria-pressed="false"] { opacity: .45; }
+    .tabtoggle[aria-pressed="false"]::after { content: ""; position: absolute; width: 18px; height: 1.5px; background: var(--ink-2); transform: rotate(-45deg); }
+    .tabtoggle { position: relative; }
+    .send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--bg); transition: transform .1s, opacity .15s, background .15s; }
+    .send:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 82%, var(--bg)); }
     .send:active:not(:disabled) { transform: scale(.92); }
     .send:disabled { opacity: .35; cursor: default; }
-    .send .stop-icon { display: none; }
-    .send.busy { background: var(--ink); color: var(--bg); }
-    .send.busy .send-icon { display: none; }
-    .send.busy .stop-icon { display: block; }
+    .send { position: relative; }
+    .send svg { position: absolute; transition: opacity .18s, transform .25s cubic-bezier(.16, 1, .3, 1); }
+    .send .stop-icon { opacity: 0; transform: scale(.4) rotate(-90deg); }
+    .send.busy { background: var(--accent); color: #fff; }
+    .send.busy .send-icon { opacity: 0; transform: translateY(-8px); }
+    .send.busy .stop-icon { opacity: 1; transform: none; }
     .hint { font-size: 12px; color: var(--bad); padding: 0 4px; }
     .hint:empty { display: none; }
 
@@ -212,14 +250,17 @@
       <symbol id="i-down-thumb" viewBox="0 0 24 24"><g transform="rotate(180 12 12)"><path d="M7.5 10.5v9h-3v-9h3zM7.5 10.5l3.6-6.3a1.6 1.6 0 0 1 3 .9l-.6 3.9h4.8a2 2 0 0 1 2 2.4l-1.3 6.2a2 2 0 0 1-2 1.6H7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></g></symbol>
       <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
       <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M4 17l5-4.5 3.5 3 3-2.5 4.5 4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></symbol>
+      <symbol id="i-speak" viewBox="0 0 24 24"><path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
+      <symbol id="i-hush" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+      <symbol id="i-again" viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.1-5M19 4.5V9h-4.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v13M6 12.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-tab" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M3.5 9.5h17" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
     </defs>
   </svg>
 
   <header class="top">
-    <img src="icons/icon48.png" alt="">
-    <span class="name">Bhai</span>
     <span class="status" id="status" role="status" title="Connecting…"></span>
+    <span class="status-text" id="statusText"></span>
     <span class="grow"></span>
     <button class="icon-btn" id="btnNew" title="New chat" aria-label="New chat"><svg width="17" height="17"><use href="#i-plus"/></svg></button>
   </header>
@@ -231,13 +272,17 @@
       <button class="link-btn" id="btnRetry">Try again</button>
     </div>
     <section class="welcome" id="welcome">
-      <h1 id="welcomeTitle">Hey, I'm right here with you.</h1>
-      <p>Ask about this page, or tell me what to do in it.</p>
-      <ul class="suggest" id="suggest"></ul>
+      <div class="hello">
+        <img src="icons/icon48.png" alt="">
+        <h1 id="greeting">What should we do here?</h1>
+        <p class="tip" id="tip"></p>
+      </div>
+      <div class="suggest" id="suggest"></div>
     </section>
   </main>
 
   <footer class="dock">
+    <button class="jump" id="btnJump" hidden><svg width="13" height="13"><use href="#i-down"/></svg>Latest</button>
     <div class="pending" id="selChip" hidden>
       <svg width="15" height="15"><use href="#i-quote"/></svg>
       <span class="quote" id="selText"></span>
@@ -267,7 +312,8 @@
       <textarea id="input" rows="1" placeholder="Ask Bhai, or type @ to add tabs" aria-label="Message Bhai"></textarea>
       <div class="tools">
         <button class="tool" id="btnDraw" title="Draw on the page to show Bhai what you mean" aria-label="Draw on the page"><svg width="16" height="16"><use href="#i-pen"/></svg></button>
-        <button class="tool at" id="btnAt" title="Mention another tab" aria-label="Mention a tab">@</button>
+        <button class="tool at" id="btnAt" title="Share another tab" aria-label="Share another tab">@</button>
+        <button class="tool tabtoggle" id="tabToggle" aria-pressed="true"></button>
         <span class="grow"></span>
         <button class="send" id="btnSend" title="Send" aria-label="Send">
           <svg class="send-icon" width="16" height="16"><use href="#i-up"/></svg>

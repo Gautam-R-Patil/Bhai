@@ -169,6 +169,21 @@ export function shellWriteTargetsProtected(line: string, cwd: string): string | 
     return null;
 }
 
+// ── Child environment ────────────────────────
+
+/**
+ * Bhai's own credentials (its channel bot tokens, email password, account ids, the
+ * runtime key) are its, not the commands it runs: every shell_exec child inherited them,
+ * so \`env\` (or a prompt-injected curl …$TELEGRAM_BOT_TOKEN) handed them out. Tokens the
+ * owner set for tools (GITHUB_TOKEN, HF_TOKEN…) stay for gh, git and the like.
+ */
+const BHAI_SECRET_ENV =
+    /^(ATLAS_RUNTIME_KEY|ATLAS_DEVICE_SECRET|ATLAS_OTPLESS_USER_ID|ATLAS_ACCOUNT_EMAIL|OWNER_[A-Z_]+_IDS|CONVEX_[A-Z_]+|WIDGET_TOKEN)$|_BOT_TOKEN$|_APP_TOKEN$|_SIGNING_SECRET$|_ACCESS_TOKEN$|^EMAIL_PASS(WORD)?$|^SMTP_PASS(WORD)?$|^IMAP_PASS(WORD)?$|_SESSION_TOKEN$/;
+
+export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    return Object.fromEntries(Object.entries(env).filter(([k]) => !BHAI_SECRET_ENV.test(k)));
+}
+
 // ── Cross-Platform Command Executor ──────────
 
 async function execCommand(
@@ -180,12 +195,20 @@ async function execCommand(
         const shell = await resolveWindowsShell();
         const wrapped = wrapForShell(shell, command, args);
         return execFileAsync(wrapped.command, wrapped.args, {
+            env: childEnv(),
             cwd: options.cwd,
             timeout: options.timeout,
             maxBuffer: 1024 * 1024,
         });
     }
-    return execFileAsync(command, args, {
+    // With shell: true Node joins command and args with bare spaces, so an argument with
+    // spaces fell apart: bash -c "set -e; zip …" ran as \`bash -c set -e; zip …\` — a bare
+    // \`set\`, which printed Bhai's whole environment into the tool result. Each arg is one
+    // literal argument (as the schema says); shell syntax belongs in \`command\`.
+    const q = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
+    const line = args.length ? `${command} ${args.map(q).join(" ")}` : command;
+    return execFileAsync(line, [], {
+        env: childEnv(),
         cwd: options.cwd,
         timeout: options.timeout,
         maxBuffer: 1024 * 1024,
@@ -249,7 +272,8 @@ export const shellExec: ToolDefinition = {
                     args: {
                         type: "array",
                         items: { type: "string" },
-                        description: "Command arguments",
+                        description:
+                            "Arguments, each passed as one literal argument (quoted). Put pipes, globs, redirects or && in command instead.",
                     },
                     cwd: { type: "string", description: "Working directory (optional)" },
                     timeout: { type: "number", description: "Timeout in ms (default 30000)" },

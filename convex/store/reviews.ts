@@ -20,7 +20,7 @@ export const getByItem = query({
     sortBy: v.optional(v.string()), // "recent" | "helpful"
   },
   handler: async (ctx, args) => {
-    const limit = args.limit ?? 20;
+    const limit = Math.min(Math.max(1, args.limit ?? 20), 100);
 
     let reviews;
 
@@ -38,7 +38,9 @@ export const getByItem = query({
         .take(limit);
     }
 
-    return reviews;
+    // Never the reviewer's account id: it is what /api/auth/session takes, so handing it
+    // to every signed-in user exposed reviewers' accounts.
+    return reviews.map(({ userId: _userId, ...rest }) => rest);
   },
 });
 

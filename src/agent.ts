@@ -148,6 +148,7 @@ import {
 import { getPreferredTools, recordIntentToolUsage } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
+import { runQuickCommand } from "./quick-commands.js";
 import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
 import { sendFailed, withSendLedger } from "./tools/send-ledger.js";
 import { ownerMemoryTool } from "./tools/tool-intelligence.js";
@@ -290,13 +291,14 @@ function stripChannelTags(text: string): string {
 }
 
 /**
- * The message points at Bhai itself: its repo, its site, Bhai Bridge, or text
+ * The message points at Bhai itself: its repo, its site, its Chrome extension
+ * (now named "Bhai", formerly "Bhai Bridge"), or text
  * naming Bhai together with XAGI. A friend called "bhai" never counts, nor does
  * a <name>.bhai@xagilab.com mail address.
  */
 export function isAboutBhai(text: string): boolean {
     return (
-        /github\.com\/xagi-lab\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b/i.test(text) ||
+        /github\.com\/xagi-lab\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b|\bbhai (?:chrome )?(?:extension|side ?panel)\b/i.test(text) ||
         // Bhai described as itself, not "bhai, send the XAGI invoice".
         /\bbhai\b[^.\n]{0,60}\b(?:(?:personal )?ai (?:agent|assistant|companion)|built by xagi)/i.test(text)
     );
@@ -377,6 +379,11 @@ export function extractDoneContract(text: string | null | undefined): string | u
 export function contractProgressLine(content: string | null | undefined, hasToolCalls: boolean): string | undefined {
     const ack = hasToolCalls && extractDoneContract(content) ? findAckLine(content) : undefined;
     return ack && `[ACK] ${ack}`;
+}
+
+/** A final reply that only announces the work ("on it — …; done = …") with no tool call made yet. */
+export function ackWithoutAction(reply: string, toolCallsSoFar: number): boolean {
+    return toolCallsSoFar === 0 && !!extractDoneContract(reply) && !takeStuckMarker(reply).stuck;
 }
 
 /** Steers the verify step to check the criterion the agent itself promised. */
@@ -742,6 +749,11 @@ export interface ChannelContext {
     contactProfile?: any; // WhatsApp ContactProfile
     /** A run nobody typed (scheduled task, research follow-up): it can't answer a consent question. */
     autonomous?: boolean;
+    /**
+     * A run steered by content nobody vetted (the research follow-up reads web pages): it may
+     * read and report, never send, post, buy, book or delete — it suggests, the owner acts.
+     */
+    noOutward?: boolean;
 }
 
 // ── Session State ─────────────────────────────
@@ -1494,6 +1506,7 @@ export async function runAgent(
         const caller: import("./tools/cron-tool.js").CronCallerContext = {
             isOwner: callerIsOwner,
             autonomous: channelContext?.autonomous === true,
+            noOutward: channelContext?.noOutward === true,
             isPrivate: channelContext?.isPrivate === true,
             message: stripChannelTags(userMessage),
         };
@@ -1778,6 +1791,20 @@ async function _runAgentBody(
         );
     }
 
+    // ── Quick commands: everyday computer commands run without a model call ──
+    // (src/quick-commands.ts). The owner's own text turns only; anything not fully
+    // understood, or a step that fails, carries on to the model below.
+    if (!isForked && channelContext?.isOwner === true && !channelContext.autonomous && !media?.length) {
+        const quick = await runQuickCommand(userIntentText, executeTool).catch(() => null);
+        if (quick?.reply) {
+            console.log(`  ⚡ Quick command: ${quick.reply}`);
+            workingHistory.push({ role: "assistant", content: quick.reply });
+            if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
+            return { text: quick.reply, toolCalls: 1 };
+        }
+        if (quick?.partial) workingHistory.push({ role: "system", content: quick.partial });
+    }
+
     const messages: ChatCompletionMessageParam[] = workingHistory;
 
     let iterations = 0;
@@ -1789,6 +1816,7 @@ async function _runAgentBody(
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
     let lookNudged = false; // asksLeaveToLook fires once per run
+    let ackNudged = false; // the ack-without-action nudge, once per run
     const receiptFor = async (text: string): Promise<Receipt | undefined> => {
         const receipt = pickReceipt(verifyGate, {
             stuck: takeStuckMarker(text).stuck,
@@ -3754,6 +3782,21 @@ PLAN:`,
                     role: "user",
                     content:
                         "You can see my screen yourself: don't ask me to look or ask leave to look. Open what shows it (e.g. the right System Settings pane), read it with os_inspect or a screenshot, finish the task, and give me the actual answer.",
+                });
+                lastToolCalls = undefined;
+                continue;
+            }
+
+            // An ack with no action: the contract line ("on it — …; done = …") and no tool
+            // call, so nothing happened. Small models stop there (gpt-5-nano, model-ladder eval).
+            if (!ackNudged && ackWithoutAction(responseText, totalToolCalls)) {
+                ackNudged = true;
+                console.log("  🔄 Announced the task but called no tool — continuing");
+                messages.push({ role: "assistant", content: responseText });
+                messages.push({
+                    role: "user",
+                    content:
+                        "You said what you'll do but made no tool call, so nothing has happened yet. Do it now with your tools, then tell me the result.",
                 });
                 lastToolCalls = undefined;
                 continue;

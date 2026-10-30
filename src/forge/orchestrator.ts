@@ -33,6 +33,7 @@ import {
     invokePersistedTool,
     reinstallPersistedTool,
     uninstallPersistedTool,
+    wrapHandler,
 } from "./sandbox-supervisor.js";
 import { emitForgeEvent, initForgeTelemetry } from "./telemetry.js";
 import type {
@@ -331,7 +332,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
 
     if (!_embedFn) throw new Error("embedFn not set");
     const embedding = await _embedFn(req.description);
-    const handlerHash = hashSync(result.envelope.handler_code);
+    const handlerHash = hashSync(wrapHandler(result.envelope.handler_code)); // what handler.js holds
     try {
         insertTool({
             slug: req.name,
@@ -496,6 +497,9 @@ export async function approveDynamicTool(
     if (!manifest) {
         return { ok: false, error: `manifest not found for slug ${slug}` };
     }
+    if (isBuiltinToolName(slug)) {
+        return { ok: false, error: `"${slug}" is a built-in tool's name; a dynamic tool can't replace it.` };
+    }
     // Refresh approval metadata.
     const approved: PersistedToolManifest = {
         ...manifest,
@@ -635,6 +639,10 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
             } catch {
                 /* unknown slug */
             }
+            continue;
+        }
+        if (isBuiltinToolName(slug)) {
+            console.warn(`[forge] boot-scan: ${slug} shadows a built-in tool; not registering it`);
             continue;
         }
         registerPersisted(slug, manifest);

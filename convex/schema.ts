@@ -40,6 +40,7 @@ export default defineSchema({
     firstSeen: v.number(),
     lastSeen: v.number(),
     removedAt: v.optional(v.number()), // removed by the owner: no new sessions until a verified sign-in
+    secretHash: v.optional(v.string()), // SHA-256 of the secret issued at the last verified sign-in
   })
     .index("by_user", ["otplessUserId"])
     .index("by_user_and_fingerprint", ["otplessUserId", "fingerprint"]),

@@ -16,6 +16,8 @@ type Op = "schedule" | "list" | "cancel" | "trigger";
 export interface CronCallerContext {
     isOwner: boolean;
     autonomous?: boolean;
+    /** A run steered by unvetted content: no outward actions (see ChannelContext.noOutward). */
+    noOutward?: boolean;
     /** A private chat with Bhai (not a group or shared channel): owner memories may be shown. */
     isPrivate?: boolean;
     /** The owner's words this turn: memory_store supersedes only when they read like a correction. */
@@ -45,6 +47,9 @@ export const isMainLoopCall = (tool: string): boolean => _mainLoopTool.getStore(
 export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promise<T> | T): Promise<T> | T {
     return _callerStorage.run(ctx, fn);
 }
+
+/** This run may not act outside the machine (it reads unvetted content, nobody is watching). */
+export const isNoOutwardCaller = (): boolean => _callerStorage.getStore()?.noOutward === true;
 
 /** The owner, speaking in this turn: not a contact, not a scheduled/autonomous run. */
 export function isOwnerCaller(): boolean {

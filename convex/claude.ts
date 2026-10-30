@@ -183,7 +183,9 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
     model,
     // Thinking is always on for these models and counts against max_tokens,
     // so leave room even when the client asked for a short answer.
-    max_tokens: Math.max(Number(body.max_tokens) || 16000, 8192),
+    // Billed per call, so the size per call is capped: an unbounded max_tokens let one
+    // free-tier credit buy a huge Opus generation.
+    max_tokens: Math.min(Math.max(Number(body.max_tokens) || 16000, 8192), 32_000),
     messages,
     // Auto-cache the growing conversation; the explicit breakpoint below keeps
     // tools + the byte-stable server prompt cached even when the client's

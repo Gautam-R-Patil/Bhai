@@ -168,6 +168,7 @@ async function buildResponse(
 import { getCreditCost } from "./credit_cost.js";
 import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
 import { isBotUsername, managedBotLink } from "./telegramManaged.js";
+import { newDeviceSecret, sha256Hex } from "./devices.js";
 import { isEmail, MAX_RECIPIENTS_PER_EMAIL, parseRecipients, SEND_RECIPIENTS_PER_DAY } from "./bhaiMailHelpers.js";
 
 // ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
@@ -276,6 +277,9 @@ async function verifyHCaptcha(token: string, remoteIp?: string): Promise<boolean
   }
 }
 
+// Convex's .site is behind Cloudflare: it sets CF-Connecting-IP on every request and
+// rejects one the client sends (403), so it must stay first. X-Forwarded-For and
+// X-Real-IP are client-controlled and only a fallback (checked live, Oct 2026).
 function extractClientIp(request: Request): string {
   return (
     request.headers.get("CF-Connecting-IP") ||
@@ -927,6 +931,15 @@ http.route({
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
+    // A user id is not a secret (it shows up in logs and support threads), so a session
+    // also needs the secret this device got at its last verified sign-in.
+    const { deviceSecret } = body;
+    if (typeof deviceFingerprint !== "string" || !deviceFingerprint || typeof deviceSecret !== "string" || !deviceSecret) {
+      return new Response(
+        JSON.stringify({ error: "sign_in_required" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     try {
       // The account MUST already exist. /api/otpless/validate-token is the
@@ -971,7 +984,8 @@ http.route({
 
       const result = await ctx.runMutation(internal.sessions.createSessionInternal, {
         otplessUserId,
-        deviceFingerprint: deviceFingerprint || undefined,
+        deviceFingerprint,
+        deviceSecretHash: await sha256Hex(deviceSecret),
         clientPublicKey: clientPublicKey || undefined,
         serverPublicKey,
         sharedKey,
@@ -992,10 +1006,11 @@ http.route({
       );
     } catch (err: any) {
       const msg = typeof err?.message === "string" ? err.message : "";
-      const status = msg.includes("not found") ? 404 : 403;
+      // The app tells these apart: the device must sign in again, not retry.
+      const error = ["device_removed", "sign_in_required"].find((e) => msg.includes(e));
+      const status = error === "sign_in_required" ? 401 : msg.includes("not found") ? 404 : 403;
       return new Response(
-        // The app tells a removed device apart: it must sign in again, not retry.
-        JSON.stringify({ error: msg.includes("device_removed") ? "device_removed" : "Session creation failed" }),
+        JSON.stringify({ error: error ?? "Session creation failed" }),
         { status, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -1992,8 +2007,9 @@ http.route({
         body: JSON.stringify({
           api_key: tavilyKey,
           query,
-          search_depth: search_depth || "advanced",
-          max_results: max_results || 15,
+          // Unbilled and on the server's quota: client values are clamped, not passed through.
+          search_depth: search_depth === "basic" ? "basic" : "advanced",
+          max_results: Math.min(Math.max(1, Number(max_results) || 15), 20),
           include_answer: false,
           include_raw_content: false,
         }),
@@ -2141,9 +2157,14 @@ http.route({
         },
         body: JSON.stringify({
           query,
-          type: type || "auto",
-          numResults: numResults || 15,
-          contents: contents || { highlights: { maxCharacters: 300 } },
+          // Unbilled and on the server's quota: client values are clamped, not passed through.
+          type: ["auto", "neural", "keyword", "fast"].includes(type) ? type : "auto",
+          numResults: Math.min(Math.max(1, Number(numResults) || 15), 20),
+          contents: {
+            highlights: {
+              maxCharacters: Math.min(Number(contents?.highlights?.maxCharacters) || 300, 500),
+            },
+          },
         }),
       });
 
@@ -2738,12 +2759,17 @@ http.route({
         phone: identity.phone,
         name: identity.name,
       });
+      // OTPless just verified this sign-in: a removed device comes back, and the device
+      // gets a new secret it must show for later sessions (/api/auth/session).
+      const fp = typeof deviceFingerprint === "string" && deviceFingerprint ? deviceFingerprint : undefined;
+      const deviceSecret = fp ? newDeviceSecret() : undefined;
       const session = await ctx.runMutation(internal.sessions.createSessionInternal, {
         otplessUserId: identity.userId,
-        deviceFingerprint: deviceFingerprint || undefined,
-        reactivate: true, // OTPless just verified this sign-in: a removed device comes back
+        deviceFingerprint: fp,
+        reactivate: true,
+        deviceSecretHash: deviceSecret ? await sha256Hex(deviceSecret) : undefined,
       });
-      return new Response(JSON.stringify({ session, ...identity }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ session, ...identity, ...(deviceSecret ? { deviceSecret } : {}) }), { status: 200, headers: { "Content-Type": "application/json" } });
     } catch (err: any) {
       const raw = (err?.message || "validate failed") as string;
       const clean = raw

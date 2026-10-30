@@ -24,6 +24,12 @@ describe("parseOtplessVerifyResponse", () => {
         });
     });
 
+    it("keeps the device secret the sign-in issued (later sessions need it)", () => {
+        const raw = { session: { token: "t" }, userId: "u", deviceSecret: "ab12" };
+        expect(parseOtplessVerifyResponse(raw).deviceSecret).toBe("ab12");
+        expect(parseOtplessVerifyResponse({ ...raw, deviceSecret: { x: 1 } }).deviceSecret).toBeUndefined();
+    });
+
     it("returns ok:false and error on error payload", () => {
         const raw = { error: "Incorrect OTP" };
         expect(parseOtplessVerifyResponse(raw)).toEqual({ ok: false, error: "Incorrect OTP" });

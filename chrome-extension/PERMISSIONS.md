@@ -1,4 +1,4 @@
-# Bhai Bridge — permission rationale
+# Bhai (Chrome extension) — permission rationale
 
 Notes on why the manifest requests its permissions. Kept out of `manifest.json`
 because Chrome warns on unrecognized (`_`-prefixed) manifest keys.

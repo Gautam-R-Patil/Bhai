@@ -1042,7 +1042,7 @@ async function handleOverlayMessage(
 [SOURCE: Bhai's side panel in the user's Chrome — respond there, NOT on Telegram. Keep it short.
 ${
             imageKind === "pasted"
-                ? "Attached: an image the user pasted into the chat. Answer about it directly."
+                ? "Attached: an image the user shared with you (pasted in, or picked on a page). Answer about it directly."
                 : `Attached: a screenshot of the Chrome tab the user is looking at (the page only). Orange strokes or boxes on it are the user's own drawing: focus on what they marked. Answer as if you can see the page, without "based on the screenshot". To act on the page, use the browser tools on this tab; to point something out to them, use browser_mark.`
         }]${chromeCtxNote}`;
     } else if (wsIsOwner(ws) && source !== "chrome-extension" && isScreenQuery(userMessage)) {

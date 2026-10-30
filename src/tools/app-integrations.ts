@@ -75,12 +75,20 @@ async function getStorefront(): Promise<string> {
  */
 export async function playCatalogTrack(query: string): Promise<{ track: string; artist: string } | { error: string }> {
     const country = await getStorefront();
+    // limit=1 often comes back empty for a query limit=5 answers ("blinding lights the
+    // weeknd": 0 vs 3), so take five and keep the one whose title and artist the query names.
     const res = await fetch(
-        `https://itunes.apple.com/search?entity=song&limit=1&country=${country}&term=${encodeURIComponent(query)}`,
+        `https://itunes.apple.com/search?entity=song&limit=5&country=${country}&term=${encodeURIComponent(query)}`,
         { signal: AbortSignal.timeout(5000) },
     );
-    const hit = ((await res.json()) as { results?: { trackName: string; artistName: string; trackViewUrl: string }[] })
-        .results?.[0];
+    const results =
+        ((await res.json()) as { results?: { trackName: string; artistName: string; trackViewUrl: string }[] }).results ??
+        [];
+    const words = new Set(query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+    const named = (t: string) => (t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => words.has(w)).length;
+    const hit = results
+        .map((r, i) => ({ r, score: named(r.trackName) * 2 + named(r.artistName) - i * 0.1 }))
+        .sort((a, b) => b.score - a.score)[0]?.r;
     if (!hit) return { error: "not found in the Apple Music catalog" };
     if (!hit.trackViewUrl.startsWith("https://music.apple.com/")) return { error: "unexpected catalog link" };
     await execFileAsync("open", [hit.trackViewUrl.replace(/^https:/, "music:")], { timeout: 5000 });
@@ -92,6 +100,8 @@ tell application "System Events" to tell process "Music"
             repeat with sa in (scroll areas of splitter group 1 of window 1)
                 repeat with t in (tables of sa whose description is "track list")
                     repeat with r in (rows of t whose selected is true)
+                        -- The keystroke goes to the frontmost app: make sure that's Music.
+                        set frontmost to true
                         set focused of t to true
                         key code 36
                         return "ok"
@@ -374,6 +384,8 @@ export const calendarTool: ToolDefinition = {
                         action === "today"
                             ? new Date().toISOString().split("T")[0]
                             : (input.date as string) || new Date().toISOString().split("T")[0];
+                    // Goes into the JXA script as code: a date and nothing else.
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return JSON.stringify({ error: "date must be YYYY-MM-DD." });
 
                     const result = await runJXA(
                         `
@@ -423,6 +435,12 @@ JSON.stringify(events);`,
                     const calName = (input.calendar_name as string) || "";
                     const location = (input.location as string) || "";
                     const notes = (input.notes as string) || "";
+                    // The times go into the JXA script unescaped: only a date and time get in
+                    // (x"); ObjC.import("stdlib"); $.system("…"); (" would otherwise run as code).
+                    const TIME = /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$/;
+                    if (!TIME.test(startTime) || !TIME.test(endTime)) {
+                        return JSON.stringify({ error: "start_time and end_time must be 'YYYY-MM-DD HH:MM'." });
+                    }
 
                     const escaped = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 

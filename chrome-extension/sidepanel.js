@@ -20,6 +20,27 @@ let selectionIgnored = false;
 // Lets the background worker know when the panel closes (it removes any drawing).
 chrome.runtime.connect({ name: 'sidepanel' });
 
+(() => {
+  const h = new Date().getHours();
+  const line = h < 5 ? 'Up late? What do you need?'
+    : h < 12 ? "Morning. What's first?"
+    : h < 17 ? 'What should we do here?'
+    : h < 22 ? 'Evening. What can I take off your plate?'
+    : 'Still going? What do you need?';
+  $('greeting').textContent = line;
+  const tips = [
+    'Type @ to share another tab with Bhai.',
+    'Draw on the page to point at something.',
+    'Select text first, and Bhai focuses on it.',
+    'Paste a screenshot to ask about it.',
+    'Right-click text or an image to ask Bhai.',
+    `${/Mac/.test(navigator.platform) ? 'Option' : 'Alt'}+Shift+B opens Bhai from any tab.`,
+  ];
+  let n = 0;
+  try { n = Number(localStorage.getItem('bhaiTip') || 0); localStorage.setItem('bhaiTip', String(n + 1)); } catch {}
+  $('tip').textContent = tips[n % tips.length];
+})();
+
 function send(message) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(message, (resp) => {
@@ -63,7 +84,12 @@ function renderMarkdown(text) {
     for (const block of part.split(/\n{2,}/)) {
       const lines = block.split('\n').filter((l) => l.trim());
       if (!lines.length) continue;
-      if (lines.length === 1 && /^#{1,4}\s+/.test(lines[0])) {
+      if (lines.length >= 2 && lines.every((l) => /^\s*\|.*\|\s*$/.test(l)) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[1])) {
+        const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim()));
+        const head = cells(lines[0]).map((c) => `<th>${c}</th>`).join('');
+        const body = lines.slice(2).map((l) => `<tr>${cells(l).map((c) => `<td>${c}</td>`).join('')}</tr>`).join('');
+        html += `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+      } else if (lines.length === 1 && /^#{1,4}\s+/.test(lines[0])) {
         html += `<h3>${inline(lines[0].replace(/^#{1,4}\s+/, ''))}</h3>`;
       } else if (lines.every((l) => /^\s*[-*•]\s+/.test(l))) {
         html += `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*•]\s+/, ''))}</li>`).join('')}</ul>`;
@@ -81,29 +107,48 @@ function renderMarkdown(text) {
 
 // ── Thread ───────────────────────────────────
 
-function tag(name, text) {
+function tag(name, text, kind) {
   const t = document.createElement('span');
-  t.className = 'tag';
+  t.className = `tag ${kind}`;
   const label = document.createElement('span');
   label.textContent = text;
   t.append(icon(name, 12), label);
   return t;
 }
 
-function messageEl(m) {
+let lastChat = [];
+const timeOf = (ts) => {
+  const d = new Date(ts);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString([], sameDay ? { hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
+
+function messageEl(m, arriving = false) {
   const el = document.createElement('div');
   el.className = `msg ${m.role}`;
+  if (m.ts > 1e12) el.title = timeOf(m.ts);
   if (m.role === 'you') {
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.textContent = m.text;
-    el.append(bubble);
+    const edit = document.createElement('button');
+    edit.className = 'icon-btn edit';
+    edit.title = 'Edit and send again';
+    edit.setAttribute('aria-label', 'Edit and send again');
+    edit.append(icon('pen', 14));
+    edit.addEventListener('click', () => {
+      input.value = m.text;
+      autosize();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+    el.append(edit, bubble);
     const meta = m.meta || {};
     const tags = [];
-    if (meta.drew) tags.push(tag('pen', 'Your drawing'));
-    else if (meta.shared) tags.push(tag('tab', 'This tab'));
-    if (meta.selection) tags.push(tag('quote', `“${meta.selection}”`));
-    for (const t of meta.tabs || []) tags.push(tag('tab', t));
+    if (meta.drew) tags.push(tag('pen', 'Your drawing', 'draw'));
+    if (meta.pasted) tags.push(tag('image', 'Image', 'draw'));
+    if (meta.selection) tags.push(tag('quote', `“${meta.selection}”`, 'sel'));
+    for (const t of meta.tabs || []) tags.push(tag('tab', t, 'tab'));
     if (tags.length) {
       const row = document.createElement('div');
       row.className = 'attach';
@@ -113,6 +158,17 @@ function messageEl(m) {
   } else if (m.role === 'bhai') {
     const body = document.createElement('div');
     body.innerHTML = renderMarkdown(m.text);
+    for (const pre of body.querySelectorAll('pre')) {
+      const b = document.createElement('button');
+      b.className = 'code-copy';
+      b.textContent = 'Copy';
+      b.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(pre.querySelector('code')?.textContent || '').catch(() => {});
+        b.textContent = 'Copied';
+        setTimeout(() => { b.textContent = 'Copy'; }, 1200);
+      });
+      pre.append(b);
+    }
     const tools = document.createElement('div');
     tools.className = 'reply-tools';
     const copy = document.createElement('button');
@@ -126,6 +182,44 @@ function messageEl(m) {
       setTimeout(() => copy.replaceChildren(icon('copy', 15)), 1200);
     });
     tools.append(copy);
+
+    // Read aloud with the Mac's own voice (nothing leaves the computer).
+    if ('speechSynthesis' in window) {
+      const speak = document.createElement('button');
+      speak.className = 'icon-btn';
+      const setSpeak = (on) => {
+        speak.title = on ? 'Stop reading' : 'Read aloud';
+        speak.setAttribute('aria-label', speak.title);
+        speak.setAttribute('aria-pressed', String(on));
+        speak.replaceChildren(icon(on ? 'hush' : 'speak', 15));
+      };
+      setSpeak(false);
+      speak.addEventListener('click', () => {
+        if (speak.getAttribute('aria-pressed') === 'true') { speechSynthesis.cancel(); return; }
+        speechSynthesis.cancel();
+        document.querySelectorAll('.reply-tools [aria-pressed="true"]').forEach((b) => b.dispatchEvent(new Event('speech-end')));
+        const u = new SpeechSynthesisUtterance(body.innerText);
+        u.onend = u.onerror = () => setSpeak(false);
+        speak.addEventListener('speech-end', () => setSpeak(false), { once: true });
+        setSpeak(true);
+        speechSynthesis.speak(u);
+      });
+      tools.append(speak);
+    }
+
+    // Ask again (latest reply only): sends the question before it once more.
+    const again = document.createElement('button');
+    again.className = 'icon-btn again';
+    again.title = 'Ask again';
+    again.setAttribute('aria-label', 'Ask again');
+    again.append(icon('again', 15));
+    again.addEventListener('click', () => {
+      const i = lastChat.indexOf(m);
+      const q = [...lastChat.slice(0, i)].reverse().find((c) => c.role === 'you');
+      if (q && !busy) sendMessage({ type: 'send_message', text: q.text, mentions: [...extraTabs.keys()] });
+    });
+    tools.append(again);
+
     const actions = m.meta?.actions || [];
     const feedback = actions.filter((a) => a.action.startsWith('feedback:'));
     const forget = actions.filter((a) => a.action.startsWith('mem:forget:'));
@@ -189,8 +283,23 @@ function messageEl(m) {
       el.append(row);
     }
     el.append(tools);
+    if (arriving) {
+      el.classList.add('reveal');
+      [...body.children].forEach((c, i) => c.style.setProperty('--d', String(Math.min(i, 8))));
+    }
   } else {
-    el.textContent = m.text;
+    // An error: say it, and offer to send the last message again.
+    const text = document.createElement('span');
+    text.textContent = `${m.text} `;
+    el.append(text);
+    const retry = document.createElement('button');
+    retry.className = 'link-btn';
+    retry.textContent = 'Try again';
+    retry.addEventListener('click', () => {
+      const lastYou = [...lastChat].reverse().find((c) => c.role === 'you');
+      if (lastYou) { retry.remove(); sendMessage({ type: 'send_message', text: lastYou.text, mentions: [...extraTabs.keys()] }); }
+    });
+    el.append(retry);
   }
   return el;
 }
@@ -198,17 +307,39 @@ function messageEl(m) {
 let rendered = 0;
 function renderChat(chat) {
   chat = chat || [];
+  lastChat = chat;
   if (chat.length < rendered) { thread.querySelectorAll('.msg').forEach((el) => el.remove()); rendered = 0; }
   const working = $('workingRow');
-  for (const m of chat.slice(rendered)) thread.insertBefore(messageEl(m), working || null);
+  const arriving = rendered > 0 && chat.length - rendered === 1; // one new message, not the first load
+  const wasAtBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+  let newest = null;
+  for (const m of chat.slice(rendered)) {
+    newest = messageEl(m, arriving && m.role === 'bhai');
+    thread.insertBefore(newest, working || null);
+  }
   rendered = chat.length;
   const rows = thread.querySelectorAll('.bhai .followups');
   rows.forEach((r, i) => { r.hidden = i !== rows.length - 1 || chat[chat.length - 1]?.role !== 'bhai'; });
   $('welcome').hidden = chat.length > 0;
-  thread.scrollTop = thread.scrollHeight;
+  $('btnNew').hidden = chat.length === 0;
+  // Only the newest reply offers "Ask again".
+  const agains = thread.querySelectorAll('.bhai .again');
+  agains.forEach((b, i) => { b.hidden = i !== agains.length - 1; });
+  if (arriving && !wasAtBottom && newest?.classList.contains('bhai')) {
+    $('btnJump').hidden = false; // reading further up: don't yank them away
+  } else if (arriving && newest?.classList.contains('bhai') && newest.offsetHeight > thread.clientHeight * 0.6) {
+    thread.scrollTop = newest.offsetTop - 12;
+  } else {
+    thread.scrollTop = thread.scrollHeight;
+  }
 }
 
 let lastProgress = 0;
+const cleanProgress = (t) => (t || '')
+  .replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '')
+  .replace(/^step\s+\d+\s*·\s*/i, '')
+  .replace(/\s*·\s*\d+\s*s$/i, '')
+  .trim();
 function setBusy(on, text) {
   busy = on;
   lastProgress = Date.now();
@@ -224,7 +355,7 @@ function setBusy(on, text) {
     row.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span></span>';
     thread.append(row);
   }
-  row.lastElementChild.textContent = text || 'Thinking…';
+  row.lastElementChild.textContent = cleanProgress(text) || 'Thinking…';
   thread.scrollTop = thread.scrollHeight;
   updateSendState();
 }
@@ -238,6 +369,7 @@ function renderStatus(resp) {
   const dot = $('status');
   dot.dataset.state = canChat ? 'on' : searching ? '' : 'off';
   dot.title = canChat ? 'Connected to Bhai' : searching ? 'Connecting…' : browserOn ? 'Chat is reconnecting…' : "Bhai isn't running";
+  $('statusText').textContent = canChat ? 'Connected' : searching ? 'Connecting…' : browserOn ? 'Reconnecting…' : 'Offline';
   $('offline').hidden = browserOn || searching;
   for (const b of document.querySelectorAll('.suggest button, #btnDraw, #btnAt')) b.disabled = !canChat;
   document.querySelectorAll('.followups button').forEach((b) => { b.disabled = !canChat; });
@@ -260,18 +392,8 @@ async function refreshTab() {
   }
   activeTab = tab;
   extraTabs.delete(tab.id); // the current tab is shared as itself
-  const sharable = /^(https?|file):/.test(tab.url || '');
   renderSharing();
   renderSuggestions();
-  const title = $('welcomeTitle');
-  title.replaceChildren();
-  if (sharable && host(tab.url)) {
-    const b = document.createElement('b');
-    b.textContent = host(tab.url);
-    title.append("Hey, I'm looking at ", b, ' with you.');
-  } else {
-    title.append("Hey, I'm right here with you.");
-  }
 }
 
 function renderSelection() {
@@ -307,7 +429,16 @@ function sharedTabs() {
 function renderSharing() {
   const tabs = sharedTabs();
   const canShareActive = sharableTab(activeTab);
-  $('sharing').hidden = !tabs.length && !canShareActive;
+  // The current tab is shared by default; the row only appears when there's more to say.
+  $('sharing').hidden = !extraTabs.size && (shareTab || !canShareActive);
+  const toggle = $('tabToggle');
+  toggle.hidden = !canShareActive;
+  if (canShareActive) {
+    toggle.replaceChildren(favicon(activeTab));
+    toggle.setAttribute('aria-pressed', String(shareTab));
+    toggle.title = shareTab ? `Bhai sees ${host(activeTab.url) || 'this tab'}. Click to stop sharing it.` : `Not sharing ${host(activeTab.url) || 'this tab'}. Click to share it.`;
+    toggle.setAttribute('aria-label', toggle.title);
+  }
   $('shareLabel').textContent = !tabs.length
     ? 'Not sharing any tab'
     : tabs.length === 1 && tabs[0] === activeTab ? 'Sharing this tab' : `Sharing ${tabs.length} tab${tabs.length === 1 ? '' : 's'}`;
@@ -360,14 +491,18 @@ function suggestionsFor(tab) {
   const ask = (label, text, ic = 'ask') => ({ label, ic, run: () => sendMessage({ type: 'send_message', text }) });
   const summary = { label: 'Summarize this page', ic: 'doc', run: () => sendMessage({ type: 'send_page', question: 'Summarize this page for me.', display: 'Summarize this page' }) };
   const explain = { label: "Explain what's here", ic: 'ask', run: () => sendMessage({ type: 'send_selection', question: 'Explain this simply.' }) };
-  const draw = { label: 'Circle something and ask about it', ic: 'pen', run: startDrawing };
+  const draw = { label: 'Circle something to ask about', ic: 'pen', run: startDrawing };
+  const fill = (label, text) => ({ label, run: () => { input.value = text; autosize(); input.focus(); } });
+  if (!sharableTab(tab)) {
+    return [fill('Search the web for…', 'Search the web for '), fill('Open a site for me', 'Open '), ask('What can you do?', 'What can you do for me in Chrome? Keep it short.')];
+  }
   if (/youtube\.com$/.test(h) && path.startsWith('/watch')) {
     return [ask('Summarize this video', 'Summarize this video for me.', 'doc'), ask('What are the key points?', 'What are the key points of this video?'), draw];
   }
   if (h === 'github.com') {
     return [ask('Explain this repo', 'Explain what this repo is and how it is organised.', 'doc'), ask('What changed recently?', 'What changed recently here?'), draw];
   }
-  if (h === 'mail.google.com') {
+  if (h === 'mail.google.com' || /^(mail|webmail)\./.test(h) || /(^|\.)(outlook\.(live|office)\.com|mail\.yahoo\.com|proton\.me)$/.test(h)) {
     return [ask('Summarize this email', 'Summarize this email for me.', 'doc'), ask('Draft a reply', 'Draft a reply to this email. Show it to me before sending.'), draw];
   }
   if (h === 'docs.google.com') {
@@ -385,14 +520,13 @@ function suggestionsFor(tab) {
 function renderSuggestions() {
   const list = $('suggest');
   list.replaceChildren();
-  for (const sgt of suggestionsFor(activeTab)) {
-    const li = document.createElement('li');
+  for (const [i, sgt] of suggestionsFor(activeTab).entries()) {
     const b = document.createElement('button');
-    b.append(icon(sgt.ic, 17), document.createTextNode(sgt.label));
+    b.style.setProperty('--i', i);
+    b.textContent = sgt.label;
     b.disabled = !canChat;
     b.addEventListener('click', sgt.run);
-    li.append(b);
-    list.append(li);
+    list.append(b);
   }
 }
 
@@ -592,6 +726,11 @@ input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); return pickMention(menuIndex); }
   }
   if (e.key === 'Escape') { if (!mentionMenu.hidden) return closeMenu(); if (busy) return stop(); }
+  if (e.key === 'ArrowUp' && !input.value) {
+    const lastYou = [...lastChat].reverse().find((c) => c.role === 'you');
+    if (lastYou) { e.preventDefault(); input.value = lastYou.text; autosize(); input.setSelectionRange(input.value.length, input.value.length); }
+    return;
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!busy) sendText(); }
 });
 
@@ -609,6 +748,13 @@ composer.addEventListener('drop', (e) => {
   if (file) { e.preventDefault(); attachImage(file); }
 });
 $('btnAttachOff').addEventListener('click', clearImage);
+$('btnJump').addEventListener('click', () => {
+  thread.scrollTo({ top: thread.scrollHeight, behavior: 'smooth' });
+  $('btnJump').hidden = true;
+});
+thread.addEventListener('scroll', () => {
+  if (thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40) $('btnJump').hidden = true;
+});
 setInterval(() => {
   const row = $('workingRow');
   if (busy && row && Date.now() - lastProgress > 45000) row.lastElementChild.textContent = 'Still working on it…';
@@ -628,6 +774,10 @@ $('btnAt').addEventListener('click', () => {
   input.setSelectionRange(pos + pad.length + 1, pos + pad.length + 1);
   updateMenu();
 });
+$('tabToggle').addEventListener('click', () => {
+  shareTab = !shareTab;
+  renderSharing();
+});
 $('shareHead').addEventListener('click', () => {
   shareOpen = !shareOpen;
   renderSharing();
@@ -637,6 +787,7 @@ $('btnSelOff').addEventListener('click', () => {
   renderSelection();
 });
 $('btnNew').addEventListener('click', async () => {
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
   await send({ type: 'clear_chat' });
   renderChat([]);
   setBusy(false);

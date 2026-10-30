@@ -205,9 +205,10 @@ const { readVault, registerVaultIpc } = require("./vault-store");
 // kept here as breadcrumbs for legacy callers.
 let _desktopSessionToken = null;
 let _desktopSessionExpiry = 0;
-// Set when the server says the owner removed this Mac (Account → Devices on another one):
-// it gets no session until someone signs in here again.
-let _deviceRemoved = false;
+// Set when the server refuses this Mac a session until someone signs in here again:
+// "device_removed" (the owner removed it in Account → Devices on another one) or
+// "sign_in_required" (no device secret yet, e.g. signed in before secrets existed).
+let _signInNeeded = null;
 
 /** This device as the bot names it (src/session.ts getDeviceFingerprint): one Devices row per Mac. */
 function deviceFingerprint() {
@@ -222,16 +223,24 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
 
     let userId = overrideUserId;
 
+    // Until someone signs in here again the server will only refuse; asking anyway
+    // just spends the sign-in rate limit.
+    if (_signInNeeded) return null;
+    const saved = loadAccountSession();
     if (!userId) {
-        const session = loadAccountSession();
-        if (!session || !session.userId) return null;
-        userId = session.userId;
+        if (!saved || !saved.userId) return null;
+        userId = saved.userId;
+    }
+    if (!saved?.deviceSecret) {
+        _signInNeeded = "sign_in_required";
+        return null;
     }
 
     const https = require("https");
     const bodyStr = JSON.stringify({
         otplessUserId: userId,
         deviceFingerprint: deviceFingerprint(),
+        deviceSecret: saved.deviceSecret,
     });
 
     return new Promise((resolve) => {
@@ -250,12 +259,12 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
                 try {
                     const data = JSON.parse(raw);
                     if (data.token) {
-                        _deviceRemoved = false;
+                        _signInNeeded = null;
                         _desktopSessionToken = data.token;
                         _desktopSessionExpiry = data.expiresAt || (Date.now() + 86400000);
                         resolve(data.token);
                     } else {
-                        if (data.error === "device_removed") _deviceRemoved = true;
+                        if (data.error === "device_removed" || data.error === "sign_in_required") _signInNeeded = data.error;
                         console.warn("[Session] Desktop session failed:", data.error || "unknown");
                         resolve(null);
                     }
@@ -1269,11 +1278,12 @@ async function startBot() {
     if (stopPromise) await stopPromise; // never run two bots at once
     if (isAlive(botProcess)) return { status: "already_running" };
 
-    // ── Account gate: check status before starting ──
+    // ── Account gate: a device without its sign-in secret only gets refused ──
     const session = loadAccountSession();
-    if (session && session.user) {
-        // Account is configured — we'll pass credentials to the bot
-        // but the actual pre-start check is done async (see startBotAsync below)
+    if (session?.userId && !session.deviceSecret) {
+        _signInNeeded = "sign_in_required";
+        console.log("[BOT] Not starting: sign in again (Account) — this device has no sign-in secret yet");
+        return { status: "sign_in_required" };
     }
 
     // Ensure data dir exists
@@ -1360,6 +1370,7 @@ async function startBot() {
     if (session && session.userId) {
         spawnEnv.ATLAS_OTPLESS_USER_ID = session.userId;
         spawnEnv.ATLAS_ACCOUNT_EMAIL = session.email || "";
+        if (session.deviceSecret) spawnEnv.ATLAS_DEVICE_SECRET = session.deviceSecret;
     }
 
     if (!IS_DEV) {
@@ -2348,17 +2359,25 @@ function registerIPC() {
 
     let authWindow = null;
 
-    function finalizeAuth({ session, userId, email, phone, name }) {
+    function finalizeAuth({ session, userId, email, phone, name, deviceSecret }) {
         saveAccountSession({
             userId,
             token: session.token,
             email: email || null,
             phone: phone || null,
             name: name || null,
+            deviceSecret: deviceSecret || null,
             created_at: new Date().toISOString(),
         });
         _desktopSessionToken = session.token;
         _desktopSessionExpiry = session.expiresAt || (Date.now() + 86400000);
+        _signInNeeded = null;
+        // The bot needs the new identity and device secret: restart a running one, and
+        // start one that stopped for want of a sign-in (once setup is done).
+        if (isAlive(botProcess) || fs.existsSync(SETUP_FLAG)) {
+            stopBot();
+            startBot().catch((err) => console.error("[AUTH] Bot start failed:", err.message));
+        }
         // Seed the profile name from sign-in (the Profile screen is gone): the bot
         // writes it into the identity memory on boot (src/setup/wizard-seed.ts).
         if (name) {
@@ -2456,7 +2475,8 @@ function registerIPC() {
     // Open auth window from renderer. Short-circuits if a valid session already exists.
     ipcMain.handle("window:openAuth", () => {
         const existing = loadAccountSession();
-        if (existing && existing.userId && !isLegacyUserId(existing.userId)) {
+        // Signed in before device secrets (or told to sign in again): open sign-in.
+        if (existing && existing.userId && !isLegacyUserId(existing.userId) && existing.deviceSecret && !_signInNeeded) {
             if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
             return { success: true, alreadySignedIn: true };
         }
@@ -5009,7 +5029,7 @@ function registerIPC() {
             } catch (err) {
                 console.warn("[Account] Convex info query failed:", err.message);
             }
-            if (_deviceRemoved) return { signedIn: false, deviceRemoved: true };
+            if (_signInNeeded) return { signedIn: false, deviceRemoved: _signInNeeded === "device_removed", signInAgain: true };
 
             return {
                 signedIn: true,

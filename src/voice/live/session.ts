@@ -10,6 +10,7 @@ import type { LLMClient } from "../../llm.js";
 import { MODELS } from "../../llm.js";
 import { nativeVadAnyFrame16Khz } from "../../native/index.js";
 import { noteOwnerMessage } from "../../security/consent.js";
+import { anySecretTyped } from "../../security/vault.js";
 import { getAck, isAckBankReady, startAckBankWarmup } from "./ack-bank.js";
 import { AudioPlayer } from "./audio/audio-player.js";
 import { MicCapture } from "./audio/mic-capture.js";
@@ -425,7 +426,10 @@ export class LiveVoiceSession extends EventEmitter {
                 try {
                     this.screenShare = startScreenShare(
                         (b64, mime) => this.backend?.sendVideo(b64, mime),
-                        () => this.micMuted || this.state !== "active",
+                        // Paused while a vault secret has been typed this task: these frames go to
+                        // the voice provider, and pixels of a filled card/password field can't be
+                        // masked (screenshots elsewhere are already withheld then).
+                        () => this.micMuted || this.state !== "active" || anySecretTyped(),
                     );
                     console.log(
                         "👁  [LIVE-SESSION] Screen sharing ACTIVE — your screen is being streamed to the live-voice model while the mic is unmuted. Mute the mic to pause.",
@@ -646,7 +650,10 @@ export class LiveVoiceSession extends EventEmitter {
         this.backend.on("user_transcript", (text: string) => {
             if (!this.hybridMode) {
                 this.emitEvent("user_transcript", text);
-                noteOwnerMessage(text); // live voice is the owner at their Mac: a spoken yes counts
+                // Not a consent answer: native mode sends partial chunks (a fragment "yes" of
+                // "yes, but not now"), and its own playback isn't gated, so Bhai's spoken question
+                // could come back as the answer. Hybrid mode's one clean final transcript (below)
+                // still counts; otherwise confirm in chat.
             }
             this.speaker.onNewTurn();
         });

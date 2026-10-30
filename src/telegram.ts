@@ -437,6 +437,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         triggerMessageId: number;
         description: string;
         startedAt: number;
+        /** Who started it: in a group, "stop" from one member must not cancel another's work. */
+        senderId?: number;
     }
     const activeTasks = new Map<number, ActiveTask[]>();
     const MAX_CONCURRENT_TASKS = 3;
@@ -579,7 +581,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 messageBuffer.delete(bufKey);
             }
 
-            const tasks = activeTasks.get(chatId) || [];
+            // The owner may stop anything; anyone else only what they started.
+            const isOwnerSender = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
+            const allTasks = activeTasks.get(chatId) || [];
+            const tasks = isOwnerSender ? allTasks : allTasks.filter((t) => t.senderId === ctx.from?.id);
 
             // If replying "stop" to a specific bot message, cancel only that task
             if (replyToText && ctx.message.reply_to_message) {
@@ -590,7 +595,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     targetTask.controller.abort();
                     activeTasks.set(
                         chatId,
-                        tasks.filter((t) => t.taskId !== targetTaskId),
+                        allTasks.filter((t) => t.taskId !== targetTaskId),
                     );
                     console.log(`  🛑 Stopping specific task ${targetTask.taskId}: "${targetTask.description}"`);
                     await ctx.reply(`🛑 Stopping: ${targetTask.description}`, {
@@ -603,7 +608,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             // Otherwise cancel all tasks
             if (tasks.length > 0) {
                 for (const task of tasks) task.controller.abort();
-                activeTasks.delete(chatId);
+                const rest = allTasks.filter((t) => !tasks.includes(t));
+                if (rest.length) activeTasks.set(chatId, rest);
+                else activeTasks.delete(chatId);
                 console.log(`  🛑 Aborting all ${tasks.length} active task(s) for chat ${chatId}`);
                 await ctx.reply(`🛑 Stopping ${tasks.length} active task(s)...`);
             } else {
@@ -650,6 +657,13 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
         // Check for slash commands — instant, no debounce
         if (userMessage.startsWith("/")) {
+            // /new, /compact, /status… act on (or show) the owner's own session: owner, in private.
+            if (!(ctx.chat?.type === "private" && ctx.from?.id && telegramOwners.has(ctx.from.id))) {
+                await ctx.reply("Commands are only for Bhai's owner, in a private chat.", {
+                    reply_parameters: { message_id: triggerMessageId },
+                });
+                return;
+            }
             const cmdResult = await handleCommand(userMessage);
             if (cmdResult.handled) {
                 if (cmdResult.response) {
@@ -808,6 +822,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             triggerMessageId,
             description: taskDescription,
             startedAt: Date.now(),
+            senderId: ctx.from?.id,
         };
         existingTasks.push(task);
         activeTasks.set(chatId, existingTasks);
@@ -833,7 +848,11 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             const taskStartTime = Date.now();
 
             try {
-                setTelegramContext(bot, chatId);
+                // send_file goes to the chat set here (one per process): only the owner's private
+                // turns may set it, or another chat's turn would redirect the owner's files.
+                if (ctx.chat?.type === "private" && ctx.from?.id && telegramOwners.has(ctx.from.id)) {
+                    setTelegramContext(bot, chatId);
+                }
 
                 // ── Detect short acknowledgements ─────────────────────────────
                 const msgLower = combinedMessage.toLowerCase().trim();
@@ -1139,7 +1158,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 setSwarmProgress(progressCallback);
                 setDeepResearchProgress(progressCallback);
                 setLongTaskProgress(progressCallback);
-                const senderIsOwner = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
+                // Owner powers (tools, memory, history) only in the owner's private chat: in a
+                // group the reply — and whatever a tool or memory put in it — is everyone's.
+                const senderIsOwner =
+                    !!ctx.from?.id && telegramOwners.has(ctx.from.id) && ctx.chat?.type === "private";
                 const response = await runAgent(
                     llm,
                     agentMessage,
@@ -1375,6 +1397,16 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     bot.on("callback_query:data", async (ctx) => {
         const data = ctx.callbackQuery.data;
         const chatId = ctx.chat?.id;
+
+        // Buttons act on the owner's inbox, memory, tasks and approvals (an interrupt's
+        // "Approve" resumes the owner's agent): only the owner, in their private chat. A
+        // stuck report's Retry/Skip in someone's own private chat is theirs to press.
+        const inPrivate = ctx.chat?.type === "private";
+        const pressedByOwner = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
+        if (!inPrivate || (!pressedByOwner && !data.startsWith("stuck:"))) {
+            await ctx.answerCallbackQuery({ text: "Only Bhai's owner can do that." }).catch(() => {});
+            return;
+        }
 
         // ── Inbox chat-fallback callbacks: inbox:<action>:<id>[:<minutes>] (Phase 4.3) ──
         if (data.startsWith("inbox:")) {
@@ -1740,7 +1772,9 @@ async function handleMediaMessage(
         // Build media attachment
         const media: MediaAttachment[] = [{ type: mediaType, base64, mimeType }];
 
-        setTelegramContext(bot, ctx.chat.id);
+        if ((ctx.chat as { type?: string })?.type === "private" && ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config)) {
+            setTelegramContext(bot, ctx.chat.id); // owner's private chat only (see the text path)
+        }
 
         // ── Send one natural acknowledgement before work starts ──
         const { ack: mediaAck } = await classifyAndAck(llm, caption);
@@ -1753,7 +1787,8 @@ async function handleMediaMessage(
             if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, mediaAckId, msg.slice(6));
         };
 
-        const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config);
+        const senderIsOwner =
+            !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config) && (ctx.chat as { type?: string })?.type === "private";
         const result = await runAgent(
             llm,
             caption,
@@ -1765,7 +1800,7 @@ async function handleMediaMessage(
             undefined,
             {
                 channel: "telegram",
-                userId: String(ctx.chat.id),
+                userId: String(ctx.from?.id ?? ctx.chat.id), // the sender: a group's id would merge its members
                 userName: ctx.from?.first_name,
                 isOwner: senderIsOwner,
                 isPrivate: (ctx.chat as { type?: string })?.type === "private",
@@ -1892,14 +1927,17 @@ ${caption ? `User caption: "${caption}"\n` : ""}
 You can't listen to audio, so don't guess what's in it (no song names, no sounds). Tell the user briefly and ask them to type what they need.`;
         }
 
-        setTelegramContext(bot, ctx.chat.id);
+        if (ctx.chat?.type === "private" && ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config)) {
+            setTelegramContext(bot, ctx.chat.id); // owner's private chat only (see the text path)
+        }
 
         const progressCallback = async (msg: string) => {
             console.log(`  📊 [progress] ${msg}`);
             if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, undefined, msg.slice(6));
         };
 
-        const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config);
+        const senderIsOwner =
+            !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config) && ctx.chat?.type === "private";
         const result = await runAgent(
             llm,
             enrichedPrompt,

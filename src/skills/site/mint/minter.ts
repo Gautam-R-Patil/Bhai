@@ -5,7 +5,7 @@
 // skill.json + skill.cjs, replays it offline (replay.ts) until it passes, and
 // finishes. Finish runs the static gate (checks.ts), the full replay and one
 // review call; a pass installs the skill as awaiting_approval, which the
-// registry skips until the owner approves it (approveSiteSkill, ownerSaid).
+// registry skips until the owner approves it (approveSiteSkill, ownerApproved).
 //
 // Budgets: 12 model turns (ATLAS_SITE_MINT_MAX_TURNS), 10 minutes, 2 review
 // rounds, 2 replies in a row with no tool call. Sonnet throughout; Opus for at
@@ -42,7 +42,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { getDataDir } from "../../../config/paths.js";
 import { type ChatCompletionMessageParam, type ChatCompletionTool, type LLMClient, MODELS } from "../../../llm.js";
-import { ownerSaid } from "../../../security/consent.js";
+import { ownerApproved } from "../../../security/consent.js";
 import { maskCredentials } from "../../../security/credential-mask.js";
 import { redactPii } from "../../../security/pii-redactor.js";
 import { knownForms } from "../../../security/value-forms.js";
@@ -563,7 +563,7 @@ function install(stage: string, storeDir: string, slug: string): string {
 
 /**
  * The owner's approval: `userQuote` must be words the owner actually sent after
- * the skill was installed (ownerSaid). The newest waiting version becomes the
+ * the skill was installed (ownerApproved). The newest waiting version becomes the
  * live skill; the one it replaces is kept in _prev/.
  */
 export function approveSiteSkill(opts: { slug: string; userQuote: string; storeDir?: string }): {
@@ -581,7 +581,7 @@ export function approveSiteSkill(opts: { slug: string; userQuote: string; storeD
         .filter((x) => x.m?.status === "awaiting_approval")
         .sort((a, b) => (Number(b.m.version) || 1) - (Number(a.m.version) || 1))[0];
     if (!waiting) return { ok: false, error: `No site skill "${slug}" is waiting for approval.` };
-    if (!ownerSaid(opts.userQuote, Date.parse(waiting.m.minted?.at ?? "") || Date.now()))
+    if (!ownerApproved(opts.userQuote, Date.parse(waiting.m.minted?.at ?? "") || Date.now()))
         return {
             ok: false,
             error: "user_quote must be the user's own words from a message sent after the skill was ready. Show them the card and ask first.",

@@ -60,6 +60,11 @@ export function getSessionTokenSync(): string | null {
     return null;
 }
 
+// Set when the server refused this device a session until the owner signs in on it
+// again (sign_in_required / device_removed): retrying won't help.
+let _needsSignIn = false;
+export const sessionNeedsSignIn = (): boolean => _needsSignIn;
+
 /**
  * Initialize session on startup. Call once during boot.
  */
@@ -143,6 +148,8 @@ async function createSession(otplessUserId: string): Promise<void> {
         body: JSON.stringify({
             otplessUserId,
             deviceFingerprint: getDeviceFingerprint(),
+            // Issued to this device at sign-in; the desktop app passes it in.
+            deviceSecret: process.env.ATLAS_DEVICE_SECRET,
             clientPublicKey,
             // Tell the server which KDF version the client is prepared
             // to use. Server echoes back the version it actually used
@@ -156,6 +163,7 @@ async function createSession(otplessUserId: string): Promise<void> {
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({ error: "Unknown error" }));
+        _needsSignIn = ["sign_in_required", "device_removed"].includes((error as any).error);
         throw new Error(`Session creation failed (${response.status}): ${(error as any).error}`);
     }
 

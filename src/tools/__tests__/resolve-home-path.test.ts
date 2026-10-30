@@ -23,3 +23,14 @@ describe("resolveHomePath", () => {
         expect(resolveHomePath("/Users/someone/definitely-not-here-xyz")).toBe("/Users/someone/definitely-not-here-xyz");
     });
 });
+
+// From the complex-task eval: list_directory("~/Downloads") read "<cwd>/~/Downloads".
+describe("withHomePaths (every tool call)", () => {
+    it("resolves ~ in path arguments and leaves the rest alone", async () => {
+        const { withHomePaths } = await import("../index.js");
+        const out = withHomePaths({ path: "~/Downloads", query: "~/not-a-path", target: "https://x.y/~a" });
+        expect(out.path).toBe(join(homedir(), "Downloads"));
+        expect(out.query).toBe("~/not-a-path");
+        expect(out.target).toBe("https://x.y/~a");
+    });
+});
