@@ -21,6 +21,7 @@ import {
 import { classifyComplexity } from "./agents/complexity-classifier.js";
 import { takeStuckMarker } from "./channel-text.js";
 import { stripInternalTags, stripOverlayMarkers } from "./stream-filter.js";
+import { createTurnStream, type TurnEventSink, type TurnStream } from "./turn-events.js";
 import { historyForCaller } from "./guest-history.js";
 import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
@@ -737,6 +738,8 @@ export interface AgentResponse {
     receipt?: Receipt;
     /** The memory this owner turn stored last, for a one-tap "Forget that" (memoryUndoAction). */
     memoryUndo?: { id: number; at: number };
+    /** The filtered answer streamed so far, when the turn was stopped (onTurnEvent turns only). */
+    partialText?: string;
 }
 
 export interface ChannelContext {
@@ -764,6 +767,11 @@ export interface ChannelContext {
      * read and report, never send, post, buy, book or delete — it suggests, the owner acts.
      */
     noOutward?: boolean;
+    /**
+     * Live chat surfaces: structured turn events (status, steps, streamed answer, owner notes).
+     * Set = main-loop model calls stream (and take the turn's abort signal); unset = no change.
+     */
+    onTurnEvent?: TurnEventSink;
 }
 
 // ── Session State ─────────────────────────────
@@ -1507,6 +1515,13 @@ export async function runAgent(
     // privileges when they interleave LLM awaits. Absent channelContext
     // defaults to non-owner (harness/research/voice paths).
     const callerIsOwner = channelContext?.isOwner === true;
+    const turnStream = channelContext?.onTurnEvent
+        ? createTurnStream(channelContext.onTurnEvent, {
+              channel: channelContext.channel,
+              // Thinking and narration: the owner's own, attended turns only.
+              notes: callerIsOwner && !channelContext.autonomous,
+          })
+        : undefined;
     const runWithCaller = async (fn: () => Promise<AgentResponse>): Promise<AgentResponse> => {
         // Lazy ESM import to avoid circular dep at module-load time.
         // (Was `require()` previously — `require` is undefined in ESM-
@@ -1532,6 +1547,7 @@ export async function runAgent(
             // so a recurring cron job may send the same text on its next tick.
             res = await (channelContext?.autonomous ? withSendLedger(turn) : turn());
         } finally {
+            turnStream?.end();
             // Read after the turn: pruning may have swapped the history array.
             stripTurnNudges(historyFork ?? conversationHistory, nudges);
             // Prune between turns, off the next turn's critical path.
@@ -1590,6 +1606,7 @@ export async function runAgent(
                     toolAllowlist,
                     channelContext,
                     _earlyTraceId,
+                    turnStream,
                 ),
             ),
         ).catch((err: unknown) => {
@@ -1609,6 +1626,7 @@ export async function runAgent(
             toolAllowlist,
             channelContext,
             null,
+            turnStream,
         ),
     );
 }
@@ -1624,6 +1642,7 @@ async function _runAgentBody(
     toolAllowlist: string[] | undefined,
     channelContext: ChannelContext | undefined,
     _injectedTraceId: string | null,
+    turnStream: TurnStream | undefined,
 ): Promise<AgentResponse> {
     const isForked = !!historyFork;
     // A non-owner never gets the owner's tools by default (a channel that
@@ -1962,8 +1981,10 @@ async function _runAgentBody(
     const turnStartedAt = Date.now();
     let toolStep = 0;
     let stepStatus = "working on it";
+    const elapsedSec = () => Math.round((Date.now() - turnStartedAt) / 1000);
     const sendStatus = (status: string) => {
         stepStatus = status;
+        turnStream?.status(status, toolStep, elapsedSec());
         return sendProgress(formatStepStatus(toolStep, status, Date.now() - turnStartedAt));
     };
     const runToolBatch = async (
@@ -1979,6 +2000,8 @@ async function _runAgentBody(
             }
         };
         stepStatus = calls.map(milestoneOf).find(Boolean) ?? "working on it";
+        turnStream?.step(stepStatus);
+        turnStream?.status(stepStatus, toolStep, elapsedSec());
         const stop =
             onProgress && !calls.some((tc) => SELF_REPORTING_TOOLS.has(tc.function.name))
             ? startStepHeartbeat(
@@ -1986,10 +2009,14 @@ async function _runAgentBody(
                   () => void sendStatus(stepStatus),
               )
             : () => {};
+        let failed = true;
         try {
-            return await executeToolCallsBatch(calls, { ...ctx, sendProgress, sendStatus });
+            const results = await executeToolCallsBatch(calls, { ...ctx, sendProgress, sendStatus });
+            failed = results.some(toolFailed);
+            return results;
         } finally {
             stop();
+            turnStream?.stepEnd(failed ? "failed" : "done");
         }
     };
 
@@ -2072,6 +2099,25 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
     // Hard stop for a turn that never converges (each step costs credits).
     const MAX_AGENT_ITERATIONS = Number(process.env.ATLAS_MAX_ITERATIONS ?? "60");
 
+    const stopped = (): AgentResponse => {
+        console.log(`  🛑 Task cancelled by user`);
+        // A stopped streamed answer stays in history as what the owner saw.
+        const partialText = turnStream?.partial() || undefined;
+        workingHistory.push({
+            role: "assistant",
+            content: partialText ? `${partialText} [stopped]` : "Task cancelled by user.",
+        });
+        // Credit already deducted per-API-call, just return
+        const stats = getSessionCreditStats();
+        if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+        return {
+            text: `✅ Task stopped. (${stats.creditsUsed} credits used)`,
+            toolCalls: totalToolCalls,
+            ...(partialText && { partialText }),
+        };
+    };
+    // Main-loop model calls stream into the turn events (and stop with the turn) only on live surfaces.
+    const live = () => (turnStream ? { onDelta: turnStream.live(), signal } : {});
     while (true) {
         if (iterations >= MAX_AGENT_ITERATIONS) {
             console.log(`  🛑 Iteration cap (${MAX_AGENT_ITERATIONS}) reached`);
@@ -2217,14 +2263,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         }
 
         // Check for cancellation
-        if (signal?.aborted) {
-            console.log(`  🛑 Task cancelled by user`);
-            workingHistory.push({ role: "assistant", content: "Task cancelled by user." });
-            // Credit already deducted per-API-call, just return
-            const stats = getSessionCreditStats();
-            if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
-            return { text: `✅ Task stopped. (${stats.creditsUsed} credits used)`, toolCalls: totalToolCalls };
-        }
+        if (signal?.aborted) return stopped();
 
         // ── Mid-session credit check (every 5 tool calls) ──
         // If credits run out while working, stop gracefully instead of continuing
@@ -3518,8 +3557,12 @@ PLAN:`,
                 // Unhinged runs hot: a higher sampling temperature makes Grok wilder
                 // and less predictable — the point of the mode. Normal turns omit it.
                 temperature: model === MODELS.GROK ? 1.1 : undefined,
+                ...live(),
             });
         } catch (llmErr) {
+            // Stopped mid-call: what streamed stays as the partial answer. Failed: withdrawn.
+            if (signal?.aborted) return stopped();
+            turnStream?.withdraw();
             if (turnArm && model === turnArm.model) turnArmInfra = true; // provider trouble, not the model's answer
             cbRecordFailure(circuitBreaker);
             console.error(`[AGENT] LLM call threw: ${(llmErr as Error).message} — attempting recovery`);
@@ -3542,11 +3585,14 @@ PLAN:`,
                     thinkingLevel: iterThinking,
                     modelOverride: fallbackModel,
                     skillSlugs: iterSkillSlugs,
+                    ...live(),
                 });
                 if (response?.choices?.length) {
                     console.log(`  ✅ LLM error recovered with fallback model ${fallbackModel}`);
                 }
             } catch (fallbackErr) {
+                if (signal?.aborted) return stopped();
+                turnStream?.withdraw();
                 console.warn(`  ⚠️ Fallback model also failed: ${(fallbackErr as Error).message}`);
             }
             if (!response?.choices?.length) {
@@ -3603,6 +3649,7 @@ PLAN:`,
                         thinkingLevel: iterThinking,
                         modelOverride: retryModel,
                         skillSlugs: iterSkillSlugs,
+                        ...live(),
                     });
                     if (retryResponse?.choices?.length) {
                         response = retryResponse;
@@ -3611,6 +3658,8 @@ PLAN:`,
                         break;
                     }
                 } catch (retryErr) {
+                    if (signal?.aborted) return stopped();
+                    turnStream?.withdraw();
                     console.warn(`  ⚠️ Retry with ${retryModel} failed: ${(retryErr as Error).message}`);
                 }
             }
@@ -3624,6 +3673,7 @@ PLAN:`,
                         thinkingLevel: iterThinking,
                         modelOverride: model,
                         skillSlugs: iterSkillSlugs,
+                        ...live(),
                     });
                     if (lastRetry?.choices?.length) {
                         response = lastRetry;
@@ -3631,7 +3681,8 @@ PLAN:`,
                         console.log(`  ✅ Empty response recovered on final retry with ${model}`);
                     }
                 } catch {
-                    /* fall through to error */
+                    if (signal?.aborted) return stopped();
+                    turnStream?.withdraw(); // fall through to error
                 }
             }
             if (!recovered) {
@@ -3663,7 +3714,9 @@ PLAN:`,
             (choice as any)?.message?.reasoning_content ||
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (choice as any)?.message?.reasoning;
-        if (reasoning && typeof reasoning === "string" && onProgress) {
+        // Owner's own attended turns only (no channel context = an internal owner path).
+        const showsThinking = !channelContext || (channelContext.isOwner && !channelContext.autonomous);
+        if (reasoning && typeof reasoning === "string" && onProgress && showsThinking) {
             try {
                 await onProgress(`[THINKING] ${reasoning}`);
             } catch {
@@ -3852,6 +3905,7 @@ PLAN:`,
                 console.log(
                     `  🔄 Anti-giving-up: agent stopped after tool failure (${recentFailures} errors) — forcing retry with visual fallback`,
                 );
+                turnStream?.sendBack("Taking another pass");
                 pushRetry(
                     messages,
                     responseText,
@@ -3870,6 +3924,7 @@ PLAN:`,
             ) {
                 lookNudged = true;
                 console.log("  🔄 Asked leave to look before finishing — continuing instead");
+                turnStream?.sendBack("Taking another pass");
                 pushRetry(
                     messages,
                     responseText,
@@ -3884,6 +3939,7 @@ PLAN:`,
             if (!ackNudged && ackWithoutAction(responseText, totalToolCalls)) {
                 ackNudged = true;
                 console.log("  🔄 Announced the task but called no tool — continuing");
+                turnStream?.sendBack("Taking another pass");
                 pushRetry(
                     messages,
                     responseText,
@@ -3906,6 +3962,7 @@ PLAN:`,
                     `  🔍 Verify gate: ${verifyGate.lastMutator} mutated UI but no verification ran — forcing one more iteration`,
                 );
                 verifyGate.nudgedThisRun = true;
+                turnStream?.sendBack("Checking it actually worked");
                 pushRetry(messages, responseText, buildVerifyReminder(verifyGate));
                 if (turnContract) pushNudge(messages, contractCheckNudge(turnContract));
                 lastToolCalls = undefined; // bump model selection to PRO for the verify-and-respond turn
@@ -3942,6 +3999,7 @@ PLAN:`,
                 console.log(
                     `  🔄 Persistence nudge: model paused after ${totalToolCalls} tool calls — checking if more work needed`,
                 );
+                turnStream?.sendBack("Taking another pass");
                 pushRetry(
                     messages,
                     responseText,
@@ -3968,16 +4026,25 @@ PLAN:`,
                 TIER_RANK[claudeTier(finalSelection.modelId)] > TIER_RANK[claudeTier(model)]
             ) {
                 console.log(`  🧠 Switching to ${finalSelection.displayName} for final answer`);
-                const finalResponse = await llm.chat({
-                    messages: iterationMessages,
-                    tools: finalTools,
-                    thinkingLevel: finalSelection.thinkingLevel,
-                    modelOverride: finalSelection.modelId,
-                });
+                turnStream?.sendBack("Taking another pass");
+                const finalResponse = await llm
+                    .chat({
+                        messages: iterationMessages,
+                        tools: finalTools,
+                        thinkingLevel: finalSelection.thinkingLevel,
+                        modelOverride: finalSelection.modelId,
+                        ...live(),
+                    })
+                    .catch((err: unknown) => {
+                        if (signal?.aborted) return null;
+                        throw err;
+                    });
+                if (!finalResponse) return stopped();
                 const finalChoice = finalResponse.choices[0];
                 if (finalChoice) {
                     if (finalChoice.message.tool_calls?.length) {
                         // PRO wants to keep working — push its message and loop
+                        turnStream?.withdraw(true);
                         messages.push({
                             role: "assistant",
                             content: finalChoice.message.content || null,
@@ -4059,6 +4126,7 @@ PLAN:`,
                                 console.log(`  ✂️ Pruned ${dropped} mid-conversation messages to recover from overflow`);
                             }
                         }
+                        turnStream?.sendBack("Taking another pass");
                         pushRetry(
                             messages,
                             "",
@@ -4092,6 +4160,7 @@ PLAN:`,
                 console.log(
                     `  🔄 Empty response after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES}`,
                 );
+                turnStream?.sendBack("Taking another pass");
                 pushRetry(
                     messages,
                     "",
@@ -4114,18 +4183,22 @@ PLAN:`,
                         );
                         // Feed quality failure back to router for future routing decisions
                         recordQualityFailure(model, selection.taskType, cascadeCheck.reason);
+                        turnStream?.sendBack("Taking another pass");
                         try {
                             const escalatedResponse = await llm.chat({
                                 messages: iterationMessages,
                                 tools: finalTools,
                                 thinkingLevel: selection.thinkingLevel,
                                 modelOverride: nextModel,
+                                ...live(),
                             });
                             const escalatedText = escalatedResponse.choices?.[0]?.message?.content;
                             if (escalatedText) {
                                 text = sanitizeAgentResponse(escalatedText) || text;
                             }
                         } catch (err) {
+                            if (signal?.aborted) return stopped();
+                            turnStream?.withdraw();
                             console.warn(`  ⚠️ Cascade escalation failed: ${(err as Error).message}`);
                         }
                     }
@@ -4172,6 +4245,9 @@ PLAN:`,
             settleLearnings(text);
             return { text, toolCalls: totalToolCalls, receipt: await receiptFor(text) };
         }
+
+        // Text before tool calls was narration, not the answer.
+        turnStream?.withdraw(true);
 
         // Append assistant message with tool calls
         messages.push({

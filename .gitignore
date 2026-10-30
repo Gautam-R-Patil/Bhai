@@ -88,6 +88,8 @@ desktop/hostinger-upload/
 !src/llm-stream.test.ts
 !src/llm-stream-client.test.ts
 !src/stream-filter.test.ts
+!src/turn-events.test.ts
+!src/agent-turn-events.test.ts
 !src/prompts/identity-guard.test.ts
 !src/serious-mode.test.ts
 !src/proactive/timed-quiet.test.ts
