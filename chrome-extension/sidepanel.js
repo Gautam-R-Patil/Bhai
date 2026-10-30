@@ -28,6 +28,17 @@ chrome.runtime.connect({ name: 'sidepanel' });
     : h < 22 ? 'Evening. What can I take off your plate?'
     : 'Still going? What do you need?';
   $('greeting').textContent = line;
+  const tips = [
+    'Type @ to share another tab with Bhai.',
+    'Draw on the page to point at something.',
+    'Select text first, and Bhai focuses on it.',
+    'Paste a screenshot to ask about it.',
+    'Right-click text or an image to ask Bhai.',
+    `${/Mac/.test(navigator.platform) ? 'Option' : 'Alt'}+Shift+B opens Bhai from any tab.`,
+  ];
+  let n = 0;
+  try { n = Number(localStorage.getItem('bhaiTip') || 0); localStorage.setItem('bhaiTip', String(n + 1)); } catch {}
+  $('tip').textContent = tips[n % tips.length];
 })();
 
 function send(message) {
@@ -120,7 +131,18 @@ function messageEl(m, arriving = false) {
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.textContent = m.text;
-    el.append(bubble);
+    const edit = document.createElement('button');
+    edit.className = 'icon-btn edit';
+    edit.title = 'Edit and send again';
+    edit.setAttribute('aria-label', 'Edit and send again');
+    edit.append(icon('pen', 14));
+    edit.addEventListener('click', () => {
+      input.value = m.text;
+      autosize();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+    el.append(edit, bubble);
     const meta = m.meta || {};
     const tags = [];
     if (meta.drew) tags.push(tag('pen', 'Your drawing', 'draw'));
@@ -470,6 +492,10 @@ function suggestionsFor(tab) {
   const summary = { label: 'Summarize this page', ic: 'doc', run: () => sendMessage({ type: 'send_page', question: 'Summarize this page for me.', display: 'Summarize this page' }) };
   const explain = { label: "Explain what's here", ic: 'ask', run: () => sendMessage({ type: 'send_selection', question: 'Explain this simply.' }) };
   const draw = { label: 'Circle something to ask about', ic: 'pen', run: startDrawing };
+  const fill = (label, text) => ({ label, run: () => { input.value = text; autosize(); input.focus(); } });
+  if (!sharableTab(tab)) {
+    return [fill('Search the web for…', 'Search the web for '), fill('Open a site for me', 'Open '), ask('What can you do?', 'What can you do for me in Chrome? Keep it short.')];
+  }
   if (/youtube\.com$/.test(h) && path.startsWith('/watch')) {
     return [ask('Summarize this video', 'Summarize this video for me.', 'doc'), ask('What are the key points?', 'What are the key points of this video?'), draw];
   }

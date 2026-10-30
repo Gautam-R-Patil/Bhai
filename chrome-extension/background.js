@@ -556,21 +556,46 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onInstalled.addListener(() => {
   // Remove existing menus first to avoid duplicates
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: "atlas-ask-page",
-      title: "Ask Bhai about this page",
-      contexts: ["page"],
-    });
-
-    chrome.contextMenus.create({
-      id: "atlas-ask-selection",
-      title: "Ask Bhai about this",
-      contexts: ["selection"],
-    });
-
-    console.log("[ATLAS Bridge] Context menus registered");
+    chrome.contextMenus.create({ id: "atlas-ask-page", title: "Ask Bhai about this page", contexts: ["page"] });
+    chrome.contextMenus.create({ id: "atlas-ask-image", title: "Ask Bhai about this image", contexts: ["image"] });
+    // Text gets one "Bhai" submenu so the right-click menu doesn't fill up.
+    chrome.contextMenus.create({ id: "atlas-text", title: "Bhai", contexts: ["selection"] });
+    for (const [id, title] of [
+      ["atlas-ask-selection", "Ask about this"],
+      ["atlas-explain", "Explain"],
+      ["atlas-summarize", "Summarize"],
+      ["atlas-translate", "Translate to English"],
+    ]) {
+      chrome.contextMenus.create({ id, parentId: "atlas-text", title, contexts: ["selection"] });
+    }
   });
 });
+
+const TEXT_ASKS = {
+  "atlas-ask-selection": ["What can you tell me about this?", "About"],
+  "atlas-explain": ["Explain this simply.", "Explain"],
+  "atlas-summarize": ["Summarize this in a few lines.", "Summarize"],
+  "atlas-translate": ["Translate this to English. Keep the meaning and tone.", "Translate"],
+};
+
+// A page image as a ≤1600px JPEG data part; null if the site won't let us fetch it.
+async function fetchImage(src) {
+  try {
+    if (!/^https?:/.test(src || "")) return null;
+    const blob = await (await fetch(src, { credentials: "include" })).blob();
+    if (!blob.type.startsWith("image/") || blob.size > 15_000_000) return null;
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(bmp.width * scale)), Math.max(1, Math.round(bmp.height * scale)));
+    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const jpeg = new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.85 })).arrayBuffer());
+    let bin = "";
+    for (let k = 0; k < jpeg.length; k += 0x8000) bin += String.fromCharCode(...jpeg.subarray(k, k + 0x8000));
+    return { mimeType: "image/jpeg", base64: btoa(bin) };
+  } catch {
+    return null;
+  }
+}
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
@@ -585,10 +610,23 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (sendToAtlas(message, { url, title, action: "ask_page" })) addChat("you", `About this page: ${title}`);
   }
 
-  if (info.menuItemId === "atlas-ask-selection") {
-    const selectedText = info.selectionText || "";
-    const message = `[From browser: ${url}] User asks about: "${selectedText}"`;
-    if (sendToAtlas(message, { url, title, selectedText, action: "ask_selection" })) addChat("you", `About: "${selectedText.slice(0, 200)}"`);
+  if (TEXT_ASKS[info.menuItemId]) {
+    const [ask, label] = TEXT_ASKS[info.menuItemId];
+    const selectedText = (info.selectionText || "").slice(0, 4000);
+    const message = `[From browser: ${url}] User selected: "${selectedText}"\n\n${ask}`;
+    if (sendToAtlas(message, { url, title, selectedText, action: "ask_selection" })) {
+      addChat("you", label, { selection: selectedText.slice(0, 140) });
+    }
+  }
+
+  if (info.menuItemId === "atlas-ask-image") {
+    const image = await fetchImage(info.srcUrl);
+    const message = image
+      ? `[From browser: ${url}] What can you tell me about this image?`
+      : `[From browser: ${url}] What can you tell me about the image at ${info.srcUrl}?`;
+    if (sendToAtlas(message, { url, title, action: "ask_image", imageKind: "pasted" }, image)) {
+      addChat("you", "About this image", image ? { pasted: true } : null);
+    }
   }
 });
 
