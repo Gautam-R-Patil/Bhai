@@ -196,7 +196,10 @@ export const clipboard: ToolDefinition = {
 
     async handler(input) {
         try {
-            const action = (input.action as string) || "read";
+            // Models say "set"/"copy" for write and "get"/"paste" for read: an unknown verb used
+            // to fall through to a read that reported success (and copied nothing).
+            const asked = String(input.action ?? "").toLowerCase();
+            const action = /^(write|set|copy|put|save)$/.test(asked) || (!asked && typeof input.text === "string") ? "write" : "read";
 
             if (action === "write") {
                 const text = input.text as string;

@@ -85,3 +85,22 @@ describe("os_inspect shows on-screen text but not field contents", () => {
         expect(out.elements).not.toContain("hunter2");
     });
 });
+
+// From cua's driver: a query-filtered read is a few hundred characters instead of the window.
+describe("os_inspect query", () => {
+    it("returns only the matching elements, keeping their ids for os_click_id", async () => {
+        frontPid = 55;
+        tree = app("System Settings", 55, [
+            n("AXButton", "Bluetooth", null, 10),
+            n("AXButton", "Wi-Fi", null, 40),
+            n("AXCheckBox", "Wi-Fi toggle", null, 70),
+            n("AXButton", "Sound", null, 100),
+        ]);
+        const out = JSON.parse(await osInspect.handler({ query: "wi-fi toggle" }));
+        expect(out.elements.split("\n")[0]).toContain('"Wi-Fi toggle"');
+        expect(out.elements).not.toContain("Bluetooth");
+        expect(out.elements).toContain("[3]"); // the id it has in the full list
+        const none = JSON.parse(await osInspect.handler({ query: "printer" }));
+        expect(none.hint).toMatch(/without query/);
+    });
+});

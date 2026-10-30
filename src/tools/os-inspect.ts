@@ -38,6 +38,24 @@ interface InspectCache {
     timestamp: number;
 }
 
+/** Elements whose label (or a static text's value) shares words with the query, best first. */
+export function matchElements<T extends { label?: string | null; value?: string | null; role: string }>(
+    all: T[],
+    query: string,
+): T[] {
+    const words = (t: string) => t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+    const want = [...new Set(words(query))].filter((w) => w.length > 1 || /\d/.test(w));
+    if (!want.length) return [];
+    return all
+        .map((e) => {
+            const have = new Set(words(`${e.label ?? ""} ${e.role === "AXStaticText" ? (e.value ?? "") : ""}`));
+            return { e, hit: want.filter((w) => have.has(w)).length / want.length };
+        })
+        .filter((x) => x.hit > 0)
+        .sort((a, b) => b.hit - a.hit)
+        .map((x) => x.e);
+}
+
 // Roles whose AX value is their state (checked, slider position, typed text): it
 // changes when the agent uses them, so it can't identify them on a re-check.
 const STATE_VALUE_ROLES = new Set([
@@ -77,6 +95,11 @@ export const osInspect: ToolDefinition = {
                         type: "number",
                         description: "Max tree depth (default 20, max 30). Higher = more elements but slower.",
                     },
+                    query: {
+                        type: "string",
+                        description:
+                            "Only the elements matching these words (labels, and on-screen text), best first, e.g. 'save' or 'wi-fi toggle'. A much smaller result than the full list: use it when you know what you're looking for.",
+                    },
                     max_elements: {
                         type: "number",
                         description:
@@ -113,7 +136,10 @@ export const osInspect: ToolDefinition = {
             }
 
             const all = flattenInteractive(dump);
-            const elements = all.slice(0, maxElements);
+            // A query returns only the matching elements (ids unchanged, so os_click_id works):
+            // a few hundred characters instead of the whole window.
+            const query = typeof input.query === "string" ? input.query.trim() : "";
+            const elements = query ? matchElements(all, query).slice(0, Math.min(maxElements, 15)) : all.slice(0, maxElements);
 
             _lastInspect = {
                 elements: all, // os_click_id text= can match past the listed cap
@@ -146,7 +172,10 @@ export const osInspect: ToolDefinition = {
 
             // Phase 2 finding: empty AT-SPI tree on Linux often means Electron/Chromium without
             // --force-renderer-accessibility. Surface this as a hint.
-            let hint: string | undefined;
+            let hint: string | undefined =
+                query && !elements.length
+                    ? `Nothing matches "${query}". Call os_inspect without query for the full list.`
+                    : undefined;
             if (dump.source === "pyatspi" && all.length === 0) {
                 hint =
                     "Empty tree — if targeting an Electron/Chromium app (VS Code, Slack, browsers), relaunch with --force-renderer-accessibility for AT-SPI to populate.";

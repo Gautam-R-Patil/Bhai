@@ -51,6 +51,7 @@ vi.mock("./tools/index.js", () => ({
             "os_screenshot",
             "os_type",
             "system_info",
+            "clipboard",
             "browser_navigate",
             "app_manager",
             "window_manage",
@@ -87,6 +88,7 @@ const CASES: [string, string][] = [
     ["how much free disk space do i have", "system_info"],
     ["open example.com in the browser and tell me the page's main heading", "browser_navigate"],
     ["open the wikipedia page for alan turing and tell me the year he was born", "browser_navigate"],
+    ["find the newest pdf in my downloads folder and copy its file name to my clipboard", "clipboard"],
 ];
 
 describe("computer-use routing without the classifier", () => {
