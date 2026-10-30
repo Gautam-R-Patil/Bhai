@@ -277,6 +277,9 @@ async function verifyHCaptcha(token: string, remoteIp?: string): Promise<boolean
   }
 }
 
+// Convex's .site is behind Cloudflare: it sets CF-Connecting-IP on every request and
+// rejects one the client sends (403), so it must stay first. X-Forwarded-For and
+// X-Real-IP are client-controlled and only a fallback (checked live, Oct 2026).
 function extractClientIp(request: Request): string {
   return (
     request.headers.get("CF-Connecting-IP") ||
