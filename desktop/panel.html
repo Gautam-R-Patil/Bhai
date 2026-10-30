@@ -361,11 +361,12 @@
                                 </label>
                             </div>
                             <div id="ppDescShown" class="pp-desc-shown"></div>
-                            <label style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-                                <span style="font-size:0.9em;color:var(--text-secondary);">Anything else? (optional)</span>
+                            <button type="button" class="link-like pp-notes-toggle" id="ppNotesToggle" onclick="showPersonalityNotes(true)">Add your own instructions</button>
+                            <label id="ppNotesBox" style="display:none;flex-direction:column;gap:6px;margin-top:4px;">
+                                <span style="font-size:0.9em;color:var(--text-secondary);">Your instructions for Bhai</span>
                                 <textarea id="personalityNotes" oninput="onPersonalityNotesInput()" rows="2" maxlength="800" placeholder="e.g. 'always start with the bottom line', 'use Hindi-English mix sometimes', 'no emojis ever'" style="resize:vertical;min-height:60px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px;outline:none;font-family:inherit;font-size:13px;"></textarea>
                             </label>
-                            <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);margin-top:4px;min-height:1em;"></div>
+                            <div id="personalitySaveStatus" style="font-size:0.85em;color:var(--text-secondary);min-height:0;"></div>
                         </div>
                     </div>
 
@@ -3637,6 +3638,7 @@
                 }
                 const notes = document.getElementById('personalityNotes');
                 if (notes) notes.value = persona.notes || '';
+                showPersonalityNotes(!!(persona.notes || '').trim(), false);
                 showPersonalityDesc();
             } catch (e) {
                 // Non-fatal — leave defaults
@@ -3646,6 +3648,13 @@
         function showPersonalityDesc() {
             const row = document.querySelector('input[name="personality-preset"]:checked')?.closest('.pp-row');
             document.getElementById('ppDescShown').textContent = row ? row.querySelector('.pp-desc').textContent : '';
+        }
+
+        // The instructions box stays tucked away until asked for (open when there are some).
+        function showPersonalityNotes(open, focus = true) {
+            document.getElementById('ppNotesBox').style.display = open ? 'flex' : 'none';
+            document.getElementById('ppNotesToggle').style.display = open ? 'none' : '';
+            if (open && focus) document.getElementById('personalityNotes').focus();
         }
 
         let notesTimer = null;

@@ -6312,3 +6312,5 @@ body.hig .dash-ask .chat-kbd { margin: 0; background: var(--surface-2); color: v
 body.hig small.workspace-path { display: block; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; padding: 0; border: none; font: inherit; font-size: 11px; }
 body.hig .settings-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; }
 body.hig .settings-foot .about-links { color: var(--text-secondary); }
+body.hig .pp-notes-toggle { align-self: flex-start; font-size: 12.5px; padding: 0; color: var(--accent-text, var(--text-secondary)); }
+body.hig .pp-notes-toggle:hover { text-decoration: underline; }
