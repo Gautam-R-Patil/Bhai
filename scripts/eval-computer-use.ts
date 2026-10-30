@@ -18,7 +18,7 @@
 // (default data/eval-computer-use.jsonl). Spotify and Apple Music tasks need those apps signed in.
 import Anthropic from "@anthropic-ai/sdk";
 import { execFile } from "node:child_process";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,9 +61,14 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
         return JSON.stringify({ error: "only status is allowed in this test" });
     // Writes stay in the sandbox folder; nothing is deleted.
     if (["write", "append_file", "compress_files", "file_manage", "image_edit", "pdf_edit"].includes(name)) {
-        const paths = JSON.stringify(args).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
+        // image_edit/pdf_edit write their output, not their source (a source that isn't there gets
+        // corrected to the file of that name nearby, in the sandbox).
+        const media = name === "image_edit" || name === "pdf_edit";
+        const src = String(args.path ?? (args.paths as string[] | undefined)?.[0] ?? "");
+        const checked = media ? (args.output ? { output: args.output } : existsSync(resolveHomePath(src)) ? { src } : {}) : args;
+        const paths = JSON.stringify(checked).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
         // Resolved as Bhai resolves them (a placeholder home is the real one).
-        if (!paths.length || paths.some((p) => !resolveHomePath(p).startsWith(EVAL_DIR)))
+        if ((!paths.length && !media) || paths.some((p) => !resolveHomePath(p).startsWith(EVAL_DIR)))
             return JSON.stringify({ error: `In this test, files may only be written inside ${EVAL_DIR}` });
     }
     if ((name === "apple_notes" || name === "reminders_tool") && /delete|remove|move/.test(String(args.action)))

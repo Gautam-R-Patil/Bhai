@@ -305,6 +305,14 @@ export const browserScan: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+            // gpt-4.1-nano opened a URL with open_in_app (the user's own browser) and then scanned
+            // Bhai's empty one eight times.
+            if (/^(about:blank|chrome:\/\/newtab\/?)?$/.test(page.url())) {
+                return JSON.stringify({
+                    success: false,
+                    error: "Bhai's browser has no page open. Open one with browser_navigate (url), then scan or extract it.",
+                });
+            }
 
             // Pre-hover: reveal hidden controls before scanning (e.g. YouTube player controls)
             if (input.hover_at) {
