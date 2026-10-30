@@ -14,6 +14,8 @@ it("matches whole meaningful words, at least two, or the domain", () => {
     expect(findStrategy("what do you know about me?")).toBeNull();
     expect(findStrategy("send an email from my gmail with the report")).toBeNull();
     expect(findStrategy("extract prices from smartprix for this phone")?.taskPattern).toMatch(/smartprix/);
+    recordStrategy("extract data from www.flipkart.com", "www.flipkart.com", ok, "");
+    expect(findStrategy("extract the price list on flipkart")?.domain).toBe("www.flipkart.com"); // site by its name
     expect(findStrategy("fill the signup form", "example.com")?.domain).toBe("example.com");
     recordStrategy("browse news.ycombinator.com", "news.ycombinator.com", [], ""); // no steps
     expect(findStrategy("browse news.ycombinator.com")?.successRate).toBe(0); // not NaN
