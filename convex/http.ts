@@ -1992,8 +1992,9 @@ http.route({
         body: JSON.stringify({
           api_key: tavilyKey,
           query,
-          search_depth: search_depth || "advanced",
-          max_results: max_results || 15,
+          // Unbilled and on the server's quota: client values are clamped, not passed through.
+          search_depth: search_depth === "basic" ? "basic" : "advanced",
+          max_results: Math.min(Math.max(1, Number(max_results) || 15), 20),
           include_answer: false,
           include_raw_content: false,
         }),
@@ -2141,9 +2142,14 @@ http.route({
         },
         body: JSON.stringify({
           query,
-          type: type || "auto",
-          numResults: numResults || 15,
-          contents: contents || { highlights: { maxCharacters: 300 } },
+          // Unbilled and on the server's quota: client values are clamped, not passed through.
+          type: ["auto", "neural", "keyword", "fast"].includes(type) ? type : "auto",
+          numResults: Math.min(Math.max(1, Number(numResults) || 15), 20),
+          contents: {
+            highlights: {
+              maxCharacters: Math.min(Number(contents?.highlights?.maxCharacters) || 300, 500),
+            },
+          },
         }),
       });
 
