@@ -102,29 +102,32 @@ const BIDI_MARKS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 /**
  * Parse `lsappinfo list`: the user-facing apps (type "Foreground", what System Events calls
- * "background only is false"), in order, and the app marked "(in front)". Empty frontmost
- * when no app is marked.
+ * "background only is false"), in order, and the one marked "(in front)". A UIElement or
+ * background process marked in front (SecurityAgent's password prompt) is not what System
+ * Events calls frontmost, so frontmost is then empty, as it is when nothing is marked.
  */
 export function parseLsappinfoList(out: string): { apps: string[]; frontmost: string } {
     const apps: string[] = [];
     let frontmost = "";
     let name: string | null = null;
+    let inFront = false;
     for (const line of out.split("\n")) {
         const head = /^\s*\d+\) "(.*)" ASN:/.exec(line);
         if (head) {
             name = head[1].replace(BIDI_MARKS, "").trim();
-            if (line.includes("(in front)")) frontmost = name;
+            inFront = line.includes("(in front)");
             continue;
         }
         if (name !== null && /\btype="Foreground"/.test(line)) {
             apps.push(name);
+            if (inFront) frontmost = name;
             name = null;
         }
     }
     return { apps, frontmost };
 }
 
-/** The visible apps and the frontmost one; null when the probe failed (the caller keeps what it knew). */
+/** The visible apps and the frontmost one ("" = keep the last known); null when the probe failed (the caller keeps what it knew). */
 async function getActiveApps(): Promise<{ apps: string[]; frontmost: string } | null> {
     if (IS_MAC) {
         try {
@@ -132,7 +135,7 @@ async function getActiveApps(): Promise<{ apps: string[]; frontmost: string } | 
             // (~0.2 s CPU, and they collided: -1719 turned the front app into "unknown").
             const { stdout } = await execFileAsync("lsappinfo", ["list"], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
             const parsed = parseLsappinfoList(stdout);
-            return parsed.frontmost ? parsed : null;
+            return parsed.apps.length ? parsed : null;
         } catch {
             return null;
         }
@@ -207,7 +210,9 @@ async function probePresence(): Promise<UserPresence> {
         getActiveApps(),
     ]);
     // A failed probe isn't an app switch: keep the last known front app and app list.
-    const { apps, frontmost } = probed ?? { apps: lastApps, frontmost: lastFrontmostApp || "unknown" };
+    // So is a front process that isn't a user-facing app (SecurityAgent, loginwindow).
+    const apps = probed?.apps ?? lastApps;
+    const frontmost = probed?.frontmost || lastFrontmostApp || "unknown";
     lastApps = apps;
 
     const idleMinutes = Math.floor(idleSeconds / 60);

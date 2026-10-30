@@ -26,7 +26,9 @@ const list = (front: string) => `
     pid = 901 type="UIElement" flavor=3
  4) "‎WhatsApp" ASN:0x0-0x211211: ${front === "WhatsApp" ? "(in front) " : ""}
     pid = 902 type="Foreground" flavor=3
- 5) "chronod" ASN:0x0-0xf00f:
+ 5) "SecurityAgent" ASN:0x0-0x79079: ${front === "SecurityAgent" ? "(in front) " : ""}
+    pid = 63345 type="UIElement" flavor=3
+ 6) "chronod" ASN:0x0-0xf00f:
     pid = 722 !signalled type="BackgroundOnly" flavor=2
 `;
 
@@ -49,7 +51,9 @@ describe("presence probe", () => {
     it("parses lsappinfo list: Foreground apps in order, bidi marks dropped, the front app", async () => {
         const { parseLsappinfoList } = await load();
         expect(parseLsappinfoList(list("WhatsApp"))).toEqual({ apps: ["Google Chrome", "WhatsApp"], frontmost: "WhatsApp" });
-        expect(parseLsappinfoList(list("loginwindow")).frontmost).toBe("loginwindow");
+        // A UIElement process lsappinfo marks in front isn't the user-facing front app.
+        expect(parseLsappinfoList(list("loginwindow")).frontmost).toBe("");
+        expect(parseLsappinfoList(list("SecurityAgent"))).toEqual({ apps: ["Google Chrome", "WhatsApp"], frontmost: "" });
         expect(parseLsappinfoList("garbage").frontmost).toBe("");
     });
 
@@ -79,6 +83,17 @@ describe("presence probe", () => {
         expect(events.filter((e) => e.kind === "app_switch").map((e) => e.meta)).toEqual([
             { from: "Google Chrome", to: "WhatsApp" },
         ]);
+    });
+
+    it("an auth prompt (SecurityAgent) in front keeps the last front app and fires no app_switch", async () => {
+        const { getUserPresence, _resetPresenceCacheForTests, describePresence, events } = await load();
+        await getUserPresence();
+        replies.lsappinfo = () => ({ stdout: list("SecurityAgent") });
+        _resetPresenceCacheForTests();
+        const p = await getUserPresence();
+        expect(p.frontmostApp).toBe("Google Chrome");
+        expect(describePresence(p)).not.toContain("SecurityAgent");
+        expect(events.filter((e) => e.kind === "app_switch")).toEqual([]);
     });
 
     it("callers share one probe for 25 s, then probe again", async () => {
