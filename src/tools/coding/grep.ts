@@ -27,6 +27,16 @@ const SENSITIVE_GLOBS = [
     "!.git-credentials",
     "!*_history",
     "!.atlas",
+    // Bhai's own secrets in its data dir (read refuses them; grep walked straight in).
+    "!google-credentials.json",
+    "!google-tokens",
+    "!chrome-bridge-token.txt",
+    "!audit.jsonl",
+    "!memories.db*",
+    "!*.enc",
+    "!*.p12",
+    "!id_rsa*",
+    "!id_ed25519*",
 ];
 import type { ToolDefinition } from "../get-current-time.js";
 
@@ -165,7 +175,12 @@ export const grep: ToolDefinition = {
             return JSON.stringify({ error: stderr.trim() || `rg exited with code ${code}` });
         }
 
-        const lines = stdout ? stdout.split("\n").filter((l) => l.length > 0) : [];
+        // Every hit's file is checked too (symlinks, names the globs don't cover): a path
+        // read would refuse never comes back from grep either.
+        const fileOf = (l: string) => (mode === "files_with_matches" ? l : l.slice(0, l.indexOf(":") > 0 ? l.indexOf(":") : l.length));
+        const lines = stdout
+            ? stdout.split("\n").filter((l) => l.length > 0 && !isSensitivePath(fileOf(l)).denied)
+            : [];
         const sliced = lines.slice(offset, offset + headLimit);
         const truncated = lines.length > offset + headLimit;
 

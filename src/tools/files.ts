@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
+import { isSensitivePath } from "../security/sensitive-paths.js";
 import { forget as forgetRead } from "./coding/read-registry.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
@@ -95,6 +96,8 @@ export const deleteFile: ToolDefinition = {
                 error: `Deleting "${filePath}" is not allowed — this path is part of the bot's own codebase and is write-protected.`,
             });
         }
+        const sensitive = isSensitivePath(filePath);
+        if (sensitive.denied) return JSON.stringify({ error: `Refused to delete it: ${sensitive.reason}` });
         try {
             fs.unlinkSync(filePath);
             forgetRead(filePath);

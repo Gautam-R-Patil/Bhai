@@ -11,6 +11,8 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { getExportsDir } from "../config/paths.js";
+import { isPathAllowed, isProtectedPath } from "../security/allowlist.js";
+import { isSensitivePath, outboundFileRefusal } from "../security/sensitive-paths.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { IS_MAC, IS_WIN, nativeOpen, runPowerShell, runPowerShellInline } from "./platform.js";
 import { getTelegramContext } from "./send-file.js";
@@ -465,9 +467,12 @@ export const compressFiles: ToolDefinition = {
                 const paths = input.paths as string[];
                 if (!paths || paths.length === 0) return JSON.stringify({ error: "Provide 'paths' to compress." });
 
-                // Verify all paths exist
+                // Verify all paths exist, and none is (or holds) a secret: the archive is
+                // an ordinary file that send_file would happily send.
                 for (const p of paths) {
                     if (!existsSync(p)) return JSON.stringify({ error: `Path not found: ${p}` });
+                    const refused = outboundFileRefusal(p);
+                    if (refused) return JSON.stringify({ error: refused });
                 }
 
                 const archivePath =
@@ -509,6 +514,12 @@ export const compressFiles: ToolDefinition = {
                 const outputDir =
                     (input.output_dir as string) ||
                     join(dirname(archivePath), basename(archivePath, extname(archivePath)));
+
+                // Extraction writes (and overwrites) everything in the archive under outputDir.
+                const outAbs = resolve(outputDir);
+                if (!isPathAllowed(outAbs) || isProtectedPath(outAbs) || isSensitivePath(outAbs).denied) {
+                    return JSON.stringify({ error: `Refused to extract into ${outputDir}: protected or sensitive location.` });
+                }
 
                 const ext = extname(archivePath).toLowerCase();
                 if (ext === ".zip") {

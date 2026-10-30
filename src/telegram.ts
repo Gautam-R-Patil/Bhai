@@ -2194,7 +2194,9 @@ export async function sendProactiveMessage(
     }
 
     // File attachment path — send document/photo/video based on extension
-    if (filePath) {
+    const refusedFile = filePath ? (await import("./security/sensitive-paths.js")).outboundFileRefusal(filePath) : null;
+    if (refusedFile) console.warn(`[TG] ${refusedFile}`);
+    if (filePath && !refusedFile) {
         try {
             const fs = await import("node:fs");
             const path = await import("node:path");

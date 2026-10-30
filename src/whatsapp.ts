@@ -73,6 +73,7 @@ import {
     verifyOTP,
     type WhatsAppGroup,
 } from "./whatsapp-users.js";
+import { outboundFileRefusal } from "./security/sensitive-paths.js";
 
 // ── Constants ────────────────────────────────
 
@@ -2452,7 +2453,10 @@ export { getOwners } from "./whatsapp-users.js";
  * Respects rate limits and typing simulation.
  */
 /** Resolves whether anyone got it. */
-export async function sendWhatsAppProactiveMessage(message: string, filePath?: string): Promise<boolean> {
+export async function sendWhatsAppProactiveMessage(message: string, rawFilePath?: string): Promise<boolean> {
+    const refused = rawFilePath ? outboundFileRefusal(rawFilePath) : null;
+    if (refused) console.warn(`[WHATSAPP] ${refused}`);
+    const filePath = refused ? undefined : rawFilePath;
     if (!socket) return false;
 
     // Collect all owner JIDs + legacy allowed JIDs
@@ -2624,6 +2628,11 @@ export const whatsappSendTool: ToolDefinition = {
             return JSON.stringify({
                 error: `Could not resolve recipient "${to}". Try using their phone number with country code.`,
             });
+        }
+
+        if (filePath) {
+            const refused = outboundFileRefusal(filePath);
+            if (refused) return JSON.stringify({ error: refused });
         }
 
         try {

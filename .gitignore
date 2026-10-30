@@ -239,6 +239,7 @@ desktop/hostinger-upload/
 !src/tools/browser/secret-fields.test.ts
 !src/overlay/overlay-turns.test.ts
 !src/overlay/overlay-task-drawer.test.ts
+!src/security/outbound-files.test.ts
 !src/tools/browser/bridge-heartbeat.test.ts
 !src/tools/browser/extension-frame-offset.test.ts
 !src/tools/mac-wifi.test.ts

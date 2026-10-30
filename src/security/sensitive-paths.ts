@@ -82,12 +82,27 @@ const FILENAME_PATTERNS: RegExp[] = [
     // *.env / *.env.local / *.env.production — common env-file shapes.
     /\.env(\.[a-zA-Z0-9_-]+)?$/i,
     /\.pem$/i,
+    /\.enc$/i, // the app's encrypted vault, settings and account session
     /\.p12$/i,
     /private[_-]?key/i,
     /id_rsa(\.pub)?$/i,
     /id_ed25519(\.pub)?$/i,
     /^\.aws[_-]?credentials/i,
 ];
+
+/**
+ * Why a file must not leave the machine (sent to a chat, attached, archived), or null.
+ * read and grep already refused these paths, but send_file and the channels' file
+ * senders sent any path they were given — keys, the vault, memories.db included.
+ */
+export function outboundFileRefusal(filePath: string): string | null {
+    const check = isSensitivePath(filePath);
+    if (check.denied) return `Refused to send it: ${check.reason} Secrets, keys and Bhai's own data never leave the machine.`;
+    // A folder that holds one (zipping ~ sweeps in ~/.ssh and ~/.atlas).
+    const dir = normalize(filePath) + path.sep;
+    const inside = [...deniedDirPrefixes(), ...exactDeniedPaths()].find((p) => startsWith(normalize(p), dir));
+    return inside ? `Refused: "${filePath}" contains ${inside}, and secrets never leave the machine.` : null;
+}
 
 export interface SensitivePathCheck {
     denied: boolean;

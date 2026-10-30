@@ -827,7 +827,9 @@ export async function sendDiscordProactiveMessage(message: string, filePath?: st
 
         // File attachment path — Discord renders images/videos inline from
         // attached files and renders other types as downloadable files.
-        if (filePath) {
+        const refusedFile = filePath ? (await import("./security/sensitive-paths.js")).outboundFileRefusal(filePath) : null;
+        if (refusedFile) console.warn(`[DISCORD] ${refusedFile}`);
+        if (filePath && !refusedFile) {
             try {
                 const fs = await import("node:fs");
                 const path = await import("node:path");

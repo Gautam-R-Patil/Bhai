@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { InputFile } from "grammy";
 import type { ToolDefinition } from "./get-current-time.js";
+import { outboundFileRefusal } from "../security/sensitive-paths.js";
 
 // ── Active chat state (set by telegram.ts) ────
 
@@ -77,6 +78,9 @@ export const sendFileTool: ToolDefinition = {
             if (!_botInstance || !_activeChatId) {
                 return JSON.stringify({ error: "Telegram context not available. Cannot send file." });
             }
+
+            const refused = outboundFileRefusal(filePath);
+            if (refused) return JSON.stringify({ error: refused });
 
             if (!fs.existsSync(filePath)) {
                 return JSON.stringify({ error: `File not found: ${filePath}` });
