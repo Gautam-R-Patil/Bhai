@@ -398,7 +398,7 @@
       mix-blend-mode: screen;
     }
 
-    #reply-text {
+    #reply-text, #reply-history {
       position: relative;
       z-index: 1;
       color: var(--text-primary);
@@ -406,7 +406,7 @@
       font-variant-numeric: tabular-nums;
     }
 
-    #reply-text code {
+    :is(#reply-text, #reply-history) code {
       background: var(--accent-soft);
       color: #c7d2fe;
       padding: 2px 6px;
@@ -415,7 +415,7 @@
       font-size: 12.5px;
     }
 
-    #reply-text pre {
+    :is(#reply-text, #reply-history) pre {
       background: rgba(10, 10, 26, 0.6);
       padding: 12px 14px;
       border-radius: 10px;
@@ -427,25 +427,25 @@
       border: 1px solid var(--border);
     }
 
-    #reply-text pre code {
+    :is(#reply-text, #reply-history) pre code {
       background: none;
       color: rgba(255, 255, 255, 0.92);
       padding: 0;
     }
 
-    #reply-text strong {
+    :is(#reply-text, #reply-history) strong {
       color: var(--accent-hover);
       font-weight: 600;
     }
 
-    #reply-text img {
+    :is(#reply-text, #reply-history) img {
       max-width: 100%;
       border-radius: 10px;
       margin: 6px 0;
       display: block;
     }
 
-    #reply-text .img-caption {
+    :is(#reply-text, #reply-history) .img-caption {
       font-size: 11px;
       color: rgba(255, 255, 255, 0.4);
       margin-top: 2px;
@@ -2132,7 +2132,7 @@
     body.theme-light :where(.quick-action-btn, .md-table td, .collapse-header, .collapse-content,
       .inbox-item-topic, .inbox-item-body, .inbox-action-btn, .inbox-edit-input) { color: var(--text-primary); }
     body.theme-light #progress:not(:has(.progress-card)),
-    body.theme-light #reply-text .img-caption,
+    body.theme-light :is(#reply-text, #reply-history) .img-caption,
     body.theme-light .notif-action-btn.dismiss,
     body.theme-light .widget-clock .widget-date,
     body.theme-light :where(.collapse-arrow, .copy-response-btn, .thinking-block, .inbox-header,
