@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bhai Bridge",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Lets Bhai, your AI assistant, read and use Chrome for you.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -32,8 +32,12 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
@@ -53,5 +57,14 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+B",
+        "mac": "Alt+Shift+B"
+      },
+      "description": "Open Bhai"
+    }
   }
 }

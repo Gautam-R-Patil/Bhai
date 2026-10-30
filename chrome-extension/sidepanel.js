@@ -90,9 +90,17 @@ function tag(name, text) {
   return t;
 }
 
+let lastChat = [];
+const timeOf = (ts) => {
+  const d = new Date(ts);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString([], sameDay ? { hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
+
 function messageEl(m) {
   const el = document.createElement('div');
   el.className = `msg ${m.role}`;
+  if (m.ts > 1e12) el.title = timeOf(m.ts);
   if (m.role === 'you') {
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
@@ -190,7 +198,18 @@ function messageEl(m) {
     }
     el.append(tools);
   } else {
-    el.textContent = m.text;
+    // An error: say it, and offer to send the last message again.
+    const text = document.createElement('span');
+    text.textContent = `${m.text} `;
+    el.append(text);
+    const retry = document.createElement('button');
+    retry.className = 'link-btn';
+    retry.textContent = 'Try again';
+    retry.addEventListener('click', () => {
+      const lastYou = [...lastChat].reverse().find((c) => c.role === 'you');
+      if (lastYou) { retry.remove(); sendMessage({ type: 'send_message', text: lastYou.text, mentions: [...extraTabs.keys()] }); }
+    });
+    el.append(retry);
   }
   return el;
 }
@@ -198,6 +217,7 @@ function messageEl(m) {
 let rendered = 0;
 function renderChat(chat) {
   chat = chat || [];
+  lastChat = chat;
   if (chat.length < rendered) { thread.querySelectorAll('.msg').forEach((el) => el.remove()); rendered = 0; }
   const working = $('workingRow');
   for (const m of chat.slice(rendered)) thread.insertBefore(messageEl(m), working || null);
@@ -592,6 +612,11 @@ input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); return pickMention(menuIndex); }
   }
   if (e.key === 'Escape') { if (!mentionMenu.hidden) return closeMenu(); if (busy) return stop(); }
+  if (e.key === 'ArrowUp' && !input.value) {
+    const lastYou = [...lastChat].reverse().find((c) => c.role === 'you');
+    if (lastYou) { e.preventDefault(); input.value = lastYou.text; autosize(); input.setSelectionRange(input.value.length, input.value.length); }
+    return;
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!busy) sendText(); }
 });
 
