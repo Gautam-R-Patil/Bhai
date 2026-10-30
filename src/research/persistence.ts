@@ -253,17 +253,19 @@ export async function storeResearchInMemory(
     try {
         const { remember } = await import("../memory/sqlite.js");
 
-        // Store executive summary as high-importance memory
+        // Where the report is and its id (check_deep_research's no-id list only covers the last day),
+        // kept in the summary's memory: a second memory per run only said the same thing again.
+        const where = `Report (research_id ${id}) saved at ${reportFile}; check_deep_research({ research_id: "${id}" }) returns it.`;
         const summaryMatch = report.match(/## Executive Summary\n([\s\S]*?)(?=\n## )/);
-        if (summaryMatch) {
-            remember(
-                `Deep research completed on "${topic}": ${summaryMatch[1].trim().substring(0, 500)}`,
-                "research",
-                `research,${topic.substring(0, 50)}`,
-                7, // below 8: an unused research summary can fade (8+ never weakens)
-                "tool", // not "user": the owner's-words boost lifted these to 10
-            );
-        }
+        remember(
+            summaryMatch
+                ? `Deep research completed on "${topic}": ${summaryMatch[1].trim().substring(0, 500)} ${where}`
+                : `Research report on "${topic}": ${where}`,
+            "research",
+            `research,${topic.substring(0, 50)}`,
+            summaryMatch ? 7 : 6, // below 8: an unused research summary can fade (8+ never weakens)
+            "tool", // not "user": the owner's-words boost lifted these to 10
+        );
 
         // The best findings, strongest first, without near-repeats: one run stored up to
         // 25, half of them the same fact from different articles.
@@ -278,16 +280,7 @@ export async function storeResearchInMemory(
             );
         }
 
-        // Where the report is and its id: check_deep_research's no-id list only covers the last day.
-        remember(
-            `Research report on "${topic}" (research_id ${id}) saved at ${reportFile}. check_deep_research({ research_id: "${id}" }) returns it.`,
-            "research",
-            `research,${topic.substring(0, 50)},report`,
-            6,
-            "tool",
-        );
-
-        console.log(`[RESEARCH] Stored ${picked.length + 2} research memories for follow-up queries`);
+        console.log(`[RESEARCH] Stored ${picked.length + 1} research memories for follow-up queries`);
     } catch (err) {
         console.warn(`[RESEARCH] Failed to store in memory:`, (err as Error).message);
     }
