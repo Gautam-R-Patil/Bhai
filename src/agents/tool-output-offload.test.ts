@@ -36,4 +36,15 @@ describe("offloadIfLarge", () => {
         expect(keepRestReadable("x", "t4", "turn-4", "short", "short")).toBe("short"); // nothing cut, nothing saved
         vi.unstubAllEnvs();
     });
+
+    it("a saved JSON result reads line by line: its text keeps real newlines", async () => {
+        vi.stubEnv("ATLAS_DATA_DIR", mkdtempSync(join(tmpdir(), "offload-")));
+        const { offloadIfLarge } = await import("./tool-output-offload.js");
+        const page = Array.from({ length: 3000 }, (_, n) => `line ${n}`).join("\n");
+        const r = offloadIfLarge("web_read", "t5", "turn-5", JSON.stringify({ success: true, text: page }));
+        const saved = readFileSync(r.savedAt as string, "utf-8");
+        expect(saved).toContain(`## text\n${page}`);
+        expect(saved.split("\n").length).toBeGreaterThan(3000);
+        vi.unstubAllEnvs();
+    });
 });

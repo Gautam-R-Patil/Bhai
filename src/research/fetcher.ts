@@ -303,6 +303,7 @@ async function fetchPageContentOnce(url: string): Promise<string | null> {
             })
             .replace(/&amp;/g, "&") // last, so "&amp;lt;" stays the literal "&lt;"
             .replace(/[ \t]+/g, " ")
+            .replace(/ ?\n ?/g, "\n") // " \n \n \n" runs (layout markup) were left as blank-looking lines
             .replace(/\n{3,}/g, "\n\n")
             .trim();
 

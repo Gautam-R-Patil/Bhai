@@ -142,7 +142,7 @@ export function saveToolOutput(toolName: string, toolCallId: string, turnId: str
     const turnDir = path.join(OFFLOAD_ROOT, slug(turnId));
     if (!existsSync(turnDir)) mkdirSync(turnDir, { recursive: true });
     const abs = path.join(turnDir, `${slug(toolName)}-${slug(toolCallId || String(Date.now()))}.txt`);
-    writeFileSync(abs, protect(result, { credentials: !CODE_TOOLS.has(toolName) }), "utf-8");
+    writeFileSync(abs, protect(readableForm(result), { credentials: !CODE_TOOLS.has(toolName) }), "utf-8");
     // Best-effort GC so the dir doesn't grow unbounded across sessions.
     gcOldTurnDirs();
     return abs;
@@ -161,6 +161,25 @@ export function keepRestReadable(toolName: string, toolCallId: string, turnId: s
     } catch {
         return cut;
     }
+}
+
+/**
+ * `read` pages a file by line, and a JSON result is one line with every newline
+ * escaped (a 47K page came back as its first 5K, no way further). Write a JSON
+ * object's string fields out with real newlines; anything else as it was.
+ */
+function readableForm(result: string): string {
+    let v: unknown;
+    try {
+        v = JSON.parse(result);
+    } catch {
+        return result;
+    }
+    if (!v || typeof v !== "object") return result;
+    if (Array.isArray(v)) return JSON.stringify(v, null, 2);
+    return Object.entries(v)
+        .map(([k, x]) => `## ${k}\n${typeof x === "string" ? x : JSON.stringify(x, null, 2)}`)
+        .join("\n\n");
 }
 
 function buildPreview(result: string): string {
