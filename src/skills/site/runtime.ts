@@ -38,6 +38,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { canonicalArgsHash } from "../../agents/tool-call-guardrail.js";
+import { unsafeBrowserUrl } from "../../security/url-safety.js";
 import { captureDrift, isDrift, noteRun } from "./drift.js";
 import { type SiteAction, SkillHost } from "./host.js";
 
@@ -371,7 +372,9 @@ export async function runSiteTask(opts: {
             const key = actionKey(a);
             const isSubmit = commitKeys.has(key) || (task.pendingConfirm && key === actionKey(task.pendingConfirm.submit));
             if (isSubmit && !viaConfirm) return end("aborted", { reason: "unconsented_submit" });
-            if (a.op === "navigate" && !onSite(a.value ?? "", manifest.domains)) return end("aborted", { reason: "off_site" });
+            // http(s) only: a file: URL whose host is the site's domain still passed onSite.
+            if (a.op === "navigate" && (unsafeBrowserUrl(a.value ?? "") || !onSite(a.value ?? "", manifest.domains)))
+                return end("aborted", { reason: "off_site" });
             if (a.op !== "waitFor") {
                 task.repeats[key] = (task.repeats[key] ?? 0) + 1;
                 if (task.repeats[key] >= 3) return end("aborted", { reason: "loop_identical_args" });

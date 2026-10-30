@@ -314,6 +314,10 @@ describe("same-site fence and declared questions", () => {
         const nav = withManifest(`exports.step = () => ({ actions: [{ op: "navigate", value: "https://evil.test/" }] });`, manifest);
         const d = pageDriver();
         expect([(await runSiteTask({ skillPath: nav, phase: "search", driver: d })).reason, d.calls.length]).toEqual(["off_site", 0]);
+        // The site's own host under file: is still off the web.
+        const file = withManifest(`exports.step = () => ({ actions: [{ op: "navigate", value: "file://shop.test/etc/passwd" }] });`, manifest);
+        const df = pageDriver();
+        expect([(await runSiteTask({ skillPath: file, phase: "search", driver: df })).reason, df.calls.length]).toEqual(["off_site", 0]);
 
         let url = "https://shop.test/";
         const click = withManifest(`exports.step = () => ({ actions: [{ op: "click", target: { sel: "#go" } }] });`, manifest);
