@@ -17,7 +17,7 @@ import {
     shouldExtractContacts, extractContactsSection,
 } from "./analysis.js";
 import { crossReferenceFindings, dedupeByText, mentionsTopic, rankSource, UrlSet } from "./scoring.js";
-import { saveResearchState, storeResearchInMemory } from "./persistence.js";
+import { loadResearchState, saveResearchState, storeResearchInMemory } from "./persistence.js";
 import { generateHypotheses, updateHypothesis, type Hypothesis, type ResearchPlan } from "./hypothesis-engine.js";
 import { getCredibility, recordClaimVerification } from "./credibility-model.js";
 import { getDimensionValue } from "../harness/registry.js";
@@ -47,8 +47,11 @@ export async function executeDeepResearch(
     const MAX_FINDINGS = 1000;
     // A follow-up (builds_on) starts from a finished research's findings, often already at the cap:
     // keep the longest half so its own findings have room, and don't store the old ones to memory again.
-    const basisTexts = resume?.buildsOn ? new Set(resume.allFindings.map(f => f.text)) : null;
-    if (basisTexts && allFindings.length > MAX_FINDINGS / 2) {
+    // A resumed follow-up starts from its own checkpoint, so the old findings come from the basis's.
+    const basisTexts = research.buildsOn
+        ? new Set((resume?.buildsOn ? resume : await loadResearchState(research.buildsOn))?.allFindings.map(f => f.text))
+        : null;
+    if (resume?.buildsOn && allFindings.length > MAX_FINDINGS / 2) {
         allFindings.sort((a, b) => b.text.length - a.text.length);
         allFindings.length = MAX_FINDINGS / 2;
     }

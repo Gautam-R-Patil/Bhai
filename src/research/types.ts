@@ -101,6 +101,8 @@ export interface ActiveResearch {
     autoResumes?: number;
     /** False from "completed" until the answer goes out; a restart in between re-sends it at boot. */
     delivered?: boolean;
+    /** The finished research this one follows up on; kept in its checkpoints so a resumed follow-up still skips the old findings when storing to memory. */
+    buildsOn?: string;
 }
 
 export interface ResearchIndexEntry {
@@ -147,7 +149,7 @@ export interface ResearchState {
     pendingQueries: string[];
     rounds: ResearchRound[];
     currentRound: number;
-    /** Set on the starting point of a follow-up: the finished research it builds on (not a resume). */
+    /** Set only on the starting point of a fresh follow-up (not a resume): the finished research it builds on. */
     buildsOn?: string;
 }
 

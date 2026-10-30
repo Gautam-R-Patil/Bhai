@@ -114,15 +114,11 @@ export async function initDeepResearch(): Promise<void> {
 // one that keeps crashing the app isn't restarted forever. One with no checkpoint yet stays
 // "interrupted" in the status snippet for the agent to mention.
 const MAX_AUTO_RESUMES = 2;
+// At boot the computer's window and the chat apps connect a little after this runs: wait for the
+// place it was asked for up to RESEND_WAIT_MS before falling back to the other channels.
+const RESEND_WAIT_MS = 60_000;
+const RESEND_EVERY_MS = 10_000;
 export async function resumeInterruptedResearch(): Promise<void> {
-    // Finished, but the restart came before its answer went out: send the report itself.
-    const undelivered = _undelivered;
-    _undelivered = [];
-    for (const e of undelivered) {
-        const origin = (await loadResearchState(e.id))?.research.origin;
-        await sendAnswer(origin, e.id, e.topic, `The app restarted before I could sum it up. The full report is saved at ${e.reportFile}; ask me to go through it.`, e.reportFile);
-        await upsertIndexEntry({ ...e, delivered: true });
-    }
     const ids = _cutOff;
     _cutOff = [];
     for (const id of ids) {
@@ -134,6 +130,23 @@ export async function resumeInterruptedResearch(): Promise<void> {
         const out = JSON.parse(await deepResearch.handler({ resume_id: id })) as { error?: string };
         if (out.error) console.warn(`[RESEARCH] Auto-resume of ${id} failed: ${out.error}`);
         else console.log(`[RESEARCH] Auto-resumed ${id} after a restart`);
+    }
+    // Finished, but its answer never went out (a restart, or nothing took it): send the report itself.
+    // Marked delivered only once something took it; otherwise the next boot tries again.
+    let pending = _undelivered;
+    _undelivered = [];
+    for (let waited = 0; pending.length > 0; waited += RESEND_EVERY_MS) {
+        if (waited > 0) await new Promise((r) => setTimeout(r, RESEND_EVERY_MS));
+        const last = waited >= RESEND_WAIT_MS;
+        const left: ResearchIndexEntry[] = [];
+        for (const e of pending) {
+            const origin = (await loadResearchState(e.id))?.research.origin;
+            const text = `I couldn't get you the answer before the app restarted. The full report is saved at ${e.reportFile}; ask me to go through it.`;
+            if (await sendAnswer(origin, e.id, e.topic, text, e.reportFile, !last)) await upsertIndexEntry({ ...e, delivered: true });
+            else left.push(e);
+        }
+        if (last) break;
+        pending = left;
     }
 }
 
@@ -215,25 +228,39 @@ export function registerResearchStatusCard(channel: string, factory: StatusCardF
     statusCards.set(channel, factory);
 }
 
-/** To the channel it was asked on (the computer when it wasn't asked on a chat: voice, a sub-agent);
- *  when that can't take it, every channel, so it isn't lost. */
-async function sendToOrigin(origin: ChannelContext | undefined, text: string, file?: string): Promise<void> {
-    const sender = getChannelSender(!origin || startedOnDesktop(origin) ? "overlay" : origin.channel);
-    if (sender && (await sender(text, file).catch(() => false)) !== false) return;
+const primaryChannel = () => process.env.PRIMARY_CHANNEL || "telegram";
+async function trySend(channel: string, text: string, file?: string): Promise<boolean> {
+    const sender = getChannelSender(channel);
+    return !!sender && (await sender(text, file).catch(() => false)) !== false;
+}
+
+/** To the channel it was asked on, or the computer when it was asked there. With no origin (voice, or a
+ *  sub-agent, which gets no channel context) the owner may be at the computer or on a chat: the computer
+ *  and the primary channel both. When none of those take it, and onlyOrigin is off, the primary channel
+ *  gets the report file, else every channel the text, so it isn't lost. True when a channel took it
+ *  (the every-channel broadcast can't say, so it counts as not). */
+async function sendToOrigin(origin: ChannelContext | undefined, text: string, file?: string, onlyOrigin = false): Promise<boolean> {
+    const routes = !origin ? ["overlay", primaryChannel()] : [startedOnDesktop(origin) ? "overlay" : origin.channel];
+    let sent = false;
+    for (const ch of routes) if (await trySend(ch, text, file)) sent = true;
+    if (sent || onlyOrigin) return sent;
     // Held by Do Not Disturb: the other channels stay quiet too (the answer is marked important and passes).
-    if (await shouldSuppressMessage(text).catch(() => false)) return;
-    // The answer keeps its report: the primary channel takes the file; only when it can't does every channel get the text.
-    const primary = file ? getChannelSender(process.env.PRIMARY_CHANNEL || "telegram") : undefined;
-    if (primary && primary !== sender && (await primary(text, file).catch(() => false)) !== false) return;
+    if (await shouldSuppressMessage(text).catch(() => false)) return false;
+    if (file && !routes.includes(primaryChannel()) && (await trySend(primaryChannel(), text, file))) return true;
     if (_telegramNotifier) await _telegramNotifier(text).catch(() => {});
+    return false;
 }
 
 // The answer, with the report: on the computer as a card that stays until dismissed when it was
 // asked there; otherwise on its channel with the report file attached. The header marks it as
 // something the owner asked for, so Do Not Disturb doesn't swallow it.
-async function sendAnswer(origin: ChannelContext | undefined, id: string, topic: string, text: string, file?: string): Promise<void> {
-    if ((!origin || startedOnDesktop(origin)) && (await _overlayResult?.(text, id, file).catch(() => false))) return;
-    await sendToOrigin(origin, `📚 Research ready — ${topic.substring(0, 60)}\n\n${text}`, file);
+async function sendAnswer(origin: ChannelContext | undefined, id: string, topic: string, text: string, file?: string, onlyOrigin = false): Promise<boolean> {
+    const message = `📚 Research ready — ${topic.substring(0, 60)}\n\n${text}`;
+    if ((!origin || startedOnDesktop(origin)) && (await _overlayResult?.(text, id, file).catch(() => false))) {
+        if (!origin) await trySend(primaryChannel(), message, file); // the owner may be on a chat
+        return true;
+    }
+    return sendToOrigin(origin, message, file, onlyOrigin);
 }
 
 export function createNotify(origin?: ChannelContext, card?: StatusCard | null, title = ""): NotifyFn {
@@ -399,6 +426,7 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
             abortController: new AbortController(),
             originalPrompt,
             origin: capturedChannelContext,
+            buildsOn: basisId,
         };
 
         activeResearches.set(id, research);
@@ -428,8 +456,7 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
             void import("../notifications/push.js")
                 .then(({ sendPushNotification }) => sendPushNotification("Research ready", topic.substring(0, 180)))
                 .catch(() => {});
-            await sendAnswer(capturedChannelContext, id, topic, text, research.reportFile || undefined);
-            research.delivered = true;
+            research.delivered = await sendAnswer(capturedChannelContext, id, topic, text, research.reportFile || undefined);
             await syncActiveToIndex(research);
         };
         const capturedLLM = _llm!;

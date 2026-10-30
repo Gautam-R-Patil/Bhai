@@ -13,6 +13,8 @@ const ctl = vi.hoisted(() => ({
     maxInFlight: 0,
     seedCalls: 0,
     checkpoints: [] as ResearchState[],
+    stored: [] as string[],
+    basis: null as ResearchState | null,
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -86,7 +88,7 @@ vi.mock("./scoring.js", async (importOriginal) => ({
     }),
     dedupeByText: (items: unknown[]) => items,
     mentionsTopic: () => true,
-    crossReferenceFindings: () => [],
+    crossReferenceFindings: (findings: unknown[]) => findings,
 }));
 
 vi.mock("./persistence.js", () => ({
@@ -94,7 +96,10 @@ vi.mock("./persistence.js", () => ({
         ctl.checkpoints.push(structuredClone(s));
     },
     deleteResearchState: async () => {},
-    storeResearchInMemory: async () => {},
+    loadResearchState: async () => ctl.basis,
+    storeResearchInMemory: async (_t: string, findings: Array<{ text: string }>) => {
+        ctl.stored = findings.map((f) => f.text);
+    },
 }));
 vi.mock("./hypothesis-engine.js", () => ({
     generateHypotheses: async () => ({ hypotheses: [], queryOrder: [] }),
@@ -114,7 +119,7 @@ const profile: ResearchProfile = {
 };
 
 beforeEach(() => {
-    Object.assign(ctl, { search: null, fetched: [], inFlight: 0, maxInFlight: 0, seedCalls: 0, checkpoints: [] });
+    Object.assign(ctl, { search: null, fetched: [], inFlight: 0, maxInFlight: 0, seedCalls: 0, checkpoints: [], stored: [], basis: null });
 });
 
 describe("executeDeepResearch source cap", () => {
@@ -220,6 +225,18 @@ describe("executeDeepResearch source cap", () => {
         expect(ctl.checkpoints.at(-1)?.allFindings.some((f) => f.text === "f")).toBe(true);
         // A follow-up is a new research, not "picking up" an old one.
         expect(notices.some(([m]) => m.includes("Picking up"))).toBe(false);
+    }, 30_000);
+    it("a follow-up resumed after a restart still doesn't store the old research's findings to memory", async () => {
+        const finding = (text: string) => ({ text, sourceUrl: "https://b.example/", sourceTitle: "B", categories: [] });
+        const empty = { allSources: [], visitedUrls: [], usedQueries: [], pendingQueries: [], rounds: [], currentRound: 0 };
+        ctl.basis = { research: { ...newResearch(), abortController: undefined } as never, allFindings: [finding("old")], ...empty };
+        // Its own checkpoint: no buildsOn on the state (that marks a fresh follow-up), only on the research.
+        const { abortController: _, ...saved } = { ...newResearch(), currentPhase: 2, buildsOn: "research_1_1" };
+        const research: ActiveResearch = { ...saved, abortController: new AbortController() };
+        await executeDeepResearch(research, profile, {} as never, async () => {}, { research: saved, allFindings: [finding("old")], ...empty });
+        expect(research.status).toBe("completed");
+        expect(ctl.stored).toContain("f");
+        expect(ctl.stored).not.toContain("old");
     }, 30_000);
 });
 

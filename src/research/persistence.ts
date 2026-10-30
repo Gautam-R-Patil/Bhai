@@ -189,12 +189,16 @@ export async function deleteResearchState(researchId: string): Promise<void> {
 }
 
 /** Finished researches keep their sources for follow-ups: the newest KEEP_FINISHED of them. A failed or
- *  interrupted one keeps its checkpoint for resume_id for KEEP_UNFINISHED_MS; any other checkpoint
- *  (cancelled, older, or dropped from the index by its cap) is deleted. */
+ *  interrupted one keeps its checkpoint for resume_id for KEEP_UNFINISHED_MS; any other listed checkpoint
+ *  (cancelled, older) is deleted. One the index doesn't list (dropped by its cap, or the index was lost)
+ *  goes only once its file is older than KEEP_UNFINISHED_MS. */
 const KEEP_FINISHED = 20;
 const KEEP_UNFINISHED_MS = 14 * 24 * 60 * 60 * 1000;
 export async function pruneFinishedStates(): Promise<void> {
     const all = await listIndex();
+    // An unreadable or missing index reads as empty: that says nothing about which checkpoints are wanted.
+    if (all.length === 0) return;
+    const listed = new Set(all.map((e) => e.id));
     const keep = new Set([
         ...all.filter((e) => e.status === "completed").slice(0, KEEP_FINISHED),
         ...all.filter((e) => e.status === "running"
@@ -202,7 +206,12 @@ export async function pruneFinishedStates(): Promise<void> {
     ].map((e) => e.id));
     for (const f of await fs.readdir(STATE_DIR).catch(() => [] as string[])) {
         const id = f.replace(/\.state\.json$/, "");
-        if (id !== f && isResearchId(id) && !keep.has(id)) await deleteResearchState(id);
+        if (id === f || !isResearchId(id) || keep.has(id)) continue;
+        if (!listed.has(id)) {
+            const mtime = (await fs.stat(join(STATE_DIR, f)).catch(() => null))?.mtimeMs;
+            if (mtime === undefined || Date.now() - mtime < KEEP_UNFINISHED_MS) continue;
+        }
+        await deleteResearchState(id);
     }
 }
 
