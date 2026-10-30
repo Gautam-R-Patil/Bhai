@@ -1545,13 +1545,18 @@ export const osVisualVerify: ToolDefinition = {
                 verifyDims?.focusedWindow,
                 (verifyDims?.originY ?? 0) + 25,
             );
-            const pass = !!found;
+            // OCR misses some text (Calculator's large thin digits read as nothing, and a
+            // model then re-pressed "=" to check). The front app's accessibility text is
+            // exact: a hit there counts. Only found/not-found comes back, never a field's text.
+            const inAx = !found && (await frontAppHasText(expectText));
+            const pass = !!found || inAx;
             results.expect_text = {
                 query: expectText,
                 found: pass,
-                matched: found?.element.text ?? null,
-                score: found ? Number(found.score.toFixed(3)) : null,
+                matched: found?.element.text ?? (inAx ? expectText : null),
+                score: found ? Number(found.score.toFixed(3)) : inAx ? 1 : null,
                 position: found ? { x: found.element.cx_screen, y: found.element.cy_screen } : null,
+                ...(inAx ? { source: "accessibility" } : {}),
             };
             if (!pass) overallSuccess = false;
         }
@@ -1576,6 +1581,23 @@ export const osVisualVerify: ToolDefinition = {
         return JSON.stringify(results);
     },
 };
+
+/** Whether the frontmost app's accessibility tree shows `text` (labels and values, case and spacing ignored). */
+async function frontAppHasText(text: string): Promise<boolean> {
+    const flat = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+    const want = flat(text);
+    if (!want) return false;
+    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+    const dump = await dumpAccessibilityTree({ depth: 20, timeoutMs: 3000 }).catch(() => null);
+    if (!dump || dump.error) return false;
+    const stack = [dump.root];
+    while (stack.length) {
+        const n = stack.pop()!;
+        for (const t of [n.label, n.value]) if (t && t !== "[secure]" && flat(t).includes(want)) return true;
+        stack.push(...n.children);
+    }
+    return false;
+}
 
 // ── OS Context Tool (App Awareness) ───────────
 

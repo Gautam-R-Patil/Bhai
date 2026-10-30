@@ -755,6 +755,10 @@ function scoreText(q: string, hay: string): number {
         // e.g. "Downloads" in "the Downloads folder in the sidebar") still wins
         // because qCovered there is high relative to the few content tokens.
         if (hayCovered >= 0.999 && qCovered >= 0.5) return 0.82; // label fully in query AND dominates it
+        // Every word the query names is in the label, which adds at most one more ("the clear
+        // button" → "All Clear", "save" → "Save As…"). Below a fully-named label (0.82+), so
+        // "Clear" still beats "All Clear" when both exist; above it this went to a vision call.
+        if (qCovered >= 0.999 && hTok.length <= qTok.length + 1) return 0.8;
         const blend = (2 * hayCovered * qCovered) / (hayCovered + qCovered || 1); // F1 of the two coverages
         if (blend > 0) return Math.min(0.79, 0.35 + blend * 0.45);
     }
