@@ -121,6 +121,7 @@ desktop/hostinger-upload/
 !src/__tests__/location-gps-backoff.test.ts
 # Session 2026-10-29: desktop RAM/CPU runtime track
 !desktop/tests/mascot-loop.test.js
+!desktop/tests/file-memo.test.js
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
 !src/tools/google-api-clients.test.ts
 !src/video-studio/util/ffmpeg-bin.test.ts

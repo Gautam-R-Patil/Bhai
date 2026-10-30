@@ -2144,7 +2144,7 @@
 
             if (isRunning && !statsInterval) {
                 refreshStats();
-                statsInterval = setInterval(refreshStats, 5000);
+                statsInterval = setInterval(whenShown(refreshStats), 5000);
                 // Start credit auto-refresh when bot is running
                 startCreditAutoRefresh();
                 refreshCreditDisplay();
@@ -3627,7 +3627,7 @@
         function startCreditAutoRefresh() {
             if (creditRefreshInterval) clearInterval(creditRefreshInterval);
             // Refresh credits every 30 seconds while bot is running
-            creditRefreshInterval = setInterval(refreshCreditDisplay, 30000);
+            creditRefreshInterval = setInterval(whenShown(refreshCreditDisplay), 30000);
         }
 
         function stopCreditAutoRefresh() {
@@ -4366,14 +4366,27 @@
             } catch { /* */ }
 
             // Auto-refresh dashboard status every 5 seconds
-            setInterval(async () => {
-                try {
-                    const { status } = await atlas.getBotStatus();
-                    updateUI(status);
-                    updateConnectionStatus();
-                } catch { /* */ }
-            }, 5000);
+            setInterval(whenShown(pollStatus), 5000);
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) return;
+                pollStatus();
+                if (statsInterval) refreshStats();
+                if (creditRefreshInterval) refreshCreditDisplay();
+            });
         })();
+
+        async function pollStatus() {
+            try {
+                const { status } = await atlas.getBotStatus();
+                updateUI(status);
+                updateConnectionStatus();
+            } catch { /* */ }
+        }
+
+        // The polls only run while the panel is on screen; showing it refreshes at once.
+        function whenShown(fn) {
+            return () => { if (!document.hidden) fn(); };
+        }
 
         // ── Store ────────────────────────────────────────
         // All store data flows through the main process (IPC → authenticated

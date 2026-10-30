@@ -188,6 +188,7 @@ const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}
 
 const { parseOtplessVerifyResponse, isLegacyUserId, isLoopbackHost } = require("./auth-helpers");
 const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
+const { fileMemo } = require("./file-memo");
 const { readVault, registerVaultIpc } = require("./vault-store");
 
 // ── Desktop Session Token Management ─────────────
@@ -964,6 +965,16 @@ function addMessageToday() {
 }
 let botToolCount = 0;
 const channelStatuses = {};
+let lastChannelPush = ""; // what the panel last got over "channel-status-update"
+// Push channel statuses to the panel, only when something changed (or a fresh page loaded).
+function pushChannelStatuses(force = false) {
+    const win = mainWindow;
+    const snap = JSON.stringify(channelStatuses);
+    if ((force || snap !== lastChannelPush) && win && !win.isDestroyed()) {
+        lastChannelPush = snap;
+        win.webContents.send("channel-status-update", channelStatuses);
+    }
+}
 
 // WhatsApp owner sign-up: the bot's own number (from its ##ATLAS_WA_SELF## line)
 // lets the panel offer a wa.me link/QR with the code already typed in.
@@ -1413,8 +1424,8 @@ async function startBot() {
         console.log("[BOT]", msg);
         // Save to log file (all messages)
         writeToLogFile(msg);
-        // Send to renderer (will only show errors as toast)
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        // The panel only toasts ❌ lines (addBotLog); everything else is in the log file.
+        if (msg.includes("❌") && mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("bot-log", msg);
         }
     };
@@ -1614,11 +1625,7 @@ async function startBot() {
             if (msg.includes("\u2705 Bot online: @")) channelStatuses.telegram = "connected";
             if (msg.includes("Bhai online (Telegram disabled)")) channelStatuses.telegram = "not_configured";
 
-            // Push status updates to renderer
-            const win = mainWindow;
-            if (win && !win.isDestroyed()) {
-                win.webContents.send("channel-status-update", channelStatuses);
-            }
+            pushChannelStatuses();
         }
     });
 
@@ -1631,8 +1638,8 @@ async function startBot() {
             const isError = /\[ERROR\]|❌|Error:|Uncaught|Unhandled/.test(msg);
             console.error("[BOT ERR]", msg);
             writeToLogFile(`${isError ? "[ERROR]" : "[WARN]"} ${msg}`);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("bot-log", `${isError ? "❌" : "⚠"} ${msg}`);
+            if (isError && mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send("bot-log", `❌ ${msg}`);
             }
         }
     });
@@ -1909,6 +1916,7 @@ async function createPanelWindow() {
     });
 
     hardenBrowserWindow(mainWindow, { externalLinks: true });
+    mainWindow.webContents.on("did-finish-load", () => pushChannelStatuses(true));
     // The native close button hides to the menu bar, like the app's own close
     // control; Quit (⌘Q / tray) still quits.
     mainWindow.on("close", (e) => {
@@ -2654,7 +2662,10 @@ function registerIPC() {
     ipcMain.on("chat:stop", () => {
         if (appChatWs && appChatWs.readyState === 1) appChatWs.send(JSON.stringify({ type: "stop" }));
     });
-    ipcMain.handle("dash:activity", () => require("./activity").doneToday(path.join(DATA_DIR, "audit.jsonl")));
+    // The panel polls these every 5 s: recompute only when the file changes.
+    const auditLog = path.join(DATA_DIR, "audit.jsonl");
+    const activityToday = fileMemo(auditLog, () => require("./activity").doneToday(auditLog));
+    ipcMain.handle("dash:activity", () => activityToday(new Date().toDateString()));
     ipcMain.on("overlay:show", () => {
         showOverlay();
     });
@@ -2845,13 +2856,15 @@ function registerIPC() {
         return out;
     }
     // Reminders and scheduled tasks the bot saved (src/tools/scheduled.ts).
-    ipcMain.handle("schedule:upcoming", () => {
+    const scheduledFile = path.join(DATA_DIR, "scheduled-tasks.json");
+    const upcoming = fileMemo(scheduledFile, () => {
         try {
-            const saved = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "scheduled-tasks.json"), "utf-8"));
+            const saved = JSON.parse(fs.readFileSync(scheduledFile, "utf-8"));
             return Array.isArray(saved) ? saved.map(({ id, expression, description, fireAt }) => ({ id, expression, description, fireAt })) : [];
         } catch { return []; }
     });
-    ipcMain.handle("chats:list", () => {
+    ipcMain.handle("schedule:upcoming", () => upcoming());
+    const chatList = fileMemo(CHAT_LOG, () => {
         const chats = new Map();
         for (const e of readChatLog()) {
             let c = chats.get(e.chat);
@@ -2862,6 +2875,7 @@ function registerIPC() {
         }
         return [...chats.values()].sort((a, b) => b.end - a.end);
     });
+    ipcMain.handle("chats:list", () => chatList());
     ipcMain.handle("chats:get", (_, id) =>
         readChatLog().filter((e) => e.chat === id).map(({ role, text, ts }) => ({ role, text, ts })));
     ipcMain.handle("chats:clear", () => {
