@@ -151,14 +151,14 @@ const overlaySplash = (text = "Bhai is waking up…") =>
 // The overlay page embeds the owner token only for a request that proves it holds it
 // (src/overlay/overlay-chat.ts): this app's own requests add it, read from the 0600 file
 // the bot writes, so another local process or a browser tab opening the page gets none.
+const OVERLAY_TOKEN_FILE = path.join(require("node:os").homedir(), ".atlas", "overlay-local-token");
 let overlayTokenHooked = false;
 function hookOverlayToken(ses) {
     if (overlayTokenHooked) return;
     overlayTokenHooked = true;
-    const tokenFile = path.join(require("node:os").homedir(), ".atlas", "overlay-local-token");
     ses.webRequest.onBeforeSendHeaders({ urls: [`${OVERLAY_URL}/*`] }, (details, cb) => {
         try {
-            const tok = fs.readFileSync(tokenFile, "utf8").trim();
+            const tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim();
             if (tok) details.requestHeaders["X-Bhai-Overlay"] = tok;
         } catch {
             /* bot hasn't written it yet: the page loads token-less and is reloaded on ##ATLAS_READY## */
@@ -2468,24 +2468,39 @@ function registerIPC() {
     }
 
     // Overlay IPC — auto-show overlay from preload (e.g. research completion)
-    // The dashboard's ask box: open chat and send what was typed there.
-    ipcMain.on("overlay:ask", (_, text) => {
-        const t = String(text || "").trim().slice(0, 4000);
-        if (!t) return;
-        showOverlay();
-        if (!overlayWindow || overlayWindow.isDestroyed()) return;
-        const wc = overlayWindow.webContents;
-        let tries = 0;
-        // The chat page may still be loading (or waiting on the bot): retry ~20s.
-        const fill = () => wc.executeJavaScript(`(function (t) {
-            var i = document.getElementById('input');
-            if (!i || i.disabled) return false;
-            i.value = t;
-            i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-            return true;
-        })(${JSON.stringify(t)})`).catch(() => false)
-            .then((ok) => { if (!ok && ++tries < 60 && !wc.isDestroyed()) setTimeout(fill, 350); });
-        setTimeout(fill, 200);
+    // In-app chat: the panel talks to Bhai over the chat bar's socket, held here so
+    // the owner token never reaches the page. One socket; each send names its chat.
+    let appChatWs = null;
+    let appChatId = null;
+    const appChatSocket = () => new Promise((resolve, reject) => {
+        if (appChatWs && appChatWs.readyState === 1) return resolve(appChatWs);
+        let tok = "";
+        try { tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim(); } catch { /* bot not up yet */ }
+        if (!tok) return reject(new Error("Bhai isn't running"));
+        const ws = new WebSocket(`ws://127.0.0.1:18792/?localToken=${encodeURIComponent(tok)}`);
+        ws.onopen = () => { appChatWs = ws; resolve(ws); };
+        ws.onerror = () => reject(new Error("Couldn't reach Bhai"));
+        ws.onclose = () => { if (appChatWs === ws) appChatWs = null; };
+        ws.onmessage = (e) => {
+            let msg;
+            try { msg = JSON.parse(e.data); } catch { return; }
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("chat:event", { chat: appChatId, msg });
+        };
+    });
+    ipcMain.handle("chat:send", async (_, { chat, text } = {}) => {
+        const t = String(text || "").trim().slice(0, 8000);
+        if (!t || typeof chat !== "string") return { ok: false, error: "Nothing to send" };
+        try {
+            const ws = await appChatSocket();
+            appChatId = chat.slice(0, 64);
+            ws.send(JSON.stringify({ type: "chat", chat: appChatId, text: t }));
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
+    });
+    ipcMain.on("chat:stop", () => {
+        if (appChatWs && appChatWs.readyState === 1) appChatWs.send(JSON.stringify({ type: "stop" }));
     });
     ipcMain.handle("dash:activity", () => require("./activity").doneToday(path.join(DATA_DIR, "audit.jsonl")));
     ipcMain.on("overlay:show", () => {

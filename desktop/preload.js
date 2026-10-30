@@ -110,7 +110,9 @@ contextBridge.exposeInMainWorld("atlas", {
     listChats: () => ipcRenderer.invoke("chats:list"),
     getUpcoming: () => ipcRenderer.invoke("schedule:upcoming"),
     getActivity: () => ipcRenderer.invoke("dash:activity"),
-    askBhai: (text) => ipcRenderer.send("overlay:ask", text),
+    chatSend: (chat, text) => ipcRenderer.invoke("chat:send", { chat, text }),
+    chatStop: () => ipcRenderer.send("chat:stop"),
+    onChatEvent: (callback) => { ipcRenderer.on("chat:event", (_, data) => callback(data)); },
     getChat: (id) => ipcRenderer.invoke("chats:get", id),
     clearChats: () => ipcRenderer.invoke("chats:clear"),
     onGoogleOAuthSuccess: (callback) => {

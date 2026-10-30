@@ -199,11 +199,20 @@
                         <button class="btn btn-secondary btn-sm" onclick="switchTab('dashboard')" title="Back to Dashboard">← Dashboard</button>
                         <h2 class="tab-title">Chats</h2>
                     </div>
-                    <button class="btn btn-secondary btn-sm" id="chatsClearBtn" onclick="clearChatHistory()" hidden>Clear history</button>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-secondary btn-sm" id="chatsClearBtn" onclick="clearChatHistory()" hidden>Clear history</button>
+                        <button class="btn btn-secondary btn-sm" onclick="startNewChat()">New chat</button>
+                    </div>
                 </div>
                 <div class="chats-layout">
                     <div class="chats-list surface-card" id="chatsList" aria-label="Past chats"></div>
-                    <div class="chats-thread surface-card" id="chatsThread"></div>
+                    <div class="chats-pane surface-card">
+                        <div class="chats-thread" id="chatsThread" aria-live="polite"></div>
+                        <form class="chats-composer" id="chatsComposer" onsubmit="event.preventDefault(); sendFromComposer();">
+                            <input id="chatsInput" type="text" placeholder="Message Bhai…" autocomplete="off" aria-label="Message Bhai">
+                            <button type="submit" class="btn btn-primary btn-sm" id="chatsSendBtn">Send</button>
+                        </form>
+                    </div>
                 </div>
             </div>
 
@@ -1535,16 +1544,18 @@
             } catch { /* non-fatal */ }
         }
 
-        async function loadChats() {
+        async function loadChats(keepThread) {
             const list = document.getElementById('chatsList');
             const thread = document.getElementById('chatsThread');
             const chats = await atlas.listChats().catch(() => []);
             document.getElementById('chatsClearBtn').hidden = !chats.length;
             list.replaceChildren();
             if (!chats.length) {
-                chatsOpenId = null;
                 list.innerHTML = '<div class="chats-empty">No chats yet</div>';
-                thread.innerHTML = '<div class="chats-empty">Conversations from the chat bar show up here.<br>Bhai still remembers them after you close the bar.</div>';
+                if (!chatsFresh && !liveChat) {
+                    chatsOpenId = null;
+                    thread.innerHTML = '<div class="chats-empty">Ask Bhai anything below.<br>Chats from the chat bar show up here too.</div>';
+                }
                 return;
             }
             for (const c of chats) {
@@ -1561,32 +1572,118 @@
                 item.onclick = () => openChat(c.id);
                 list.appendChild(item);
             }
-            openChat(chats.some((c) => c.id === chatsOpenId) ? chatsOpenId : chats[0].id);
+            if (keepThread || chatsFresh || (liveChat && liveChat.id === chatsOpenId)) markOpenChat(chatsOpenId);
+            else openChat(chats.some((c) => c.id === chatsOpenId) ? chatsOpenId : chats[0].id);
         }
-        async function openChat(id) {
-            chatsOpenId = id;
+        function markOpenChat(id) {
             document.querySelectorAll('.chats-item').forEach((b) => {
                 const on = b.dataset.id === id;
                 b.classList.toggle('active', on);
                 if (on) b.setAttribute('aria-current', 'true');
                 else b.removeAttribute('aria-current');
             });
+        }
+        async function openChat(id) {
+            chatsOpenId = id;
+            chatsFresh = false;
+            markOpenChat(id);
             const msgs = await atlas.getChat(id).catch(() => []);
             if (chatsOpenId !== id) return; // another chat was picked meanwhile
             const thread = document.getElementById('chatsThread');
-            thread.replaceChildren(...msgs.map((m) => {
-                const row = document.createElement('div');
-                row.className = `chats-msg ${m.role === 'user' ? 'from-user' : 'from-bhai'}`;
-                const bubble = document.createElement('div');
-                bubble.className = 'chats-bubble';
-                bubble.textContent = m.text;
-                const when = document.createElement('div');
-                when.className = 'chats-when';
-                when.textContent = new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                row.append(bubble, when);
-                return row;
-            }));
+            thread.replaceChildren(...msgs.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => chatBubble(m.role, m.text, m.ts)));
+            if (liveChat && liveChat.id === id) thread.append(liveChat.working);
             thread.scrollTop = thread.scrollHeight;
+        }
+
+        // A message row. Bhai's replies get **bold** and `code`; everything else is plain text.
+        function chatBubble(role, text, ts, isError) {
+            const row = document.createElement('div');
+            row.className = `chats-msg ${role === 'user' ? 'from-user' : 'from-bhai'}${isError ? ' is-error' : ''}`;
+            const bubble = document.createElement('div');
+            bubble.className = 'chats-bubble';
+            if (role === 'user') bubble.textContent = text;
+            else {
+                const esc = String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+                bubble.innerHTML = esc.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>').replace(/`([^`\n]+)`/g, '<code>$1</code>');
+            }
+            const when = document.createElement('div');
+            when.className = 'chats-when';
+            when.textContent = new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            row.append(bubble, when);
+            return row;
+        }
+
+        // ── In-app chat: talk to Bhai right here (main relays the chat bar's socket) ──
+        let liveChat = null;   // { id, working } while a reply is on its way
+        let chatsFresh = false; // a new chat that isn't in the history yet
+        const newChatId = () => `app-${Math.random().toString(36).slice(2, 10)}`;
+
+        function startNewChat() {
+            if (liveChat) return;
+            chatsOpenId = newChatId();
+            chatsFresh = true;
+            markOpenChat(null);
+            document.getElementById('chatsThread').innerHTML = '<div class="chats-empty">Ask Bhai anything below.</div>';
+            document.getElementById('chatsInput').focus();
+        }
+
+        function setComposerBusy(busy) {
+            const btn = document.getElementById('chatsSendBtn');
+            btn.textContent = busy ? 'Stop' : 'Send';
+            btn.type = busy ? 'button' : 'submit';
+            btn.onclick = busy ? () => atlas.chatStop() : null;
+        }
+
+        async function sendChat(text, chatId) {
+            text = String(text || '').trim();
+            if (!text || liveChat) return false;
+            const id = chatId || newChatId();
+            const thread = document.getElementById('chatsThread');
+            if (chatsOpenId !== id || chatsFresh) {
+                if (chatsOpenId !== id) markOpenChat(null);
+                thread.replaceChildren();
+            }
+            chatsOpenId = id;
+            chatsFresh = false;
+            thread.querySelector('.chats-empty')?.remove();
+            thread.append(chatBubble('user', text, Date.now()));
+            const working = document.createElement('div');
+            working.className = 'chats-working';
+            working.textContent = 'Thinking…';
+            thread.append(working);
+            thread.scrollTop = thread.scrollHeight;
+            liveChat = { id, working };
+            setComposerBusy(true);
+            const r = await atlas.chatSend(id, text).catch((e) => ({ ok: false, error: e.message }));
+            if (!r || !r.ok) finishLiveChat(r?.error ? `Couldn't send: ${r.error}.` : "Couldn't reach Bhai.", true);
+            return true;
+        }
+
+        function finishLiveChat(text, isError) {
+            if (!liveChat) return;
+            const { id, working } = liveChat;
+            liveChat = null;
+            working.remove();
+            setComposerBusy(false);
+            const thread = document.getElementById('chatsThread');
+            if (chatsOpenId === id && text) {
+                thread.append(chatBubble('assistant', text, Date.now(), isError));
+                thread.scrollTop = thread.scrollHeight;
+            }
+            if (document.getElementById('tab-chats').classList.contains('active')) loadChats(true); // list only: the thread is already live
+            loadRecentChats();
+        }
+
+        atlas.onChatEvent(({ chat, msg }) => {
+            if (!liveChat || chat !== liveChat.id || !msg) return;
+            if (msg.type === 'progress' && msg.text) liveChat.working.textContent = String(msg.text).replace(/^[^\p{L}\p{N}]+/u, '');
+            else if (msg.type === 'response') finishLiveChat(msg.text || (msg.stopped ? 'Stopped.' : ''));
+            else if (msg.type === 'error') finishLiveChat(msg.text || 'Something went wrong.', true);
+        });
+
+        function sendFromComposer() {
+            const input = document.getElementById('chatsInput');
+            sendChat(input.value, chatsOpenId || undefined).then((sent) => { if (sent) input.value = ''; });
         }
         async function clearChatHistory() {
             if (!confirm('Delete all saved chats? Bhai keeps what it has learned in its memory.')) return;
@@ -1745,8 +1842,9 @@
             const input = document.getElementById('dashAskInput');
             const text = input.value.trim();
             if (!text) return;
-            atlas.askBhai(text);
             input.value = '';
+            switchTab('chats');
+            sendChat(text);
         }
 
         async function loadActivity() {
