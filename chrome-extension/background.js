@@ -34,9 +34,9 @@ let _chat = [];
 const chatReady = chrome.storage.session.get("chat")
   .then((r) => { if (Array.isArray(r.chat)) _chat = r.chat; })
   .catch(() => {});
-function addChat(role, text) {
+function addChat(role, text, meta = null) {
   if (!text) return;
-  _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now() });
+  _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now(), ...(meta ? { meta } : {}) });
   if (_chat.length > MAX_CHAT) _chat = _chat.slice(-MAX_CHAT);
   chrome.storage.session.set({ chat: _chat }).catch(() => {});
   chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
@@ -318,7 +318,7 @@ function logAction(type, detail) {
 // Messages include meta.source = "chrome-extension" so the server can
 // detect browser context and prepend URL info for the agent.
 
-function sendToAtlas(text, meta = {}) {
+function sendToAtlas(text, meta = {}, image = null) {
   if (!overlayWs || overlayWs.readyState !== WebSocket.OPEN) {
     console.warn("[ATLAS Bridge] Cannot send — overlay not connected");
     return false;
@@ -332,39 +332,114 @@ function sendToAtlas(text, meta = {}) {
       ...meta,
     },
   };
+  if (image) payload.image = image;
 
   overlayWs.send(JSON.stringify(payload));
   console.log(`[ATLAS Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
   return true;
 }
 
-// The visible tab with the user's drawing on it, as a JPEG data URL; null if
-// they haven't drawn. The drawing is removed once it's been captured.
-async function takeMarkedScreenshot(tab) {
-  const [probe] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: () => {
-      const d = window.__bhaiDraw;
-      if (!d || !d.hasInk()) return false;
-      d.hideBar();
-      return true;
-    },
-  }).catch(() => []);
-  if (!probe?.result) return null;
-  await new Promise((r) => setTimeout(r, 80)); // let the toolbar disappear before the capture
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
-  chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => window.__bhaiDraw?.remove() }).catch(() => {});
-  return dataUrl;
+// What the user sees in the tab (never the side panel or the rest of the
+// screen), with their drawing if they made one; the drawing is removed once
+// captured. null on pages Chrome won't let extensions capture.
+const drawnTabs = new Set();
+async function captureTab(tab) {
+  if (!tab?.id || !/^(https?|file):/.test(tab.url || "")) return null;
+  let drew = false;
+  if (drawnTabs.has(tab.id)) {
+    const [probe] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const d = window.__bhaiDraw;
+        if (!d) return false;
+        d.hideBar();
+        return d.hasInk();
+      },
+    }).catch(() => []);
+    drew = !!probe?.result;
+    await new Promise((r) => setTimeout(r, 80)); // let the toolbar disappear before the capture
+  }
+  try {
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
+    const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl || "");
+    return m ? { image: { mimeType: m[1], base64: m[2] }, drew } : null;
+  } catch {
+    return null;
+  } finally {
+    if (drawnTabs.has(tab.id)) removeDrawing(tab.id);
+  }
 }
 
-// A message with a picture goes as the chat server's file attachment.
-function sendImageToAtlas(text, dataUrl) {
-  if (!overlayWs || overlayWs.readyState !== WebSocket.OPEN) return false;
-  const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl || "");
-  if (!m) return false;
-  overlayWs.send(JSON.stringify({ type: "file_attach", name: "marked-page.jpg", mimeType: m[1], base64: m[2], text }));
-  return true;
+function removeDrawing(tabId) {
+  drawnTabs.delete(tabId);
+  chrome.scripting.executeScript({ target: { tabId }, func: () => window.__bhaiDraw?.remove() }).catch(() => {});
 }
+
+// Text of tabs the user @-mentioned (at most 3).
+async function mentionedTabs(ids) {
+  let out = "";
+  const titles = [];
+  for (const id of (Array.isArray(ids) ? ids : []).slice(0, 3)) {
+    const tab = await chrome.tabs.get(id).catch(() => null);
+    if (!tab) continue;
+    let text = "";
+    try { text = (await chrome.tabs.sendMessage(id, { action: "get_page_context" }))?.pageContent || ""; } catch { /* no content script */ }
+    if (!text && /^https?:/.test(tab.url || "")) {
+      const [r] = await chrome.scripting.executeScript({ target: { tabId: id }, func: () => document.body?.innerText || "" }).catch(() => []);
+      text = r?.result || "";
+    }
+    out += `\n\n[Another tab the user shared with you: "${tab.title || "Untitled"}" (${tab.url})\n${text.slice(0, 6000) || "(couldn't read this tab)"}]`;
+    titles.push(tab.title || "Untitled");
+  }
+  return { text: out, titles };
+}
+
+// One path for everything sent from the side panel: the message, what's
+// selected, @-mentioned tabs, and a screenshot of the tab (drawing included).
+async function sendFromPanel(msg) {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+  const ctx = await capturePageContext();
+  const url = ctx?.url || tab?.url || "";
+  const title = ctx?.title || tab?.title || "";
+  const selection = msg.ignoreSelection ? "" : (ctx?.selectedText || "").trim().slice(0, 2000);
+  // "Not sharing" in the panel skips the screenshot, unless they drew (that's the point of drawing).
+  const pasted = typeof msg.image === "string" ? /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(msg.image) : null;
+  const shot = pasted
+    ? { image: { mimeType: pasted[1], base64: pasted[2] }, drew: false, pasted: true }
+    : msg.noScreenshot && !drawnTabs.has(tab?.id) ? null : await captureTab(tab);
+  const quote = (t) => `"${t.slice(0, 100)}${t.length > 100 ? "…" : ""}"`;
+
+  let body;
+  let display;
+  if (msg.type === "send_page") {
+    body = `Page title: "${title}"\n\nPage content:\n${ctx?.pageContent || "(could not extract)"}\n\nAsk: ${msg.question || "Summarize this page."}`;
+    display = msg.display || "Summarize this page";
+  } else if (msg.type === "send_selection") {
+    body = selection
+      ? `User selected: "${selection}" ${msg.question || "Explain this simply."}`
+      : `Explain what's on this page${shot?.drew ? ", especially what I marked" : ""}, simply.`;
+    display = selection ? `Explain ${quote(selection)}` : shot?.drew ? "Explain what I marked" : "Explain this page";
+  } else {
+    body = msg.text;
+    display = msg.text;
+    if (selection) body += `\n\n[Selected on the page; the user wants you to focus on this: "${selection}"]`;
+  }
+  const mentions = await mentionedTabs(msg.mentions);
+  const text = `${url ? `[From browser: ${url}] ` : ""}${body}${mentions.text}`;
+  const sent = sendToAtlas(text, { url, title, action: msg.type, imageKind: shot?.pasted ? "pasted" : "tab" }, shot?.image || null);
+  // What went with the message, for the panel to show as chips.
+  if (sent) {
+    addChat("you", display, {
+      drew: !!shot?.drew,
+      pasted: !!shot?.pasted,
+      shared: !!shot && !shot.pasted,
+      selection: msg.type === "send_message" && selection ? selection.slice(0, 140) : "",
+      tabs: mentions.titles,
+    });
+  }
+  return { ok: sent, drawing: !!shot?.drew };
+}
+
 
 // ── Handle Messages from Bhai Server ────────
 
@@ -420,7 +495,14 @@ function handleOverlayMessage(msg) {
 
   if (msg.type === "response") {
     lastAtlasResponse = msg.text || "";
-    addChat("bhai", lastAtlasResponse);
+    // Follow-ups, feedback and "Forget that" ride with the reply; the panel shows them as buttons.
+    const actions = (Array.isArray(msg.quickActions) ? msg.quickActions : [])
+      .map((a) => (typeof a === "string" ? { label: a, action: a } : a))
+      .filter((a) => a && typeof a.label === "string" && typeof a.action === "string")
+      .slice(0, 8)
+      .map((a) => ({ label: a.label.slice(0, 80), action: a.action.slice(0, 300) }));
+    const links = (Array.isArray(msg.links) ? msg.links : []).filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 6);
+    addChat("bhai", lastAtlasResponse, actions.length || links.length ? { actions, links } : null);
     chrome.runtime.sendMessage({
       type: "atlas_response",
       text: lastAtlasResponse,
@@ -446,6 +528,12 @@ function handleOverlayMessage(msg) {
 }
 
 // ── Context Menus ────────────────────────────
+
+// Closing the side panel takes any drawing off the page: it was only for Bhai.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "sidepanel") return;
+  port.onDisconnect.addListener(() => { for (const id of [...drawnTabs]) removeDrawing(id); });
+});
 
 chrome.runtime.onInstalled.addListener(() => {
   // Remove existing menus first to avoid duplicates
@@ -2150,75 +2238,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ── Overlay Bridge: send page context to Bhai ──
 
-  if (msg.type === "send_page") {
-    capturePageContext().then((ctx) => {
-      if (!ctx) {
-        sendResponse({ ok: false, error: "Could not capture page context" });
-        return;
-      }
-      const ask = typeof msg.question === "string" && msg.question.trim() ? `\n\nAsk: ${msg.question.trim()}` : "";
-      const text = `[From browser: ${ctx.url}]\nPage title: "${ctx.title}"\n\nPage content:\n${ctx.pageContent || "(could not extract)"}${ask}`;
-      const sent = sendToAtlas(text, {
-        url: ctx.url,
-        title: ctx.title,
-        action: "send_page",
-      });
-      if (sent) addChat("you", msg.display || `Sent this page: ${ctx.title || ctx.url}`);
-      sendResponse({ ok: sent });
-    });
+  // A button under Bhai's reply (a follow-up, feedback or "Forget that").
+  if (msg.type === "quick_action" && typeof msg.action === "string") {
+    const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
+    if (ok) {
+      overlayWs.send(JSON.stringify({ type: "quick_action", text: msg.action }));
+      if (!msg.action.startsWith("feedback:")) addChat("you", msg.label || msg.action);
+    }
+    sendResponse({ ok });
     return true;
   }
-
-  if (msg.type === "send_selection") {
-    capturePageContext().then((ctx) => {
-      if (!ctx) {
-        sendResponse({ ok: false, error: "Could not capture page context" });
-        return;
-      }
-      const selectedText = ctx.selectedText || "(no text selected)";
-      const ask = typeof msg.question === "string" && msg.question.trim() ? ` ${msg.question.trim()}` : "";
-      const text = `[From browser: ${ctx.url}] User selected: "${selectedText}"${ask}`;
-      const sent = sendToAtlas(text, {
-        url: ctx.url,
-        title: ctx.title,
-        selectedText,
-        action: "send_selection",
-      });
-      if (sent) addChat("you", msg.display || `About: "${selectedText.slice(0, 200)}"`);
-      sendResponse({ ok: sent });
-    });
+  if (msg.type === "send_message" && msg.text === "stop") {
+    sendResponse({ ok: sendToAtlas("stop", { action: "send_message" }) });
     return true;
   }
-
-  if (msg.type === "send_message") {
-    (async () => {
-      const ctx = await capturePageContext();
-      const url = ctx?.url || "";
-      const title = ctx?.title || "";
-      const prefix = url ? `[From browser: ${url}] ` : "";
-      let text = `${prefix}${msg.text}`;
-      if (msg.text === "stop") {
-        sendResponse({ ok: sendToAtlas(text, { url, title, action: "send_message" }) });
-        return;
-      }
-      // Text selected on the page is what the user means: Bhai should focus on it.
-      const selection = (ctx?.selectedText || "").trim().slice(0, 2000);
-      if (selection) text += `\n\n[Selected on the page; the user wants you to focus on this: "${selection}"]`;
-      // Drew on the page? Send what they see, drawing included.
-      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
-      const shot = tab?.id ? await takeMarkedScreenshot(tab).catch(() => null) : null;
-      const sent = shot
-        ? sendImageToAtlas(`${text}\n\n[Attached: the page as the user sees it, with their drawing in orange. Focus on what they marked.]`, shot)
-        : sendToAtlas(text, { url, title, action: "send_message" });
-      if (sent) {
-        const notes = [
-          shot ? "🖍️ with your drawing" : "",
-          selection ? `📌 "${selection.slice(0, 100)}${selection.length > 100 ? "…" : ""}"` : "",
-        ].filter(Boolean);
-        addChat("you", [msg.text, ...notes].join("\n"));
-      }
-      sendResponse({ ok: sent, drawing: !!shot });
-    })();
+  if (msg.type === "send_page" || msg.type === "send_selection" || msg.type === "send_message") {
+    sendFromPanel(msg).then(sendResponse, () => sendResponse({ ok: false }));
     return true;
   }
 
@@ -2232,6 +2267,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       try {
         await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["draw.js"] });
+        drawnTabs.add(tab.id);
         sendResponse({ ok: true });
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || "Couldn't open drawing on this page." });
@@ -2241,7 +2277,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === "clear_draw") {
     chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
-      if (tab?.id) chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => window.__bhaiDraw?.remove() }).catch(() => {});
+      if (tab?.id) removeDrawing(tab.id);
       sendResponse({ ok: true });
     });
     return true;

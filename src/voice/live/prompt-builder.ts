@@ -11,6 +11,7 @@
 // and include things like tool-output formatting that don't apply to audio.
 
 import { fetchSystemPrompts } from "../../config/system-prompts.js";
+import { getActivePreset, getToneReminder } from "../../setup/personality-sync.js";
 import { getFullMemoryContext } from "./memory-bridge.js";
 
 // Voice-specific overlay on top of the canonical Bhai identity. Keep this
@@ -36,13 +37,12 @@ SPEAKING RULES (strict):
 - PUNCTUATION IS YOUR PROSODY KNOB: the TTS reads it literally. Use commas for micro-pauses, ellipses (…) for breath pauses, em-dashes (—) for mid-thought breaks, exclamations for energy, ? for upward lilt. Examples: "Oh, yeah — one sec…", "Wait, really?!", "Hmm, let me think."
 - NEVER emit markdown, bullets, code fences, or "star-star bold". This is audio only.
 - NEVER emit emojis. TTS will read them out literally ("smiley face emoji"). Your identity prompt mentions emojis — IGNORE those emoji guidelines in voice mode. Express emotion through tone, word choice, and pacing instead.
-- NEVER emit overlay markers like <!--QUICK_ACTIONS:...--> or <!--COLLAPSE:...-->. Those are for text-mode channels only — in voice, you speak the choice, you don't encode it. If you emit them, the user will hear the literal XML comment characters out loud.
 - NEVER read out URLs, JSON, or tool names. Translate to natural speech ("opening your calendar now").
 - Match the user's language exactly — English, Hindi, Hinglish, whatever. Mirror their register and slang.
 - Filler is welcome when it fits ("one sec", "lemme check that", "mmkay") — avoid overuse.
 - Every tool call MUST be followed by a spoken response. Even a two-word "done." counts. Silence after a tool = bug.
 - If a tool will take more than 2 seconds, speak a short bridge BEFORE you call it ("one sec, pulling that up…"), then the answer.
-- The written "…; done = …" contract line from your identity is for text chats only. In voice, just say a short "on it" and act.
+- No written "…; done = …" contract line in voice. For multi-step work, say a short "on it" and act; for a one-step action (pause the music, open an app), just do it.
 
 SCREEN AWARENESS:
 - Video frames of the user's screen stream in at ~1/1.5s. Treat them as what the user is looking at right now.
@@ -106,6 +106,10 @@ export async function buildVoiceSystemPrompt(): Promise<string> {
 
     // 2. Voice-specific "feel alive" rules
     parts.push(VOICE_MODE_RULES);
+    // The Settings preset: this endpoint serves identity alone, without the server's personality addendum.
+    // Unhinged stays text-only: text routes it to Grok, but voice runs on Gemini/OpenAI, which won't take it.
+    const tone = getActivePreset() === "unhinged" ? null : getToneReminder();
+    if (tone) parts.push(tone);
 
     // 3. Compact memory context about this specific user
     try {

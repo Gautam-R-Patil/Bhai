@@ -83,7 +83,7 @@ import { buildMemoryCards } from "./memory/cards.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
-import { getEpisodicSnippet } from "./memory/episodic.js";
+import { getEpisodicSnippet, noteEpisodeCallbacks } from "./memory/episodic.js";
 import { createGoal, detectGoalFromMessage, getGoalsSnippet } from "./memory/goals.js";
 import { getIdentityPromptSnippet } from "./memory/identity.js";
 import { getProjectMemorySnippet } from "./memory/project-memory.js";
@@ -129,6 +129,9 @@ import {
 import { detectTaskType } from "./prompts/dynamic-assembler.js";
 import { buildDynamicContextReminder } from "./prompts/dynamic-context.js";
 import { lateNightNote, noteOwnerReply } from "./late-night-nudge.js";
+import { noteOwnerBusy } from "./proactive/kill-switches.js";
+import { isSerious, noteOwnerMood, SHADES_OFF_NOTE } from "./serious-mode.js";
+import { noteSignaturePhrase, signaturePhraseNote } from "./setup/personality-sync.js";
 import { noteOwnerMessage } from "./security/consent.js";
 import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./security/pii-vault.js";
 import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
@@ -290,6 +293,21 @@ function stripChannelTags(text: string): string {
             .trim()
     );
 }
+
+/**
+ * The message points at Bhai itself: its repo, its site, Bhai Bridge, or text
+ * naming Bhai together with TRUSCOR. A friend called "bhai" never counts, nor does
+ * a <name>.bhai@xagilab.com mail address.
+ */
+export function isAboutBhai(text: string): boolean {
+    return (
+        /github\.com\/gautam-r-patil\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b/i.test(text) ||
+        // Bhai described as itself, not "bhai, send the TRUSCOR invoice".
+        /\bbhai\b[^.\n]{0,60}\b(?:(?:personal )?ai (?:agent|assistant|companion)|built by truscor)/i.test(text)
+    );
+}
+const ABOUT_SELF_NOTE =
+    "This message may show something about Bhai itself (its repo, site, app or extension). If so, that's you: speak first person (\"that's my own repo\"), never about Bhai as someone else. Still nothing beyond what's shown, no model or provider names, and don't claim you wrote the code yourself.";
 
 /** Categories a plain desktop-driving turn uses, plus the always-on ones. */
 const GUI_LOOP_CATEGORIES = new Set([
@@ -454,6 +472,20 @@ function sanitizeAgentResponse(text: string): string {
 /** Channels that stay silent when the whole reply is [NO_REPLY]; the overlay and the rest always answer. */
 const NO_REPLY_CHANNELS = new Set(["telegram", "whatsapp", "discord", "slack", "matrix", "email"]);
 
+const PHONE_CHAT = "phone chat: 1-2 short lines unless they asked for detail; no headings or tables";
+const TEAM_CHAT = "team chat: short; markdown lists and code blocks are fine";
+/** How a reply should look on each channel; the only place reply length and markup are set per channel. */
+const CHANNEL_REGISTER: Record<string, string> = {
+    telegram: PHONE_CHAT,
+    whatsapp: PHONE_CHAT,
+    discord: TEAM_CHAT,
+    slack: TEAM_CHAT,
+    matrix: TEAM_CHAT,
+    email: "email: full sentences, no emoji or chat slang, greeting/sign-off only if theirs had one",
+    overlay:
+        'desktop overlay: short by default, full answer when asked. Markers go at the END: <!--QUICK_ACTIONS:["Option 1","Option 2"]--> for a choice or confirmation (always before deleting, overwriting, installing or anything destructive); <!--COLLAPSE:Title-->long content<!--/COLLAPSE--> around code over 5 lines or lists over 5 items; for the current time output exactly <!--WIDGET: {"type": "clock"}--> instead of the time',
+};
+
 /** The final reply as channels get it: an exact [NO_REPLY] on a silent-capable, user-typed turn survives sanitizing. */
 export function finalReplyText(raw: string, channelContext?: ChannelContext): string {
     if (
@@ -464,7 +496,12 @@ export function finalReplyText(raw: string, channelContext?: ChannelContext): st
     ) {
         return "[NO_REPLY]";
     }
-    return sanitizeAgentResponse(raw);
+    const text = sanitizeAgentResponse(raw);
+    // Overlay markers (<!--QUICK_ACTIONS-->, <!--WIDGET-->, <!--COLLAPSE-->) mean nothing elsewhere and would show
+    // as literal text. Only those: other HTML comments can be real content (code, "A --> B").
+    return channelContext?.channel === "overlay"
+        ? text
+        : text.replace(/<!--\s*(?:QUICK_ACTIONS|WIDGET|\/?COLLAPSE)\b[\s\S]*?-->/g, "").trim();
 }
 
 /**
@@ -1512,7 +1549,11 @@ export async function runAgent(
         ) {
             res.text = reveal(res.text);
         }
-        if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") noteOwnerReply(res.text, userMessage);
+        if (callerIsOwner && !channelContext?.autonomous && typeof res?.text === "string") {
+            noteOwnerReply(res.text, userMessage);
+            noteSignaturePhrase(res.text);
+            noteEpisodeCallbacks(res.text, userMessage);
+        }
         // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
         if (caller.storedMemory && channelContext?.isPrivate === true && res) res.memoryUndo = caller.storedMemory;
         return res;
@@ -1633,9 +1674,12 @@ async function _runAgentBody(
     // telegram.ts always emits, so a `]` inside the quote can't end it early.
     const userIntentText =
         rawUserMessage.replace(/^\[Replying to [^\n]*?message: "[\s\S]*?"\]\n\n/, "").trim() || rawUserMessage;
+    const aboutSelf = channelContext?.isOwner === true && !channelContext.autonomous && isAboutBhai(userIntentText);
     // Only a message the owner actually sent can answer a consent question.
     if (channelContext?.isOwner && !channelContext.autonomous) {
         noteOwnerMessage(userIntentText);
+        noteOwnerBusy(userIntentText); // "not now" → proactive holds for 2h
+        noteOwnerMood(userIntentText); // grief, health, lost money, crisis → shades off
         // Any channel: the owner talking back is engagement (proactive fatigue gate).
         import("./proactive/notification-tracker.js")
             .then((m) => m.recordOwnerEngagement())
@@ -2512,7 +2556,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── 8. Relationship tone modulation ──
             try {
-                const relationshipSnippet = getRelationshipSnippet();
+                // Owner's private chat only: a group, contact or autonomous turn would spend a once-ever milestone.
+                const relationshipSnippet =
+                    channelContext?.isOwner !== false &&
+                    channelContext?.isPrivate === true &&
+                    !channelContext?.autonomous
+                        ? getRelationshipSnippet()
+                        : "";
                 if (relationshipSnippet) parts.push(relationshipSnippet);
             } catch {
                 /* */
@@ -2690,46 +2740,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                         /* persona injection is best-effort — skip on read failure */
                     }
                 }
-                let _relationshipDepth: number | undefined;
-                let _preferredLength: "terse" | "normal" | "detailed" | undefined;
-                try {
-                    const relMod = await import("./memory/relationship.js");
-                    _relationshipDepth = relMod.getRelationshipState().depth_score;
-                    const persMod = await import("./setup/personality-sync.js");
-                    _preferredLength = persMod.getPreferredLength();
-                } catch {
-                    /* best-effort — the tone/relationship modules just stay off */
-                }
                 const dynCtx = buildDynamicContextReminder(rawUserMessage, {
                     hour: localHour,
                     persona: _personaForCtx,
-                    relationshipDepth: _relationshipDepth,
-                    preferredLength: _preferredLength,
                 });
                 if (dynCtx) parts.push(dynCtx);
             } catch {
                 /* dynamic context is a nicety — never block the turn */
-            }
-
-            // ── Casual-chat nudge: when the user is in short-message mode,
-            // suppress the model's reflexive interrogation. Looks at the last
-            // 3 user messages — if all are ≤ 5 words, signal casual mode.
-            try {
-                const userMsgs = messages.filter((m) => m.role === "user").slice(-3);
-                if (userMsgs.length >= 2) {
-                    const wordCounts = userMsgs.map((m) => {
-                        const content = typeof m.content === "string" ? m.content : "";
-                        return content.trim().split(/\s+/).filter(Boolean).length;
-                    });
-                    const allShort = wordCounts.every((c) => c > 0 && c <= 5);
-                    if (allShort) {
-                        parts.push(
-                            "[chat is casual — drop interrogation patterns. NO 'what're you working on?' / 'what's on your mind?' / 'what's next?' style follow-ups. End with a statement or short reaction. Only ask a question if you genuinely need information to act.]",
-                        );
-                    }
-                }
-            } catch {
-                /* nudge is a hint, never block */
             }
 
             // ── Credit awareness context ──
@@ -2792,11 +2809,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
             // ── Onboarding nudge for first-time users ──
             if (isFirstTime) {
-                parts.push(`🆕 FIRST-TIME USER — you have zero memory. This is your very first chat with this person.
-- Introduce yourself casually ONCE: "hey! I'm Bhai 👋" — keep it short and warm.
-- Naturally get to know them through conversation (name, what they do, what they're building). DON'T interrogate.
-- Save info as you learn it: identity_update for name/role/company, trait_update for preferences.
-- After this chat, you'll remember everything. Never re-introduce or re-ask.`);
+                parts.push(
+                    "🆕 FIRST-TIME USER: memory is empty. Follow FIRST-TIME USERS in your identity; save what they tell you with identity_update / trait_update.",
+                );
             }
 
             parts.push(...(await codingPartsPromise));
@@ -2907,10 +2922,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 console.warn("[AGENT] research status snippet failed:", (err as Error).message);
             }
 
-            // For simple casual messages, add a nudge for extra natural tone
+            // Preset-neutral: identity §3/§4 already carry the casual register.
             if (modelHint === "simple") {
-                const casualNudge = `\n\n[CASUAL MODE — this is a simple/casual message. Respond like you're texting a close friend. Be spontaneous, not formulaic. Don't pad your response. If 2 words is enough, send 2 words. Match their energy exactly. Don't try to be impressive or add observations just to fill space.]`;
-                activeInjection = (activeInjection || "") + casualNudge;
+                activeInjection = `${activeInjection || ""}\n\n[simple message: answer in as few words as it needs; no padding, no follow-up question unless you need one to act]`;
             }
 
             // Record user turn in session buffer. Use the sanitized text —
@@ -3004,7 +3018,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // Owner turns only; 1 credit a call.
         if (iterations === 1 && (!channelContext || channelContext.isOwner) && turnTier !== "complex") {
             const { getActivePreset } = await import("./setup/personality-sync.js");
-            unhingedTurn = getActivePreset() === "unhinged";
+            unhingedTurn = getActivePreset() === "unhinged" && !isSerious();
         }
 
         // ── Simple desktop tasks stay on Haiku ──
@@ -3097,8 +3111,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             if (process.env.MATRIX_HOMESERVER) activeChannels.push("matrix");
 
             const primaryChannel = process.env.PRIMARY_CHANNEL || "telegram";
+            const register = CHANNEL_REGISTER[channelContext.channel];
 
-            const ctxMsg = `[Channel: ${channelContext.channel} | User: ${channelContext.userName || channelContext.userId} | Role: ${channelContext.isOwner ? "owner" : "contact"} | Active channels: ${activeChannels.join(", ")} | Primary channel for notifications: ${primaryChannel}]`;
+            const ctxMsg = `[Channel: ${channelContext.channel} | User: ${channelContext.userName || channelContext.userId} | Role: ${channelContext.isOwner ? "owner" : "contact"} | Active channels: ${activeChannels.join(", ")} | Primary channel for notifications: ${primaryChannel}${register ? ` | Register: ${register}` : ""}]`;
             iterationMessages.push({ role: "system", content: ctxMsg });
         }
 
@@ -3106,7 +3121,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // (never for contacts, groups or widget visitors).
         if (!channelContext || channelContext.isOwner) {
             const { getToneReminder } = await import("./setup/personality-sync.js");
-            const tone = getToneReminder();
+            const tone = isSerious() ? SHADES_OFF_NOTE : getToneReminder();
             if (tone) iterationMessages.push({ role: "system", content: tone });
         }
         // identity.md allows one late-hour remark per night; the model can't
@@ -3115,6 +3130,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         if (channelContext?.isOwner === true) {
             const lateNote = lateNightNote();
             if (lateNote) iterationMessages.push({ role: "system", content: lateNote });
+            const sigNote = signaturePhraseNote();
+            if (sigNote) iterationMessages.push({ role: "system", content: sigNote });
+            if (aboutSelf) iterationMessages.push({ role: "system", content: ABOUT_SELF_NOTE });
         }
 
         // ── Orchestrator Planning: Sonnet 4.6 generates execution plan for interactive tasks ──

@@ -132,22 +132,52 @@ export function updateRelationshipAfterSession(
 
 // ── Prompt Snippet ────────────────────────────
 
+const STREAK_MILESTONES = [7, 30, 100];
+
+/**
+ * The milestone due today that was never offered before: a 7/30/100-day
+ * streak, or a first-chat anniversary (within a week after it).
+ */
+export function pickMilestone(
+    streak: number,
+    firstChat: string | null,
+    said: string[],
+    now: Date = new Date(),
+): { key: string; line: string } | null {
+    if (STREAK_MILESTONES.includes(streak) && !said.includes(`streak_${streak}`)) {
+        return { key: `streak_${streak}`, line: `${streak} days in a row with them` };
+    }
+    if (!firstChat) return null;
+    // SQLite's datetime('now') is UTC without a zone marker.
+    const first = new Date(firstChat.includes("T") ? firstChat : `${firstChat.replace(" ", "T")}Z`);
+    const days = (now.getTime() - first.getTime()) / (1000 * 60 * 60 * 24);
+    const years = Math.floor(days / 365.25);
+    if (years >= 1 && days - years * 365.25 < 7 && !said.includes(`year_${years}`)) {
+        return {
+            key: `year_${years}`,
+            line: `${years === 1 ? "a year" : `${years} years`} since they first talked to you`,
+        };
+    }
+    return null;
+}
+
 export function getRelationshipSnippet(userId = DEFAULT_USER): string {
     const state = getRelationshipState(userId);
-
-    // Only inject when meaningful
-    if (state.trust_score < 0.3 && state.depth_score < 0.2) return "";
-
     const parts: string[] = [];
 
-    if (state.trust_score > 0.7) {
-        parts.push("- High trust established — use confident, relaxed tone");
-    } else if (state.trust_score > 0.4) {
-        parts.push("- Building trust — be helpful and precise");
-    }
-
-    if (state.engagement_streak > 5) {
-        parts.push(`- Active streak: ${state.engagement_streak} days`);
+    // ponytail: marked said when offered, not when the reply says it.
+    if (_db) {
+        const row = _db.exec("SELECT milestones_said FROM relationship_state WHERE user_id = ?", [userId]);
+        const said = String(row[0]?.values[0]?.[0] ?? "");
+        const firstChat = _db.exec("SELECT MIN(created_at) FROM conversations")[0]?.values[0]?.[0];
+        const m = pickMilestone(state.engagement_streak, (firstChat as string) ?? null, said.split(","));
+        if (m) {
+            _db.run("UPDATE relationship_state SET milestones_said = ? WHERE user_id = ?", [
+                said ? `${said},${m.key}` : m.key,
+                userId,
+            ]);
+            parts.push(`- Milestone today: ${m.line}. Mention it once in one line, then drop it.`);
+        }
     }
 
     if (state.depth_score > 0.5) {

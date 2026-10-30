@@ -36,6 +36,39 @@ export function isShadowMode(): boolean {
     return isTrue(process.env.ATLAS_PROACTIVE_SHADOW);
 }
 
+// ── Timed quiet ──
+// "shut up" is permanent; "not now" or a serious moment holds non-urgent sends
+// for a while. Read by the observer's DND and dispatch, so urgent still passes.
+// Not by dnd.ts: every Telegram/overlay send goes through it, asked-for ones too.
+// ponytail: in-memory, so a restart clears it; persist next to cfg.quiet if that matters.
+let quietUntil = 0;
+
+/** Hold non-urgent proactive sends until `ms` (the later deadline wins). */
+export function setQuietUntil(ms: number): void {
+    quietUntil = Math.max(quietUntil, ms);
+}
+
+export function isQuietNow(now = Date.now()): boolean {
+    return now < quietUntil;
+}
+
+// The owner brushing Bhai off in their own words: the whole message is brush-off
+// phrases and filler, so "not now, I'm busy bro" is one and "busy, call mom" or
+// "later today remind me to file the GST return" isn't.
+const BRUSH = "not now|busy|i'?m busy|later|talk later|ttyl|in a meeting|can'?t talk|abhi nahi|baad me(?:in)?";
+const FILLER = "bro|bhai|man|dude|yaar|sorry|pls|please|rn|right now|now|abhi|thoda";
+const BUSY_RE = new RegExp(`^\\s*(?:${BRUSH})(?:[\\s,.!]+(?:${BRUSH}|${FILLER}))*[\\s,.!]*$`, "i");
+
+/** An owner message like "not now" or "busy" quiets proactive sends for 2h. */
+export function noteOwnerBusy(text: string, now = Date.now()): void {
+    if (BUSY_RE.test(text)) setQuietUntil(now + 2 * 3_600_000);
+}
+
+/** "bhai resume": the owner wants Bhai back now. */
+export function clearQuiet(): void {
+    quietUntil = 0;
+}
+
 // ── Log rotation state ────────────────────────────────
 
 const LOG_DIR = (): string =>

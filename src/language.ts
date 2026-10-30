@@ -7,6 +7,8 @@
 // and keyword heuristics. Injects language hints into LLM context so the
 // agent naturally responds in the user's language.
 
+import { getIdentityProfile, updateIdentityProfile } from "./memory/identity.js";
+
 // ── Script-Based Detection ───────────────────
 // Uses Unicode character ranges to identify writing systems.
 
@@ -88,6 +90,27 @@ const ENGLISH_MARKERS =
 let currentLanguage = "English";
 let lastDetectionTime = 0;
 const DETECTION_COOLDOWN_MS = 30000; // Don't re-detect within 30s
+let loaded = false;
+// A switch is saved only when the next detection confirms it, so a one-off paste
+// (a text to translate, a quoted email) doesn't become the language after a restart.
+// The confirming message must be a different one: every LLM call of a long turn re-checks the same text.
+let pendingSave = "";
+let pendingFrom = "";
+
+// The owner's language is kept in their identity profile, so proactive sends after a restart
+// don't fall back to English. Read once the identity store is up (its row carries a version).
+function loadSavedLanguage(): void {
+    if (loaded) return;
+    try {
+        const profile = getIdentityProfile();
+        if (!profile.version) return;
+        loaded = true;
+        const saved = profile.preferences?.language;
+        if (typeof saved === "string" && saved.length > 0 && saved.length <= 40) currentLanguage = saved;
+    } catch {
+        /* fail open: session language only */
+    }
+}
 
 // ── Public API ───────────────────────────────
 
@@ -170,6 +193,7 @@ export function detectLanguage(text: string): LanguageMatch {
  * Returns the detected language. Uses cooldown to avoid thrashing.
  */
 export function updateSessionLanguage(userMessage: string): string {
+    loadSavedLanguage();
     const now = Date.now();
 
     // Don't re-detect too frequently
@@ -184,12 +208,22 @@ export function updateSessionLanguage(userMessage: string): string {
         console.log(`[LANG] Language switch: ${currentLanguage} → ${detection.language} (confidence: ${detection.confidence.toFixed(2)}, script: ${detection.script})`);
         currentLanguage = detection.language;
         lastDetectionTime = now;
+        pendingSave = currentLanguage;
+        pendingFrom = userMessage;
     } else if (detection.confidence > 0 && detection.language === currentLanguage) {
         // Only a REAL same-language detection refreshes the cooldown. A message
         // too short to detect returns the inherited language at confidence 0 —
         // if that armed the 30s window, a quick "ok" before a long foreign
         // message would block its detection and keep replies in the old language.
         lastDetectionTime = now;
+        if (detection.confidence >= 0.8 && pendingSave === currentLanguage && userMessage !== pendingFrom) {
+            pendingSave = "";
+            try {
+                updateIdentityProfile({ preferences: { language: currentLanguage } });
+            } catch {
+                /* identity store not up: this session only */
+            }
+        }
     }
 
     return currentLanguage;
@@ -200,6 +234,7 @@ export function updateSessionLanguage(userMessage: string): string {
  * Returns empty string if English (no instruction needed).
  */
 export function getLanguageInstruction(): string {
+    loadSavedLanguage();
     if (currentLanguage === "English") return "";
 
     if (currentLanguage === "Hindi (Romanized)") {
@@ -213,6 +248,7 @@ export function getLanguageInstruction(): string {
  * Get the current session language.
  */
 export function getCurrentLanguage(): string {
+    loadSavedLanguage();
     return currentLanguage;
 }
 
@@ -222,4 +258,7 @@ export function getCurrentLanguage(): string {
 export function resetLanguage(): void {
     currentLanguage = "English";
     lastDetectionTime = 0;
+    loaded = false;
+    pendingSave = "";
+    pendingFrom = "";
 }

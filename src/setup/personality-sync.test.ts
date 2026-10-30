@@ -21,7 +21,15 @@ vi.mock("../crypto-transport.js", () => ({
     },
 }));
 
-const { syncPersonalityIfPresent, watchPersonalityFile, loadActivePreset, getToneReminder, RETRY_MS } = await import("./personality-sync.js");
+const {
+    syncPersonalityIfPresent,
+    watchPersonalityFile,
+    loadActivePreset,
+    getToneReminder,
+    RETRY_MS,
+    noteSignaturePhrase,
+    signaturePhraseNote,
+} = await import("./personality-sync.js");
 
 describe("personality-sync", () => {
     let dir: string;
@@ -73,7 +81,10 @@ describe("personality-sync", () => {
             expect(getToneReminder()).toMatch(/CASUAL/); // local tone follows the choice even though the push failed
             expect(fs.existsSync(file())).toBe(true); // still unsynced
             await vi.advanceTimersByTimeAsync(RETRY_MS[0]); // second attempt succeeds
-            expect(pushed.at(-1)).toMatch(/playful/);
+            // The default is a short "unchanged" dial, not identity restated as an override; the precedence clause stays.
+            expect(pushed.at(-1)).toMatch(/Dial: default/);
+            expect(pushed.at(-1)).toMatch(/still take precedence/);
+            expect(pushed.at(-1)).not.toMatch(/across channels/);
             expect(fs.existsSync(file())).toBe(false);
             stop();
         } finally {
@@ -89,5 +100,18 @@ describe("personality-sync", () => {
         write("professional_concise");
         await vi.waitFor(() => expect(pushed.length).toBe(1), { timeout: 10000 });
         stop();
+    });
+
+    it("a signature phrase isn't used twice in a row, and the note stays off where phrases are off", () => {
+        write("casual_playful");
+        loadActivePreset({ userDataDir: dir });
+        noteSignaturePhrase("Chalo, pushed the fix.");
+        expect(signaturePhraseNote()).toBe('[Your last reply used "chalo". No signature phrase in this one.]');
+        noteSignaturePhrase("Pushed the fix.");
+        expect(signaturePhraseNote()).toBeNull();
+        noteSignaturePhrase("ho gaya ✅");
+        write("direct_terse");
+        loadActivePreset({ userDataDir: dir });
+        expect(signaturePhraseNote()).toBeNull();
     });
 });

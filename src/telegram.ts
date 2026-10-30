@@ -28,7 +28,6 @@ import {
     categorizeError,
     getErrorMessage,
     getProgressMessage,
-    getResponseTimeAck,
     getThinkingPhrase,
     getVoiceStagePhrase,
     getWaitPhrase,
@@ -614,7 +613,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         }
 
         // ── Proactive-subsystem commands (shut up / resume / set posture / status + monitor CRUD) ──
-        {
+        // Owner only: another allowed user must not silence the owner's Bhai or add monitors.
+        if (ctx.from?.id && telegramOwners.has(ctx.from.id)) {
             const { tryProactiveCommand } = await import("./proactive/chat-commands.js");
             const { parseMonitorRule } = await import("./proactive/monitors/monitor-parser.js");
             const { getMonitorStore } = await import("./proactive/monitors/store-singleton.js");
@@ -1174,24 +1174,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     console.log(`   (${response.toolCalls} tool call(s))`);
                 }
 
-                // ── Response-time awareness ──────────────────────────────────
-                // If the response took a while, acknowledge it naturally using alive-ux
                 // A stuck report gets one-tap handoff buttons in the owner's private chat, else the plain reply line.
                 const stuckButtons = wantsStuckButtons(response, senderIsOwner, ctx.chat?.type);
-                let responseText = stuckButtons ? response.text : withStuckReplyLine(response, senderIsOwner);
-                // No "finally!"/"phew" in front of a stuck report: it reads as success.
-                const timeAck = response.stuck ? null : getResponseTimeAck(taskDurationMs, response.toolCalls > 0);
-                if (timeAck) {
-                    const lowerResp = responseText.toLowerCase();
-                    if (
-                        !lowerResp.startsWith("sorry") &&
-                        !lowerResp.startsWith("apolog") &&
-                        !lowerResp.startsWith("that took") &&
-                        !lowerResp.startsWith("took")
-                    ) {
-                        responseText = timeAck + responseText;
-                    }
-                }
+                const responseText = stuckButtons ? response.text : withStuckReplyLine(response, senderIsOwner);
 
                 // Split into human-like multiple messages at paragraph breaks
                 await clearStatusMessage();
@@ -2201,7 +2186,7 @@ export async function sendProactiveMessage(
     message: string,
     filePath?: string,
     buttons?: ProactiveButton[],
-    ownerOnly = false,
+    _ownerOnly = false, // all proactive sends are owner-only now
 ): Promise<boolean> {
     if (config.allowedUserIds.size === 0) {
         console.warn("⚠️ No allowed Telegram users to send proactive message to.");
@@ -2286,13 +2271,14 @@ export async function sendProactiveMessage(
     }
 
     const chunks = chunkMarkdownForTelegram(sanitizeReply(message));
-    // Buttons act on the owner's memory, and ownerOnly messages quote it: the owners' private chats only.
     const keyboard = buttons?.length ? new InlineKeyboard() : undefined;
     for (const [i, b] of (buttons ?? []).entries()) {
         keyboard?.text(b.text, b.data);
         if (i % 4 === 3) keyboard?.row();
     }
-    const recipients = keyboard || ownerOnly ? parseTelegramOwners(config) : config.allowedUserIds;
+    // Proactive messages are the owner's (briefings, reminders, alerts carry their calendar,
+    // tasks and mail): owners only, never every allowed user.
+    const recipients = parseTelegramOwners(config);
 
     let delivered = false;
     for (const userId of recipients) {

@@ -1648,23 +1648,27 @@ function startLocalServer() {
 // arbitrary navigations, and pins webPreferences to the safe defaults that
 // shouldn't be opt-in. Pass `allowedNavigateOrigins` to permit specific
 // remote loads (e.g. the OTPless-hosted auth page on tryatlasagi.com).
+const TRUSTED_LOCAL_ORIGINS = new Set([new URL(OVERLAY_URL).origin]);
+
 function hardenBrowserWindow(win, opts = {}) {
     const allowed = Array.isArray(opts.allowedNavigateOrigins) ? opts.allowedNavigateOrigins : [];
     const allowLocal = opts.allowLocal !== false; // file:// + http://127.0.0.1 by default
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    win.webContents.on("will-navigate", (e, url) => {
+    // Local means our own files and our own servers (the bot's page, the panel's server),
+    // not any service on a localhost port: a window keeps its preload wherever it navigates.
+    const guard = (e, url) => {
         try {
             const u = new URL(url);
-            if (allowLocal && (u.protocol === "file:" || u.hostname === "127.0.0.1" || u.hostname === "localhost")) {
-                return;
-            }
+            if (allowLocal && (u.protocol === "file:" || TRUSTED_LOCAL_ORIGINS.has(u.origin))) return;
             if (allowed.includes(u.host)) return;
             e.preventDefault();
             console.warn(`[Window] Blocked navigation to ${url}`);
         } catch {
             e.preventDefault();
         }
-    });
+    };
+    win.webContents.on("will-navigate", guard);
+    win.webContents.on("will-redirect", guard);
 }
 
 function createWizardWindow() {
@@ -1744,6 +1748,7 @@ async function createPanelWindow() {
     // Load from local HTTP server so OTPless SDK origin check passes
     const port = await startLocalServer();
     if (port) {
+        TRUSTED_LOCAL_ORIGINS.add(`http://127.0.0.1:${port}`);
         mainWindow.loadURL(`http://127.0.0.1:${port}/panel.html`);
     } else {
         // Fallback: load from file:// (OTPless won't work but app still opens)
@@ -2404,7 +2409,10 @@ function registerIPC() {
         }
         return { ok: false, error: "live-voice not available" };
     });
-    ipcMain.on("overlay:notify", (_, { title, body }) => {
+    ipcMain.on("overlay:notify", (_, msg) => {
+        // Sent by the bot-served overlay page: plain short strings only.
+        const title = typeof msg?.title === "string" ? msg.title.slice(0, 80) : "";
+        const body = typeof msg?.body === "string" ? msg.body.slice(0, 240) : "";
         const { Notification } = require("electron");
         // The only sender today is "research complete" — a task notice.
         if (store.get("notificationsEnabled") === false || store.get("notifyOnTask") === false) return;
@@ -2455,6 +2463,7 @@ function registerIPC() {
     ipcMain.handle("window:drag", () => { /* handled by CSS -webkit-app-region */ });
 
     // ── Settings: Read credentials (masks secrets) ──
+    const SECRET_SETTING = /TOKEN|SECRET|PASSWORD|PASSWD|PASS$|_KEY$|^KEY_|API_KEY|CREDENTIAL|COOKIE|SESSION|PRIVATE/i;
     ipcMain.handle("settings:get", () => {
         try {
             const envContent = loadEnvDecrypted();
@@ -2467,7 +2476,8 @@ function registerIPC() {
                 if (eq === -1) continue;
                 const key = trimmed.substring(0, eq).trim();
                 const value = trimmed.substring(eq + 1).trim();
-                settings[key] = value;
+                // Tokens, passwords and keys stay in main: the panel only needs to know they're set.
+                settings[key] = SECRET_SETTING.test(key) && value ? "••••••••" : value;
             }
             return { success: true, settings };
         } catch (err) {
@@ -4941,39 +4951,6 @@ function registerIPC() {
 
     // ── Account Handlers ─────────────────────────
     // otplessData = { userId, token, email, phone, name }
-    ipcMain.handle("account:login", async (_, otplessData) => {
-        try {
-            const { userId, token, email, phone, name } = otplessData || {};
-            if (!userId) return { success: false, error: "Invalid OTPless response — missing userId" };
-
-            // Session creation auto-upserts the account (creates on first login with 100 starter credits)
-            try {
-                _desktopSessionToken = null;
-                _desktopSessionExpiry = 0;
-                await getDesktopSessionToken(userId, { email, phone, name });
-                console.log("[Account] Convex upsert OK for", userId);
-            } catch (err) {
-                console.warn("[Account] Convex upsert (non-fatal):", err.message);
-            }
-
-            // Save session locally
-            saveAccountSession({
-                userId,
-                token,
-                email: email || null,
-                phone: phone || null,
-                name: name || null,
-                created_at: new Date().toISOString(),
-            });
-
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("account-status-change", { signedIn: true });
-            }
-            return { success: true, session: true };
-        } catch (err) {
-            return { success: false, error: err.message };
-        }
-    });
 
     // Account: Logout — clear local session file
     ipcMain.handle("account:logout", async () => {
@@ -5076,6 +5053,9 @@ function registerIPC() {
     // the item is active, that the user hasn't already installed it, and
     // returns the content download URL. userId is injected server-side from
     // the session (USER_BOUND_PATHS), so it must not be passed here.
+    // store:install downloads and runs code: only a URL this process got from the store's own
+    // startInstall (not whatever the renderer passes) may be installed.
+    const issuedStoreUrls = new Set();
     ipcMain.handle("store:start-install", async (_, { itemId, version }) => {
         try {
             const data = await convexSiteRequest("POST", "/api/store/mutation", {
@@ -5085,6 +5065,7 @@ function registerIPC() {
             if (!data || data.status !== "success") {
                 throw new Error(data?.error || "Failed to start install");
             }
+            if (typeof data.value?.contentUrl === "string") issuedStoreUrls.add(data.value.contentUrl);
             return { success: true, ...data.value };
         } catch (err) {
             console.error("[Store] start-install failed:", err.message);
@@ -5147,6 +5128,7 @@ function registerIPC() {
             if (typeof downloadUrl !== "string" || !/^https:\/\//i.test(downloadUrl)) {
                 throw new Error("Store downloads must use https");
             }
+            if (!issuedStoreUrls.delete(downloadUrl)) throw new Error("Start the install from the Store first");
             fs.mkdirSync(typeDir, { recursive: true });
 
             // Download content
@@ -6034,7 +6016,7 @@ ${body}`;
             const personaPath = path.join(DATA_DIR, "whatsapp-persona.json");
             if (fs.existsSync(personaPath)) return JSON.parse(fs.readFileSync(personaPath, "utf-8"));
         } catch {}
-        return { name: "Personal Assistant", systemPrompt: "", allowedToolNames: [], autoAllow: false };
+        return { name: "Bhai", systemPrompt: "", allowedToolNames: [], autoAllow: false };
     });
 
     ipcMain.handle("wa:save-persona", (_, persona) => {

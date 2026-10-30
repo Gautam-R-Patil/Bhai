@@ -9,6 +9,11 @@ describe("emotion detector", () => {
         expect(detectEmotion("whatever works, just pick one").primary).toBe("neutral");
         expect(detectEmotion("ugh this is so annoying, it's broken").primary).toBe("frustrated");
     });
+
+    it("everyday words don't read as pressure or confusion", () => {
+        expect(detectEmotion("what's the deadline for filing?").primary).toBe("neutral");
+        expect(detectEmotion("I lost my keys again").primary).toBe("neutral");
+    });
 });
 
 describe("emotion scoring", () => {
@@ -45,7 +50,7 @@ describe("emotion scoring", () => {
 
 describe("dynamic context tone", () => {
     it("midnight counts as late, and late replies don't nag about rest or the hour", () => {
-        expect(buildDynamicContextReminder("hey", { hour: 0 })).toContain("Keep responses brief");
+        expect(buildDynamicContextReminder("hey", { hour: 0 })).toMatch(/keep it short unless they asked for detail/i);
         expect(buildDynamicContextReminder("hey", { hour: 23 })).not.toMatch(/\brest\b|late/i);
     });
 
@@ -55,11 +60,8 @@ describe("dynamic context tone", () => {
         expect(r).not.toContain("Acknowledge their feelings");
     });
 
-    // Regression guard for the caller-starvation bug: the relationship/length
-    // modules only fire when the call site forwards these opts (agent.ts).
-    it("relationshipDepth and preferredLength light up the tone modules", () => {
-        const r = buildDynamicContextReminder("hey", { hour: 14, relationshipDepth: 0.9, preferredLength: "terse" });
-        expect(r).toContain("close relationship");
-        expect(r).toContain("concise");
+    it("confusion gets no fix-first steer, and mornings don't push priorities", () => {
+        expect(buildDynamicContextReminder("I'm confused, what do you mean", { hour: 14 })).not.toContain("fix first");
+        expect(buildDynamicContextReminder("hey", { hour: 8 })).toBe("");
     });
 });

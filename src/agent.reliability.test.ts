@@ -55,6 +55,16 @@ describe("finalReplyText", () => {
         expect(finalReplyText("[NO_REPLY]")).toBe("");
         expect(finalReplyText("ok [NO_REPLY]", tg)).toBe("ok");
     });
+    it("keeps overlay markers only on the overlay", () => {
+        const raw = 'Delete it?<!--QUICK_ACTIONS:["a"]-->';
+        expect(finalReplyText(raw, tg)).toBe("Delete it?");
+        expect(finalReplyText(raw, { ...tg, channel: "overlay" })).toBe(raw);
+        expect(finalReplyText("<!--COLLAPSE:Code-->x<!--/COLLAPSE--> ok", tg)).toBe("x ok");
+    });
+    it("keeps other HTML comments, e.g. in code", () => {
+        const raw = "Use `<!-- note -->` then A --> B";
+        expect(finalReplyText(raw, tg)).toBe(raw);
+    });
 });
 
 describe("antiGivingUpFailures", () => {

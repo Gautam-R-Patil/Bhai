@@ -220,7 +220,11 @@ export function getTaskLearningsContext(task: string, category?: LearningCategor
     );
 
     for (const m of matches) {
-        lines.push(`\n[${m.category.toUpperCase()}] "${m.taskPattern}" (${m.context}) — success: ${(m.successScore * 100).toFixed(0)}%, used ${m.timesReinforced}x`);
+        // A playbook is stated as plain facts so the model says "done this here before", not a percentage.
+        const stats = m.lastVerifiedAt
+            ? `playbook: verified on this machine, last ${m.lastVerifiedAt.slice(0, 10)}, used ${m.timesReinforced}x`
+            : `success: ${(m.successScore * 100).toFixed(0)}%, used ${m.timesReinforced}x`;
+        lines.push(`\n[${m.category.toUpperCase()}] "${m.taskPattern}" (${m.context}) — ${stats}`);
         if (m.whatWorked.length > 0) lines.push(`  ✅ Worked: ${m.whatWorked.join(" | ")}`);
         if (m.whatFailed.length > 0) lines.push(`  ❌ Failed: ${m.whatFailed.join(" | ")}`);
         if (m.tips.length > 0) lines.push(`  💡 Tips: ${m.tips.join(" | ")}`);

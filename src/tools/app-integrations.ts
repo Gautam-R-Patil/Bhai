@@ -131,7 +131,8 @@ export const musicControl: ToolDefinition = {
                     },
                     query: {
                         type: "string",
-                        description: "Search query for 'search_play': a song, artist, or one of the user's playlist names (e.g. 'Blinding Lights', 'Taylor Swift', 'Favourite Songs playlist')",
+                        description:
+                            "Search query for 'search_play': a song, artist, or one of the user's playlist names (e.g. 'Blinding Lights', 'Taylor Swift', 'Favourite Songs playlist')",
                     },
                 },
                 required: ["action"],

@@ -84,9 +84,16 @@ desktop/hostinger-upload/
 # they survive the broad ignore. Add a new entry when you commit a
 # test you want to keep.
 # Session 2026-10-29: personalization/soul pure-logic fixes
+!src/prompts/identity-guard.test.ts
+!src/serious-mode.test.ts
+!src/proactive/timed-quiet.test.ts
+!src/language-persist.test.ts
 !src/prompts/dynamic-assembler.test.ts
+!src/agent.about-self.test.ts
 !src/alive-ux.test.ts
 !src/memory/relationship.test.ts
+!src/memory/identity.test.ts
+!src/voice/live/prompt-builder.test.ts
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
 !src/memory/playbooks.test.ts
 !src/screen/grid-overlay.test.ts
@@ -231,9 +238,15 @@ desktop/hostinger-upload/
 !src/memory/session-expiry.test.ts
 !src/tools/browser/secret-fields.test.ts
 !src/overlay/overlay-turns.test.ts
+!src/overlay/overlay-task-drawer.test.ts
 !src/tools/browser/bridge-heartbeat.test.ts
 !src/tools/browser/extension-frame-offset.test.ts
 !src/tools/mac-wifi.test.ts
+!src/telegram-proactive-recipients.test.ts
+!src/prompts/dynamic-context.test.ts
+!src/whatsapp-owner-commands.test.ts
+!src/tools/ask-owner-concurrency.test.ts
+!src/tools/web-search-unconfigured.test.ts
 !src/tools/browser/extension-agent-tab.test.ts
 !convex/devices.test.ts
 !src/llm-guest.test.ts

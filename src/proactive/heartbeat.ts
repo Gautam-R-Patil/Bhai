@@ -176,13 +176,7 @@ export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
                 const suppress = await shouldSuppressMessage(alertMsg);
                 if (!suppress) {
                     console.log(`💓 Monitor alert fired`);
-                    await config.onNotification(alertMsg);
-                    try {
-                        const { recordNotification } = await import("./notification-tracker.js");
-                        recordNotification("monitor_alert", alertMsg);
-                    } catch {
-                        /* non-fatal */
-                    }
+                    await config.onNotification(alertMsg); // the sender records the delivery (once)
                 } else {
                     console.log(`💓 Monitor alert suppressed by DND`);
                 }
@@ -228,15 +222,7 @@ export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
 
                     if (shouldSurface) {
                         console.log(`💓 Inner thought surfaced`);
-                        await config.onNotification(thought);
-
-                        // Record notification for tracking
-                        try {
-                            const { recordNotification } = await import("./notification-tracker.js");
-                            recordNotification("thought", thought);
-                        } catch {
-                            /* non-fatal */
-                        }
+                        await config.onNotification(thought); // the sender records the delivery (once)
                     }
                 }
             } catch (err) {

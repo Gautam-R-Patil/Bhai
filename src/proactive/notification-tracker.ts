@@ -94,15 +94,15 @@ export function recordResponse(
 }
 
 /**
- * The owner wrote (any channel): every notification of the last 4h still waiting for a
- * response counts as engaged. Called with id 0 before, which matched no row, so nothing was
- * ever engaged and isFatigued() muted every proactive message — urgent ones too — after 5.
+ * The owner wrote (any channel): every notification of the last 48h still waiting for a
+ * response counts as engaged, which lifts isFatigued(). Called with id 0 before, which
+ * matched no row, so nothing was ever engaged.
  */
 export function recordOwnerEngagement(): void {
     if (!db) return;
     db.run(
         `UPDATE notification_log SET user_response_at = datetime('now'), response_type = 'engaged', response_depth = 1
-         WHERE user_response_at IS NULL AND sent_at > datetime('now', '-4 hours')`,
+         WHERE user_response_at IS NULL AND sent_at > datetime('now', '-48 hours')`,
         []
     );
 }
@@ -189,20 +189,33 @@ export function getEngagementRate(type?: NotificationType, daysBack = 14): numbe
 
 // ── Fatigue Detection ─────────────────────────
 
+/**
+ * The last two proactive sends of the last 48h both went unanswered: dispatch
+ * sends only FYIs and urgent ones until the owner writes again. Only the
+ * senders' "proactive" rows count; heartbeat also logs the same delivery as a
+ * thought or monitor_alert.
+ */
 export function isFatigued(): boolean {
     if (!db) return false;
 
     const results = db.exec(
-        `SELECT COUNT(*) as cnt,
-                SUM(CASE WHEN response_type = 'engaged' THEN 1 ELSE 0 END) as engaged
-         FROM notification_log
-         WHERE sent_at > datetime('now', '-4 hours')`,
+        `SELECT CAST(strftime('%s', sent_at) AS INTEGER), response_type FROM notification_log
+         WHERE type = 'proactive' AND sent_at > datetime('now', '-48 hours')
+         ORDER BY id DESC LIMIT 12`,
         []
     );
 
-    if (!results[0]?.values[0]) return false;
-    const [count, engaged] = results[0].values[0] as [number, number];
-    return count >= 5 && (engaged / Math.max(count, 1)) < 0.3;
+    // One delivery fanned out to several channels logs a row per channel: rows
+    // within 2 minutes of each other are the same send.
+    let sends = 0;
+    let newer = Number.POSITIVE_INFINITY;
+    for (const [at, response] of (results[0]?.values ?? []) as [number, string | null][]) {
+        if (response !== null) return false;
+        if (newer - at > 120) sends++;
+        newer = at;
+        if (sends === 2) return true;
+    }
+    return false;
 }
 
 // ── Helpers ───────────────────────────────────

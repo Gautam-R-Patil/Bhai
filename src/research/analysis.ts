@@ -157,10 +157,14 @@ Output JSON only:
             modelOverride: selectForResearch(topic).modelId,
         });
         const parsed = parseJsonSafe(response.choices?.[0]?.message?.content || "");
+        // Model output: keep only non-empty strings (one object in the list used to throw
+        // later and fail the whole run).
+        const strings = (v: unknown): string[] =>
+            Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
         return {
-            findings: Array.isArray(parsed?.findings) ? parsed.findings : [],
-            followUpQueries: Array.isArray(parsed?.follow_up_queries) ? parsed.follow_up_queries : [],
-            categories: Array.isArray(parsed?.categories) ? parsed.categories : [],
+            findings: strings(parsed?.findings),
+            followUpQueries: strings(parsed?.follow_up_queries),
+            categories: strings(parsed?.categories),
         };
     } catch { return { findings: [], followUpQueries: [], categories: [] }; }
 }
@@ -190,7 +194,16 @@ If no contradictions found, return: { "contradictions": [] }`;
             modelOverride: selectForResearch(findings.slice(0, 5).join("; ")).modelId,
         });
         const parsed = parseJsonSafe(response.choices?.[0]?.message?.content || "");
-        return Array.isArray(parsed?.contradictions) ? parsed.contradictions : [];
+        return Array.isArray(parsed?.contradictions)
+            ? parsed.contradictions.filter(
+                  (c: unknown): c is { finding1: string; finding2: string } =>
+                      !!c &&
+                      typeof (c as { finding1?: unknown }).finding1 === "string" &&
+                      typeof (c as { finding2?: unknown }).finding2 === "string" &&
+                      (c as { finding1: string }).finding1.trim() !== "" &&
+                      (c as { finding2: string }).finding2.trim() !== "",
+              )
+            : [];
     } catch { return []; }
 }
 

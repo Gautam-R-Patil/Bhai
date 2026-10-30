@@ -567,7 +567,8 @@ async function searchTavily(query: string): Promise<SearchResult[]> {
             signal: AbortSignal.timeout(15000),
         });
         if (!response.ok) {
-            if (response.status === 429) markFailure("tavily");
+            // 429 and 5xx (e.g. "Tavily not configured" on the server) back off alike.
+            if (response.status === 429 || response.status >= 500) markFailure("tavily");
             return [];
         }
         const data = await response.json() as any;
@@ -634,7 +635,7 @@ async function searchExa(query: string): Promise<SearchResult[]> {
             signal: AbortSignal.timeout(12000),
         });
         if (!response.ok) {
-            if (response.status === 429) markFailure("exa");
+            if (response.status === 429 || response.status >= 500) markFailure("exa");
             return [];
         }
         const data = await response.json() as any;

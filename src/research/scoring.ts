@@ -52,19 +52,53 @@ export function rankSource(
     };
 }
 
+// ── URL identity ─────────────────────────────
+
+const TRACKING_PARAM = /^(utm_[a-z]+|fbclid|gclid|mc_[a-z]+|ref|ref_src)$/i;
+
+/**
+ * One key per page: http vs https, www., a trailing slash, a #fragment or tracking
+ * parameters made the same page count as several independent sources (and so as
+ * corroboration of its own findings).
+ */
+export function normalizeUrl(url: string): string {
+    try {
+        const u = new URL(url);
+        const params = [...u.searchParams].filter(([k]) => !TRACKING_PARAM.test(k));
+        params.sort(([a], [b]) => a.localeCompare(b));
+        const query = params.length ? `?${new URLSearchParams(params).toString()}` : "";
+        return `${u.hostname.toLowerCase().replace(/^www\./, "")}${u.pathname.replace(/\/+$/, "")}${query}`;
+    } catch {
+        return url;
+    }
+}
+
+/** A Set of URLs keyed by normalizeUrl. */
+export class UrlSet extends Set<string> {
+    override add(url: string): this {
+        return super.add(normalizeUrl(url));
+    }
+    override has(url: string): boolean {
+        return super.has(normalizeUrl(url));
+    }
+}
+
 // ── Finding Deduplication ────────────────────
 
+// Letters, marks and digits of any script: an ASCII-only filter left Hindi, CJK, Arabic or
+// Cyrillic findings with no words at all, and two empty sets counted as identical, so
+// every such finding was a "duplicate" of the first.
 function getWords(text: string): Set<string> {
     return new Set(
         text.toLowerCase()
-            .replace(/[^a-z0-9\s]/g, "")
+            .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
             .split(/\s+/)
             .filter(w => w.length > 2)
     );
 }
 
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-    if (a.size === 0 && b.size === 0) return 1;
+    if (a.size === 0 || b.size === 0) return 0; // nothing to compare is not "the same"
     let intersection = 0;
     for (const word of a) { if (b.has(word)) intersection++; }
     const union = a.size + b.size - intersection;
@@ -119,7 +153,7 @@ export function crossReferenceFindings(
 
         // Check how many other sources mention similar content
         for (const source of allSources) {
-            if (source.url === finding.sourceUrl) continue;
+            if (normalizeUrl(source.url) === normalizeUrl(finding.sourceUrl)) continue;
             const sourceWords = getWords(source.findings.join(" "));
             if (jaccardSimilarity(words, sourceWords) > 0.15) {
                 supportingSources.push(source.url);

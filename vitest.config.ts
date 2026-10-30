@@ -35,6 +35,8 @@ export default defineConfig({
             "convex/**/*.test.ts",
         ],
         environment: "node",
+        // An empty home per test file: tests must never touch the owner's ~/.atlas.
+        setupFiles: ["./vitest.setup.ts"],
         testTimeout: 30_000,
         // Closing Chromium or an HTTP server can take >10s on a Windows runner —
         // and a beforeAll/afterAll timeout is NOT covered by `retry` (that re-runs

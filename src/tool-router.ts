@@ -264,6 +264,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             // per category are offered (MAX_TOOLS_PER_CATEGORY). Keep what the
             // rules-mac prompt and the verify-before-done gate rely on near the top.
             "os_smart_click",
+            "app_manager", // step one of every app task: bring the app forward (launches it)
             "os_inspect",
             "os_click_id",
             "os_type",
@@ -740,7 +741,7 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Settings, permissions and machine state ("give zoom access to my camera", "battery")
     {
         pattern:
-            /\b(settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
+            /\b((dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
         category: "system_controls",
         minScore: 0.7,
     },

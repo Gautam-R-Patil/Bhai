@@ -42,8 +42,27 @@ describe("proactive push", () => {
         await dispatchProactiveMessage("overlay", "x", "fyi");
         delete process.env.ATLAS_PROACTIVE_SHADOW;
         _setFatigueCheckForTests(() => true);
-        await dispatchProactiveMessage("overlay", "x", "fyi");
+        await dispatchProactiveMessage("overlay", "x", "question");
         await flush();
         expect(push).not.toHaveBeenCalled();
+    });
+
+    describe("fatigue gate", () => {
+        afterEach(() => _setFatigueCheckForTests(null));
+        it("holds an ordinary nudge, but never an FYI, a deadline or a reminder the owner asked for", async () => {
+            _setFatigueCheckForTests(() => true); // the last two nudges went unanswered
+            expect(await dispatchProactiveMessage("telegram", "how'd the call go?", "question")).toBe(false);
+            expect(await dispatchProactiveMessage("telegram", "your 5pm moved", "fyi")).toBe(true);
+            expect(
+                await dispatchProactiveMessage(
+                    "telegram",
+                    "30m left on the report",
+                    "question",
+                    undefined,
+                    false,
+                    true,
+                ),
+            ).toBe(true);
+        });
     });
 });

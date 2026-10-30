@@ -6,8 +6,7 @@
 // IMAP listener (incoming) + SMTP sender (outgoing)
 // Uses Hostinger email: imap.hostinger.com / smtp.hostinger.com
 
-import { ImapFlow } from "imapflow";
-import nodemailer from "nodemailer";
+import type { ImapFlow } from "imapflow";
 import type { SendMailOptions, Transporter } from "nodemailer/lib/mailer";
 import { type ChannelContext, runAgent } from "./agent.js";
 import { withStuckReplyLine } from "./channel-text.js";
@@ -148,6 +147,24 @@ export function isEmailAuthenticated(rawSource: string): { authenticated: boolea
     return { authenticated: true, details };
 }
 
+const MAX_EMAIL_BYTES = 10 * 1024 * 1024;
+
+/** Mail a machine sent: auto-replies, lists, bounces, no-reply senders, or our own address. */
+export function isAutomatedEmail(rawSource: string, senderEmail: string, ownAddress?: string): boolean {
+    const h = (name: string) => (extractHeaderFromSource(rawSource, name) ?? "").toLowerCase();
+    const auto = h("Auto-Submitted");
+    return (
+        (!!auto && auto !== "no") ||
+        /^(bulk|junk|list|auto_reply)$/.test(h("Precedence")) ||
+        !!h("List-Id") ||
+        !!h("List-Unsubscribe") ||
+        !!h("X-Autoreply") ||
+        !!h("X-Autorespond") ||
+        /^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounce[s]?)[@+]/i.test(senderEmail) ||
+        (!!ownAddress && senderEmail === ownAddress.toLowerCase())
+    );
+}
+
 // Per-sender inbound rate limit (F2): max 5 emails/hour processed.
 const EMAIL_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const EMAIL_RATE_LIMIT_MAX = 5;
@@ -168,7 +185,9 @@ function emailRateLimitAllow(senderEmail: string): boolean {
 
 // ── SMTP Sender ───────────────────────────────
 
-function createSMTPTransport(config: Config): Transporter {
+// The mail SDKs (~30MB) load only when email is configured.
+async function createSMTPTransport(config: Config): Promise<Transporter> {
+    const { default: nodemailer } = await import("nodemailer");
     return nodemailer.createTransport({
         host: config.smtpHost || "smtp.hostinger.com",
         port: config.smtpPort || 465,
@@ -221,6 +240,7 @@ export async function sendEmailFromAtlas(
 // ── IMAP Listener ─────────────────────────────
 
 async function startIMAPListener(config: Config, llm: LLMClient): Promise<void> {
+    const { ImapFlow } = await import("imapflow");
     imapClient = new ImapFlow({
         host: config.imapHost || "imap.hostinger.com",
         port: config.imapPort || 993,
@@ -359,29 +379,39 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
         }
         const collected: CollectedEmail[] = [];
 
-        const messages = imapClient.fetch(
-            { seen: false },
-            {
-                envelope: true,
-                source: true,
-                uid: true,
-            },
-        );
-
-        for await (const msg of messages) {
+        // Envelopes and sizes first: a stranger's 30 MB attachment (or a backlog of
+        // unseen mail) used to be downloaded in full before the whitelist was checked.
+        const heads: Array<{ uid: number; senderEmail: string; senderName: string; subject: string; messageId: string; size: number }> = [];
+        for await (const msg of imapClient.fetch({ seen: false }, { envelope: true, size: true, uid: true })) {
             const envelope = msg.envelope;
             if (!envelope) continue;
             const from = envelope.from?.[0];
             const senderEmail = from?.address?.toLowerCase() || "";
-            const senderName = from?.name || senderEmail;
-            const subject = envelope.subject || "(no subject)";
-            const messageId = envelope.messageId || "";
-
-            // Extract body from raw source while in the fetch loop
-            const rawSource = msg.source?.toString("utf-8") || "";
-            const bodyText = extractTextFromEmail(rawSource);
-
-            collected.push({ uid: msg.uid, senderEmail, senderName, subject, messageId, bodyText, rawSource });
+            heads.push({
+                uid: msg.uid,
+                senderEmail,
+                senderName: from?.name || senderEmail,
+                subject: envelope.subject || "(no subject)",
+                messageId: envelope.messageId || "",
+                size: msg.size ?? 0,
+            });
+        }
+        const markSeen = (uid: number) =>
+            imapClient!.messageFlagsAdd({ uid }, ["\\Seen"], { uid: true }).catch(() => {});
+        for (const h of heads) {
+            if (!config.emailWhitelist.has(h.senderEmail)) {
+                console.log(`🚫 Blocked email from non-whitelisted sender: ${h.senderEmail}`);
+                await markSeen(h.uid);
+                continue;
+            }
+            if (h.size > MAX_EMAIL_BYTES) {
+                console.warn(`🚫 [EMAIL] Skipping ${Math.round(h.size / 1e6)} MB email from ${h.senderEmail} (over the size cap)`);
+                await markSeen(h.uid);
+                continue;
+            }
+            const msg = await imapClient.fetchOne(String(h.uid), { source: true }, { uid: true });
+            const rawSource = (msg && msg.source?.toString("utf-8")) || "";
+            collected.push({ ...h, bodyText: extractTextFromEmail(rawSource), rawSource });
         }
 
         if (collected.length === 0) {
@@ -417,6 +447,18 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                 continue;
             }
             console.log(`   🔐 Email auth: ${authResult.details}`);
+
+            // Auto-replies, mailing lists, bounces and our own mail are never answered:
+            // an out-of-office reply from a whitelisted sender used to loop with Bhai.
+            if (isAutomatedEmail(email.rawSource, email.senderEmail, config.emailUser)) {
+                console.log(`   🤖 [EMAIL] Automated mail from ${email.senderEmail}: not answering`);
+                try {
+                    await imapClient!.messageFlagsAdd({ uid: email.uid }, ["\\Seen"], { uid: true });
+                } catch {
+                    /* ignore */
+                }
+                continue;
+            }
 
             // ── Per-sender inbound rate limit ──
             if (!emailRateLimitAllow(email.senderEmail)) {
@@ -582,7 +624,7 @@ export async function initEmail(llm: LLMClient, config: Config): Promise<void> {
     isShuttingDown = false;
 
     // Create SMTP transport
-    smtpTransport = createSMTPTransport(config);
+    smtpTransport = await createSMTPTransport(config);
 
     // Verify SMTP connection
     try {

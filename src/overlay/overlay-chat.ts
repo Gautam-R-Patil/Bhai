@@ -187,6 +187,44 @@ const chatOf = (ws: WebSocket) => chatIds.get(ws) || "overlay";
 // The "Forget that" this socket was last offered; a forget tap must match it (ids are guessable).
 const offeredUndo = new WeakMap<WebSocket, string>();
 
+let drawerIds = new Set<string>();
+
+/** Send the owner's open chat bars every running research / long task, and what has ended. */
+async function pushTaskDrawer(): Promise<void> {
+    const owners = ownerClients().filter((c) => c.readyState === 1);
+    if (owners.length === 0) return;
+    const [{ listRunningResearch }, { listActiveLongTasks }] = await Promise.all([
+        import("../research/index.js"),
+        import("../agents/long-task.js"),
+    ]);
+    const items = [
+        ...listRunningResearch().map((r) => ({
+            taskId: r.id,
+            name: r.topic.slice(0, 80),
+            taskType: "research",
+            progress: r.progress,
+            phase: r.phase,
+        })),
+        ...listActiveLongTasks()
+            .filter((t) => t.status === "running" || t.status === "planning")
+            .map((t) => ({
+                taskId: t.id,
+                name: t.description.slice(0, 80),
+                taskType: "long_task",
+                progress: t.phases.length ? (100 * t.currentPhase) / t.phases.length : undefined,
+                phase: t.phases[t.currentPhase]?.description?.slice(0, 80) ?? t.status,
+            })),
+    ];
+    const now = new Set(items.map((i) => i.taskId));
+    const ended = [...drawerIds].filter((id) => !now.has(id));
+    drawerIds = now;
+    if (items.length === 0 && ended.length === 0) return;
+    for (const c of owners) {
+        for (const i of items) c.send(JSON.stringify({ type: "task_progress", ...i }));
+        for (const taskId of ended) c.send(JSON.stringify({ type: "task_complete", taskId }));
+    }
+}
+
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
     // Pick up where the conversation left off before a restart.
@@ -598,6 +636,16 @@ export function initOverlayChat(llm: LLMClient): void {
 
                 if (typeof msg.chat === "string" && msg.chat) chatIds.set(ws, msg.chat.slice(0, 64));
 
+                if (msg.type === "cancel_task") {
+                    // The task drawer's Cancel: the owner's researches and long tasks only.
+                    if (!wsIsOwner(ws) || typeof msg.taskId !== "string") return;
+                    const { cancelResearchById } = await import("../research/index.js");
+                    const { cancelLongTask } = await import("../agents/long-task.js");
+                    const cancelled = (await cancelResearchById(msg.taskId)) || cancelLongTask(msg.taskId);
+                    sendToClient(ws, cancelled ? { type: "task_cancelled", taskId: msg.taskId } : { type: "task_complete", taskId: msg.taskId });
+                    return;
+                }
+
                 if (msg.type === "stop") {
                     // Stop button / Esc: abort this socket's running turn. No new
                     // tool starts after this (agent.ts checks the signal per tool).
@@ -632,7 +680,23 @@ export function initOverlayChat(llm: LLMClient): void {
                         console.log(`🌐 [Chrome Extension] Browser context injected: ${browserUrl}`);
                     }
 
-                    await handleOverlayMessage(ws, messageText, messageSource, msg.text.trim());
+                    // The extension may attach a screenshot of the tab (with the user's drawing).
+                    const image = msg.meta?.source === "chrome-extension" ? msg.image : undefined;
+                    const tabShot =
+                        image &&
+                        typeof image.base64 === "string" &&
+                        image.base64.length < 8_000_000 &&
+                        /^image\/(jpeg|png|webp)$/.test(image.mimeType)
+                            ? ({ type: "image", base64: image.base64, mimeType: image.mimeType } as MediaAttachment)
+                            : undefined;
+                    await handleOverlayMessage(
+                        ws,
+                        messageText,
+                        messageSource,
+                        msg.text.trim(),
+                        tabShot,
+                        msg.meta?.imageKind === "pasted" ? "pasted" : "tab",
+                    );
                 } else if (msg.type === "quick_action" && msg.text) {
                     const actionText = msg.text.trim();
                     if (actionText.startsWith("mem:forget:")) {
@@ -717,6 +781,12 @@ export function initOverlayChat(llm: LLMClient): void {
         // (createOverlayWindow in desktop/main.js, toggled by the global hotkey).
         // The server just hosts the HTTP+WS endpoint it connects to.
     });
+
+    // The chat bar's task drawer: running deep researches and long tasks, with Cancel.
+    // (The drawer existed but nothing on the server ever sent it a task.)
+    setInterval(() => {
+        pushTaskDrawer().catch(() => {});
+    }, 4000).unref();
 
     // ── Persistent Overlay Research Progress ──────
     // This callback persists across agent iterations (unlike _onProgress which is cleared)
@@ -886,7 +956,14 @@ function ownerClients(): WebSocket[] {
 
 // `logText` is what the transcript shows as the user's words (without injected
 // context such as the browser prefix or the voice-analysis prompt).
-async function handleOverlayMessage(ws: WebSocket, userMessage: string, source = "overlay", logText = userMessage): Promise<void> {
+async function handleOverlayMessage(
+    ws: WebSocket,
+    userMessage: string,
+    source = "overlay",
+    logText = userMessage,
+    tabShot?: MediaAttachment,
+    imageKind: "tab" | "pasted" = "tab",
+): Promise<void> {
     if (!llmClient) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
         return;
@@ -957,10 +1034,23 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
         }
     } catch { /* non-fatal */ }
 
-    let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep your response SHORT and concise — this is a compact overlay, not a full chat. Use 1-3 sentences when possible.]${chromeCtxNote}`;
+    let taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.]${chromeCtxNote}`;
 
-    // Only the owner's own chat bar may look at the screen — never a web-widget visitor.
-    if (wsIsOwner(ws) && isScreenQuery(userMessage)) {
+    if (tabShot) {
+        // The Chrome side panel sends what the user sees in the tab (never the panel itself,
+        // never the rest of the screen), drawing included.
+        media = [tabShot];
+        taggedMessage = `${userMessage}
+
+[SOURCE: Bhai's side panel in the user's Chrome — respond there, NOT on Telegram. Keep it short.
+${
+            imageKind === "pasted"
+                ? "Attached: an image the user pasted into the chat. Answer about it directly."
+                : `Attached: a screenshot of the Chrome tab the user is looking at (the page only). Orange strokes or boxes on it are the user's own drawing: focus on what they marked. Answer as if you can see the page, without "based on the screenshot". To act on the page, use the browser tools on this tab; to point something out to them, use browser_mark.`
+        }]${chromeCtxNote}`;
+    } else if (wsIsOwner(ws) && source !== "chrome-extension" && isScreenQuery(userMessage)) {
+        // Only the owner's own chat bar may look at the screen — never a web-widget visitor,
+        // and not the Chrome panel, which sends its tab instead.
         console.log("  📸 [Overlay] Screen query detected — capturing screenshot...");
         sendToClient(ws, { type: "progress", text: "📸 Looking at your screen…" });
 
@@ -969,7 +1059,7 @@ async function handleOverlayMessage(ws: WebSocket, userMessage: string, source =
             media = [{ type: "image", base64: screenshot.base64, mimeType: screenshot.mimeType }];
             taggedMessage = `${userMessage}
 
-[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep responses SHORT (2-4 sentences).
+[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.
 
 A screenshot of the user's current screen is attached. Use it as your PRIMARY context.
 
@@ -985,7 +1075,7 @@ IMPORTANT RULES:
             // Screenshot failed (permissions issue etc) — tell user
             taggedMessage = `${userMessage}
 
-[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep responses SHORT.
+[SOURCE: Desktop overlay chat — respond here, NOT on Telegram.
 NOTE: Screenshot capture failed (screen recording permission may be needed). Answer based on conversation context if possible, or ask the user to describe what they are seeing.]`;
         }
     }
@@ -1121,7 +1211,7 @@ async function handleFileAttachment(
 
     const prompt = userText
         ? `${userText}${fileContext}\n\n[SOURCE: Desktop overlay chat — file attached: ${fileName}]`
-        : `[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. Keep responses SHORT. The user dropped a file: "${fileName}". ${isImage ? "Analyze the image and describe what you see." : `Here is its content:${fileContext}`}]`;
+        : `[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. The user dropped a file: "${fileName}". ${isImage ? "Analyze the image and describe what you see." : `Here is its content:${fileContext}`}]`;
 
     try {
         const onProgress = async (msg: string) => {

@@ -63,7 +63,6 @@ async function seedPrompts() {
     { slug: "rules-mac", file: "rules-mac.md" },
     { slug: "rules-windows", file: "rules-windows.md" },
     { slug: "browsing", file: "browsing.md" },
-    { slug: "thinking", file: "thinking.md" },
     { slug: "coding", file: "coding.md" },
     { slug: "spec", file: "spec.md" },
     { slug: "proactive-composer", file: "proactive-composer.md" },

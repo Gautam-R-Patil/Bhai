@@ -8,8 +8,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock the memory module so the tool's calls to updateIdentityProfile and
-// addProject/addGoal don't require a SQLite DB at test time.
-vi.mock("../memory/identity.js", () => ({
+// addProject/addGoal don't require a SQLite DB at test time; the claim
+// guards themselves stay real.
+vi.mock("../memory/identity.js", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../memory/identity.js")>()),
     updateIdentityProfile: vi.fn().mockReturnValue({ user_id: "default" }),
     getIdentityProfile: vi.fn().mockReturnValue({ user_id: "default" }),
     addProject: vi.fn(),
@@ -136,5 +138,14 @@ describe("identity_update verification", () => {
         expect(upd.mock.calls[0][0]).toMatchObject({ name: { value: "Gautam", verified: true } });
         await call({ location: "Pune", verification_level: "observed" });
         expect(upd.mock.calls[1][0]).toMatchObject({ location: { value: "Pune", verified: false } });
+    });
+
+    it("stores an explicit 'call me' as preferences.address_as, never an ownership claim", async () => {
+        const { updateIdentityProfile } = await import("../memory/identity.js");
+        const upd = vi.mocked(updateIdentityProfile);
+        upd.mockClear();
+        await call({ address_as: "DJ" });
+        expect(upd.mock.calls[0][0]).toMatchObject({ preferences: { address_as: "DJ" } });
+        expect((await call({ address_as: "founder of TRUSCOR" })).success).toBe(false);
     });
 });

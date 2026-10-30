@@ -6,7 +6,6 @@ import fs from "node:fs";
 import path from "node:path";
 // pptxgenjs ships CJS + ESM; default-import interop varies, so we resolve
 // the constructor at runtime and give it a typed handle.
-import pptxgenjsModule from "pptxgenjs";
 import { getPresentationsDir } from "../../config/paths.js";
 import { getTheme } from "./themes.js";
 import type { ChartSpec, PresentationOutline, Slide, Theme } from "./types.js";
@@ -32,8 +31,6 @@ type PptxSlide = {
     addNotes: (text: string) => void;
 };
 
-// Handle both ESM default and CJS-style module shapes.
-const PptxGenJS = ((pptxgenjsModule as { default?: unknown }).default ?? pptxgenjsModule) as PptxCtor;
 
 // Slide dimensions (16:9, inches).
 const SLIDE_W = 13.333;
@@ -50,6 +47,9 @@ export async function renderPptx(
     opts?: { outputPath?: string },
 ): Promise<{ filePath: string; sizeKb: number; warnings: string[] }> {
     const theme = getTheme(outline.themeId);
+    // Loaded on first render. Handle both ESM default and CJS-style module shapes.
+    const pptxgenjsModule = await import("pptxgenjs");
+    const PptxGenJS = ((pptxgenjsModule as { default?: unknown }).default ?? pptxgenjsModule) as PptxCtor;
     const pres = new PptxGenJS();
 
     pres.layout = "LAYOUT_WIDE"; // 13.333 x 7.5 inches

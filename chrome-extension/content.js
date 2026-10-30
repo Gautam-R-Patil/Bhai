@@ -14,7 +14,12 @@ document.addEventListener("selectionchange", () => {
   if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
   selectionDebounceTimer = setTimeout(() => {
     const sel = window.getSelection();
-    cachedSelection = sel ? sel.toString().trim() : "";
+    const next = sel ? sel.toString().trim() : "";
+    // Tell Bhai's side panel, so it can show what it will focus on.
+    if (next !== cachedSelection) {
+      chrome.runtime.sendMessage({ type: "page_selection", text: next.slice(0, 300) }).catch(() => { /* panel closed */ });
+    }
+    cachedSelection = next;
   }, 250);
 });
 

@@ -142,7 +142,9 @@ export function reinforceTrait(
         const conflicting = getTrait(conflictKey);
         if (conflicting && conflicting.confidence >= HIGH_CONFIDENCE) {
             debugLog("CAP", `Conflict detected: ${traitKey} vs ${conflictKey} (${conflicting.confidence}). Contradicting.`);
-            contradictTrait(conflictKey, value);
+            // Lower the opposite trait's confidence; keep its own value (it used to take this
+            // trait's, e.g. likes_detailed_answers = "short replies").
+            contradictTrait(conflictKey, conflicting.value);
         }
     }
 

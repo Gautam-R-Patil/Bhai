@@ -31,11 +31,11 @@ const EMOTION_SIGNALS: Record<string, { words: string[]; valence: number; arousa
         valence: -0.9, arousal: 0.9,
     },
     stressed: {
-        words: ["deadline", "urgent", "asap", "running out of time", "pressure", "overwhelmed", "too much", "behind"],
+        words: ["urgent", "asap", "running out of time", "pressure", "overwhelmed"],
         valence: -0.5, arousal: 0.7,
     },
     confused: {
-        words: ["confused", "don't understand", "what do you mean", "makes no sense", "lost", "unclear", "huh", "wait what"],
+        words: ["confused", "don't understand", "what do you mean", "makes no sense", "unclear", "huh", "wait what"],
         valence: -0.3, arousal: 0.3,
     },
     excited: {
@@ -149,28 +149,4 @@ export function detectEmotion(text: string): EmotionAnalysis {
         arousal: Math.max(0, Math.min(1, arousal)),
         signals,
     };
-}
-
-/**
- * Generate a tone calibration directive based on detected emotion.
- */
-export function getToneDirective(emotion: EmotionAnalysis): string {
-    switch (emotion.primary) {
-        case "frustrated":
-            return "User is frustrated — be patient, acknowledge the difficulty, offer a clear path forward.";
-        case "angry":
-            return "User is upset — stay calm, validate their concern, apologize if appropriate, focus on resolution.";
-        case "stressed":
-            return "User is under pressure — be efficient, prioritize the most urgent items, offer to take things off their plate.";
-        case "confused":
-            return "User is confused — explain step by step, use simpler language, check understanding.";
-        case "excited":
-            return "User is excited — match their energy, encourage their enthusiasm, build on their ideas.";
-        case "grateful":
-            return "User is grateful — acknowledge warmly, continue being helpful.";
-        case "happy":
-            return "User is in a good mood — keep the positive tone, be friendly.";
-        default:
-            return "";
-    }
 }

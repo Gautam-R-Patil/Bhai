@@ -2,7 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { getIdentityProfile, updateIdentityProfile } from "../memory/identity.js";
+import { getIdentityProfile, statedField, updateIdentityProfile } from "../memory/identity.js";
 import {
     addEntity,
     addRelationship,
@@ -152,8 +152,10 @@ export const coreMemoryReplace: ToolDefinition = {
                     let found = false;
 
                     for (const [key, val] of Object.entries(profile)) {
-                        if (typeof val === "string" && val === oldContent) {
-                            fields[key] = newContent;
+                        // Name, email and location may be stored as {value, verified}.
+                        const text = typeof val === "string" ? val : (val as { value?: unknown } | null)?.value;
+                        if (text === oldContent) {
+                            fields[key] = statedField(key, newContent);
                             found = true;
                         } else if (Array.isArray(val)) {
                             const idx = val.indexOf(oldContent);
@@ -361,7 +363,7 @@ export const coreMemoryAppend: ToolDefinition = {
                     };
 
                     if (fieldMap[field]) {
-                        updateIdentityProfile({ [fieldMap[field]]: value });
+                        updateIdentityProfile({ [fieldMap[field]]: statedField(fieldMap[field], value) });
                     } else if (field === "project") {
                         const { addProject } = await import("../memory/identity.js");
                         addProject(value);

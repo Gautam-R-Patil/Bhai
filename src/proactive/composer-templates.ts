@@ -145,13 +145,13 @@ export const TEMPLATES: Record<string, Partial<Record<Channel, TemplateFn>>> = {
         telegram: (i) => {
             const { activity, expectedHour } = i.payload as { activity?: string; expectedHour?: number };
             if (!activity || expectedHour == null) return null;
-            const timeStr = expectedHour < 12 ? `${expectedHour}am` : `${expectedHour - 12 || 12}pm`;
+            const timeStr = expectedHour < 12 ? `${expectedHour || 12}am` : `${expectedHour - 12 || 12}pm`;
             return `you usually ${activity} around ${timeStr}. nothing scheduled — blocked?`;
         },
         whatsapp: (i) => {
             const { activity, expectedHour } = i.payload as { activity?: string; expectedHour?: number };
             if (!activity || expectedHour == null) return null;
-            const timeStr = expectedHour < 12 ? `${expectedHour}am` : `${expectedHour - 12 || 12}pm`;
+            const timeStr = expectedHour < 12 ? `${expectedHour || 12}am` : `${expectedHour - 12 || 12}pm`;
             return `you usually ${activity} around ${timeStr}. nothing scheduled — blocked?`;
         },
     },

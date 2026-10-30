@@ -79,9 +79,11 @@ export const routeInbound = internalMutation({
         subject: v.string(),
         text: v.string(),
         automated: v.boolean(),
+        /** The receiving server verified From (aligned SPF/DKIM/DMARC pass). */
+        authenticated: v.optional(v.boolean()),
     },
     returns: v.union(v.literal("queued"), v.literal("unknown"), v.literal("over_cap"), v.literal("duplicate")),
-    handler: async (ctx, { address, from, fromName, messageId, subject, text, automated }) => {
+    handler: async (ctx, { address, from, fromName, messageId, subject, text, automated, authenticated }) => {
         const row = await ctx.db
             .query("bhai_mail_addresses")
             .withIndex("by_address", (q) => q.eq("address", address))
@@ -92,7 +94,11 @@ export const routeInbound = internalMutation({
             .withIndex("by_messageId", (q) => q.eq("messageId", messageId))
             .first();
         if (seen) return "duplicate" as const;
-        const fromOwner = from.toLowerCase() === row.ownerEmail;
+        const claimsOwner = from.toLowerCase() === row.ownerEmail;
+        const fromOwner = claimsOwner && authenticated === true;
+        // Unverified mail claiming to be the owner: never owner Bhai, and no guest reply
+        // either (it would go to the owner's real address). Announced, never answered.
+        if (claimsOwner && !fromOwner) automated = true;
         if (fromOwner) {
             await ctx.db.patch(row._id, { lastInboundAt: Date.now() });
         } else if (!automated) {

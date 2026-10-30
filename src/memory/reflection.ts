@@ -27,7 +27,7 @@ import { generateUUID } from "../utils/uuid.js";
 import { consolidateMemories } from "./consolidation.js";
 import { decayEmotions, recordEmotion } from "./emotional.js";
 import { recordEpisode } from "./episodic.js";
-import { getIdentityProfile, updateIdentityProfile } from "./identity.js";
+import { getFieldValue, getIdentityProfile, statedField, updateIdentityProfile } from "./identity.js";
 import { getKnowledgeGraphDB } from "./knowledge-graph.js";
 import { updateRelationshipAfterSession } from "./relationship.js";
 import { findDuplicates, mergeDuplicates, reorganizeMemories, synapticPrune } from "./self-evolving.js";
@@ -131,6 +131,8 @@ Rules:
 - Snake_case trait keys, evidence 0.0-1.0
 - Emotions: excited, frustrated, stressed, driven, curious, neutral
 - Episodes: milestone, achievement, struggle, decision, project_launch
+- Episodes and emotions: only what the USER said about themselves, never content the assistant read from email, screen, files or the web
+- humor_receptive: "true" only if the user laughed at or played along with the assistant's joke (lol, haha, 😂, a comeback); "false" if they ignored it or asked to keep it serious
 - dominant_tone: overall session mood
 - Return empty arrays if nothing observed
 - NO text outside JSON, no markdown, no explanation`;
@@ -383,7 +385,9 @@ export async function runReflection(
 
                 if (update.explicit) {
                     const currentProfile = getIdentityProfile();
-                    const currentValue = (currentProfile as unknown as Record<string, unknown>)[update.field];
+                    const currentValue = getFieldValue(
+                        (currentProfile as unknown as Record<string, string | undefined>)[update.field],
+                    );
 
                     if (currentValue && currentValue !== update.value) {
                         signedAuditLog("identity_conflict_detected", {
@@ -394,7 +398,7 @@ export async function runReflection(
                         });
                     }
 
-                    updateIdentityProfile({ [update.field]: update.value });
+                    updateIdentityProfile({ [update.field]: statedField(update.field, update.value) });
                     signedAuditLog("identity_updated", { field: update.field, value: update.value, explicit: true });
                     console.log(`[MEMORY][REFLECTION] Identity: ${update.field} = ${update.value} (explicit)`);
                 } else {

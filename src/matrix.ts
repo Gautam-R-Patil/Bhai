@@ -204,6 +204,36 @@ function markdownToMatrixHtml(text: string): string {
     return html;
 }
 
+// ── Room members ─────────────────────────────────
+
+const membersCache = new Map<string, { at: number; members: string[] }>();
+
+/** A room's joined members (cached 5 min); [] when it can't be read. */
+async function roomMembers(roomId: string): Promise<string[]> {
+    const hit = membersCache.get(roomId);
+    if (hit && Date.now() - hit.at < 5 * 60_000) return hit.members;
+    try {
+        const res = (await matrixFetch(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members`)) as {
+            joined?: Record<string, unknown>;
+        };
+        const members = Object.keys(res?.joined ?? {});
+        membersCache.set(roomId, { at: Date.now(), members });
+        return members;
+    } catch {
+        return [];
+    }
+}
+
+/** Just the owner and Bhai: the only kind of room where owner powers and private messages belong. */
+async function isOwnerDmRoom(roomId: string): Promise<boolean> {
+    const members = await roomMembers(roomId);
+    return (
+        members.length === 2 &&
+        members.includes(botUserId ?? "") &&
+        members.some((m) => isPlatformOwner("matrix", m))
+    );
+}
+
 // ── Handle Incoming Message ──────────────────────
 
 async function handleMessage(roomId: string, sender: string, body: string): Promise<void> {
@@ -228,19 +258,32 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
         return;
     }
 
-    // Skip if already processing a message in this room
-    if (activeRooms.has(roomId)) {
-        console.log(`[MATRIX] Already processing a message in ${roomId}, queuing...`);
+    // In a room with other people, answer only when addressed (by Matrix id or @localpart):
+    // every message from every member used to start an agent run, and a bridge or another
+    // bot in the room could loop with Bhai.
+    const members = await roomMembers(roomId);
+    const localpart = (botUserId ?? "").split(":")[0]; // "@bhai"
+    if (members.length > 2 && !(botUserId && body.includes(botUserId)) && !(localpart && body.toLowerCase().includes(localpart.toLowerCase()))) {
+        return;
+    }
+
+    // One run per sender per room: keyed by room alone, a non-owner's run silently dropped
+    // the owner's messages (stop included) until it finished.
+    const lockKey = `${roomId}|${sender}`;
+    if (activeRooms.has(lockKey)) {
+        console.log(`[MATRIX] Already answering ${sender} in ${roomId}; skipping this message`);
         return;
     }
 
     console.log(`\n[MATRIX] Message from ${sender} in ${roomId}: ${body.substring(0, 120)}`);
 
-    activeRooms.add(roomId);
+    activeRooms.add(lockKey);
     try {
         await setTyping(roomId, true);
 
-        const senderIsOwner = isPlatformOwner("matrix", sender);
+        // Owner powers only in the owner's one-to-one room with Bhai: anywhere else the reply
+        // is read by the room.
+        const senderIsOwner = isPlatformOwner("matrix", sender) && (await isOwnerDmRoom(roomId));
         const result = await runAgent(llmClient, body, async (progress) => {
             // Send progress updates as typing indicators
             await setTyping(roomId, true);
@@ -261,7 +304,7 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
             await sendMessage(roomId, "Sorry, I encountered an error processing your message. Please try again.");
         } catch { /* send error non-fatal */ }
     } finally {
-        activeRooms.delete(roomId);
+        activeRooms.delete(lockKey);
     }
 }
 
@@ -436,8 +479,11 @@ export async function sendMatrixProactiveMessage(message: string): Promise<boole
     // If no allowed rooms configured, skip
     if (!allowedRooms || allowedRooms.size === 0) return false;
 
+    // Proactive messages carry the owner's private data: only the owner's one-to-one rooms,
+    // never every allowed room (those include rooms where others talk to Bhai).
     let delivered = false;
     for (const roomId of allowedRooms) {
+        if (!(await isOwnerDmRoom(roomId))) continue;
         try {
             await sendReply(roomId, message);
             delivered = true;

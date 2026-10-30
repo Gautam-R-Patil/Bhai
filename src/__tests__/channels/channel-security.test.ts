@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { isEmailAuthenticated, isPlatformOwner as isEmailPlatformOwner, sanitizeIncomingChannelText } from "../../email.js";
+import { isAutomatedEmail, isEmailAuthenticated, isPlatformOwner as isEmailPlatformOwner, sanitizeIncomingChannelText } from "../../email.js";
 import { normalizeJid, isOwner, addOwner, removeOwner, getOwners } from "../../whatsapp-users.js";
 
 // ── Helpers ──────────────────────────────────
@@ -209,5 +209,22 @@ describe("F8 WhatsApp JID normalization", () => {
     it("@lid namespace is treated as separate (no cross-namespace match)", () => {
         addOwner(ownerJid, "Owner");
         expect(isOwner("1234567890@lid")).toBe(false);
+    });
+});
+
+describe("automated mail is never answered", () => {
+    const mail = (headers: string) => `From: x@example.com\r\n${headers}\r\nSubject: hi\r\n\r\nbody`;
+    it("spots auto-replies, lists, bounces and our own address", () => {
+        expect(isAutomatedEmail(mail("Auto-Submitted: auto-replied"), "boss@example.com")).toBe(true);
+        expect(isAutomatedEmail(mail("Precedence: bulk"), "news@example.com")).toBe(true);
+        expect(isAutomatedEmail(mail("List-Id: <team.example.com>"), "team@example.com")).toBe(true);
+        expect(isAutomatedEmail(mail("X-Autoreply: yes"), "boss@example.com")).toBe(true);
+        expect(isAutomatedEmail(mail(""), "mailer-daemon@example.com")).toBe(true);
+        expect(isAutomatedEmail(mail(""), "no-reply@example.com")).toBe(true);
+        expect(isAutomatedEmail(mail(""), "me@gmail.com", "Me@gmail.com")).toBe(true);
+    });
+    it("answers a person", () => {
+        expect(isAutomatedEmail(mail("Auto-Submitted: no"), "boss@example.com", "me@gmail.com")).toBe(false);
+        expect(isAutomatedEmail(mail(""), "boss@example.com", "me@gmail.com")).toBe(false);
     });
 });

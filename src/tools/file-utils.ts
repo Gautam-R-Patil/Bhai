@@ -768,6 +768,19 @@ export const runShortcut: ToolDefinition = {
 // 6. OPEN URL/FILE IN SPECIFIC APP
 // ═══════════════════════════════════════════════
 
+/**
+ * Small models write the home folder as "~", "/Users/your_username" or "C:\\Users\\user".
+ * When a path under some other home doesn't exist but the same path under the real one
+ * does, it meant the real one.
+ */
+export function resolveHomePath(p: string): string {
+    if (/^~(?=[/\\]|$)/.test(p)) return join(homedir(), p.slice(1));
+    const m = /^(?:\/Users|\/home|[A-Za-z]:[\\/]Users)[\\/]([^\\/]+)(.*)$/.exec(p);
+    if (!m || existsSync(p)) return p;
+    const mine = join(homedir(), m[2]);
+    return existsSync(mine) ? mine : p;
+}
+
 // Folders that are almost never what someone means by "find my file".
 const FIND_NOISE = /\/(Library|node_modules|\.git|\.Trash|\.cache|\.npm|DerivedData)\//;
 
@@ -809,7 +822,7 @@ export const findFiles: ToolDefinition = {
             .replace(/^\./, "")
             .toLowerCase();
         const args = input.content ? [query] : ["-name", query];
-        if (input.folder) args.unshift("-onlyin", resolve(String(input.folder).replace(/^~(?=\/|$)/, homedir())));
+        if (input.folder) args.unshift("-onlyin", resolve(resolveHomePath(String(input.folder))));
         try {
             const { stdout } = await execFileAsync("mdfind", args, { timeout: 10_000, maxBuffer: 20 * 1024 * 1024 });
             const home = homedir();
@@ -869,7 +882,8 @@ export const openInApp: ToolDefinition = {
 
     async handler(input) {
         // Fallback: LLMs often send "path" since other file tools use that param name
-        const target = (input.target || input.path || input.url) as string | undefined;
+        const raw = (input.target || input.path || input.url) as string | undefined;
+        const target = raw && !/^[a-z][\w+.-]+:/i.test(raw) ? resolveHomePath(raw) : raw; // URLs pass as-is
         const app = input.app as string | undefined;
 
         if (!target) {

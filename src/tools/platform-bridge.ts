@@ -14,6 +14,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { AxNode } from "../screen/ax-dump.js";
 import {
     captureScreenshot,
     clipboardRead,
@@ -259,6 +260,62 @@ export function parseMacWifi(networksetupOut: string, summaryOut: string): MacWi
     const ssid = /^\s*SSID\s*:\s*(.+)$/m.exec(summaryOut)?.[1]?.trim() ?? null;
     if (!connected) return { connected: false, ssid: null, nameHidden: false };
     return ssid && ssid !== "<redacted>" ? { connected, ssid, nameHidden: false } : { connected, ssid: null, nameHidden: true };
+}
+
+/**
+ * The Wi-Fi pane's status group reads: "Wi-Fi", blurb, toggle, <network name>,
+ * "Connected, …": the name is the text just before "Connected".
+ * ponytail: English "Connected" only; other UI languages fall back to the hint.
+ */
+export function wifiNameFromPane(root: AxNode): string | null {
+    const walk = (n: AxNode): string | null => {
+        const kids = n.children ?? [];
+        for (let i = 1; i < kids.length; i++) {
+            const prev = kids[i - 1];
+            const name = (prev.label || prev.value || "").trim();
+            if (
+                /^Connected\b/.test(kids[i].label || kids[i].value || "") &&
+                prev.role === "AXStaticText" &&
+                name &&
+                name.length <= 64
+            )
+                return name;
+        }
+        for (const c of kids) {
+            const hit = walk(c);
+            if (hit) return hit;
+        }
+        return null;
+    };
+    return walk(root);
+}
+
+/**
+ * The name macOS hides from command-line tools is on screen in System Settings: open
+ * the Wi-Fi pane without bringing it forward and read it through Accessibility.
+ */
+export async function wifiNameFromSettings(): Promise<string | null> {
+    try {
+        await execFileAsync("open", ["-g", "x-apple.systempreferences:com.apple.wifi-settings-extension"], {
+            timeout: 5000,
+        });
+        const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await new Promise((r) => setTimeout(r, 1200));
+            const pid = Number.parseInt(
+                (await execFileAsync("pgrep", ["-x", "System Settings"], { timeout: 2000 }).catch(() => ({ stdout: "" })))
+                    .stdout,
+                10,
+            );
+            if (!pid) continue;
+            const dump = await dumpAccessibilityTree({ pid, depth: 30, budgetMs: 8000, timeoutMs: 10_000 });
+            const name = dump.root && !dump.error ? wifiNameFromPane(dump.root) : null;
+            if (name) return name;
+        }
+    } catch {
+        /* no Accessibility access, or System Settings didn't open */
+    }
+    return null;
 }
 
 export async function macWifi(iface = "en0"): Promise<MacWifi> {

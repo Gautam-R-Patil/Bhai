@@ -48,6 +48,7 @@ describe("composer templates — V3", () => {
 
     it("habit_anomaly names expected activity", () => {
         const out = tryTemplate(mk("habit_anomaly", { activity: "workout", expectedHour: 7 }), "telegram");
+        expect(tryTemplate(mk("habit_anomaly", { activity: "journal", expectedHour: 0 }), "telegram")).toContain("12am");
         expect(out).toContain("workout");
         expect(out).toContain("7am");
     });

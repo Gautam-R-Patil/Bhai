@@ -662,6 +662,26 @@ async function doPlay(input: Record<string, unknown>): Promise<string> {
 
     const isContext = isContextType(uriType(normalizeSpotifyUri(targetUri)));
 
+    // A track on this Mac: tell the desktop app directly (~100ms) and confirm from it,
+    // instead of spogo's round trip through Spotify's servers (~6s). Anything that
+    // doesn't confirm (another device, a relinked track id) goes the spogo way below.
+    if (IS_MAC && !isContext && uriType(normalizeSpotifyUri(targetUri)) === "track") {
+        try {
+            await osPlayTrackByUri(targetUri);
+            const want = normalizeSpotifyUri(targetUri);
+            for (let i = 0; i < 12; i++) {
+                await new Promise((r) => setTimeout(r, 150));
+                const now = await osNowPlayingLocal();
+                if (now.playing && now.track_uri && normalizeSpotifyUri(now.track_uri) === want) {
+                    if (query) rememberLastPlayed(query, targetUri, label);
+                    return ok({ action: "play", mode: "local_app", uri: targetUri, label: label || undefined });
+                }
+            }
+        } catch {
+            /* fall through to spogo */
+        }
+    }
+
     // Pre-play snapshot lets verifyPlayback distinguish "already playing
     // something" from "new context started" when status.context.uri is absent.
     const preSnap = isContext

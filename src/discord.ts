@@ -246,7 +246,8 @@ async function runAndReply(
     setLongTaskProgress(progressCallback);
 
     try {
-        const senderIsOwner = isPlatformOwner("discord", interaction.user.id);
+        // Owner powers only in a DM: in a server channel everyone reads the reply.
+        const senderIsOwner = !interaction.guildId && isPlatformOwner("discord", interaction.user.id);
         const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
 
         if (result.text.trim() === "[NO_REPLY]") {
@@ -343,7 +344,8 @@ async function runInThread(
     setLongTaskProgress(progressCallback);
 
     try {
-        const senderIsOwner = isPlatformOwner("discord", interaction.user.id);
+        // Owner powers only in a DM: in a server channel everyone reads the reply.
+        const senderIsOwner = !interaction.guildId && isPlatformOwner("discord", interaction.user.id);
         const result = await runAgent(llm, message, progressCallback, undefined, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
 
         if (result.text.trim() === "[NO_REPLY]") {
@@ -594,6 +596,11 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                 }
 
                 case "status": {
+                    // The owner's running tasks and channels are theirs to see.
+                    if (!isPlatformOwner("discord", interaction.user.id)) {
+                        await interaction.reply({ content: "Only Bhai's owner can see its status.", ephemeral: true });
+                        break;
+                    }
                     const uptimeMs = Date.now() - startTime;
                     const uptimeMin = Math.floor(uptimeMs / 60_000);
                     const uptimeHr = Math.floor(uptimeMin / 60);
@@ -666,7 +673,8 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
         // Check if this is a DM or an @mention
         const isDM = message.channel.type === ChannelType.DM;
-        const isMention = message.mentions.has(client.user!);
+        // A real @mention of Bhai, not @everyone/@here or a role ping.
+        const isMention = message.mentions.has(client.user!, { ignoreEveryone: true, ignoreRoles: true });
 
         if (!isDM && !isMention) return;
 
@@ -732,16 +740,25 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                     .catch(() => {});
             };
 
-            setSwarmProgress(progressCallback);
-            setDeepResearchProgress(progressCallback);
-            setLongTaskProgress(progressCallback);
-
-            const senderIsOwner = isPlatformOwner("discord", message.author.id);
-            const result = await runAgent(llm, content, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "discord", userId: message.author.id, userName: message.author.username, isOwner: senderIsOwner });
-
-            clearSwarmProgress();
-            clearDeepResearchProgress();
-            clearLongTaskProgress();
+            // Owner powers (tools, memory, history) only in a DM: a channel reply is read by
+            // everyone in it. The progress hooks are process-wide and only owner tools use
+            // them, so only an owner turn registers them (and always clears them).
+            const senderIsOwner = isDM && isPlatformOwner("discord", message.author.id);
+            if (senderIsOwner) {
+                setSwarmProgress(progressCallback);
+                setDeepResearchProgress(progressCallback);
+                setLongTaskProgress(progressCallback);
+            }
+            let result: Awaited<ReturnType<typeof runAgent>>;
+            try {
+                result = await runAgent(llm, content, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "discord", userId: message.author.id, userName: message.author.username, isOwner: senderIsOwner });
+            } finally {
+                if (senderIsOwner) {
+                    clearSwarmProgress();
+                    clearDeepResearchProgress();
+                    clearLongTaskProgress();
+                }
+            }
 
             if (result.text.trim() === "[NO_REPLY]") {
                 // Never end on the promise: close the contract line.
@@ -794,11 +811,16 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 export async function sendDiscordProactiveMessage(message: string, filePath?: string): Promise<boolean> {
     if (!discordClient) return false;
 
+    // Proactive messages carry the owner's private data: to the owner's DM. The configured
+    // notifications channel is used only when no owner id is set (it may be shared).
+    const ownerId = [...parseDiscordOwners()][0];
     const channelId = process.env.DISCORD_NOTIFICATIONS_CHANNEL_ID;
-    if (!channelId) return false;
+    if (!ownerId && !channelId) return false;
 
     try {
-        const channel = await discordClient.channels.fetch(channelId);
+        const channel = ownerId
+            ? await (await discordClient.users.fetch(ownerId)).createDM()
+            : await discordClient.channels.fetch(channelId!);
         if (!channel || !("send" in channel)) return false;
 
         const sanitized = sanitizeReply(message);

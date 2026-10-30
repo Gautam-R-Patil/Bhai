@@ -3,9 +3,11 @@
 // See LICENSE.md for details.
 
 import { describe, it, expect, vi } from "vitest";
-import { composeMorningBatch } from "./composer.js";
+import { compose, composeMorningBatch } from "./composer.js";
 import type { ProactiveIntent } from "./intent.js";
 import type { LLMClient } from "../llm.js";
+
+vi.mock("../config/system-prompts.js", () => ({ fetchSystemPrompt: async () => "sys" }));
 
 function mk(kind: string, topic: string, payload: Record<string, unknown>): ProactiveIntent {
     const now = Date.now();
@@ -78,5 +80,39 @@ describe("composeMorningBatch", () => {
         const intents = [mk("calendar_today_summary", "cal", {})];
         const result = await composeMorningBatch(intents, "telegram", [], { llm: mockLlm });
         expect(result).toBeNull();
+    });
+});
+
+describe("compose — template fast path follows the tone", () => {
+    const llm = () =>
+        ({
+            chat: vi.fn(async () => ({ choices: [{ message: { content: '{"text":"How did Review go?"}' } }] })),
+        }) as unknown as LLMClient;
+
+    it("casual tone keeps the template; Professional goes to the LLM", async () => {
+        const debrief = mk("meeting_debrief", "debrief", { title: "Review" });
+        const casual = llm();
+        expect((await compose(debrief, "telegram", { tone: "warm" }, [], { llm: casual }))?.text).toMatch(
+            /how'd Review go/,
+        );
+        expect(casual.chat).not.toHaveBeenCalled();
+        const pro = llm();
+        const r = await compose(debrief, "telegram", { tone: "Tone right now: PROFESSIONAL" }, [], { llm: pro });
+        expect(r?.text).toBe("How did Review go?");
+        expect(pro.chat).toHaveBeenCalledTimes(1);
+    });
+
+    it("commitment nudges stay on the template whatever the tone", async () => {
+        const due = mk("commitment_due", "due", { content: "send the deck", dueMs: Date.now() });
+        const pro = llm();
+        expect((await compose(due, "telegram", { tone: "Tone right now: DIRECT" }, [], { llm: pro }))?.text).toMatch(
+            /send the deck/,
+        );
+        expect(pro.chat).not.toHaveBeenCalled();
+        const deadline = mk("deadline_imminent", "deadline", { title: "ship PR", dueMs: Date.now() + 30 * 60_000 });
+        expect(
+            (await compose(deadline, "telegram", { tone: "Tone right now: PROFESSIONAL" }, [], { llm: pro }))?.text,
+        ).toMatch(/left on 'ship PR'/);
+        expect(pro.chat).not.toHaveBeenCalled();
     });
 });

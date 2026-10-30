@@ -1,6 +1,14 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { bhaiAddress, handleFromEmail, isEmail, pickBhaiRecipient, stripQuoted } from "./bhaiMailHelpers";
+import {
+    bhaiAddress,
+    firstHeader,
+    handleFromEmail,
+    isEmail,
+    pickBhaiRecipient,
+    senderAuthenticated,
+    stripQuoted,
+} from "./bhaiMailHelpers";
 
 describe("Bhai's own email", () => {
     it("makes a .bhai address from the owner's email", () => {
@@ -49,5 +57,27 @@ describe("Bhai's email with everyone", () => {
         expect(isAutomatedMail("MAILER-DAEMON@x.com", {})).toBe(true);
         expect(isAutomatedMail("no-reply@x.com", {})).toBe(true);
         expect(isAutomatedMail("noreen@x.com", {})).toBe(false);
+    });
+});
+
+describe("who really sent it", () => {
+    const ar = (s: string) => `mx1.hostinger.com; ${s}`;
+    it("trusts From only with a pass aligned to its domain", () => {
+        expect(senderAuthenticated(ar("dkim=pass header.d=gmail.com; spf=pass smtp.mailfrom=me@gmail.com; dmarc=pass header.from=gmail.com"), "me@gmail.com")).toBe(true);
+        expect(senderAuthenticated(ar("dkim=pass header.i=@mail.example.com"), "me@example.com")).toBe(true); // subdomain aligns
+        // A spoofer's own domain passing proves nothing about the owner's address.
+        expect(senderAuthenticated(ar("spf=pass smtp.mailfrom=evil.com; dkim=pass header.d=evil.com"), "me@gmail.com")).toBe(false);
+        expect(senderAuthenticated(ar("dkim=pass header.d=gmail.com; dmarc=fail header.from=gmail.com"), "me@gmail.com")).toBe(false);
+        expect(senderAuthenticated(ar("spf=softfail smtp.mailfrom=gmail.com"), "me@gmail.com")).toBe(false);
+        expect(senderAuthenticated(null, "me@gmail.com")).toBe(false); // fail-closed
+    });
+
+    it("reads the topmost Authentication-Results (ours), not one a sender put further down", () => {
+        const raw =
+            "Authentication-Results: mx1.hostinger.com; dmarc=fail header.from=gmail.com\r\n" +
+            "Auto-Submitted: no\r\n" +
+            "Authentication-Results: forged.example; dmarc=pass\r\n\t header.from=gmail.com\r\n";
+        expect(firstHeader(raw, "authentication-results")).toBe("mx1.hostinger.com; dmarc=fail header.from=gmail.com");
+        expect(firstHeader(raw, "x-missing")).toBe(null);
     });
 });

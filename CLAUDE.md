@@ -223,7 +223,7 @@ Most privilege-differentiated channel. Baileys (`@whiskeysockets/baileys`). Stat
 - **Add flow** (`groups.upsert`, `whatsapp.ts:1499`): owner in participants → auto-`active`; else `pending` + DMs owner. Silent until approved.
 - **Lifecycle**: `pending` → `active` → optional `muted`. Commands: `approve X`, `decline X`, `groups`, `mute/unmute group X`.
 - **Response gating** (`handleGroupMessage`, `whatsapp.ts:1033`): must be `active`; always respond if @mentioned/replied; else throttle (<30s since last send OR bot >15% of messages) then Haiku YES/NO chime-in.
-- **Tool allowlist**: `senderIsOwner ? undefined : getPersona().allowedToolNames`.
+- **Tool allowlist**: DMs: `senderIsOwner ? undefined : getPersona().allowedToolNames`. Groups: `GROUP_TOOLS` (time/weather/web search) for everyone, owner included, run as non-owner and non-private — a group's text is anyone's, and its replies are everyone's. Same rule on Discord/Slack/Matrix: owner powers and proactive sends only in the owner's DM.
 
 ### Web Portals (`portals/`)
 Next.js + Tailwind, own `package.json` + `.env.example`: `admin-panel/` (users, store submissions, system prompts/skills), `developer-portal/` (skill/tool/MCP publishing).
@@ -245,7 +245,7 @@ Companion for `chrome-backend.ts`. `background.js` (WS bridge), `content.js` (DO
 
 **Personality presets** (Settings → Personality; wizard Personalize step): casual_playful, professional_concise, warm_supportive, direct_terse, unhinged (18+, owner-only). The choice is written to `<userData>/.user-personality.json`; the bot (`src/setup/personality-sync.ts`, path from `ATLAS_USER_DATA_DIR`) watches it and pushes the `user-personality` addendum instantly, which `convex/systemContent.ts` renders as its own "Tone the user chose in Settings" section; `agent.ts` also restates non-default tones next to the owner's message each turn. Bhai's character (English-first, a few Hindi signature phrases, Hinglish only when mirrored) lives in `prompts/identity.md`.
 
-**System prompts are SERVER-SIDE**: Convex `system_prompts` table, seeded from `prompts/` via `scripts/seed-system-content.ts` (needs `ADMIN_API_KEY`). Client never reads disk — `src/config/system-prompts.ts::fetchSystemPrompt(slug)` pulls via `/api/system/prompt?slug=` (coalesced + single-flight auth refresh). Desktop electron-builder does NOT bundle `../prompts`. Seeded slugs (11): `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `thinking`, `coding`, `spec`, `proactive-composer`, `monitor-rule-parser`, `orchestrator-base`.
+**System prompts are SERVER-SIDE**: Convex `system_prompts` table, seeded from `prompts/` via `scripts/seed-system-content.ts` (needs `ADMIN_API_KEY`). Client never reads disk — `src/config/system-prompts.ts::fetchSystemPrompt(slug)` pulls via `/api/system/prompt?slug=` (coalesced + single-flight auth refresh). Desktop electron-builder does NOT bundle `../prompts`. Seeded slugs (13): `identity`, `rules`, `rules-mac`, `rules-windows`, `browsing`, `coding`, `spec`, `proactive-composer`, `monitor-rule-parser`, `orchestrator-base`, `site-skill-mint`, `site-skill-review`, `unhinged`.
 
 Skills loaded from `skills/` (12 role MD + 5 Convex skill dirs) and `~/.atlas/store/skills`. gray-matter frontmatter defines role/triggers/instructions. Server-side via `system_skills` table.
 

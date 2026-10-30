@@ -9,7 +9,15 @@ import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
-import { isAutomatedMail, mailDomain, parseHeaderBlock, pickBhaiRecipient, stripQuoted } from "./bhaiMailHelpers";
+import {
+    firstHeader,
+    isAutomatedMail,
+    mailDomain,
+    parseHeaderBlock,
+    pickBhaiRecipient,
+    senderAuthenticated,
+    stripQuoted,
+} from "./bhaiMailHelpers";
 
 const AUTOMATION_HEADERS = [
     "auto-submitted",
@@ -18,6 +26,7 @@ const AUTOMATION_HEADERS = [
     "list-id",
     "x-autoreply",
     "x-autorespond",
+    "authentication-results", // whether From was verified: it decides owner vs guest
 ];
 
 const PER_RUN = 20;
@@ -108,6 +117,7 @@ export const poll = internalAction({
                     from: string;
                     fromName: string;
                     automated: boolean;
+                    authenticated: boolean;
                     messageId: string;
                     subject: string;
                     structure: Part;
@@ -124,7 +134,8 @@ export const poll = internalAction({
                         domain,
                     );
                     const from = (env?.from?.[0]?.address ?? "").toLowerCase();
-                    const headers = parseHeaderBlock(msg.headers ? msg.headers.toString("utf-8") : "");
+                    const rawHeaders = msg.headers ? msg.headers.toString("utf-8") : "";
+                    const headers = parseHeaderBlock(rawHeaders);
                     found.push({
                         uid: msg.uid,
                         to: to ?? "",
@@ -133,6 +144,7 @@ export const poll = internalAction({
                         // Mail Bhai itself sent (one Bhai writing to another) is never
                         // answered either, so two Bhais can't loop.
                         automated: isAutomatedMail(from, headers) || from === cfg.user.toLowerCase(),
+                        authenticated: senderAuthenticated(firstHeader(rawHeaders, "authentication-results"), from),
                         messageId: env?.messageId || `uid-${uidValidity}-${msg.uid}`,
                         subject: env?.subject ?? "",
                         structure: msg.bodyStructure as Part,
@@ -157,6 +169,7 @@ export const poll = internalAction({
                         from: m.from,
                         fromName: m.fromName,
                         automated: m.automated,
+                        authenticated: m.authenticated,
                         messageId: m.messageId,
                         subject: m.subject,
                         text: stripQuoted(raw) || "(empty email)",

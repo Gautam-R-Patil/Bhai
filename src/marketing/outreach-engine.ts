@@ -2,7 +2,6 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import nodemailer from "nodemailer";
 import type { LLMClient } from "../llm.js";
 import { findLeadsApollo, recordOutreach, type Lead, type LeadSearchParams } from "./lead-finder.js";
 import { deliverToActiveChannel } from "../tools/channel-send.js";
@@ -70,6 +69,7 @@ async function runEmailOutreach(req: OutreachRequest): Promise<OutreachResult> {
     return { channel: "email", status: "error", message: "No leads found matching criteria" };
   }
 
+  const { default: nodemailer } = await import("nodemailer"); // loaded on first send
   const transporter = nodemailer.createTransport({
     host: process.env.EMAIL_HOST ?? "smtp.hostinger.com",
     port: Number(process.env.EMAIL_PORT ?? 465),

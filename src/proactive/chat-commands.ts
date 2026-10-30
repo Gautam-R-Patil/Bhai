@@ -26,6 +26,7 @@
 
 import { loadProactiveConfig, setPosture, setQuiet, type Posture } from "./config.js";
 import type { Channel } from "./intent.js";
+import { clearQuiet } from "./kill-switches.js";
 import type { MonitorRule, MonitorStore } from "./monitors/monitor-store.js";
 import type { ParseResult } from "./monitors/monitor-parser.js";
 
@@ -89,6 +90,7 @@ export async function tryProactiveCommand(
         && !/^(bhai,?\s+)?resume\s+monitor/i.test(lower)
     ) {
         delete process.env.ATLAS_PROACTIVE_DISABLE;
+        clearQuiet(); // a "not now" or serious-moment hold too
         try {
             setQuiet(opts.configPath, false);
         } catch {

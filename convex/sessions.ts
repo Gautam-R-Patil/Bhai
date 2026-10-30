@@ -130,6 +130,7 @@ export const validateSessionInternal = internalQuery({
       ai_credits: account.ai_credits,
       sharedKey: session.sharedKey || null,
       deviceFingerprint: session.deviceFingerprint ?? null,
+      email: account.email ?? null, // the OTPless-verified sign-in email
     };
   },
 });

@@ -115,7 +115,8 @@ export async function initSlack(llm: LLMClient): Promise<void> {
         // Only handle DMs (channel type "im") and skip bot messages
         const msg = event as unknown as Record<string, unknown>;
         if (msg.channel_type !== "im") return;
-        if (msg.bot_id || msg.subtype) return;
+        // A DM with an attachment arrives as subtype "file_share"; edits, joins etc. are skipped.
+        if (msg.bot_id || (msg.subtype && msg.subtype !== "file_share")) return;
         const userId = msg.user as string | undefined;
         if (!isAllowed(userId)) {
             console.log(`[SLACK] Ignored DM from non-allowlisted user: ${userId}`);
@@ -175,7 +176,7 @@ async function handleSlackMessage(
     try {
         // Send initial typing indicator via a placeholder message
         const modelHint = !media && classifyQuery(text) === "llm_only" ? "simple" as const : undefined;
-        const taggedMessage = `${text}\n\n[SOURCE: Slack — respond here. Keep response clear and well-formatted.]`;
+        const taggedMessage = `${text}\n\n[SOURCE: Slack — respond here.]`;
 
         // Progress callback -- update thread with status
         let statusMessageTs: string | null = null;
@@ -218,7 +219,9 @@ async function handleSlackMessage(
             }
         };
 
-        const senderIsOwner = isPlatformOwner("slack", slackUserId || "");
+        // Owner powers only in a DM (Slack DM channel ids start with "D"): a channel or
+        // thread reply is read by everyone in it.
+        const senderIsOwner = channel.startsWith("D") && isPlatformOwner("slack", slackUserId || "");
         const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, { channel: "slack", userId: slackUserId || "", userName: undefined, isOwner: senderIsOwner });
 
         // Clean the response
@@ -480,10 +483,19 @@ function splitSlackMessage(text: string, maxLen: number): string[] {
 export async function sendSlackProactiveMessage(message: string): Promise<boolean> {
     if (!slackApp) return false;
 
-    const channelId = process.env.SLACK_DEFAULT_CHANNEL;
-    if (!channelId) return false;
+    // Proactive messages carry the owner's private data: to the owner's DM. The default
+    // channel is used only when no owner id is set (it may be shared).
+    const ownerId = [...parseSlackOwners()][0];
+    let channelId = process.env.SLACK_DEFAULT_CHANNEL;
+    if (!ownerId && !channelId) return false;
 
     try {
+        if (ownerId) {
+            const opened = await slackApp.client.conversations.open({ users: ownerId });
+            channelId = opened.channel?.id;
+            if (!channelId) return false;
+        }
+        if (!channelId) return false;
         const blocks = formatBlockKit(message);
         await slackApp.client.chat.postMessage({
             channel: channelId,

@@ -8,7 +8,11 @@ import {
     addGoal,
     addProject,
     exportIdentitySnapshot,
+    fieldEmbedsOwnershipClaim,
+    fieldNamesAtlasDirectly,
     getIdentityProfile,
+    isGuardedOrg,
+    isGuardedRole,
     updateIdentityProfile,
 } from "../memory/identity.js";
 import { ownWords } from "../memory/playbooks.js";
@@ -403,140 +407,6 @@ export const identityView: ToolDefinition = {
     },
 };
 
-// Guarded ownership/creator claims about TRUSCOR / Bhai.
-// We reject ONLY ownership/creator role + TRUSCOR company combinations.
-// Working at, interested in, being a fan of TRUSCOR/Atlas is fine — the bot
-// should learn that context normally.
-// Canonical-form tokens for guarded orgs.
-// "a.t.l.a.s" canonicalizes to "a t l a s" so include that spaced form here.
-const GUARDED_ORGS = ["truscor", "bhai", "a t l a s", "bhai agi", "tryatlasagi"];
-const GUARDED_ROLES = [
-    "founder",
-    "co-founder",
-    "cofounder",
-    "co founder",
-    "owner",
-    "co-owner",
-    "creator",
-    "builder",
-    "maker",
-    "architect",
-    "developer of",
-    "ceo",
-    "cto",
-    "coo",
-    "cfo",
-    "chief executive",
-    "chief technology",
-    "head of",
-    "running",
-    "leading",
-    "lead of",
-    "started",
-    "co started",
-    "co-started",
-    // Ownership-adjacent leadership roles — VP/Director-level claims of
-    // affiliation with our own creator org are still unverifiable identity assertions.
-    "vp",
-    "vice president",
-    "president",
-    "director of",
-    "partner of",
-    "principal of",
-    "board",
-];
-
-// Strip diacritics + map common Cyrillic/Greek lookalikes to Latin equivalents
-// so obfuscated affiliation claims still get caught.
-const HOMOGLYPH_MAP: Record<string, string> = {
-    а: "a",
-    А: "a",
-    е: "e",
-    Е: "e",
-    о: "o",
-    О: "o",
-    р: "p",
-    Р: "p",
-    с: "c",
-    С: "c",
-    у: "y",
-    У: "y",
-    х: "x",
-    Х: "x",
-    і: "i",
-    І: "i",
-    ѕ: "s",
-    Ѕ: "s",
-    ј: "j",
-    Ј: "j",
-    ν: "v",
-    Ν: "n",
-    ρ: "p",
-    ο: "o",
-    α: "a",
-    ε: "e",
-    τ: "t",
-    ι: "i",
-};
-
-function deHomoglyph(s: string): string {
-    let out = "";
-    for (const ch of s) out += HOMOGLYPH_MAP[ch] ?? ch;
-    return out;
-}
-
-function canonicalize(s: string): string {
-    // NFKD splits accented chars into base+combining; we strip combining marks.
-    const stripped = s.normalize("NFKD").replace(/\p{M}/gu, "");
-    return deHomoglyph(stripped)
-        .toLowerCase()
-        .replace(/[.\s\-_]+/g, " ")
-        .trim();
-}
-
-function isGuardedOrg(value: string): boolean {
-    const c = canonicalize(value);
-    return GUARDED_ORGS.some(
-        (g) => c === g || c.endsWith(" " + g) || c.startsWith(g + " ") || c.includes(" " + g + " "),
-    );
-}
-
-function isGuardedRole(value: string): boolean {
-    const c = canonicalize(value);
-    return GUARDED_ROLES.some((r) => c.includes(r));
-}
-
-// Inspect any free-text field for an embedded ownership-claim signal.
-// E.g. name="Gautam, founder of TRUSCOR" / project="Bhai" /
-// goal="run TRUSCOR". These slip past the structured role+company check.
-function fieldEmbedsOwnershipClaim(value: string): boolean {
-    if (!value) return false;
-    const c = canonicalize(value);
-    const hasOrg = GUARDED_ORGS.some((g) => c.includes(g));
-    const hasOwnership = GUARDED_ROLES.some((r) => c.includes(r));
-    return hasOrg && hasOwnership;
-}
-
-function fieldNamesAtlasDirectly(value: string): boolean {
-    // project="Bhai" / goal="build bhai" / project="atlas-core" /
-    // goal="ship bhai v2" — claims to projects/goals NAMED after the bot
-    // or its creator org. The bot is Bhai; it cannot be a user's
-    // "project" or "goal" to build.
-    if (!value) return false;
-    const c = canonicalize(value);
-    // Exact matches
-    if (c === "a t l a s" || c === "bhai" || c === "truscor") return true;
-    // Build / ship / create verbs followed by a guarded org token
-    if (/\b(build|ship|create|launch|run|own|maintain|develop|design)\s+/.test(c)) {
-        if (c.includes("bhai") || c.includes("truscor") || c.includes("a t l a s")) return true;
-    }
-    // Compound names like "atlas-core" / "bhai v2" / "truscor platform"
-    // canonicalize to "bhai core" / "bhai v2" / "truscor platform".
-    if (/^(bhai|truscor|a t l a s)(\s|$)/.test(c)) return true;
-    if (/(\s|^)(bhai|truscor|a t l a s)$/.test(c)) return true;
-    return false;
-}
-
 export const identityUpdate: ToolDefinition = {
     schema: {
         type: "function",
@@ -554,6 +424,10 @@ export const identityUpdate: ToolDefinition = {
                     company: { type: "string", description: "User's company or organization" },
                     project: { type: "string", description: "A project name to ADD to the user's project list" },
                     goal: { type: "string", description: "An important goal to ADD to the user's goals" },
+                    address_as: {
+                        type: "string",
+                        description: "What to call the user — only when they explicitly say 'call me X'",
+                    },
                     communication_style: { type: "string", description: "direct, detailed, casual, formal, etc." },
                     detail_level: {
                         type: "string",
@@ -582,6 +456,7 @@ export const identityUpdate: ToolDefinition = {
         const emailStr = typeof input.email === "string" ? input.email : "";
         const commStyleStr = typeof input.communication_style === "string" ? input.communication_style : "";
         const detailLevelStr = typeof input.detail_level === "string" ? input.detail_level : "";
+        const addressAsStr = typeof input.address_as === "string" ? input.address_as : "";
 
         const companyIsGuardedOrg = !!companyStr && isGuardedOrg(companyStr);
         const roleClaimsOwnership = !!roleStr && isGuardedRole(roleStr);
@@ -598,7 +473,8 @@ export const identityUpdate: ToolDefinition = {
         const aliasEmbedsOwnership =
             (!!emailStr && fieldEmbedsOwnershipClaim(emailStr)) ||
             (!!commStyleStr && fieldEmbedsOwnershipClaim(commStyleStr)) ||
-            (!!detailLevelStr && fieldEmbedsOwnershipClaim(detailLevelStr));
+            (!!detailLevelStr && fieldEmbedsOwnershipClaim(detailLevelStr)) ||
+            (!!addressAsStr && fieldEmbedsOwnershipClaim(addressAsStr));
 
         if (structuredOwnership || nameEmbedsOwnership || projectIsBot || goalIsBot || aliasEmbedsOwnership) {
             // Internal detail goes to server logs only; client gets a generic
@@ -644,6 +520,7 @@ export const identityUpdate: ToolDefinition = {
         const preferences: Record<string, string> = {};
         if (input.communication_style) preferences.communication_style = input.communication_style as string;
         if (input.detail_level) preferences.detail_level = input.detail_level as string;
+        if (addressAsStr) preferences.address_as = addressAsStr;
         if (Object.keys(preferences).length > 0) fields.preferences = preferences;
 
         if (Object.keys(fields).length > 0) {

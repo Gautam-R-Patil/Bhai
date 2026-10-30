@@ -100,6 +100,29 @@ export async function initDeepResearch(): Promise<void> {
 // ── Public API (keep backward-compatible) ────
 
 export function setDeepResearchLLM(llm: LLMClient): void { _llm = llm; }
+
+/** Running deep researches, for the overlay's task drawer. */
+export function listRunningResearch(): Array<{ id: string; topic: string; progress: number; phase: string }> {
+    return [...activeResearches.values()]
+        .filter((r) => r.status === "running")
+        .map((r) => ({
+            id: r.id,
+            topic: r.topic,
+            progress: r.maxSources > 0 ? Math.min(99, (100 * r.sourcesProcessed) / r.maxSources) : 0,
+            phase: `${r.sourcesProcessed} sources · ${r.findingsCount} findings`,
+        }));
+}
+
+/** Stop a running research; false when there is none by that id. */
+export async function cancelResearchById(id: string): Promise<boolean> {
+    const research = activeResearches.get(id);
+    if (!research || research.status !== "running") return false;
+    research.abortController.abort();
+    research.status = "cancelled";
+    research.updatedAt = new Date().toISOString();
+    await syncActiveToIndex(research);
+    return true;
+}
 export function setDeepResearchProgress(fn: (msg: string) => Promise<void>): void { _onProgress = fn; }
 export function clearDeepResearchProgress(): void { _onProgress = null; }
 export function setDeepResearchNotifier(fn: (msg: string) => Promise<void>): void { _telegramNotifier = fn; }
@@ -531,10 +554,7 @@ export const cancelDeepResearch: ToolDefinition = {
         if (!research) return JSON.stringify({ error: `Research "${input.research_id}" not found` });
         if (research.status !== "running") return JSON.stringify({ message: `Research already ${research.status}.` });
 
-        research.abortController.abort();
-        research.status = "cancelled";
-        research.updatedAt = new Date().toISOString();
-        await syncActiveToIndex(research);
+        await cancelResearchById(research.id);
 
         return JSON.stringify({
             success: true,

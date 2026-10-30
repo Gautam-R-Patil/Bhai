@@ -27,6 +27,7 @@ import {
     isSourceDisabled,
     isChannelDisabled,
     debugProactive,
+    isQuietNow,
 } from "./kill-switches.js";
 import * as native from "../../native/index.js";
 import { getToneReminder } from "../setup/personality-sync.js";
@@ -360,7 +361,7 @@ export class Observer {
         // 2. Quiet hours: the scheduler holds normal/ambient intents while DND is
         //    on and still lets urgent ones through. nightWindows was never read.
         const night = this.cfg.nightWindows?.default; // a hand-edited config may lack it
-        const quiet = night ? inWindow(night) : false;
+        const quiet = (night ? inWindow(night) : false) || isQuietNow(); // "not now", a serious moment
         for (const ch of ALL_CHANNELS) {
             try {
                 native.schedulerSetDnd(ch, quiet);
@@ -500,7 +501,8 @@ export class Observer {
 
                 const buttons = intent.payload.buttons as ProactiveButton[] | undefined;
                 const ownerOnly = intent.payload.ownerOnly === true;
-                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag, buttons, ownerOnly)) {
+                const due = intent.urgency === "urgent" || intent.payload.kind === "commitment_due";
+                if (await dispatchProactiveMessage(channel, composed.text, composed.modeTag, buttons, ownerOnly, due)) {
                     sent = true;
                     this.registry.dispatched(intent);
                 }
