@@ -81,11 +81,13 @@ export const listDirectory: ToolDefinition = {
                 size: e.isFile() ? st?.size : undefined,
                 modified: st ? new Date(st.mtimeMs).toISOString().slice(0, 16).replace("T", " ") : undefined,
             }));
+            // The count first: a long listing gets cut short in the model's context, and a
+            // total at the end was lost ("how many PDFs?" answered 32 of 131).
             return JSON.stringify({
                 success: true,
+                count: all.length,
+                ...(all.length > MAX_LIST ? { shown: MAX_LIST, note: `Newest ${MAX_LIST} shown.` } : {}),
                 items,
-                count: items.length,
-                ...(all.length > MAX_LIST ? { total: all.length, note: `Newest ${MAX_LIST} shown.` } : {}),
             });
         } catch (err) {
             return JSON.stringify({ error: (err as Error).message });

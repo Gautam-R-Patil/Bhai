@@ -18,7 +18,7 @@
 // (default data/eval-computer-use.jsonl). Spotify and Apple Music tasks need those apps signed in.
 import Anthropic from "@anthropic-ai/sdk";
 import { execFile } from "node:child_process";
-import { appendFileSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +47,9 @@ const ALLOWED = new Set([
     "find_files", "open_in_app", "app_manager", "window_manage", "os_smart_click", "os_inspect", "os_click_id",
     "os_type", "os_screenshot", "os_click", "os_visual_verify", "os_keyboard_shortcuts", "os_context",
     "list_directory", "glob", "get_current_time", "bluetooth_control", "wifi_control",
+    "write", "append_file", "compress_files", "read", "file_metadata", "apple_notes", "reminders_tool", "calendar_tool",
+    "browser_navigate", "browser_extract", "browser_extract_article", "browser_scan", "browser_click", "browser_type",
+    "browser_scroll", "browser_wait", "browser_back", "browser_close",
 ]);
 const SCREEN_DRIVERS = new Set(["os_smart_click", "os_click_id", "os_type", "os_click"]);
 const SHIELD = /terminal|iterm|claude|code|warp|ghostty/i;
@@ -55,6 +58,14 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
     if (!ALLOWED.has(name)) return JSON.stringify({ error: `${name} is not available in this test` });
     if ((name === "wifi_control" || name === "bluetooth_control") && args.action !== "status")
         return JSON.stringify({ error: "only status is allowed in this test" });
+    // Writes stay in the sandbox folder; nothing is deleted.
+    if (["write", "append_file", "compress_files"].includes(name)) {
+        const paths = JSON.stringify(args).match(/(?:~|\/Users\/)[^"]*/g) ?? [];
+        if (!paths.length || paths.some((p) => !p.replace(/^~/, homedir()).startsWith(EVAL_DIR)))
+            return JSON.stringify({ error: `In this test, files may only be written inside ${EVAL_DIR}` });
+    }
+    if ((name === "apple_notes" || name === "reminders_tool") && /delete|remove|move/.test(String(args.action)))
+        return JSON.stringify({ error: "not available in this test" });
     if (SCREEN_DRIVERS.has(name)) {
         const f = await getFrontmostApp();
         if (f && SHIELD.test(f.name)) return JSON.stringify({ error: `The frontmost app is ${f.name}. Bring the target app forward first with app_manager action=activate.` });
@@ -63,7 +74,15 @@ async function guardedExec(name: string, args: Record<string, unknown>): Promise
     return r.replace(/"(screenshot_base64|zoomed_base64)":"[^"]+"/g, '"$1":"[image omitted: no vision]"').slice(0, 3500);
 }
 
-type Task = { id: string; prompt: string; setup?: () => Promise<void>; check: (reply: string) => Promise<boolean>; cleanup?: () => Promise<void> };
+const EVAL_DIR = join(homedir(), "Desktop", "BhaiEval");
+const flat = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+const newestPdf = () => {
+    const dir = join(homedir(), "Downloads");
+    return readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".pdf")).map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t)[0]?.f ?? "";
+};
+type Task = { id: string; prompt: string; setup?: () => Promise<void>; check: (reply: string, trace: string[]) => Promise<boolean>; cleanup?: () => Promise<void> };
+/** A web page was actually read (not the answer from memory). */
+const readPage = (trace: string[]) => trace.some((t) => /^browser_(navigate|extract|extract_article|scan)\(/.test(t) && !/"error"|"success":false/.test(t));
 let vol0 = 43;
 const TASKS: Task[] = [
     { id: "spotify_play", prompt: "Play Levitating by Dua Lipa on Spotify",
@@ -139,6 +158,42 @@ const TASKS: Task[] = [
       setup: async () => { await as('tell application "Spotify" to play track "spotify:track:39LLxExYz6ewLAcYrzQQyP"'); await sleep(1500); },
       check: async () => (await as('tell application "Spotify" to player state as string')) !== "playing" && /blinding lights/i.test(await as('tell application "Music" to if player state is playing then name of current track')),
       cleanup: async () => { await as('tell application "Music" to pause'); await as('tell application "Spotify" to pause'); } },
+    // ── Files (sandboxed in ~/Desktop/BhaiEval), clipboard, system ──
+    { id: "write_file", prompt: "Create a text file called todo.txt in the BhaiEval folder on my Desktop with the text: buy milk",
+      setup: async () => { rmSync(EVAL_DIR, { recursive: true, force: true }); mkdirSync(EVAL_DIR, { recursive: true }); },
+      check: async () => { try { return /buy milk/i.test(readFileSync(join(EVAL_DIR, "todo.txt"), "utf8")); } catch { return false; } } },
+    { id: "zip_folder", prompt: "Zip the BhaiEval folder on my Desktop and save the zip inside that folder",
+      setup: async () => { mkdirSync(EVAL_DIR, { recursive: true }); writeFileSync(join(EVAL_DIR, "notes.txt"), "eval"); },
+      check: async () => readdirSync(EVAL_DIR).some((f) => f.toLowerCase().endsWith(".zip")) },
+    { id: "count_pdfs", prompt: "How many PDF files are in my Downloads folder?",
+      check: async (reply) => {
+          const n = readdirSync(join(homedir(), "Downloads")).filter((f) => f.toLowerCase().endsWith(".pdf")).length;
+          return new RegExp(`\\b${n}\\b`).test(reply.replace(/,/g, ""));
+      } },
+    { id: "clipboard_copy", prompt: "Copy the text 'bhai clipboard test' to my clipboard",
+      setup: async () => void (await ex("bash", ["-c", "printf x | pbcopy"])),
+      check: async () => (await ex("pbpaste", [])).stdout.trim() === "bhai clipboard test" },
+    { id: "pdf_name_to_clipboard", prompt: "Find the newest PDF in my Downloads folder and copy its file name to my clipboard",
+      setup: async () => void (await ex("bash", ["-c", "printf x | pbcopy"])),
+      check: async () => { const want = flat(newestPdf().replace(/\.pdf$/i, "")); return !!want && flat((await ex("pbpaste", [])).stdout).includes(want); } },
+    { id: "disk_space", prompt: "How much free disk space do I have?",
+      check: async (reply) => {
+          const freeGb = Number((await ex("df", ["-g", "/System/Volumes/Data"])).stdout.trim().split("\n")[1].split(/\s+/)[3]);
+          return (reply.match(/(\d+(?:\.\d+)?)\s*(GB|GiB|gigabytes)/gi) ?? []).some((m) => Math.abs(Number.parseFloat(m) - freeGb) <= Math.max(3, freeGb * 0.15));
+      } },
+    // ── Apps with their own tools ──
+    { id: "notes_create", prompt: "Create a note in Apple Notes titled 'Bhai eval note' that says: it works",
+      check: async () => /it works/i.test(await as('tell application "Notes" to get body of first note whose name contains "Bhai eval note"')),
+      cleanup: async () => void (await as('tell application "Notes" to delete (every note whose name contains "Bhai eval note")')) },
+    { id: "reminder_create", prompt: "Remind me tomorrow at 9am to water the plants",
+      check: async () => /water the plants/i.test(await as('tell application "Reminders" to get name of (every reminder whose name contains "water the plants")')),
+      cleanup: async () => void (await as('tell application "Reminders" to delete (every reminder whose name contains "water the plants")')) },
+    // ── Web pages (Bhai's own browser) ──
+    { id: "browser_heading", prompt: "Open example.com in the browser and tell me the page's main heading",
+      check: async (reply, trace) => readPage(trace) && /example domain/i.test(reply) },
+    { id: "browser_fact", prompt: "Open the Wikipedia page for Alan Turing and tell me the year he was born",
+      check: async (reply, trace) => readPage(trace) && /\b1912\b/.test(reply),
+      cleanup: async () => void (await guardedExec("browser_close", {})) },
 ];
 
 const SYSTEM = [
@@ -213,6 +268,12 @@ async function claudeLoop(system: string, prompt: string, tools: any[], used: st
     return { reply: "", iters: 10 };
 }
 
+// The browser backend the bot registers at boot (src/index.ts).
+{
+    const { registerPlaywrightBackend } = await import("../src/tools/browser/index.js");
+    const { PlaywrightPassthroughBackend } = await import("../src/tools/browser/playwright-backend.js");
+    registerPlaywrightBackend(() => new PlaywrightPassthroughBackend());
+}
 await initToolRouter();
 setToolRouterLLM(
     ROUTER
@@ -289,7 +350,7 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
         }
     }
     const ms = Date.now() - t0;
-    const ok = await task.check(reply).catch(() => false);
+    const ok = await task.check(reply, trace).catch(() => false);
     await task.cleanup?.().catch(() => {});
     const pr = PRICES[model];
     const cost = pr ? (usage.in * pr[0] + usage.cached * pr[1] + usage.out * pr[2]) / 1e6 : null;
@@ -298,7 +359,7 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     // RECORD=1: the result is evidence for the learned router (src/routing/learned-router.ts).
     const arm = ARMS.find((a) => a.model === `azure/${model}` || (model.includes(a.id) && !a.model.startsWith("azure/")));
     if (process.env.RECORD === "1" && arm && iters >= 0) {
-        const cls = ["chain_settings", "calc_to_textedit", "newest_pdf", "playlist_and_tell", "switch_players", "textedit_type", "calculator_multistep", "find_open_file", "camera_permissions"].includes(task.id) ? "desktop" : "quick";
+        const cls = ["chain_settings", "calc_to_textedit", "newest_pdf", "playlist_and_tell", "switch_players", "textedit_type", "calculator_multistep", "find_open_file", "camera_permissions", "pdf_name_to_clipboard", "zip_folder"].includes(task.id) ? "desktop" : task.id.startsWith("browser_") ? "browser" : "quick";
         recordOutcome(cls, arm.id, { success: ok ? 1 : 0, failure: ok ? 0 : 1, calls: iters + 1, seconds: ms / 1000 });
     }
     appendFileSync(OUT, `${JSON.stringify(row)}\n`);
@@ -306,5 +367,6 @@ for (const task of TASKS.filter((t) => !only.length || only.includes(t.id))) {
     console.log(`${ok ? "✅" : "❌"} ${task.id.padEnd(22)} iters=${row.iters} calls=${used.length} ${ms}ms $${cost?.toFixed(5) ?? "?"} [${used.join(",")}] ${reply.slice(0, 80).replace(/\n/g, " ")}`);
     await sleep(500);
 }
+rmSync(EVAL_DIR, { recursive: true, force: true });
 console.log(`SCORE ${MODEL}: ${results.filter((r) => r.ok).length}/${results.length}`);
 process.exit(0);

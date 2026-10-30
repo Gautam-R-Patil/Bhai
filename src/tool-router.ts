@@ -738,7 +738,7 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Settings, permissions and machine state ("give zoom access to my camera", "battery")
     {
         pattern:
-            /\b((dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
+            /\b(disk space|free space|storage|ram|memory usage|cpu|uptime|(dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
         category: "system_controls",
         minScore: 0.7,
     },
@@ -763,7 +763,13 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
         minScore: 0.7,
     },
     // Browser
-    { pattern: /\b(website|webpage|url|browse|navigate.?to|open.?site)\b/i, category: "browser", minScore: 0.65 },
+    {
+        // "open example.com in the browser", "the Wikipedia page for Alan Turing"
+        pattern:
+            /\b(website|webpage|web page|url|browser|browse|navigate.?to|open.?site|wikipedia)\b|\b[a-z0-9-]+\.(com|org|net|io|ai|dev|in|co|app|edu|gov)\b/i,
+        category: "browser",
+        minScore: 0.7,
+    },
     // Shell
     {
         pattern: /\b(terminal|npm|pip|brew|apt|git\b|docker|sudo|bash|chmod|mkdir)\b/i,
@@ -1663,6 +1669,16 @@ export async function selectTools(opts: {
             categories: [...llmResult.categories],
         };
         classifierUsed = "llm";
+        // Safety net: an unmistakable need the classifier missed ("open example.com in the
+        // browser" filed as research) would leave the model without the tool. Add up to two
+        // categories whose high-confidence keyword pattern matches.
+        let added = 0;
+        for (const { pattern, category, minScore } of KEYWORD_BOOSTS) {
+            if (added < 2 && minScore >= 0.7 && !selectedCategories.includes(category) && pattern.test(opts.message)) {
+                selectedCategories.push(category);
+                added++;
+            }
+        }
     } else {
         lastClassification = null;
         // Fallback: hybrid structural + semantic + keyword boosts

@@ -50,6 +50,8 @@ vi.mock("./tools/index.js", () => ({
             "os_inspect",
             "os_screenshot",
             "os_type",
+            "system_info",
+            "browser_navigate",
             "app_manager",
             "window_manage",
             "web_search",
@@ -81,6 +83,10 @@ const CASES: [string, string][] = [
     // From the complex-task eval: no screen tools were offered, only app_manager and file tools.
     ["use the calculator app to work out 123 times 45, then open a new textedit document and write the result in it", "os_type"],
     ["use the calculator app to work out 123 times 45", "os_smart_click"],
+    // From the widened eval: no tools were offered for these.
+    ["how much free disk space do i have", "system_info"],
+    ["open example.com in the browser and tell me the page's main heading", "browser_navigate"],
+    ["open the wikipedia page for alan turing and tell me the year he was born", "browser_navigate"],
 ];
 
 describe("computer-use routing without the classifier", () => {

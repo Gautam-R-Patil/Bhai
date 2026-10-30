@@ -179,7 +179,8 @@ export function classifyTurn(
     const cats = new Set(c.categories ?? []);
     const any = (...xs: string[]) => xs.some((x) => cats.has(x));
     if (c.tier === "chat") return "chat";
-    if (any("coding", "codebase", "code_execution", "github", "shell")) return "coding";
+    // Shell alone is file and system work (zip, move, disk), not code.
+    if (any("coding", "codebase", "code_execution", "github")) return "coding";
     if (any("browser")) return "browser";
     if (hasMedia) return "vision"; // a screenshot with code or a web page stays coding/browser
     if (any("research", "web_search") && !any("os_control", "app_management")) return "research";
