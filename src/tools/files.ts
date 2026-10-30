@@ -36,7 +36,8 @@ export const listDirectory: ToolDefinition = {
         type: "function",
         function: {
             name: "list_directory",
-            description: "List files and directories at a path.",
+            description:
+                "List files and directories at a path, newest first, with each one's size and last-modified time. For 'the newest/latest file', the first item is the answer.",
             parameters: {
                 type: "object",
                 properties: {
@@ -54,13 +55,34 @@ export const listDirectory: ToolDefinition = {
             return JSON.stringify({ error: reason });
         }
         try {
-            const entries = fs.readdirSync(dirPath, { withFileTypes: true }).slice(0, MAX_LIST);
-            const items = entries.map((e) => ({
+            // Newest first, with dates: "the newest PDF in Downloads" was unanswerable from
+            // names alone, and the cap could cut the newest file off a big folder.
+            // ponytail: stats at most 5,000 entries (~50ms); past that "newest" is among those.
+            const all = fs
+                .readdirSync(dirPath, { withFileTypes: true })
+                .slice(0, 5000)
+                .map((e) => {
+                    let st: fs.Stats | undefined;
+                    try {
+                        st = fs.statSync(path.join(dirPath, e.name));
+                    } catch {
+                        /* broken link, or gone since readdir */
+                    }
+                    return { e, st };
+                });
+            all.sort((a, b) => (b.st?.mtimeMs ?? 0) - (a.st?.mtimeMs ?? 0));
+            const items = all.slice(0, MAX_LIST).map(({ e, st }) => ({
                 name: e.name,
                 type: e.isDirectory() ? "directory" : "file",
-                size: e.isFile() ? fs.statSync(path.join(dirPath, e.name)).size : undefined,
+                size: e.isFile() ? st?.size : undefined,
+                modified: st ? new Date(st.mtimeMs).toISOString().slice(0, 16).replace("T", " ") : undefined,
             }));
-            return JSON.stringify({ success: true, items, count: items.length });
+            return JSON.stringify({
+                success: true,
+                items,
+                count: items.length,
+                ...(all.length > MAX_LIST ? { total: all.length, note: `Newest ${MAX_LIST} shown.` } : {}),
+            });
         } catch (err) {
             return JSON.stringify({ error: (err as Error).message });
         }

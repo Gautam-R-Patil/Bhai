@@ -755,7 +755,7 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Acting on whatever is on screen
     {
         pattern:
-            /\b(click|double.?click|right.?click|tap on|scroll (up|down)|press the|type (in|into)|on (the )?screen)\b|\bopen (the )?(calculator|notes|terminal|photos|preview|textedit|system settings|app store|facetime|xcode|word|excel)\b/i,
+            /\b(click|double.?click|right.?click|tap on|scroll (up|down)|press the|type (in|into)|on (the )?screen)\b|\b(calculator|notes|terminal|photos|preview|textedit|text edit|system settings|app store|facetime|xcode|pages|numbers|keynote|word|excel|powerpoint)\b|\b(use|in|open|launch|using) (the |a |a new )?[\w.-]+ (app|document|window)\b/i,
         category: "os_control",
         minScore: 0.7,
     },

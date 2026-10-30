@@ -51,6 +51,7 @@ vi.mock("./tools/index.js", () => ({
             "os_smart_click",
             "os_inspect",
             "os_screenshot",
+            "os_type",
             "app_manager",
             "window_manage",
             "web_search",
@@ -79,6 +80,9 @@ const CASES: [string, string][] = [
     // From the model-ladder eval: light mode got 6 tools and no dark_mode; a typing task got no app_manager.
     ["switch my mac to light mode", "dark_mode"],
     ["open textedit, make a new document and type hello", "app_manager"],
+    // From the complex-task eval: no screen tools were offered, only app_manager and file tools.
+    ["use the calculator app to work out 123 times 45, then open a new textedit document and write the result in it", "os_type"],
+    ["use the calculator app to work out 123 times 45", "os_smart_click"],
 ];
 
 describe("computer-use routing without the classifier", () => {
