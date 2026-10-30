@@ -11,7 +11,10 @@ const fn = (name: string) =>
     html.match(new RegExp(` {6}function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n {6}\\}\\n`))?.[0] ?? "";
 const esc = html.match(/ {6}function esc\(t\) .*\n/)?.[0] ?? "";
 const ctx = vm.createContext({});
-vm.runInContext(`${esc}${fn("renderMd")}${fn("renderStreamingMd")}${fn("turnView")}${fn("turnRoute")}`, ctx);
+vm.runInContext(
+    `${esc}${fn("renderMd")}${fn("renderStreamingMd")}${fn("turnView")}${fn("turnRoute")}${fn("turnHasDetail")}`,
+    ctx,
+);
 
 type State = {
     turn: string;
@@ -138,5 +141,15 @@ describe("renderStreamingMd", () => {
         expect(out).toContain("<pre");
         expect(out).toContain(">const a</code>");
         expect(ctx.renderStreamingMd("**a**") as string).toBe(ctx.renderMd("**a**") as string);
+    });
+});
+
+describe("the Notes/Steps panel", () => {
+    it("says there's nothing yet instead of an empty box", () => {
+        expect(html).toContain('<div class="turn-empty">Nothing to show yet.</div>');
+        expect(ctx.turnHasDetail({ steps: [], notes: [] })).toBe(false);
+        expect(ctx.turnHasDetail({ steps: [], notes: [" \n"] })).toBe(false);
+        expect(ctx.turnHasDetail({ steps: [], notes: ["Checking"] })).toBe(true);
+        expect(ctx.turnHasDetail({ steps: [{ id: 1, text: "Search", state: "running" }], notes: [] })).toBe(true);
     });
 });

@@ -1,11 +1,19 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // The Chrome side panel's live turn view (chrome-extension/turn-view.js): the same contract and
 // cases as the overlay's (src/overlay/turn-view.test.ts), plus the extension's own one.
+import fs from "node:fs";
+import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
 // A variable specifier: the extension's plain JS stays outside the TS project.
 const modUrl = new URL("../chrome-extension/turn-view.js", import.meta.url).href;
 const { turnView, turnRoute } = await import(modUrl);
+// The side panel's own render helpers (a classic script), pulled out the way the overlay's are.
+const sidepanel = fs.readFileSync(new URL("../chrome-extension/sidepanel.js", import.meta.url), "utf8");
+const panelFn = (name: string) =>
+    sidepanel.match(new RegExp(`\\nfunction ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}\\n`))?.[0] ?? "";
+const panel = vm.createContext({});
+vm.runInContext(`${panelFn("turnHasDetail")}`, panel);
 
 type State = {
     turn: string;
@@ -128,5 +136,15 @@ describe("turnRoute", () => {
         expect(route("a", true, { type: "error" })).toBe("finish");
         expect(route("a", false, { type: "response", turn: "b" })).toBe("plain");
         expect(route(null, false, { type: "response" })).toBe("plain");
+    });
+});
+
+describe("the Notes/Steps panel", () => {
+    it("says there's nothing yet instead of an empty box", () => {
+        expect(sidepanel).toContain('<div class="turn-empty">Nothing to show yet.</div>');
+        expect(panel.turnHasDetail({ steps: [], notes: [] })).toBe(false);
+        expect(panel.turnHasDetail({ steps: [], notes: [" \n"] })).toBe(false);
+        expect(panel.turnHasDetail({ steps: [], notes: ["Checking"] })).toBe(true);
+        expect(panel.turnHasDetail({ steps: [{ id: 1, text: "Search", state: "running" }], notes: [] })).toBe(true);
     });
 });

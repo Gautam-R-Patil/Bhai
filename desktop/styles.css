@@ -6091,6 +6091,7 @@ body.hig .turn-panel { display: grid; grid-template-rows: 0fr; width: min(100%, 
 body.hig .turn-panel > div { overflow: hidden; }
 body.hig .chats-turn.open .turn-panel { grid-template-rows: 1fr; margin-top: 8px; }
 body.hig .turn-inner { padding: 4px 12px 8px; border-radius: 12px; background: var(--fill-quaternary); }
+body.hig .turn-empty { margin: 6px 0 2px; font-size: 12px; color: var(--text-muted); }
 body.hig .turn-lbl { margin: 6px 0 2px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
 body.hig .turn-notes { max-height: 110px; overflow-y: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--text-secondary); }
 body.hig .turn-step { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }

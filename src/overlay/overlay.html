@@ -356,6 +356,7 @@
     .turn-view.open .turn-panel { grid-template-rows: 1fr; margin-top: 8px; }
     .turn-inner { padding: 4px 10px 8px; border-radius: 10px; background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
     .turn-lbl { margin: 6px 0 2px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+    .turn-empty { margin: 6px 0 2px; font-size: 12.5px; color: var(--text-muted); }
     .turn-notes { max-height: 96px; overflow-y: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--text-secondary); }
     .turn-step { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
     .turn-step::before { content: ""; flex: none; width: 14px; text-align: center; }
@@ -3033,6 +3034,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           + '<span class="turn-meta"><span class="turn-count"></span><span class="turn-chev" aria-hidden="true">▾</span></span></button>'
           + '<div class="turn-bar" aria-hidden="true"><i></i></div>'
           + '<div class="turn-panel"><div><div class="turn-inner">'
+          + '<div class="turn-empty">Nothing to show yet.</div>'
           + '<div class="turn-notes-wrap" hidden><div class="turn-lbl">Notes</div><div class="turn-notes"></div></div>'
           + '<div class="turn-steps-wrap" hidden><div class="turn-lbl">Steps</div><div class="turn-steps"></div></div>'
           + '</div></div></div>';
@@ -3042,7 +3044,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         const q = (sel) => root.querySelector(sel);
         live = {
           state: { turn, seq: 0, status: null, steps: [], notes: [], answer: '', attempt: 0, open },
-          el: { root, answer, now: q('.turn-now'), count: q('.turn-count'), notes: q('.turn-notes'), steps: q('.turn-steps') },
+          el: { root, answer, now: q('.turn-now'), count: q('.turn-count'), empty: q('.turn-empty'), notes: q('.turn-notes'), steps: q('.turn-steps') },
           start: Date.now(), statusAt: 0, fallback: plainStatus(text) || 'Thinking…', shown: '', stepsShown: null, frame: 0, tick: 0, stopping: false, done: false,
         };
         setPanelOpen(root, open);
@@ -3074,6 +3076,11 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (live && root === live.el.root) live.state = { ...live.state, open };
       });
 
+      // Anything behind the live line yet: a step, or a note with words in it.
+      function turnHasDetail(s) {
+        return s.steps.length > 0 || !!s.notes.join('').trim();
+      }
+
       function liveCount() {
         if (!live || live.done) return;
         const s = live.state.status;
@@ -3098,6 +3105,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           el.steps.parentElement.hidden = !s.steps.length;
           el.steps.innerHTML = s.steps.map((x) => `<div class="turn-step ${esc(String(x.state))}">${esc(String(x.text))}</div>`).join('');
         }
+        el.empty.hidden = turnHasDetail(s);
         if (!live.done && s.answer !== live.shown) {
           live.shown = s.answer;
           el.answer.innerHTML = s.answer ? `${renderStreamingMd(s.answer)}<span class="turn-caret" aria-hidden="true"></span>` : '';

@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const html = fs.readFileSync(path.join(__dirname, "..", "panel.html"), "utf8");
 const fn = (name) => html.match(new RegExp(` {8}function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n {8}\\}\\n`))?.[0] ?? "";
 const ctx = vm.createContext({});
-vm.runInContext(`${fn("turnView")}${fn("turnRoute")}`, ctx);
+vm.runInContext(`${fn("turnView")}${fn("turnRoute")}${fn("turnHasDetail")}`, ctx);
 
 const view = (msgs, start = null) => JSON.parse(JSON.stringify(msgs.reduce((s, m) => ctx.turnView(s, m), start)));
 
@@ -90,5 +90,15 @@ describe("turnRoute", () => {
         expect(route("a", true, { type: "response" })).toBe("finish");
         expect(route("a", true, { type: "error" })).toBe("finish");
         expect(route(null, false, { type: "response" })).toBe("plain");
+    });
+});
+
+describe("the Notes/Steps panel", () => {
+    it("says there's nothing yet instead of an empty box", () => {
+        expect(html).toContain('<div class="turn-empty">Nothing to show yet.</div>');
+        expect(ctx.turnHasDetail({ steps: [], notes: [] })).toBe(false);
+        expect(ctx.turnHasDetail({ steps: [], notes: [" \n"] })).toBe(false);
+        expect(ctx.turnHasDetail({ steps: [], notes: ["Checking"] })).toBe(true);
+        expect(ctx.turnHasDetail({ steps: [{ id: 1, text: "Search", state: "running" }], notes: [] })).toBe(true);
     });
 });

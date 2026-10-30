@@ -394,6 +394,7 @@ function liveStart(state, start, text) {
     + '<span class="turn-meta"><span class="turn-count"></span><svg class="chev" width="14" height="14"><use href="#i-chev"/></svg></span></button>'
     + '<div class="turn-bar" aria-hidden="true"><i></i></div>'
     + '<div class="turn-panel"><div><div class="turn-inner">'
+    + '<div class="turn-empty">Nothing to show yet.</div>'
     + '<div class="turn-notes-wrap" hidden><div class="turn-lbl">Notes</div><div class="turn-notes"></div></div>'
     + '<div class="turn-steps-wrap" hidden><div class="turn-lbl">Steps</div><div class="turn-steps"></div></div>'
     + '</div></div></div>'
@@ -402,13 +403,18 @@ function liveStart(state, start, text) {
   const q = (sel) => root.querySelector(sel);
   live = {
     state, root, start: start || Date.now(), fallback: cleanProgress(text) || 'Thinking…', shown: '', stepsKey: '', frame: 0, stopping: false, done: false,
-    el: { now: q('.turn-now'), count: q('.turn-count'), notes: q('.turn-notes'), steps: q('.turn-steps'), answer: q('.turn-answer > div') },
+    el: { now: q('.turn-now'), count: q('.turn-count'), empty: q('.turn-empty'), notes: q('.turn-notes'), steps: q('.turn-steps'), answer: q('.turn-answer > div') },
     tick: setInterval(liveCount, 1000),
   };
   setPanelOpen(root, panelOpen);
   setBusy(true);
   renderLive();
   thread.scrollTop = thread.scrollHeight;
+}
+
+// Anything behind the live line yet: a step, or a note with words in it.
+function turnHasDetail(s) {
+  return s.steps.length > 0 || !!s.notes.join('').trim();
 }
 
 function liveCount() {
@@ -444,6 +450,7 @@ function renderLive() {
       return row;
     }));
   }
+  el.empty.hidden = turnHasDetail(s);
   if (!live.done && s.answer !== live.shown) {
     live.shown = s.answer;
     // The caret goes inside the last block, so it sits after the last word.

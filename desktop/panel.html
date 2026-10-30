@@ -1806,12 +1806,13 @@
                 + `<span class="turn-meta"><span class="turn-count"></span>${CHEVRON}</span></button>`
                 + '<div class="turn-bar" aria-hidden="true"><i></i></div>'
                 + '<div class="turn-panel" aria-hidden="true"><div><div class="turn-inner">'
+                + '<div class="turn-empty">Nothing to show yet.</div>'
                 + '<div class="turn-notes-wrap" hidden><div class="turn-lbl">Notes</div><div class="turn-notes"></div></div>'
                 + '<div class="turn-steps-wrap" hidden><div class="turn-lbl">Steps</div><div class="turn-steps"></div></div>'
                 + '</div></div></div>'
                 + '<div class="chats-msg from-bhai turn-answer" hidden><div class="chats-bubble"></div></div>';
             const q = (sel) => root.querySelector(sel);
-            const el = { face: q('.turn-face'), now: q('.turn-now'), count: q('.turn-count'), notes: q('.turn-notes'), steps: q('.turn-steps'), answerRow: q('.turn-answer'), answer: q('.turn-answer .chats-bubble') };
+            const el = { face: q('.turn-face'), now: q('.turn-now'), count: q('.turn-count'), empty: q('.turn-empty'), notes: q('.turn-notes'), steps: q('.turn-steps'), answerRow: q('.turn-answer'), answer: q('.turn-answer .chats-bubble') };
             el.face.dataset.mood = 'thinking';
             setTurnPanel(root, turnPanelPref());
             return { root, el };
@@ -1828,6 +1829,11 @@
         function faceMood(mood) {
             const face = liveChat?.el.face;
             if (face && face.dataset.mood !== mood) face.dataset.mood = mood;
+        }
+
+        // Anything behind the live line yet: a step, or a note with words in it.
+        function turnHasDetail(s) {
+            return s.steps.length > 0 || !!s.notes.join('').trim();
         }
 
         function liveChatCount() {
@@ -1867,6 +1873,7 @@
                     return row;
                 }));
             }
+            el.empty.hidden = turnHasDetail(s);
             if (s.answer !== lc.shown) {
                 lc.shown = s.answer;
                 el.answerRow.hidden = !s.answer;
