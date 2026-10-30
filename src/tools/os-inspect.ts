@@ -207,8 +207,13 @@ export const osInspect: ToolDefinition = {
                     "Empty tree — if targeting an Electron/Chromium app (VS Code, Slack, browsers), relaunch with --force-renderer-accessibility for AT-SPI to populate.";
             }
             if (dump.partial) {
+                // The walk stops at a 3 s budget (dump_ax.swift). Ran to it: a big window (Finder
+                // on Downloads, ~3000 elements), not a hung app; what's listed is accurate. Said
+                // as "the app stopped answering", the model called even the sidebar it read unverified.
                 hint =
-                    "Incomplete list: the app stopped answering mid-read, so some elements are missing. Retry os_inspect, or take a screenshot instead.";
+                    dump.elapsedMs >= 2500
+                        ? `Big window: the read stopped after ${all.length} elements, so ones further down the tree are missing. Everything listed (and the window titles) is accurate. To find one element, call os_inspect with query="its words".`
+                        : "Incomplete list: the app stopped answering mid-read, so some elements are missing. Retry os_inspect, or take a screenshot instead.";
             }
 
             return JSON.stringify({
