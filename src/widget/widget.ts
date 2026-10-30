@@ -459,11 +459,12 @@ export function getWidgetScript(wsUrl: string): string {
       connected = false;
       statusEl.textContent = "Reconnecting...";
       sendBtn.disabled = true;
-      if (liveRunning()) { // the reply was lost with the connection: never leave a dead live view
-        var streamed = live.state.answer;
-        liveEnd(null);
-        if (streamed) addMessage("Lost the connection mid-answer. Ask me again.", "system");
-        else if (live.bubble.parentNode) live.bubble.parentNode.removeChild(live.bubble);
+      if (liveRunning() || currentAgentMsg) { // the reply was lost with the connection: never leave a dead live view or "..."
+        var streamed = liveRunning() && live.state.answer;
+        var dots = liveRunning() ? live.bubble : currentAgentMsg;
+        if (liveRunning()) liveEnd(null);
+        if (!streamed && dots.parentNode) dots.parentNode.removeChild(dots);
+        addMessage(streamed ? "Lost the connection mid-answer. Ask me again." : "Connection lost. Ask me again.", "system");
         currentAgentMsg = null;
       }
       setTimeout(connect, reconnectDelay);

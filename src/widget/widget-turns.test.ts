@@ -25,7 +25,9 @@ type Fake = {
         toggle(c: string): boolean;
         contains(c: string): boolean;
     };
+    parentNode?: Fake;
     appendChild(c: Fake): Fake;
+    removeChild(c: Fake): Fake;
     replaceChildren(...c: Fake[]): void;
     remove(): void;
     querySelector(sel: string): Fake;
@@ -70,6 +72,12 @@ function fake(tag: string): Fake {
         },
         appendChild: (c) => {
             o.children.push(c);
+            c.parentNode = o;
+            return c;
+        },
+        removeChild: (c) => {
+            o.children = o.children.filter((x) => x !== c);
+            c.parentNode = undefined;
             return c;
         },
         replaceChildren: (...c) => {
@@ -264,6 +272,19 @@ describe("widget live turns", () => {
         send({ type: "turn_answer", turn: "t2", seq: 1, attempt: 0, text: "next" });
         flush();
         expect(agents().at(-1)?.innerHTML).toBe("next");
+    });
+
+    it("a lost connection before any answer text says so instead of a silent vanish", () => {
+        for (const thinking of [{ type: "thinking", turn: "t1" }, { type: "thinking" }]) {
+            boot();
+            send(thinking);
+            flush();
+            FakeWS.last.onclose?.();
+            expect(agents()).toHaveLength(0);
+            const last = messages().children.at(-1);
+            expect(last?.className).toBe("atlas-msg system");
+            expect(last?.innerHTML).toBe("Connection lost. Ask me again.");
+        }
     });
 
     it("an old bot (no turn ids) still answers in one bubble", () => {
