@@ -1474,7 +1474,7 @@ async function startBot() {
             if (msg.includes("[DISCORD] Bot online") || (msg.includes("discord") && msg.includes("ready"))) channelStatuses.discord = "connected";
             if (msg.includes("[SLACK]") && msg.includes("\u26A1")) channelStatuses.slack = "connected";
             if (msg.includes("[MATRIX] Bot started")) channelStatuses.matrix = "connected";
-            if (msg.includes("Email connected") || msg.includes("IMAP connected")) channelStatuses.email = "connected";
+            if (msg.includes("Email connected") || msg.includes("IMAP connected") || msg.includes("Bhai's email:")) channelStatuses.email = "connected";
             if (msg.includes("\u2705 Bot online: @")) channelStatuses.telegram = "connected";
             if (msg.includes("Bhai online (Telegram disabled)")) channelStatuses.telegram = "not_configured";
 

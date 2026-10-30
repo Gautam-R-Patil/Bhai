@@ -191,16 +191,7 @@
                     </div>
 
                     <!-- Connection Status -->
-                    <div class="connection-status" id="connectionStatus" style="display: none;" onclick="switchTab('channels')" title="Channels">
-                        <div class="connection-item" id="connTelegram">
-                            <span class="connection-dot"></span>
-                            <span class="connection-label">Telegram</span>
-                        </div>
-                        <div class="connection-item" id="connEmail">
-                            <span class="connection-dot"></span>
-                            <span class="connection-label">Email</span>
-                        </div>
-                    </div>
+                    <div class="connection-status" id="connectionStatus" style="display: none;" onclick="switchTab('channels')" title="Channels"></div>
 
                     <!-- Live Stats -->
                     <div class="stats-grid" id="statsGrid" style="display: none;">
@@ -2632,6 +2623,7 @@
             atlas.onChannelStatusUpdate((statuses) => {
                 if (!statuses) return;
                 channelStatuses = statuses; // Store for loadChannelConfig to use
+                if (document.getElementById('statusOnline').style.display !== 'none') renderDashChannels(statuses);
                 const channels = ['telegram', 'whatsapp', 'discord', 'slack', 'email', 'matrix'];
                 channels.forEach(ch => {
                     const status = statuses[ch];
@@ -3831,25 +3823,31 @@
                     return;
                 }
 
-                container.style.display = 'flex';
-
-                const connections = await atlas.getConnectionStatus();
                 const { label } = await atlas.getOverlayHotkey();
                 document.getElementById('chatShortcut').textContent = label;
 
-                // Only show channels the user actually set up; never assume one is live.
-                const tg = document.getElementById('connTelegram');
-                tg.style.display = connections.telegramConfigured ? '' : 'none';
-                tg.classList.toggle('connected', connections.telegram);
-                const em = document.getElementById('connEmail');
-                em.style.display = connections.email ? '' : 'none';
-                em.classList.toggle('connected', connections.email);
-                container.style.display = connections.telegramConfigured || connections.email ? 'flex' : 'none';
-
-                const live = [connections.telegram && 'Telegram', connections.email && 'email'].filter(Boolean);
-                document.getElementById('statusOnlineSub').textContent =
-                    `Press ${label} anywhere to chat` + (live.length ? `, or message it on ${live.join(' and ')}.` : '.');
+                renderDashChannels(await atlas.getChannelStatuses(), label);
             } catch { /* */ }
+        }
+
+        // One chip per channel the bot reported on (set up), lit once it's connected.
+        const DASH_CHANNELS = { telegram: 'Telegram', whatsapp: 'WhatsApp', discord: 'Discord', slack: 'Slack', matrix: 'Matrix', email: 'Email' };
+        function renderDashChannels(statuses, label) {
+            const box = document.getElementById('connectionStatus');
+            const shown = Object.keys(DASH_CHANNELS).filter(k => ['connected', 'connecting', 'disconnected'].includes(statuses?.[k]));
+            box.replaceChildren(...shown.map(k => {
+                const chip = document.createElement('div');
+                chip.className = 'connection-item' + (statuses[k] === 'connected' ? ' connected' : '');
+                chip.innerHTML = '<span class="connection-dot"></span><span class="connection-label"></span>';
+                chip.lastChild.textContent = DASH_CHANNELS[k];
+                return chip;
+            }));
+            box.style.display = shown.length ? 'flex' : 'none';
+            label = label || document.getElementById('chatShortcut').textContent;
+            const live = shown.filter(k => statuses[k] === 'connected').map(k => k === 'email' ? 'email' : DASH_CHANNELS[k]);
+            const list = live.length > 1 ? `${live.slice(0, -1).join(', ')} and ${live.at(-1)}` : live[0];
+            document.getElementById('statusOnlineSub').textContent =
+                (label ? `Press ${label} anywhere to chat` : 'Open Chat to talk to Bhai') + (list ? `, or message it on ${list}.` : '.');
         }
 
         // ── Initial Load ──────────────────────────────
