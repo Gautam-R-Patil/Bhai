@@ -7,12 +7,11 @@
 // this module attempts to diagnose and fix the issue automatically
 // before falling back to error messages.
 
-import { exec, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ErrorCategory } from "./error-types.js";
 
 const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
 
 // ── Heal Attempts Cache (avoid re-trying known failures) ──
 
@@ -32,8 +31,6 @@ interface DepFix {
         linux?: [string, string[]][]; // Linux
         win32?: [string, string[]][]; // Windows
     };
-    /** npm package to install if it's a Node module */
-    npmPackage?: string;
 }
 
 const KNOWN_DEPS: DepFix[] = [
@@ -99,15 +96,13 @@ export async function attemptSelfHeal(
     errorMessage: string,
     errorCategory?: ErrorCategory,
 ): Promise<{ fixed: boolean; action: string }> {
-    // Only attempt for dependency errors, ENOENT/spawn errors, or module errors
+    // Only attempt for dependency errors and ENOENT/spawn errors
     const isDependencyError =
         errorCategory === ErrorCategory.DependencyMissing ||
         /ENOENT.*spawn/i.test(errorMessage) ||
         /spawn.*ENOENT/i.test(errorMessage) ||
         /command not found/i.test(errorMessage) ||
-        /not recognized as.*command/i.test(errorMessage) ||
-        /Cannot find module/i.test(errorMessage) ||
-        /MODULE_NOT_FOUND/i.test(errorMessage);
+        /not recognized as.*command/i.test(errorMessage);
 
     if (!isDependencyError) {
         return { fixed: false, action: "not_applicable" };
@@ -145,28 +140,9 @@ export async function attemptSelfHeal(
         }
     }
 
-    // ── Check npm module errors ──
-    const npmMatch = errorMessage.match(/Cannot find module ['"]([^'"]+)['"]/);
-    if (npmMatch) {
-        const moduleName = npmMatch[1];
-        // Only auto-install if it looks like a top-level package (not a path)
-        if (!moduleName.startsWith(".") && !moduleName.startsWith("/")) {
-            const cacheKey = `npm:${moduleName}`;
-            const cached = healAttempted.get(cacheKey);
-            if (cached && Date.now() - cached.timestamp < HEAL_COOLDOWN) {
-                return { fixed: cached.success, action: cached.success ? "already_fixed" : "cooldown" };
-            }
-
-            console.log(`[SELF-HEAL] Missing npm module: ${moduleName} — attempting install...`);
-            const installed = await installNpmPackage(moduleName);
-            healAttempted.set(cacheKey, { success: installed, timestamp: Date.now() });
-
-            if (installed) {
-                console.log(`[SELF-HEAL] Successfully installed npm package: ${moduleName}`);
-                return { fixed: true, action: `npm_installed:${moduleName}` };
-            }
-        }
-    }
+    // No npm installs here: the module name came from any failing tool's output (a web page,
+    // a command's stderr), so whoever wrote that text chose the package, ran in a shell, and
+    // any package's install scripts run on install.
 
     return { fixed: false, action: "unknown_dependency" };
 }
@@ -190,18 +166,6 @@ async function installSystemDep(dep: DepFix): Promise<boolean> {
     }
 
     return false;
-}
-
-// ── NPM Package Installer ───────────────────────
-
-async function installNpmPackage(packageName: string): Promise<boolean> {
-    try {
-        console.log(`[SELF-HEAL] Running: npm install ${packageName}`);
-        await execAsync(`npm install ${packageName}`, { timeout: 60000 });
-        return true;
-    } catch {
-        return false;
-    }
 }
 
 // ── Binary Existence Check ───────────────────────
