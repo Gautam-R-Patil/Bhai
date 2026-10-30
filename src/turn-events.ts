@@ -74,8 +74,7 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
     let shown = "";
     let stepId = 0;
     let openStep: { id: number; text: string } | null = null;
-    // The last status's step and clock, so a status sent here carries on from it.
-    let lastStatus = { step: 0, elapsedSec: 0, at: Date.now() };
+    let lastStep = 0; // the last status's step, so a status sent here carries on from it
 
     const emitNote = (text: string) => {
         if (text && opts.notes) sink({ type: "note", text });
@@ -126,7 +125,7 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
         return true;
     };
     const pushStatus = (text: string, step: number, elapsedSec: number) => {
-        lastStatus = { step, elapsedSec, at: Date.now() };
+        lastStep = step;
         status.push({ type: "status", text, step, elapsedSec });
     };
 
@@ -147,15 +146,14 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
             openStep = { id: ++stepId, text };
             sink({ type: "step", ...openStep, state: "running" });
         },
-        /** A tool step finished: the live line moves on from its "Searching…" to its results. */
-        stepEnd(state: "done" | "failed" = "done") {
+        /**
+         * A tool step finished: the live line moves on from its "Searching…" to its results, at once
+         * (a step boundary isn't churn). It replaces any older status still waiting on the throttle.
+         */
+        stepEnd(state: "done" | "failed", elapsedSec: number) {
             if (!closeStep(state)) return;
-            const elapsedSec = lastStatus.elapsedSec + Math.round((Date.now() - lastStatus.at) / 1000);
-            pushStatus(
-                state === "done" ? "Reading what I found" : "Seeing what went wrong",
-                lastStatus.step,
-                elapsedSec,
-            );
+            pushStatus(state === "done" ? "Reading what I found" : "Seeing what went wrong", lastStep, elapsedSec);
+            status.flush();
         },
         status: pushStatus,
         /** The filtered answer streamed so far (the turn was stopped). */

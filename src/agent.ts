@@ -2022,7 +2022,7 @@ async function _runAgentBody(
             return results;
         } finally {
             stop();
-            turnStream?.stepEnd(failed ? "failed" : "done");
+            turnStream?.stepEnd(failed ? "failed" : "done", elapsedSec());
         }
     };
 
