@@ -491,7 +491,8 @@ const TEAM_CHAT = "team chat: short; markdown lists and code blocks are fine";
 /** How a reply should look on each channel; the only place reply length and markup are set per channel. */
 const CHANNEL_REGISTER: Record<string, string> = {
     telegram: PHONE_CHAT,
-    whatsapp: PHONE_CHAT,
+    // A reply starting [[react:👍]] becomes a tap-and-hold reaction on their message (whatsapp.ts takeReaction).
+    whatsapp: `${PHONE_CHAT}; to react to their message like tap-and-hold, start the reply with [[react:👍]] (one emoji); when a reaction says it all, reply with only that marker`,
     discord: TEAM_CHAT,
     slack: TEAM_CHAT,
     matrix: TEAM_CHAT,

@@ -41,3 +41,72 @@ describe("LID addresses", () => {
         expect(users.phoneJidOf("1203630@g.us", "x@lid")).toBe("1203630@g.us");
     });
 });
+
+describe("waiting contacts survive a restart", () => {
+    it("keeps the request, what they added and their WhatsApp name on disk", () => {
+        const owner = "910000000000@s.whatsapp.net";
+        const jid = "917050525092@s.whatsapp.net";
+        const req = users.createContactRequest(jid, "yo boi", owner, "Kunal Kumar Mehta");
+        users.addToPendingRequest(req, "you there?");
+        users.initWhatsAppUsers(); // what the app does after a restart
+        const back = users.pendingRequestFrom(jid);
+        expect(back?.firstMessage).toBe("yo boi\nyou there?");
+        expect(back?.pushName).toBe("Kunal Kumar Mehta");
+        users.resolveContactRequest(back!.id, "allowed");
+        expect(users.getContactProfile(jid)?.displayName).toBe("Kunal Kumar Mehta");
+        users.initWhatsAppUsers();
+        expect(users.pendingRequestFrom(jid)).toBeUndefined();
+    });
+});
+
+describe("owner questions survive a restart", () => {
+    it("files a contact's question on disk and removes it once answered", async () => {
+        const ask = await import("./tools/ask-owner.js");
+        const sent: string[] = [];
+        ask.registerOwnerRelaySender(async (_jid, text) => {
+            sent.push(text);
+        });
+        const owner = "910000000000@s.whatsapp.net";
+        const out = await ask.withRelayContact(
+            { contactJid: "917050525092@s.whatsapp.net", contactName: "Kunal", ownerJid: owner },
+            async () => {
+                expect(ask.inContactRun()).toBe(true);
+                return ask.askOwnerTool.handler({ question: "Can Kunal borrow the car Sunday?", contact_reply: "Checking!" });
+            },
+        );
+        expect(JSON.parse(out as string).success).toBe(true);
+        expect(ask.inContactRun()).toBe(false);
+        expect(sent[0]).toContain('"Can Kunal borrow the car Sunday?"');
+        const file = path.join(process.env.ATLAS_DATA_DIR!, "whatsapp-owner-questions.json");
+        expect(JSON.parse(fs.readFileSync(file, "utf-8"))[0].contactName).toBe("Kunal");
+        const q = ask.resolveLatestQueryForOwner(owner);
+        expect(q?.question).toBe("Can Kunal borrow the car Sunday?");
+        expect(JSON.parse(fs.readFileSync(file, "utf-8"))).toEqual([]);
+    });
+});
+
+describe("swipe-reply on a request notice", () => {
+    it("finds the request the notice was about and reads yes / no / neither", () => {
+        const owner = "910000000000@s.whatsapp.net";
+        users.createContactRequest("917050525092@s.whatsapp.net", "yo boi", owner, "Kunal Kumar Mehta");
+        users.createContactRequest("447700900123@s.whatsapp.net", "win a prize", owner);
+        const notice = 'New message from Kunal Kumar Mehta:\n"yo boi"\n\nSwipe-reply to this message (or just send):';
+        expect(users.requestForNotice(notice)?.jid).toBe("917050525092@s.whatsapp.net");
+        expect(users.requestForNotice('New message from 447700900123:\n"win a prize"')?.jid).toBe(
+            "447700900123@s.whatsapp.net",
+        );
+        expect(users.requestForNotice("❓ *Kunal* wants to know")).toBeUndefined();
+
+        // The exact reply from the chat that went to the agent instead of approving Kunal.
+        expect(users.noticeVerdict("Allow he is my collage friend and his name is Kunal he is also my roommate")).toEqual({
+            allow: true,
+            context: "he is my collage friend and his name is Kunal he is also my roommate",
+        });
+        expect(users.noticeVerdict("yes, my roommate")).toEqual({ allow: true, context: "my roommate" });
+        expect(users.noticeVerdict("block")).toEqual({ allow: false, context: "" });
+        expect(users.noticeVerdict("nah ignore")?.allow).toBe(false);
+        expect(users.noticeVerdict("who is this?")).toBeNull();
+        expect(users.noticeVerdict("okay")).toEqual({ allow: true, context: "" });
+        expect(users.noticeVerdict("hahaha")).toBeNull(); // "ha" must be a whole word
+    });
+});

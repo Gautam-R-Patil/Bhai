@@ -11,6 +11,9 @@
 // let one contact's ask_owner be filed (and the owner's answer sent) under another's.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import fs from "node:fs";
+import path from "node:path";
+import { getDataDir } from "../config/paths.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 export interface PendingOwnerQuery {
@@ -24,7 +27,31 @@ export interface PendingOwnerQuery {
 
 // ── State ─────────────────────────────────────
 
-const pendingQueries: PendingOwnerQuery[] = [];
+// On disk too: a question the owner hasn't answered yet must survive an app restart,
+// or their answer finds nothing to go to.
+const QUERIES_FILE = () => path.join(getDataDir(), "whatsapp-owner-questions.json");
+let pendingQueries: PendingOwnerQuery[] | null = null;
+
+function queries(): PendingOwnerQuery[] {
+    if (!pendingQueries) {
+        try {
+            const saved = JSON.parse(fs.readFileSync(QUERIES_FILE(), "utf-8"));
+            pendingQueries = Array.isArray(saved) ? saved : [];
+        } catch {
+            pendingQueries = [];
+        }
+    }
+    return pendingQueries;
+}
+
+function saveQueries(): void {
+    try {
+        fs.mkdirSync(getDataDir(), { recursive: true });
+        fs.writeFileSync(QUERIES_FILE(), JSON.stringify(queries(), null, 2), "utf-8");
+    } catch (err) {
+        console.warn("[ask-owner] Could not save pending questions:", (err as Error).message);
+    }
+}
 
 type Sender = (jid: string, text: string) => Promise<void>;
 let _sender: Sender | null = null;
@@ -42,20 +69,27 @@ export function withRelayContact<T>(ctx: RelayContact, fn: () => Promise<T>): Pr
     return relayContact.run(ctx, fn);
 }
 
+/** True inside a contact's agent turn (never the owner's). */
+export function inContactRun(): boolean {
+    return relayContact.getStore() !== undefined;
+}
+
 // ── Query management ─────────────────────────
 
 export function getPendingQueriesForOwner(ownerJid: string): PendingOwnerQuery[] {
-    return pendingQueries.filter((q) => q.ownerJid === ownerJid);
+    return queries().filter((q) => q.ownerJid === ownerJid);
 }
 
 export function resolveQuery(id: string): PendingOwnerQuery | undefined {
-    const idx = pendingQueries.findIndex((q) => q.id === id);
+    const idx = queries().findIndex((q) => q.id === id);
     if (idx === -1) return undefined;
-    return pendingQueries.splice(idx, 1)[0];
+    const [query] = queries().splice(idx, 1);
+    saveQueries();
+    return query;
 }
 
 export function resolveLatestQueryForOwner(ownerJid: string): PendingOwnerQuery | undefined {
-    const ownerQueries = pendingQueries.filter((q) => q.ownerJid === ownerJid);
+    const ownerQueries = getPendingQueriesForOwner(ownerJid);
     if (ownerQueries.length === 0) return undefined;
     const latest = ownerQueries[ownerQueries.length - 1];
     return resolveQuery(latest.id);
@@ -63,7 +97,7 @@ export function resolveLatestQueryForOwner(ownerJid: string): PendingOwnerQuery 
 
 export function resolveQueryByContactName(ownerJid: string, nameHint: string): PendingOwnerQuery | undefined {
     const lowerHint = nameHint.toLowerCase();
-    const ownerQueries = pendingQueries.filter((q) => q.ownerJid === ownerJid);
+    const ownerQueries = getPendingQueriesForOwner(ownerJid);
     const match = ownerQueries.find((q) => q.contactName.toLowerCase().includes(lowerHint));
     if (!match) return undefined;
     return resolveQuery(match.id);
@@ -114,7 +148,7 @@ export const askOwnerTool: ToolDefinition = {
         }
 
         const id = `relay_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        pendingQueries.push({
+        queries().push({
             id,
             contactJid: ctx.contactJid,
             contactName: ctx.contactName,
@@ -122,6 +156,7 @@ export const askOwnerTool: ToolDefinition = {
             askedAt: Date.now(),
             ownerJid: ctx.ownerJid,
         });
+        saveQueries();
 
         // Build owner notification
         const ownerPending = getPendingQueriesForOwner(ctx.ownerJid);

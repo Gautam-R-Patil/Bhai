@@ -50,6 +50,8 @@ export interface ContactRequest {
     receivedAt: number;
     status: "pending" | "allowed" | "blocked";
     ownerNotifiedJid?: string;
+    /** Their WhatsApp name: they have no contact profile until the owner allows them. */
+    pushName?: string;
 }
 
 export interface WhatsAppBotPersona {
@@ -107,6 +109,8 @@ const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
 const OWNERS_PATH = path.join(DATA_DIR, "whatsapp-owners.json");
 const CONTACTS_DIR = path.join(DATA_DIR, "whatsapp-contacts");
 const BLOCKLIST_PATH = path.join(DATA_DIR, "whatsapp-blocklist.json");
+// People waiting for the owner's "allow": kept on disk so an app restart doesn't forget them.
+const PENDING_PATH = path.join(DATA_DIR, "whatsapp-pending-requests.json");
 const PERSONA_PATH = path.join(DATA_DIR, "whatsapp-persona.json");
 const GROUPS_DIR = path.join(DATA_DIR, "whatsapp-groups");
 
@@ -176,6 +180,11 @@ function persistBlocklist(): void {
     ensureDir(DATA_DIR);
     const arr = Array.from(blocklist);
     fs.writeFileSync(BLOCKLIST_PATH, JSON.stringify(arr, null, 2), "utf-8");
+}
+
+function persistPending(): void {
+    ensureDir(DATA_DIR);
+    fs.writeFileSync(PENDING_PATH, JSON.stringify(Array.from(pendingContactRequests.values()), null, 2), "utf-8");
 }
 
 function persistPersona(): void {
@@ -266,6 +275,10 @@ export function initWhatsAppUsers(): void {
 
     // Load blocklist
     blocklist.clear();
+    pendingContactRequests.clear();
+    for (const r of loadJson<ContactRequest[]>(PENDING_PATH, [])) {
+        if (r?.id && r.status === "pending") pendingContactRequests.set(r.id, r);
+    }
     const blockArr = loadJson<string[]>(BLOCKLIST_PATH, []);
     for (const jid of blockArr) {
         blocklist.add(jid);
@@ -555,6 +568,7 @@ export function createContactRequest(
     jid: string,
     firstMessage: string,
     ownerJid: string,
+    pushName?: string,
 ): ContactRequest {
     const request: ContactRequest = {
         id: crypto.randomUUID(),
@@ -563,8 +577,10 @@ export function createContactRequest(
         receivedAt: Date.now(),
         status: "pending",
         ownerNotifiedJid: ownerJid,
+        pushName,
     };
     pendingContactRequests.set(request.id, request);
+    persistPending();
     return request;
 }
 
@@ -586,6 +602,36 @@ export function findGroupByName<G extends { name: string }>(groups: G[], name: s
 /** A LID-addressed JID (…@lid) as its phone JID when Baileys gave one; anything else unchanged. */
 export function phoneJidOf(jid: string | null | undefined, alt: string | null | undefined): string | null | undefined {
     return jid?.endsWith("@lid") && alt?.endsWith("@s.whatsapp.net") ? alt : jid;
+}
+
+/** The pending request a "New message from X" notice was about, by its name or its message. */
+export function requestForNotice(notice: string): ContactRequest | undefined {
+    if (!notice.startsWith("New message from ")) return undefined;
+    return getPendingRequests().find(
+        (r) =>
+            notice.startsWith(`New message from ${r.pushName || jidToPhone(r.jid)}:`) ||
+            notice.includes(`"${r.firstMessage.substring(0, 100)}`),
+    );
+}
+
+const YES_WORDS = /^(allow|yes|yeah|yep|yup|ok|okay|sure|haan|han|ha|approve|go ahead|reply|respond|talk|let)\b[\s,.!:-]*/i;
+const NO_WORDS = /^(block|no|nope|nah|ignore|deny|don'?t|dont)\b[\s,.!:-]*/i;
+
+/**
+ * The owner's swipe-reply on a request notice: allow (with whatever follows as who they are),
+ * block, or null when it isn't a yes or no ("who's this?" goes to the agent).
+ */
+export function noticeVerdict(reply: string): { allow: boolean; context: string } | null {
+    const text = reply.trim();
+    if (NO_WORDS.test(text)) return { allow: false, context: "" };
+    if (YES_WORDS.test(text)) return { allow: true, context: text.replace(YES_WORDS, "").trim() };
+    return null;
+}
+
+/** Someone waiting wrote again: keep it, so the reply after "allow" answers all of it. */
+export function addToPendingRequest(request: ContactRequest, text: string): void {
+    request.firstMessage = `${request.firstMessage}\n${text}`.slice(-2000);
+    persistPending();
 }
 
 /** The pending request from `jid`, if they are already waiting. */
@@ -629,12 +675,13 @@ export function resolveContactRequest(
     request.status = action;
 
     if (action === "allowed") {
-        allowContact(request.jid);
+        allowContact(request.jid, request.pushName, request.pushName);
     } else {
         blockContact(request.jid);
     }
 
     pendingContactRequests.delete(id);
+    persistPending();
     return request;
 }
 

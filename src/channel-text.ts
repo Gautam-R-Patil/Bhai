@@ -288,3 +288,13 @@ export function stuckKeyboard(): InlineKeyboardMarkup {
 export function stuckCallbackMessage(data: string): string | undefined {
     return data.startsWith("stuck:") ? STUCK_ACTIONS.get(data.slice(6))?.message : undefined;
 }
+
+/** Pulls the [[react:…]] marker out of a reply: the text without it, and the emoji if there was one. */
+export function takeReaction(text: string): { text: string; emoji?: string } {
+    let emoji: string | undefined;
+    const rest = text.replace(/\[\[\s*react\s*:\s*([^\]]{1,16}?)\s*\]\]/gi, (_m, e: string) => {
+        if (!emoji && /\p{Extended_Pictographic}/u.test(e)) emoji = e.trim();
+        return "";
+    });
+    return { text: rest !== text ? rest.trim() : text, emoji };
+}
