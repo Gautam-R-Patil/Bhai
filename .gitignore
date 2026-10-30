@@ -101,6 +101,7 @@ desktop/hostinger-upload/
 !src/screen/grid-overlay.test.ts
 !src/tools/send-ledger.test.ts
 !convex/stt.test.ts
+!convex/llmStream.test.ts
 !src/agent.reliability.test.ts
 !src/agent.contract.test.ts
 !src/overlay/contract-line.test.ts
