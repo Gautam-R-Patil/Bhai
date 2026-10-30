@@ -110,6 +110,7 @@ desktop/hostinger-upload/
 !src/tools/google-api-clients.test.ts
 !src/video-studio/util/ffmpeg-bin.test.ts
 !desktop/tests/bot-deps.test.js
+!src/__tests__/notifications/push.test.ts
 !src/tools/__tests__/shell-kill-pid.test.ts
 !src/memory/playbooks.test.ts
 !src/screen/grid-overlay.test.ts

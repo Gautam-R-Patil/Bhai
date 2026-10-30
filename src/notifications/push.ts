@@ -7,6 +7,7 @@
 // Generates and persists VAPID keys on first run, stores subscriptions
 // in memory, and provides sendPushNotification() for the proactive system.
 
+import { createECDH } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getDataDir } from "../config/paths.js";
@@ -37,7 +38,6 @@ let initialized = false;
 
 // The part of web-push used here (it ships no type declarations).
 interface WebPush {
-    generateVAPIDKeys(): StoredVapidKeys;
     setVapidDetails(subject: string, publicKey: string, privateKey: string): void;
     sendNotification(
         sub: { endpoint: string; keys: PushSubscriptionData["keys"] },
@@ -46,7 +46,7 @@ interface WebPush {
     ): Promise<unknown>;
 }
 let webPushMod: Promise<WebPush> | null = null;
-/** web-push loads on first send (or first-run key generation), not at boot. */
+/** web-push loads on first send, not at boot. */
 function loadWebPush(): Promise<WebPush> {
     // @ts-expect-error -- web-push has no type declarations
     webPushMod ??= import("web-push").then((m: { default: WebPush }) => m.default);
@@ -79,10 +79,14 @@ export async function initPushNotifications(): Promise<void> {
     }
 
     if (!vapidKeys) {
-        const generated = (await loadWebPush()).generateVAPIDKeys();
+        // Same as web-push's generateVAPIDKeys(), synchronously, so the public
+        // key is ready on first boot without loading web-push.
+        const curve = createECDH("prime256v1");
+        curve.generateKeys();
+        const pad = (b: Buffer, n: number) => (b.length < n ? Buffer.concat([Buffer.alloc(n - b.length), b]) : b);
         vapidKeys = {
-            publicKey: generated.publicKey,
-            privateKey: generated.privateKey,
+            publicKey: pad(curve.getPublicKey(), 65).toString("base64url"),
+            privateKey: pad(curve.getPrivateKey(), 32).toString("base64url"),
         };
         try {
             writeFileSync(VAPID_PATH, JSON.stringify(vapidKeys, null, 2), "utf-8");

@@ -34,3 +34,26 @@ describe("desktop reuses the bot's Baileys and imapflow", () => {
         expect(typeof botRequire("imapflow").ImapFlow).toBe("function");
     });
 });
+
+describe("Browser engine phase", () => {
+    it("runs a Playwright CLI the bot actually ships", async () => {
+        const { buildPhaseList } = require("../installer/phases.js");
+        const phase = buildPhaseList({ installed: {}, workspace: {} }).find((p) => p.id === "playwright-chromium");
+        const botDir = path.join(desktop, "..");
+        let args;
+        await phase.run(
+            {
+                BOT_DIR: botDir,
+                runCommand: async (_cmd, a) => {
+                    args = a;
+                },
+            },
+            () => {},
+        );
+        const cli = path.relative(path.join(botDir, "node_modules"), args[0]);
+        const botPkg = JSON.parse(fs.readFileSync(path.join(botDir, "package.json"), "utf8"));
+        expect(Object.keys(botPkg.dependencies)).toContain(cli.split(path.sep)[0]);
+        expect(fs.existsSync(args[0])).toBe(true);
+        expect(args.slice(1)).toEqual(["install", "chromium"]);
+    });
+});

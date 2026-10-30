@@ -6,7 +6,13 @@
 // must not load just because their channel/tool modules are imported at boot.
 // Each mock factory runs only if something actually imports the package.
 
+import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
+
+// acorn and google-auth-library load through createRequire, which vi.doMock
+// does not see; Node's CJS cache does.
+const cjsCache = createRequire(import.meta.url).cache;
+const cjsLoaded = (pkg: string) => Object.keys(cjsCache).filter((k) => k.includes(`/node_modules/${pkg}/`));
 
 const loaded = vi.hoisted(() => [] as string[]);
 vi.mock("googleapis", () => { loaded.push("googleapis"); return {}; });
@@ -47,6 +53,7 @@ for (const pkg of [
 
 describe("heavy channel SDKs load lazily", () => {
     it("importing the channel/tool modules does not load their SDKs", async () => {
+        const cjsBefore = ["acorn", "google-auth-library"].flatMap(cjsLoaded);
         // Registry first, as at boot (whatsapp.ts <-> tools/index.ts is circular).
         const { getToolNames } = await import("../index.js");
         await import("../google-api.js");
@@ -76,6 +83,7 @@ describe("heavy channel SDKs load lazily", () => {
         expect((await getPlatformCapabilities()).browser.playwright).toBe(true);
 
         expect(loaded).toEqual([]);
+        expect(["acorn", "google-auth-library"].flatMap(cjsLoaded)).toEqual(cjsBefore);
         // Tools stay registered and status getters work without the SDKs.
         expect(getToolNames()).toEqual(expect.arrayContaining(["gmail", "whatsapp_send"]));
         expect(whatsapp.getWhatsAppStatus()).toBe("disconnected");

@@ -43,7 +43,7 @@ const P = {
         idempotent: true,
         async run(ctx, log) {
             log("Installing Chromium (~130MB)...");
-            const cli = path.join(ctx.BOT_DIR, "node_modules", "playwright", "cli.js");
+            const cli = path.join(ctx.BOT_DIR, "node_modules", "playwright-core", "cli.js");
             await ctx.runCommand("node", [cli, "install", "chromium"], ctx.BOT_DIR, (l) => { if (l.trim()) log(l); });
         },
     }),
