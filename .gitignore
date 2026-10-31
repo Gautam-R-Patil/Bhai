@@ -534,3 +534,5 @@ brag-output/
 !src/proactive/dnd-focus.test.ts
 # Session 2026-10-31: launch step 2 (global stop)
 !src/tools/site-task-stop.test.ts
+# Session 2026-10-31: launch step 2 (prompt injection)
+!src/tools/site-task-injection.e2e.test.ts

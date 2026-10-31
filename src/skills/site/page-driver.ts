@@ -335,13 +335,13 @@ const combine = (vs: CommitVerdict[]): CommitVerdict =>
           ? { verdict: "done" }
           : UNCLEAR;
 
-type Control = { labels: string[]; submitLike: boolean };
+export type Control = { labels: string[]; submitLike: boolean };
 // In the page: the controls an action on `el` (default: the focused element)
 // would press — its own control, or with `form` (Enter) every control of the
 // form it would submit. Nothing is focused (body) → none. A link that goes
 // somewhere is navigation, not a submit; labels, radios and checkboxes are not
 // controls here ("Pay on delivery" is a choice, not a payment).
-const describeControls = /* javascript-obfuscator:disable */ (el: Element | null, form: boolean): Control[] => {
+export const describeControls = /* javascript-obfuscator:disable */ (el: Element | null, form: boolean): Control[] => {
     const e = el || document.activeElement;
     if (!e || e === document.body || e === document.documentElement) return [];
     const CONTROL = "button,a,[role=button],input[type=submit],input[type=button],input[type=image]";
@@ -362,7 +362,7 @@ const describeControls = /* javascript-obfuscator:disable */ (el: Element | null
 // Why these controls are a commit, or "": a control labelled exactly as a
 // declared commit is that commit (a header and footer copy of "Confirm
 // booking"), and a submit-like control with a money word is one too.
-const judge = (controls: Control[], commits: SiteAction[]): string => {
+export const judge = (controls: Control[], commits: SiteAction[]): string => {
     const texts = commits.map((c) => norm(c.target?.text)).filter(Boolean);
     for (const c of controls) {
         for (const l of c.labels.map(norm)) {

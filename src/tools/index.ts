@@ -13,6 +13,7 @@ import {
     currentSwarmStep,
     isExternalSideEffect,
     isPaymentCall,
+    MONEY_PRESS_TOOLS,
     outsideSwarm,
     shellText,
     swarmGate,
@@ -20,6 +21,7 @@ import {
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { checkConsent } from "../security/consent.js";
+import { type Control, describeControls, judge } from "../skills/site/page-driver.js";
 import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
 import { packageConfigPath } from "../store/installer.js";
 import { sideloadSkillTool } from "../store/sideload.js";
@@ -47,7 +49,7 @@ import { blenderScript } from "./blender.js";
 import { brandAudit } from "./brand-audit.js";
 import { captchaAfterAction } from "./browser/captcha.js";
 import { browserMark } from "./browser/mark.js";
-import { getActivePage } from "./browser/core.js";
+import { getActivePage, getLastElementMap } from "./browser/core.js";
 import {
     browserAnalyze,
     browserBack,
@@ -804,6 +806,119 @@ async function livePaymentHost(): Promise<string> {
     }
 }
 
+// ── Money-word gate for raw browser presses ──
+// A hijacked model can skip site_task and press "Place order" with the browser
+// tools. Each press is judged on the live page by the Site Skill commit guard
+// (page-driver describeControls + judge); a money-word control needs the owner's
+// yes in their next message, like a site_task confirm, and a swarm never presses
+// one (isPaymentCall). Anything else runs as before.
+// ponytail: judged here, pressed a moment later by the tool (the TOCTOU of
+// page-driver's guard); blind to browser_run_js / js_eval, os_* clicks, a control
+// inside an iframe, a label with no money word ("Continue"), and a multi_action
+// step after its own navigate. A click-time in-page listener would close the first.
+type Press = { sel?: string; text?: string; label?: number; x?: number; y?: number; form?: boolean };
+const PRESS_KEY = /(^|\+)\s*(Enter|NumpadEnter|Space| )$/i; // presses the focused control; Enter also submits its form
+const isPressKey = (k: unknown) => typeof k === "string" && PRESS_KEY.test(k);
+const isSpace = (k: unknown) => typeof k === "string" && /(Space| )$/i.test(k);
+const hasNewline = (t: unknown) => /[\r\n]/.test(String(t ?? ""));
+
+/** The controls a browser tool call would press: its click target, and the focused element for Enter/Space. */
+function pressesOf(name: string, a: Record<string, unknown>): Press[] {
+    const clicks = a.label !== undefined || (a.x !== undefined && a.y !== undefined);
+    const at: Press = clicks ? { label: a.label as number, x: a.x as number, y: a.y as number } : {};
+    if (name === "browser_click")
+        return a.text ? [{ text: String(a.text) }] : a.selector ? [{ sel: String(a.selector) }] : [];
+    if (name === "browser_click_at") return clicks ? [at] : [];
+    if (name === "browser_keyboard") {
+        if (hasNewline(a.text)) return [{ form: true }];
+        const key = [a.combo, a.hold].find(isPressKey);
+        return key ? [{ form: !isSpace(key) }] : [];
+    }
+    if (name === "browser_type") {
+        const out: Press[] = clicks ? [at] : [];
+        if (isPressKey(a.key)) out.push({ ...at, form: !isSpace(a.key) });
+        if (a.press_enter || hasNewline(a.text)) out.push({ ...at, form: true });
+        return out;
+    }
+    if (name !== "browser_multi_action") return [];
+    let acts = a.actions;
+    if (typeof acts === "string") {
+        try {
+            acts = JSON.parse(acts);
+        } catch {
+            return []; // the tool refuses it too
+        }
+    }
+    if (!Array.isArray(acts)) return [];
+    return (acts as Array<Record<string, unknown>>).flatMap((act): Press[] => {
+        if (act.action === "click")
+            return act.label !== undefined || (act.x !== undefined && act.y !== undefined)
+                ? pressesOf("browser_click_at", act)
+                : pressesOf("browser_click", act);
+        if (act.action === "keyboard") return pressesOf("browser_keyboard", { combo: act.combo });
+        if (act.action === "type") {
+            const typed = pressesOf("browser_type", { label: act.label, key: act.key, text: act.text });
+            if (!act.selector) return typed;
+            const sel = { sel: String(act.selector) }; // clicked first, then the keys go to it
+            return [sel, ...typed.map((p) => ({ ...p, ...sel }))];
+        }
+        if (act.action === "if_visible")
+            return pressesOf("browser_multi_action", {
+                actions: [...((act.then_actions as unknown[]) ?? []), ...((act.else_actions as unknown[]) ?? [])],
+            });
+        return [];
+    });
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
+async function controlsOf(page: any, p: Press): Promise<Control[]> {
+    const fn = String(describeControls);
+    if (p.text || p.sel) {
+        const loc = p.text ? page.getByText(p.text, { exact: false }).first() : page.locator(p.sel).first();
+        if (typeof loc.withEl === "function")
+            return (await page.evaluate(loc.withEl(`return el ? (${fn})(el, ${!!p.form}) : [];`))) ?? []; // Chrome bridge
+        return loc.evaluate(describeControls, !!p.form, { timeout: 1000 });
+    }
+    const el = p.label !== undefined ? getLastElementMap().find((e) => e.label === p.label) : undefined;
+    if (p.label !== undefined && !el) return []; // the tool refuses an unknown label
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright ElementHandle or Locator
+    const h = el?.handle as any;
+    if (typeof h?.evaluate === "function") return h.evaluate(describeControls, !!p.form, { timeout: 1000 });
+    const x = el?.x ?? p.x;
+    const y = el?.y ?? p.y;
+    const target =
+        x !== undefined && y !== undefined
+            ? `document.elementFromPoint(${Number(x)}, ${Number(y)}) || document.body`
+            : "null";
+    return (await page.evaluate(`(${fn})(${target}, ${!!p.form})`)) ?? [];
+}
+
+/** Why this browser call would press a money-word control on the live page ("" when it wouldn't). */
+async function browserMoneyPress(name: string, args: Record<string, unknown>): Promise<string> {
+    if (!MONEY_PRESS_TOOLS.has(name)) return "";
+    const presses = pressesOf(name, args);
+    if (!presses.length) return "";
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
+    let page: any;
+    try {
+        page = await getActivePage();
+    } catch {
+        return ""; // no browser: the tool fails on its own
+    }
+    for (const p of presses) {
+        // A text the model asked to click counts as its label: "Place order" is gated wherever it lands.
+        const said: Control[] = p.text ? [{ labels: [p.text], submitLike: true }] : [];
+        const why = judge([...said, ...(await controlsOf(page, p).catch(() => []))], []);
+        if (!why) continue;
+        let host = "";
+        try {
+            host = new URL(page.url()).host;
+        } catch {}
+        return host ? `${why} on ${host}` : why;
+    }
+    return "";
+}
+
 function stableJson(v: unknown): string {
     if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
     if (v && typeof v === "object") {
@@ -839,9 +954,17 @@ const NO_PAGE_CHECK = new Set([
 const STOPPABLE_TOOLS = new Set(["site_task"]);
 
 /** Tools that move the front app on purpose (os_* tools are matched by prefix). */
-const FOCUS_TOOLS = new Set(["app_manager", "open_in_app", "open_settings", "window_manage", "apple_script", "run_shortcut"]);
+const FOCUS_TOOLS = new Set([
+    "app_manager",
+    "open_in_app",
+    "open_settings",
+    "window_manage",
+    "apple_script",
+    "run_shortcut",
+]);
 /** Arguments that hold paths: path, file_path, paths, archive_path, output_dir, folder, target… */
-const PATH_ARG = /^(paths?|file_?paths?|target|folder|dir|directory|cwd|archive_path|output(_dir|_path)?|source|dest(ination)?)$/i;
+const PATH_ARG =
+    /^(paths?|file_?paths?|target|folder|dir|directory|cwd|archive_path|output(_dir|_path)?|source|dest(ination)?)$/i;
 const HOMEISH = /^(~|\/Users\/|\/home\/|[A-Za-z]:[\\/]Users)/;
 // Names models use for the same thing: a required key that's missing is filled from one of these.
 // gpt-4.1-nano called write with "path" five times and was refused each time ("file_path: expected string").
@@ -887,8 +1010,7 @@ export function withHomePaths(input: Record<string, unknown>): Record<string, un
     let out = input;
     for (const [k, v] of Object.entries(input)) {
         if (!PATH_ARG.test(k)) continue;
-        const fix = (x: unknown) =>
-            typeof x === "string" ? ungarble(HOMEISH.test(x) ? resolveHomePath(x) : x) : x;
+        const fix = (x: unknown) => (typeof x === "string" ? ungarble(HOMEISH.test(x) ? resolveHomePath(x) : x) : x);
         const fixed = Array.isArray(v) ? v.map(fix) : fix(v);
         if (JSON.stringify(fixed) !== JSON.stringify(v)) out = { ...out, [k]: fixed };
     }
@@ -993,22 +1115,34 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     // so a yes for site A can't let the card be typed on site B (the tab can't be
     // swapped between the ask and the confirm). Overwrites any model-supplied `site`.
     if (name === "vault_authorize_payment") actionArgs.site = await livePaymentHost();
+    // A raw browser press on "Place order" / "Pay now" is an order: the owner's yes, never a swarm's.
+    // The control's label and host are part of the consent key, so a yes covers that control only.
+    const moneyPress = await browserMoneyPress(name, actionArgs);
     // shell_exec runs `command` plus its `args` array: judge the whole line.
-    const confirmCheck = requiresConfirmation(
-        name,
-        name.startsWith("shell_exec") ? { ...actionArgs, command: shellText(name, actionArgs) } : actionArgs,
-    );
+    const confirmCheck = moneyPress
+        ? {
+              needsConfirmation: true,
+              warningMessage: `⚠️ This presses a ${moneyPress}: it places an order or pays. The owner must say yes first.`,
+          }
+        : requiresConfirmation(
+              name,
+              name.startsWith("shell_exec") ? { ...actionArgs, command: shellText(name, actionArgs) } : actionArgs,
+          );
     if (
         confirmCheck.needsConfirmation &&
         // The swarm gate stands in for this inside a swarm. A payment is refused there
         // outright, without checkConsent: recording an ask the owner never sees would let
         // an unrelated "ok" mid-run grant a sub-agent's confirmed retry.
         (currentSwarmRun()
-            ? isPaymentCall(name, actionArgs)
-            : checkConsent(consentKey(name, actionArgs), confirmed === true, {
-                  // Money: the yes must answer this very ask, not a later "ok" about something else.
-                  nextTurnOnly: isPaymentCall(name, actionArgs),
-              }) !== "granted")
+            ? isPaymentCall(name, actionArgs, moneyPress)
+            : checkConsent(
+                  consentKey(name, moneyPress ? { ...actionArgs, money_control: moneyPress } : actionArgs),
+                  confirmed === true,
+                  {
+                      // Money: the yes must answer this very ask, not a later "ok" about something else.
+                      nextTurnOnly: isPaymentCall(name, actionArgs, moneyPress),
+                  },
+              ) !== "granted")
     ) {
         console.log(`  ⚠️  ${name} needs the owner's OK first`);
         auditLog({
@@ -1023,7 +1157,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // record it: swarm_task tells the main agent to make it itself (isPaymentHold).
         const run = currentSwarmRun();
         if (run) {
-            const where = String(actionArgs.site ?? actionArgs.skill ?? "unknown site");
+            const where = String(actionArgs.site ?? actionArgs.skill ?? (moneyPress || "unknown site"));
             const amount = actionArgs.amount !== undefined ? ` for ${String(actionArgs.amount)}` : "";
             const summary = `${name} → ${where}${amount} (a payment or order can't be approved inside a swarm: do it yourself after the owner's OK)`;
             run.blocked.push({ step: currentSwarmStep()?.stepId, tool: name, summary });
@@ -1088,7 +1222,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             });
             return JSON.stringify({ error: reason, blocked_by_hook: true });
         }
-        if (pre.modifiedInput && vault) console.warn(`[TOOL] PreToolUse hook rewrite ignored: ${name} types a saved secret`);
+        if (pre.modifiedInput && vault)
+            console.warn(`[TOOL] PreToolUse hook rewrite ignored: ${name} types a saved secret`);
         else if (pre.modifiedInput) effectiveInput = pre.modifiedInput;
     } catch (err) {
         console.warn(`[TOOL] PreToolUse hook chain errored for ${name}: ${(err as Error).message}`);

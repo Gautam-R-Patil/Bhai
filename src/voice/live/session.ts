@@ -5,7 +5,7 @@
 // ── Live Voice Session — Main Orchestrator ───────
 
 import { EventEmitter } from "node:events";
-import { isUntrustedToolResult, wrapUntrustedToolResult } from "../../context-scrubber.js";
+import { fenceToolResult } from "../../context-scrubber.js";
 import type { LLMClient } from "../../llm.js";
 import { MODELS } from "../../llm.js";
 import { nativeVadAnyFrame16Khz } from "../../native/index.js";
@@ -234,12 +234,7 @@ export function looksLikeMidSentence(text: string): boolean {
 // accessibility tree, web_search results, browser_* page dumps) otherwise
 // balloon the next llm.chat input from ~30K to ~400K tokens and make every
 // subsequent turn 5-6s slower.
-const MAX_TOOL_RESULT_CHARS = Number(process.env.BHAI_VOICE_TOOL_RESULT_MAX) || 2000;
-/** Same untrusted-content fence the main agent puts on tool output (agent.ts). */
-function fenceToolResult(name: string, result: string): string {
-    if (process.env.BHAI_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(name)) return result;
-    return wrapUntrustedToolResult(name, result);
-}
+const MAX_TOOL_RESULT_CHARS = Number(process.env.ATLAS_VOICE_TOOL_RESULT_MAX) || 2000;
 
 function truncateToolResult(result: unknown): string {
     const s = typeof result === "string" ? result : JSON.stringify(result ?? {});

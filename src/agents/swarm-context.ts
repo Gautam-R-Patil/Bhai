@@ -63,12 +63,26 @@ export const runWideGrant = (run: SwarmRunContext | undefined): boolean => !!run
  * A payment refused inside a swarm. Unlike a gate hold, it is never approved by a
  * confirmed swarm_task re-run: the main agent makes it itself after the owner's OK.
  */
-/** Pays or places an order: the vault payment, or a site skill's checkout confirm. A swarm never does either. */
-export const isPaymentCall = (name: string, args: Record<string, unknown>): boolean =>
-    name === "vault_authorize_payment" || (name === "site_task" && args.action === "confirm");
-/** A hold recorded for a payment call (site_task is only ever held at confirm). */
+/** Raw browser presses executeTool judges for a money-word control (tools/index.ts browserMoneyPress). */
+export const MONEY_PRESS_TOOLS = new Set([
+    "browser_click",
+    "browser_click_at",
+    "browser_keyboard",
+    "browser_type",
+    "browser_multi_action",
+]);
+/**
+ * Pays or places an order: the vault payment, a site skill's checkout confirm, or
+ * a raw browser press on a money-word control (`moneyPress`, executeTool's verdict
+ * on the live page). A swarm never does any of them.
+ */
+export const isPaymentCall = (name: string, args: Record<string, unknown>, moneyPress = ""): boolean =>
+    name === "vault_authorize_payment" ||
+    (name === "site_task" && args.action === "confirm") ||
+    (MONEY_PRESS_TOOLS.has(name) && !!moneyPress);
+/** A hold recorded for a payment call (site_task is only ever held at confirm; a press tool only on a money control). */
 export const isPaymentHold = (b: { tool: string }): boolean =>
-    b.tool === "vault_authorize_payment" || b.tool === "site_task";
+    b.tool === "vault_authorize_payment" || b.tool === "site_task" || MONEY_PRESS_TOOLS.has(b.tool);
 
 /** Calls the gate has held back so far in the current step (0 outside a swarm). */
 export function stepBlockCount(): number {
@@ -111,8 +125,8 @@ export function swarmConsentKey(task: string): string {
 //   anything requiresConfirmation() flags (the main agent's gate: dangerous shell
 //             patterns, destructive hotkeys, wifi off, ...); in shell, not inside the
 //             arguments of a plain read/search command (`grep -rn shutdown src/`, see shellGated).
-// Not gated: generic browser and desktop input (clicks, typing, keys, run_js),
-// other shell commands, send_file / send_screenshot (they deliver
+// Not gated: generic browser and desktop input (clicks, typing, keys, run_js; a
+// browser press on a money-word control is a payment, see isPaymentCall), other shell commands, send_file / send_screenshot (they deliver
 // only to the owner's own chat), reads, research, navigation, code edits, builds.
 const ALWAYS = new Set([
     "whatsapp_send",

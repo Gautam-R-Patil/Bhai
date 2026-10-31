@@ -1358,16 +1358,12 @@ async function executeAndProcessToolCall(
     // Fence attacker-influenceable tool output (web/browser/MCP/research) so the
     // model treats it as data, not instructions (indirect prompt-injection
     // defense). Applied after offload/truncate so both the inline result and any
-    // disk-offload preview are covered. Disable with BHAI_NO_UNTRUSTED_WRAP=true.
-    if (process.env.BHAI_NO_UNTRUSTED_WRAP !== "true") {
-        try {
-            const { isUntrustedToolResult, wrapUntrustedToolResult } = await import("./context-scrubber.js");
-            if (isUntrustedToolResult(fnName)) {
-                result = wrapUntrustedToolResult(fnName, result);
-            }
-        } catch {
-            /* scrubber unavailable — leave result unfenced */
-        }
+    // disk-offload preview are covered. Disable with ATLAS_NO_UNTRUSTED_WRAP=true.
+    try {
+        const { fenceToolResult } = await import("./context-scrubber.js");
+        result = fenceToolResult(fnName, result);
+    } catch {
+        /* scrubber unavailable — leave result unfenced */
     }
 
     const isBrowser = isBrowserTool(fnName);

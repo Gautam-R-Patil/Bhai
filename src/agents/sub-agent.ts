@@ -9,7 +9,7 @@
 
 import path from "node:path";
 import { takeStuckMarker } from "../channel-text.js";
-import { isUntrustedToolResult, wrapUntrustedToolResult } from "../context-scrubber.js";
+import { fenceToolResult } from "../context-scrubber.js";
 import type { ChatCompletionMessageParam, ChatCompletionTool, LLMClient } from "../llm.js";
 import { selectForSubAgent } from "../model-router.js";
 import { executeTool, getToolSchemasByNames } from "../tools/index.js";
@@ -77,16 +77,6 @@ const MAX_CONTEXT_MESSAGES = 20; // Keep last 20 messages (10 exchanges)
 const STUCK_WINDOW_SIZE = 5; // Track last N tool calls
 const STUCK_WARNING_THRESHOLD = 3; // Inject warning after N consecutive identical calls
 const STUCK_CRITICAL_THRESHOLD = 5; // Force-exit after N consecutive identical calls
-
-/**
- * Fence attacker-influenceable tool output the same way the main agent does
- * (agent.ts executeToolCall), so web/tool text reads as data, not instructions.
- * Honors BHAI_NO_UNTRUSTED_WRAP=true.
- */
-function fenceToolResult(fnName: string, result: string): string {
-    if (process.env.BHAI_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(fnName)) return result;
-    return wrapUntrustedToolResult(fnName, result);
-}
 
 /**
  * Fast signature for tool-call loop detection. Folds in a cheap fingerprint of

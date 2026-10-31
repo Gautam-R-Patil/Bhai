@@ -32,10 +32,12 @@ exports.step = (phase, { snapshot: s, input = {} }, lib) => {
     if (phase === "select") {
         if (path === "/cart") {
             if (!el("captcha")?.checked) return { actions: [{ op: "click", target: { sel: "#captcha" } }] };
-            const line = (/(.+₹\\s*[\\d,]+)/.exec(s.text) || [])[1] || "your order";
+            // The line's own elements, never the first ₹ on the page (a banner or a name can carry one).
+            const tid = (t) => s.elements.find((e) => e.testid === t);
+            const line = tid("cart-line")?.text || "your order";
             const submit = { op: "click", target: { sel: "#checkout", text: "Place order" },
                 ...exp({ expect: { placed: { url: "/(done|otp)" }, turned_down: { sel: "[role=alert]" } } }) };
-            return { confirm: { summary: line.trim(), amount: lib.price(s.text) || 0, submit } };
+            return { confirm: { summary: line.trim(), amount: lib.price(tid("total")?.text) || 0, submit } };
         }
         const card = cards.find((e) => e.dataId === input.id);
         if (card && soldOut(card)) return { refused: { field: "id", available: cards.filter((e) => !soldOut(e)).map(label) } };
