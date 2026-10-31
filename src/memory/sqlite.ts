@@ -1118,6 +1118,9 @@ export function searchSessionMessages(query: string, limit = 10): SessionMessage
                  FROM ${ftsTable} fts
                  JOIN conversation_messages cm ON cm.id = fts.rowid
                  WHERE ${ftsTable} MATCH ?
+                   -- What was said, not the internal notes and raw tool output stored beside it: those
+                   -- filled the top 10 for "which Wikipedia articles did I ask about", hiding the asks.
+                   AND cm.role IN ('user', 'assistant')
                  ORDER BY rank
                  LIMIT ?`,
             )
@@ -1157,6 +1160,7 @@ export function browseRecentMessages(limit = 20): SessionMessageHit[] {
             .prepare(
                 `SELECT conversation_id, session_id, role, content, created_at
                  FROM conversation_messages
+                 WHERE role IN ('user', 'assistant')
                  ORDER BY created_at DESC, id DESC
                  LIMIT ?`,
             )
