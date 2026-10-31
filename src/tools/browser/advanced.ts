@@ -8,6 +8,7 @@
 import { getResourceLimits } from "../../utils/system-resources.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { agentCursor, withAgentUIHidden } from "./agent-cursor.js";
+import { getCurrentMode } from "./browser-backend.js";
 import {
     buildElementsText,
     getActivePage,
@@ -104,7 +105,11 @@ export const browserParallelTabs: ToolDefinition = {
             const closeNewTabs = (input.close_new_tabs as boolean) || false;
 
             // ── Resource-aware concurrency ────────────
-            const { maxParallelTabs, reason: resourceInfo } = getResourceLimits();
+            const limits = getResourceLimits();
+            const resourceInfo = limits.reason;
+            // The owner's Chrome has one page proxy (Bhai's tab): concurrent gotos on it race and
+            // every result reads whichever page loaded last. Run those tabs one after another.
+            const maxParallelTabs = getCurrentMode() === "chrome" ? 1 : limits.maxParallelTabs;
             const existingTabCount = context.pages().length;
 
             console.log(
