@@ -53,6 +53,21 @@ it("keeps an extension that sends its own pong every 20 s, without pinging it", 
     await vi.waitFor(() => expect(bridge.isExtensionConnected()).toBe(false));
 });
 
+it("counts a command the bridge timed out, not a page-ready probe's (it expects to lose its page)", async () => {
+    const { ws } = await connect();
+    vi.useRealTimers();
+    const before = bridge.bridgeCommandFailures().count;
+    await expect(bridge.sendBridgeCommand("execute_js", { code: "1" }, 30, true)).rejects.toThrow(/timed out/);
+    expect(bridge.bridgeCommandFailures().count).toBe(before);
+    await expect(bridge.sendBridgeCommand("click_at", { x: 1, y: 1 }, 30)).rejects.toThrow(/timed out/);
+    expect(bridge.bridgeCommandFailures().count).toBe(before + 1);
+    expect(bridge.bridgeCommandFailures().recent.at(-1)?.type).toBe("click_at");
+    const closed = new Promise((r) => ws.once("close", r));
+    ws.close();
+    await closed;
+    await vi.waitFor(() => expect(bridge.isExtensionConnected()).toBe(false));
+});
+
 it("drops an extension that stops answering pings", async () => {
     const { ws } = await connect();
     // This client never sends a pong.

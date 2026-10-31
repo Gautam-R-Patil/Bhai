@@ -45,9 +45,12 @@ export async function waitBridgeReady(maxMs = 3000, quietMs = 300, since = 0): P
     let errors = 0;
     while (Date.now() < deadline) {
         const left = deadline - Date.now();
-        const r = await sendBridgeCommand("execute_js", { code: readyJs(left, quietMs, since) }, left + 2000).catch(
-            () => null,
-        );
+        const r = await sendBridgeCommand(
+            "execute_js",
+            { code: readyJs(left, quietMs, since) },
+            left + 2000,
+            true, // a navigation mid-wait fails this probe: expected, not a bridge failure
+        ).catch(() => null);
         if (r === "ready" || r === "stale") return; // stale = settled on the same document
         if (++errors >= 3) return; // the bridge keeps failing: don't spin, let the caller carry on
         await new Promise((res) => setTimeout(res, 150)); // poll
@@ -517,6 +520,20 @@ export class ChromeLocatorProxy {
 
     async type(text: string): Promise<void> {
         await this.fill(text);
+    }
+
+    /** Playwright's waitFor (state "visible"): until the element is shown, or throws after `timeout`. */
+    async waitFor(opts?: { timeout?: number }): Promise<void> {
+        const timeout = opts?.timeout ?? 5000;
+        const deadline = Date.now() + timeout;
+        for (;;) {
+            const shown = await this.run<boolean>(
+                "if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;",
+            ).catch(() => false); // mid-navigation: not yet
+            if (shown) return;
+            if (Date.now() >= deadline) throw new Error(`waitFor: timeout ${timeout}ms exceeded (${this.selector})`);
+            await new Promise((r) => setTimeout(r, 100)); // poll
+        }
     }
 
     async count(): Promise<number> {

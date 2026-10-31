@@ -785,10 +785,25 @@ function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, aut
 
 // ── Send Command to Extension ────────────────
 
+// Commands the bridge itself failed (timed out, queue full, send failed), for
+// diagnostics and the bridge loop test: callers often swallow these. Not counted:
+// a page's own error (success:false) and a `tolerated` command (a page-ready
+// probe, which expects to lose its document mid-navigation and tries again).
+let failureCount = 0;
+const recentFailures: { type: string; error: string }[] = [];
+const bridgeFailed = (type: string, error: string, tolerated: boolean) => {
+    if (tolerated) return;
+    failureCount++;
+    recentFailures.push({ type, error });
+    if (recentFailures.length > 20) recentFailures.shift();
+};
+export const bridgeCommandFailures = () => ({ count: failureCount, recent: [...recentFailures] });
+
 export async function sendBridgeCommand(
     type: string,
     payload: Record<string, unknown> = {},
     timeoutMs?: number,
+    tolerated = false,
 ): Promise<unknown> {
     if (!extensionSocket || extensionSocket.readyState !== 1 || !authenticated) {
         throw new Error("Chrome extension not connected");
@@ -821,6 +836,7 @@ export async function sendBridgeCommand(
         // most are 2-30 s).
         if (pendingRequests.size >= MAX_PENDING_REQUESTS) {
             if (native) native.recordBridgeError();
+            bridgeFailed(type, "queue full", tolerated);
             reject(
                 new Error(
                     `Chrome bridge pending-request queue full (${pendingRequests.size} / ${MAX_PENDING_REQUESTS}) — ` +
@@ -834,6 +850,7 @@ export async function sendBridgeCommand(
         const timeout = setTimeout(() => {
             pendingRequests.delete(id);
             if (native) native.recordBridgeError();
+            bridgeFailed(type, `timed out after ${effectiveTimeout}ms`, tolerated);
             reject(new Error(`Chrome bridge command "${type}" timed out after ${effectiveTimeout}ms`));
         }, effectiveTimeout);
 
@@ -844,6 +861,7 @@ export async function sendBridgeCommand(
         } catch (err) {
             pendingRequests.delete(id);
             clearTimeout(timeout);
+            bridgeFailed(type, `send failed: ${(err as Error).message}`, tolerated);
             reject(new Error(`Failed to send command: ${(err as Error).message}`));
         }
     });
