@@ -22,12 +22,13 @@ export function rankSource(
         ? Math.min(1, (findings.length / (content.length / 1000)) * 0.5)
         : 0;
 
-    // Recency: detect year in content
+    // Recency: the latest year the page mentions, ignoring future ones (plans, forecasts)
     let recencyScore = 0.3; // default: unknown date
-    const yearMatch = content.match(/\b(202[4-6])\b/);
-    if (yearMatch) {
-        const year = parseInt(yearMatch[1]);
-        recencyScore = year >= 2026 ? 1.0 : year >= 2025 ? 0.8 : 0.6;
+    const currentYear = new Date().getFullYear();
+    const years = [...content.matchAll(/\b(20\d\d)\b/g)].map((m) => Number(m[1])).filter((y) => y <= currentYear);
+    if (years.length > 0) {
+        const age = currentYear - Math.max(...years);
+        recencyScore = age <= 0 ? 1.0 : age === 1 ? 0.8 : age === 2 ? 0.6 : 0.4;
     }
 
     // Citation score (academic papers)
