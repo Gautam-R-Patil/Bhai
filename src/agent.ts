@@ -3586,9 +3586,19 @@ PLAN:`,
         // ── Tool Allowlist Filtering ──
         // When a toolAllowlist is provided, restrict the tools sent to the LLM
         // to only those in the list. This enforces channel-level tool restrictions.
+        // An allowlist (contacts, groups, guests) is a handful of tools: offer all of them, not the
+        // routed set cut down to it. The router's chat lane or a browser pick left a contact's turn
+        // with no ask_owner, so "I'll pass it on" went nowhere.
         let finalTools = tools;
         if (toolAllowlist !== undefined) {
-            finalTools = tools.filter((t) => isToolAllowed(toolAllowlist, t.function.name));
+            const { getMCPToolSchemas } = await import("./mcp/client.js");
+            const { inContactRun } = await import("./tools/ask-owner.js");
+            finalTools = [...getToolSchemasByNames([...toolAllowlist, "get_current_time"]), ...getMCPToolSchemas()].filter(
+                (t) =>
+                    isToolAllowed(toolAllowlist, t.function.name) &&
+                    // ask_owner only reaches the owner from a WhatsApp contact's chat; elsewhere it would always fail.
+                    (t.function.name !== "ask_owner" || inContactRun()),
+            );
         }
 
         // ── Plan/Spec Mode Gating ──

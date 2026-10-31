@@ -23,6 +23,10 @@ export interface PendingOwnerQuery {
     question: string;
     askedAt: number;
     ownerJid: string;
+    /** What Bhai does, as the owner, if the owner says yes ("order Kunal an Amul Lassi on Zepto"). */
+    action?: string;
+    /** The notice reached the owner. */
+    delivered?: boolean;
 }
 
 // ── State ─────────────────────────────────────
@@ -53,7 +57,8 @@ function saveQueries(): void {
     }
 }
 
-type Sender = (jid: string, text: string) => Promise<void>;
+/** Resolves false when the notice couldn't be sent (not connected, rate limited). */
+type Sender = (jid: string, text: string) => Promise<boolean | void>;
 let _sender: Sender | null = null;
 
 // Set once at startup from whatsapp.ts
@@ -61,7 +66,13 @@ export function registerOwnerRelaySender(fn: Sender): void {
     _sender = fn;
 }
 
-type RelayContact = { contactJid: string; contactName: string; ownerJid: string };
+type RelayContact = {
+    contactJid: string;
+    contactName: string;
+    ownerJid: string;
+    ownerName?: string;
+    relation?: string;
+};
 const relayContact = new AsyncLocalStorage<RelayContact>();
 
 /** Run `fn` (a contact's agent turn) with ask_owner knowing which contact it serves. */
@@ -103,6 +114,34 @@ export function resolveQueryByContactName(ownerJid: string, nameHint: string): P
     return resolveQuery(match.id);
 }
 
+/**
+ * One plain line that WhatsApp shows exactly as written: Bhai's sending rewrites markdown (bullets,
+ * bold, links) and drops "snake_case: value" lines, and a swipe-reply quotes what was shown, so
+ * the notice's request must survive that unchanged to be found again.
+ */
+export function plainLine(raw: string, max = 300): string {
+    return raw
+        .replace(/^\s*([-*•]|\d+\.)\s+/gm, "")
+        .replace(/[*~`#]/g, "")
+        .replace(/[_[\]<>]/g, " ")
+        .replace(/\s*\n+\s*/g, "; ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, max);
+}
+
+/**
+ * The action as the owner will see it and Bhai will run it: one plain line. Anything the
+ * notice's sending would change or hide (markup, brackets, tool-like "x: y" lines) means it
+ * isn't run as written, so the request goes to the owner without an action to approve.
+ */
+export function safeAction(raw: unknown): string | undefined {
+    if (typeof raw !== "string") return undefined;
+    const one = raw.replace(/\s+/g, " ").trim().slice(0, 300);
+    if (!one || /[[\]{}<>=`]|\b[a-z]+_[a-z_]+\s*:/.test(one)) return undefined;
+    return one;
+}
+
 // ── Tool definition ──────────────────────────
 
 export const askOwnerTool: ToolDefinition = {
@@ -111,23 +150,29 @@ export const askOwnerTool: ToolDefinition = {
         function: {
             name: "ask_owner",
             description:
-                "Relay a question to the owner when you cannot answer it yourself. Use when: " +
-                "(1) a tool fails and you need the owner's input to answer the contact, " +
-                "(2) you need to know the owner's personal availability/preferences, " +
-                "(3) the contact's question requires the owner's direct confirmation. " +
-                "The owner will be notified on WhatsApp. You MUST also provide a polite holding reply to send to the contact immediately.",
+                "Reach the owner (the person you work for) from this chat: pass on a message, ask them something, " +
+                "or ask their OK for something you'd do for this person. Use it whenever the person wants something " +
+                "that is the owner's to decide or do (plans, favours, orders, money, anything on the owner's behalf, " +
+                "using the owner's computer or accounts), when they leave a message for the owner, or when you can't " +
+                "answer without the owner. Never say you passed something on without calling this. The owner answers " +
+                "on WhatsApp and you pass the answer back; if `action` is set and the owner says yes, it gets done for real.\n",
             parameters: {
                 type: "object",
                 properties: {
                     question: {
                         type: "string",
                         description:
-                            "The question to relay to the owner, written as if you are asking the owner on the contact's behalf.",
+                            "What the owner sees, in plain words, as you'd tell them: the message, the question, or the request (who wants what, and any details given).",
                     },
                     contact_reply: {
                         type: "string",
                         description:
-                            "What to tell the contact right now while waiting for the owner's reply. Should be friendly and set expectations (e.g. 'Let me check with him and get back to you!').",
+                            'What to tell this person right now, warmly, e.g. "Let me check with him, I\'ll get back to you!"',
+                    },
+                    action: {
+                        type: "string",
+                        description:
+                            'Only for a request the owner can approve: exactly what to do if they say yes (e.g. "Order one Amul Lassi on Zepto for Kunal"). Leave out for messages and questions.',
                     },
                 },
                 required: ["question", "contact_reply"],
@@ -136,7 +181,7 @@ export const askOwnerTool: ToolDefinition = {
     },
 
     async handler(input) {
-        const question = (input.question as string)?.trim();
+        const question = typeof input.question === "string" ? plainLine(input.question) : "";
         const contactReply =
             (input.contact_reply as string)?.trim() || "Let me check with him and get back to you shortly!";
 
@@ -146,34 +191,60 @@ export const askOwnerTool: ToolDefinition = {
         if (!ctx || !_sender) {
             return JSON.stringify({ error: "Relay not available in this context." });
         }
+        const contactName = plainLine(ctx.contactName, 60) || "Someone";
 
+        const action = safeAction(input.action);
+        // Asked again (the same thing, same person) and the owner has it: no second notice.
+        // If the first notice never went out, this one replaces it.
+        const same = queries().find((q) => q.contactJid === ctx.contactJid && q.question === question);
+        if (same?.delivered) return JSON.stringify({ success: true, already_asked: true, contact_reply: contactReply });
+        if (same) resolveQuery(same.id);
         const id = `relay_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         queries().push({
             id,
             contactJid: ctx.contactJid,
-            contactName: ctx.contactName,
+            contactName: contactName,
             question,
             askedAt: Date.now(),
             ownerJid: ctx.ownerJid,
+            ...(action ? { action } : {}),
         });
         saveQueries();
 
-        // Build owner notification
+        // Build owner notification: who (and who they are to the owner), then what they want.
         const ownerPending = getPendingQueriesForOwner(ctx.ownerJid);
-        let ownerMsg = `❓ *${ctx.contactName}* wants to know:\n"${question}"`;
+        const who =
+            ctx.relation && ctx.relation.length <= 40
+                ? `*${contactName}* (${plainLine(ctx.relation, 40)})`
+                : `*${contactName}*`;
+        let ownerMsg = action
+            ? `🙋 ${who} asks:\n"${question}"\n\nIf you say yes, I'll: ${action}\nSwipe-reply *yes* or *no* (or anything you want me to tell them).`
+            : `💬 ${who}:\n"${question}"\n\nSwipe-reply to answer them.`;
         if (ownerPending.length > 1) {
             ownerMsg +=
                 `\n\n_${ownerPending.length} questions pending:_\n` +
                 ownerPending.map((q, i) => `${i + 1}. [${q.contactName}] "${q.question}"`).join("\n");
-            ownerMsg += `\n\nReply:\n• \`reply to <name>: <answer>\` — answer a specific contact\n• \`reply <answer>\` — answer the latest (${ctx.contactName})`;
-        } else {
-            ownerMsg += `\n\nReply with \`reply <answer>\` to respond to them.`;
+            ownerMsg += `\n\nSwipe-reply on a question to answer it (or send \`reply to <name>: <answer>\`).`;
         }
 
+        let delivered = false;
         try {
-            await _sender(ctx.ownerJid, ownerMsg);
+            delivered = (await _sender(ctx.ownerJid, ownerMsg)) !== false;
         } catch {
-            // Non-fatal — query is still queued
+            delivered = false;
+        }
+        const filed = queries().find((q) => q.id === id);
+        if (filed && delivered) {
+            filed.delivered = true;
+            saveQueries();
+        }
+        if (!delivered) {
+            // Kept for later, but never claim it reached them.
+            return JSON.stringify({
+                success: false,
+                queued: true,
+                error: "Couldn't reach the owner right now. Tell the person plainly you couldn't pass it on yet; don't say you did.",
+            });
         }
 
         return JSON.stringify({ success: true, contact_reply: contactReply });

@@ -628,6 +628,59 @@ export function noticeVerdict(reply: string): { allow: boolean; context: string 
     return null;
 }
 
+/** The name the owner gives someone while letting them in: "his name is Kunal", "she's called Riya". */
+export function nameFromContext(text: string): string | undefined {
+    const m =
+        text.match(/\b(?:his|her|their)\s+name\s+is\s+([A-Za-z][\w'-]{1,30})/i) ||
+        text.match(/\b(?:he|she|they)(?:'s|\s+is|\s+are)\s+called\s+([A-Za-z][\w'-]{1,30})/i);
+    // ("I call her Sunni" is the owner's own nickname for them, not their name.)
+    if (!m || NOT_NAMES.has(m[1].toLowerCase())) return undefined;
+    return m[1][0].toUpperCase() + m[1].slice(1);
+}
+
+const NOT_NAMES = new Set(["also", "not", "in", "unknown", "something", "the", "a", "my", "your", "same", "secret", "private"]);
+
+/**
+ * Which pending question a notice is about. A notice can list every open question under its
+ * own ("_N questions pending:_"), so only its head counts; a pending-list message matches nothing.
+ */
+export function queryForNotice<Q extends { question: string; contactName: string }>(
+    pending: Q[],
+    notice: string,
+): Q | undefined {
+    // Only Bhai's own request notice ("🙋 *Kunal* asks:" / "💬 *Kunal*:") answers a request; a
+    // list, a hint or a summary that quotes it never does.
+    if (!/^(🙋|💬) \*/u.test(notice.trim())) return undefined;
+    const head = notice.split("\n\n_")[0];
+    const hits = pending.filter((q) => head.includes(`*${q.contactName}*`) && head.includes(`"${q.question}"`));
+    return hits.length === 1 ? hits[0] : undefined;
+}
+
+/** Trailing punctuation and emoji off, for reading a short reply. */
+const bare = (t: string) => t.trim().replace(/[\s.!,🙏👍✅👌]+$/u, "").trim();
+
+/**
+ * A clear yes, and nothing else: what it takes to run something a contact asked for.
+ * "let me think", "ok but not today" or "reply later" are not a yes.
+ */
+export function isClearYes(answer: string): boolean {
+    if (/^[\s👍✅👌]+$/u.test(answer) && answer.trim()) return true; // just a thumbs-up
+    return /^(yes|yeah|yep|yup|haan|han|ha|haa|ji|ji haan|haan ji|ok|okay|sure|go ahead|do it|approve|approved)( (please|go ahead|do it|sure|order it|book it|send it|kar do|karo|please do|ji))?$/i.test(
+        bare(answer),
+    );
+}
+
+
+/** A plain no. */
+export function isClearNo(answer: string): boolean {
+    return /^(no|nope|nah|nahi|na|don'?t|not now|no thanks)$/i.test(bare(answer));
+}
+
+/** A standalone yes or no: the only reply that may answer a notice without a swipe-reply. */
+export function isBareYesNo(text: string): boolean {
+    return isClearYes(text) || isClearNo(text);
+}
+
 /** Someone waiting wrote again: keep it, so the reply after "allow" answers all of it. */
 export function addToPendingRequest(request: ContactRequest, text: string): void {
     request.firstMessage = `${request.firstMessage}\n${text}`.slice(-2000);
