@@ -19,4 +19,15 @@ function panelLinkTarget(url) {
     }
 }
 
-module.exports = { panelLinkTarget };
+/** A link in a chat reply (any web page): the URL to hand to the OS browser, or null. */
+function chatLinkTarget(url) {
+    try {
+        const u = new URL(url);
+        if ((u.protocol !== "https:" && u.protocol !== "http:") || u.username || u.password) return null;
+        return u.href;
+    } catch {
+        return null;
+    }
+}
+
+module.exports = { panelLinkTarget, chatLinkTarget };

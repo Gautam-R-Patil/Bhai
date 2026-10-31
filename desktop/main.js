@@ -1816,8 +1816,10 @@ function startLocalServer() {
 const TRUSTED_LOCAL_ORIGINS = new Set([new URL(OVERLAY_URL).origin]);
 
 // target=_blank links in the panel/wizard: allowed sites open in the default browser.
-function openPanelLink(url) {
-    const target = require("./panel-links").panelLinkTarget(url);
+// Chat replies (the chat bar) link anywhere on the web, so any http(s) link opens.
+function openPanelLink(url, anyWebLink = false) {
+    const links = require("./panel-links");
+    const target = anyWebLink ? links.chatLinkTarget(url) : links.panelLinkTarget(url);
     if (target) shell.openExternal(target).catch(() => {});
     else console.warn(`[Window] Blocked link to ${url}`);
 }
@@ -1826,7 +1828,7 @@ function hardenBrowserWindow(win, opts = {}) {
     const allowed = Array.isArray(opts.allowedNavigateOrigins) ? opts.allowedNavigateOrigins : [];
     const allowLocal = opts.allowLocal !== false; // file:// + http://127.0.0.1 by default
     win.webContents.setWindowOpenHandler(({ url }) => {
-        if (opts.externalLinks) openPanelLink(url);
+        if (opts.externalLinks || opts.webLinks) openPanelLink(url, !!opts.webLinks);
         return { action: "deny" };
     });
     // Local means our own files and our own servers (the bot's page, the panel's server),
@@ -2254,7 +2256,8 @@ function createOverlayWindow() {
 
     // F4: deny window.open() and constrain navigation. Overlay loads from
     // 127.0.0.1 (the bot's overlay server), so allowLocal=true is sufficient.
-    hardenBrowserWindow(overlayWindow);
+    // Links in replies open in the default browser.
+    hardenBrowserWindow(overlayWindow, { webLinks: true });
 
     // macOS: show on all Spaces and in fullscreen
     if (process.platform === "darwin") {
