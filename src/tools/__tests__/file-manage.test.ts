@@ -77,6 +77,24 @@ describe("file_manage", () => {
         expect(existsSync(join(dir, "count.txt"))).toBe(false);
     });
 
+    it("won't copy or move a folder that holds a secret store", async () => {
+        const parent = join(dir, "cfg");
+        mkdirSync(join(parent, "gh"), { recursive: true });
+        writeFileSync(join(parent, "gh", "hosts.yml"), "oauth_token: x");
+        const prev = process.env.BHAI_USER_DATA_DIR;
+        process.env.BHAI_USER_DATA_DIR = join(parent, "gh");
+        try {
+            for (const action of ["copy", "move"]) {
+                const r = await run({ action, paths: [parent], destination: join(dir, "c") });
+                expect(r.error).toMatch(/contains/);
+            }
+            expect(existsSync(join(dir, "c"))).toBe(false);
+        } finally {
+            if (prev === undefined) delete process.env.BHAI_USER_DATA_DIR;
+            else process.env.BHAI_USER_DATA_DIR = prev;
+        }
+    });
+
     // From the media eval: "convert photo.png to a JPG" done as a rename.
     it("won't pass a rename off as a conversion", async () => {
         writeFileSync(join(dir, "pic.png"), "png bytes");

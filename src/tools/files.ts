@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { getPathBlockedReason, isPathAllowed, isProtectedPath } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
-import { isSensitivePath } from "../security/sensitive-paths.js";
+import { isSensitivePath, outboundFileRefusal } from "../security/sensitive-paths.js";
 import { forget as forgetRead } from "./coding/read-registry.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
@@ -129,8 +129,8 @@ const CONVERTIBLE = new Set(["png", "jpg", "jpeg", "heic", "tiff", "tif", "gif",
 export function manageRefusal(p: string, source: boolean): string | undefined {
     if (!isPathAllowed(p)) return getPathBlockedReason(p) ?? `Path not allowed: ${p}`;
     if (isProtectedPath(p)) return `"${p}" is part of Bhai's own code and is write-protected.`;
-    const sensitive = source ? isSensitivePath(p) : { denied: false, reason: "" };
-    return sensitive.denied ? `Refused: ${sensitive.reason}` : undefined;
+    // A folder that holds a secret store counts too: copying ~/.config put gh's token at a new path no rule covers.
+    return (source && outboundFileRefusal(p)) || undefined;
 }
 
 export const fileManage: ToolDefinition = {
