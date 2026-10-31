@@ -52,6 +52,10 @@ interface WttrResponse {
 
 // ── Helpers ───────────────────────────────────
 
+// wttr.in often hangs instead of failing. Three of these (wttr, geocode, Open-Meteo) must fit the 30s tool cap,
+// or the cap kills the call before the fallback runs.
+const FETCH_TIMEOUT_MS = 8_000;
+
 function resolveLocation(location: string): string {
     if (location === "auto" || location === "") {
         const loc = getLocation();
@@ -66,6 +70,7 @@ async function fetchWttr(location: string): Promise<WttrResponse> {
     const url = `https://wttr.in/${loc}?format=j1`;
     const res = await fetch(url, {
         headers: { "User-Agent": "bhai-agent/0.2.0" },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`wttr.in returned ${res.status}`);
     return (await res.json()) as WttrResponse;
@@ -82,6 +87,7 @@ async function fallbackCoords(location: string): Promise<{ lat: number; lon: num
     if (m) return { lat: Number(m[1]), lon: Number(m[2]), name: location };
     const res = await fetch(
         `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1`,
+        { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
     );
     if (!res.ok) throw new Error(`Open-Meteo geocoding returned ${res.status}`);
     const place = ((await res.json()) as { results?: { latitude: number; longitude: number; name: string; country?: string }[] })
@@ -97,7 +103,7 @@ async function fallbackCoords(location: string): Promise<{ lat: number; lon: num
 async function fetchOpenMeteoFallback(location: string): Promise<Record<string, unknown>> {
     const { lat, lon, name } = await fallbackCoords(location);
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`Open-Meteo returned ${res.status}`);
     const data = (await res.json()) as {
         current_weather: {

@@ -3,7 +3,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { dayLabel, weatherTool } from "../weather.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+});
 
 it("current weather includes today's high, low and rain chance", async () => {
     const hour = (chanceofrain: string) => ({ time: "0", tempC: "20", tempF: "68", chanceofrain, chanceofsnow: "0", weatherDesc: [{ value: "Sunny" }] });
@@ -33,6 +36,22 @@ it("the Open-Meteo fallback answers for the city asked about, not the owner's lo
     expect(urls.at(-1)).toContain("latitude=51.5&longitude=-0.12");
     expect(r).toMatchObject({ success: true, location: "London, United Kingdom", temperature_c: 11 });
 });
+
+it("a stalled wttr.in times out and reaches the fallback", async () => {
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+        const c = new AbortController();
+        setTimeout(() => c.abort(), 10);
+        return c.signal;
+    });
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+        if (url.includes("wttr.in")) {
+            return new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ current_weather: { temperature: 24, windspeed: 5, winddirection: 90, weathercode: 1 } })));
+    }));
+    const r = JSON.parse(String(await weatherTool.handler({ action: "current", location: "19.07,72.88" })));
+    expect(r).toMatchObject({ success: true, temperature_c: 24, source: "open-meteo-fallback" });
+}, 2000);
 
 it("forecast days say today, tomorrow or the weekday", () => {
     expect(dayLabel("2026-10-31", "2026-10-31")).toBe("today");
