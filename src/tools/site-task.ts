@@ -80,6 +80,11 @@ const REPAIR_NEXT =
 // ponytail: in memory only; a restart mid-wait drops it (the owner starts again).
 const HUMAN_CHECK = "human_check";
 let humanCheck: { phase: Phase; input?: Record<string, unknown> } | null = null;
+/** Tests: forget the task in memory (its checkpoint is the caller's to remove). */
+export function _resetSiteTask(): void {
+    current = null;
+    humanCheck = null;
+}
 const HANDOFF =
     "The site has a step only the owner can finish (they were asked and it's still open). Tell them in one line.";
 
@@ -136,7 +141,14 @@ async function run(input: Record<string, unknown>): Promise<string> {
         const page = await getActivePage();
         // The owner's Stop (tools/index.ts STOPPABLE_TOOLS): the task ends at once.
         const signal = input._signal as AbortSignal | undefined;
-        const base = pageDriver(page, 5000, () => getActivePage(), signal); // a closed tab is reopened
+        // A closed tab is reopened, and goes back to its last page only while no order may exist.
+        const base = pageDriver(
+            page,
+            5000,
+            () => getActivePage(),
+            signal,
+            () => !!current?.commit,
+        );
         // The skill never sees a CAPTCHA page (it must never click one): the pipeline clears it first.
         const driver: PageDriver = {
             ...base,

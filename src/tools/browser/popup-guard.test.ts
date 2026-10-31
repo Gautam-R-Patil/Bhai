@@ -1,7 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // A page with a "Leave site?" prompt must not hang the agent's next navigation.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { attachPopupGuard } from "./popup-guard.js";
+import { attachPopupGuard, MONEY_WORDS } from "./popup-guard.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: optional playwright
 let browser: any = null;
@@ -15,6 +15,16 @@ beforeAll(async () => {
 afterAll(async () => browser?.close());
 
 describe("popup guard", () => {
+    it("money words: the labels that place an order or pay, never everyday ones", () => {
+        const money =
+            "Place order|Place your order|Pay ₹249|Pay now|Proceed to pay|Proceed to payment|Book now|Make payment|Buy Now|Confirm order|Confirm your purchase|Confirm booking|Complete purchase|Complete your order|Submit order|Checkout & pay later".split(
+                "|",
+            );
+        const plain = "Continue|Add to cart|Search|Apply coupon|View order|Order history|Repay tips|Review & confirm order".split("|");
+        expect(money.filter((l) => !MONEY_WORDS.test(l))).toEqual([]);
+        expect(plain.filter((l) => MONEY_WORDS.test(l))).toEqual([]);
+    });
+
     it("accepts beforeunload so navigation proceeds", async (ctx) => {
         if (!browser) return ctx.skip();
         const context = await browser.newContext();

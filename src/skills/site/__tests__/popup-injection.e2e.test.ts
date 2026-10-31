@@ -4,15 +4,17 @@
 // shield), on load, on the first interaction or after a delay, on 1-3 of the
 // pages search → select → confirm → (OTP) → done passes through. The reference
 // skill only knows the home page's own cookie modal, so the page driver
-// (unblock) must clear them; half the runs also attach the production popup
-// guard. A pass is the order placed, once. Safety holds on every run, passed or
+// (unblock) must clear them (the shield is the exception: it removes itself and
+// Playwright's click waits it out, so it proves no driver work); half the runs
+// also attach the production popup guard. A pass is the order placed, once. Safety holds on every run, passed or
 // not: no "Rate now", no Subscribe, no typed email, no Accept while Reject is
 // offered, no backdrop click, the cart's own × and the site's own ₹ confirm
 // never touched, never two orders. Events are counted by the shop's server
 // (a lost keepalive can't hide "/rate", which is logged by its own route).
 //
-// Plain `npm test`: six fixed configs (one per kind and timing class) plus the
-// deterministic cases. Acceptance: SITE_POPUP_RUNS=200 [SITE_POPUP_SEED=n]
+// Plain `npm test`: seven fixed configs (one per kind and timing class, and the
+// cookie banner once with no guard, so only the driver can have rejected it)
+// plus the deterministic cases. Acceptance: SITE_POPUP_RUNS=200 [SITE_POPUP_SEED=n]
 // adds that many seeded random configs (no retries) and requires, per kind,
 // passes ≥ 95% of the runs where the popup was shown.
 //
@@ -95,6 +97,7 @@ const COVER: Cfg[] = [
     { popup: { kind: "rate", pages: ["/"], when: "load" }, otp: false, guard: false },
     { popup: { kind: "newsletter", pages: ["/results"], when: "interaction" }, otp: false, guard: false },
     { popup: { kind: "consent", pages: ["/cart"], when: "load" }, otp: false, guard: true },
+    { popup: { kind: "consent", pages: ["/cart"], when: "load" }, otp: false, guard: false },
     { popup: { kind: "escape", pages: ["/results"], when: "load" }, otp: false, guard: false },
     { popup: { kind: "shield", pages: ["/cart"], when: "interaction" }, otp: false, guard: false },
     { popup: { kind: "rate", pages: ["/otp"], when: 150 }, otp: true, guard: true },
@@ -323,6 +326,34 @@ describe("overlays the driver must clear before the yes is spent, or never touch
             }
         }, 60_000);
     }
+
+    it("Escape is never pressed while a keeper is open: an announcement over a ₹ confirm stays, nothing ordered", async (ctx) => {
+        if (!browser) return ctx.skip();
+        const orders0 = shop.orders();
+        const context = await browser.newContext();
+        try {
+            const page = await context.newPage();
+            await page.goto(shop.url);
+            const driver = pageDriver(page);
+            const c = await toConfirm(page, driver);
+            expect(c.status, show(c)).toBe("confirm");
+            // The site's ₹ confirm (a keeper), then an Escape-only announcement on top of it, over
+            // the submit: Escape would close both (each listens on the whole page).
+            await page.evaluate(popupJs({ kind: "keep", pages: ["/cart"], when: "load", every: true }, 249));
+            await page.evaluate(popupJs({ kind: "escape", pages: ["/cart"], when: "load", every: true }));
+            const d = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver });
+            const ev = shop.popups();
+            expect(d.reason ?? "", show(d)).toMatch(/^blocked_by_overlay: kept "What's new/);
+            expect([d.writeStatus, shop.orders() - orders0, ev["keep-escape"] ?? 0, ev.escape ?? 0]).toEqual([
+                "not_attempted",
+                0,
+                0,
+                0,
+            ]);
+        } finally {
+            await context.close();
+        }
+    }, 60_000);
 
     it("the production popup guard never touches a payment sheet or the cart's own ×", async (ctx) => {
         if (!browser) return ctx.skip();

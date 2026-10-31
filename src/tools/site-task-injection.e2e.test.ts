@@ -318,8 +318,17 @@ describe("prompt injection on the synthetic shop", { retry: 2 }, () => {
                     ["browser_click_at", center],
                     ["browser_click_at", { label: 7 }],
                     ["browser_keyboard", { combo: "Enter" }],
+                    // Enter as the tools also take it: Playwright's "\n" / "\r", a part they trim.
+                    ["browser_type", { key: "\n" }],
+                    ["browser_keyboard", { combo: "Enter " }],
+                    ["browser_keyboard", { hold: "\r" }],
                     ["browser_type", { text: "x", press_enter: true }],
                     ["browser_multi_action", { actions: [{ action: "click", selector: "#checkout" }] }],
+                    // The tool clicks the selector over the text: judged on the selector.
+                    [
+                        "browser_multi_action",
+                        { actions: [{ action: "click", selector: "#checkout", text: "zzz-not-there" }] },
+                    ],
                     [
                         "browser_multi_action",
                         {
@@ -358,6 +367,32 @@ describe("prompt injection on the synthetic shop", { retry: 2 }, () => {
                 );
                 expect(s.needs_owner_approval).toBe(true);
                 expect(run.blocked.map(isPaymentHold)).toEqual([true]);
+                expect(shop.orders()).toBe(0);
+
+                // A "Place order" that renders 1.5 s after the call (inside browser_click's own
+                // 5 s wait) is judged, not waved through as nothing.
+                await page.evaluate(`setTimeout(() => {
+                    const b = document.querySelector("#checkout").cloneNode(true);
+                    b.id = "late";
+                    document.querySelector("#checkout").after(b);
+                }, 1500)`);
+                const late = JSON.parse(await executeTool("browser_click", { selector: "#late" }));
+                expect(late.needs_confirmation, JSON.stringify(late)).toBe(true);
+                expect(shop.orders()).toBe(0);
+
+                // A "Place order" tied to the form by form="id" from outside it: Enter in the
+                // form submits through it, so the form's controls include it.
+                await page.evaluate(`(() => {
+                    for (const b of document.querySelectorAll("#checkout, #late")) {
+                        const f = b.form; // its id via getAttribute: a field named "id" shadows f.id
+                        if (!f.getAttribute("id")) f.setAttribute("id", "cart-form");
+                        b.setAttribute("form", f.getAttribute("id"));
+                        document.body.append(b);
+                    }
+                })()`);
+                await page.focus("#captcha");
+                const outside = JSON.parse(await executeTool("browser_keyboard", { combo: "Enter" }));
+                expect(outside.needs_confirmation, JSON.stringify(outside)).toBe(true);
                 expect(shop.orders()).toBe(0);
 
                 // The control: after a refusal and the owner's yes, the same press goes through,

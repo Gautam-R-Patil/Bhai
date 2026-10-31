@@ -177,12 +177,21 @@ function check(x: Run, label: string, strict: boolean) {
     const posts = x.requests.filter((r) => r.method === "POST");
     const orders = posts.filter((r) => r.path === "/order");
     // Trusted page events after Stop: only the consented submit's click (after the
-    // mark), or the tail of an action already handed to the browser before Stop.
+    // mark), or (not strict) the tail of the action the browser already had at Stop:
+    // on that call's own target (any target when it names no #id, e.g. a press), and
+    // only until that call returned.
     const late = x.events.filter((e) => e.t > f.wall);
-    const handed =
-        !strict && x.calls.some((c) => c.kind !== "snapshot" && c.t0 <= f.perf && (c.t1 ?? Infinity) > f.perf);
-    const stray = late.filter((e) => !(e.id === "checkout" && ws !== "not_attempted"));
-    expect(handed ? [] : stray, `${ctx}: page events after Stop`).toEqual([]);
+    const handed = strict
+        ? []
+        : x.calls.filter((c) => c.kind !== "snapshot" && c.t0 <= f.perf && (c.t1 ?? Infinity) > f.perf);
+    const tail = (e: { t: number; id: string }) =>
+        handed.some(
+            (c) =>
+                (!/^#[\w-]+$/.test(c.sel ?? "") || c.sel === `#${e.id}`) &&
+                e.t <= f.wall + ((c.t1 ?? Number.POSITIVE_INFINITY) - f.perf) + 50, // 50 ms: clock rounding
+        );
+    const stray = late.filter((e) => !(e.id === "checkout" && ws !== "not_attempted") && !tail(e));
+    expect(stray, `${ctx}: page events after Stop`).toEqual([]);
     expect(
         x.calls.filter((c) => c.t0 > f.perf),
         `${ctx}: driver calls started after Stop`,

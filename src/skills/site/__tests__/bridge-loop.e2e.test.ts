@@ -10,7 +10,10 @@
 // only logs the timings. The extension hardcodes port 18800, so a running Bhai
 // skips this file locally; BRIDGE_E2E_PORT=<free port> runs it beside one with a
 // copy of the extension patched to that port (its id then pinned through
-// ATLAS_EXTENSION_IDS instead of the shipped-folder id).
+// ATLAS_EXTENSION_IDS instead of the shipped-folder id; not on Windows, which
+// hashes the path differently and accepts any origin while unpinned). A busy
+// port fails the run only in CI; SITE_E2E_REQUIRE_BROWSER (the owner's Mac,
+// where Bhai holds 18800) skips it.
 import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -59,7 +62,7 @@ if (PORT !== 18800) {
         const p = path.join(ext, f);
         writeFileSync(p, readFileSync(p, "utf8").replaceAll("18800", String(PORT)));
     }
-    process.env.ATLAS_EXTENSION_IDS = unpackedExtensionId(ext);
+    if (process.platform !== "win32") process.env.ATLAS_EXTENSION_IDS = unpackedExtensionId(ext);
 }
 
 const portFree = (port: number) =>
@@ -82,7 +85,7 @@ beforeAll(async () => {
     process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // many orders × ₹249 would hit the real daily cap
     if (!(await portFree(PORT))) {
         // Never point the test extension at someone else's bridge (a running Bhai's).
-        if (REQUIRED) throw new Error(`port ${PORT} is busy: quit Bhai to run the bridge loop`);
+        if (process.env.CI) throw new Error(`port ${PORT} is busy: quit Bhai to run the bridge loop`);
         skip = `port ${PORT} is busy (Bhai is running): quit it, or set BRIDGE_E2E_PORT to a free port`;
         return;
     }
@@ -115,7 +118,11 @@ afterAll(async () => {
     await context?.close().catch(() => {});
     if (bridgeUp) closeChromeBridge();
     await shop?.close();
-    for (const d of temps) rmSync(d, { recursive: true, force: true });
+    // Windows: Chromium's helpers can hold the profile a moment after close; a leftover temp dir is harmless.
+    for (const d of temps)
+        try {
+            rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        } catch {}
 });
 
 describe("Chrome extension ⇄ bridge loop", { retry: RUNS <= 3 ? 2 : 0 }, () => {

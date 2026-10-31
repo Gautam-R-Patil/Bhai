@@ -538,3 +538,5 @@ brag-output/
 !src/tools/site-task-injection.e2e.test.ts
 # Session 2026-10-31: launch step 2 (bridge loop)
 !src/skills/site/__tests__/bridge-loop.e2e.test.ts
+# Session 2026-10-31: launch step 2 (review fixes)
+!src/skills/site/__tests__/page-driver.test.ts

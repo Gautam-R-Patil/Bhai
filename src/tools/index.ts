@@ -814,12 +814,20 @@ async function livePaymentHost(): Promise<string> {
 // one (isPaymentCall). Anything else runs as before.
 // ponytail: judged here, pressed a moment later by the tool (the TOCTOU of
 // page-driver's guard); blind to browser_run_js / js_eval, os_* clicks, a control
-// inside an iframe, a label with no money word ("Continue"), and a multi_action
-// step after its own navigate. A click-time in-page listener would close the first.
+// inside an iframe, and a label with no money word ("Continue"). A target the page
+// doesn't show within the tool's own wait is refused, not waved through (a
+// multi_action step after its own navigate included: press it in its own call).
+// A click-time in-page listener would close the TOCTOU.
 type Press = { sel?: string; text?: string; label?: number; x?: number; y?: number; form?: boolean };
-const PRESS_KEY = /(^|\+)\s*(Enter|NumpadEnter|Space| )$/i; // presses the focused control; Enter also submits its form
-const isPressKey = (k: unknown) => typeof k === "string" && PRESS_KEY.test(k);
-const isSpace = (k: unknown) => typeof k === "string" && /(Space| )$/i.test(k);
+const LOCATE_MS = 5000; // how long browser_click waits for its target (interaction.ts)
+/** The key a press sends, as the tools read it: the last "+" part trimmed, Playwright's "\n" / "\r" as Enter. */
+const keyOf = (k: unknown): string => {
+    if (typeof k !== "string") return "";
+    const last = k.length > 1 ? (k.split("+").pop() ?? "") : k;
+    return /^[\r\n]$/.test(last) ? "Enter" : last === " " ? " " : last.trim();
+};
+const isPressKey = (k: unknown) => /^(Enter|NumpadEnter|Space| )$/i.test(keyOf(k)); // presses the focused control; Enter also submits its form
+const isSpace = (k: unknown) => /^(Space| )$/i.test(keyOf(k));
 const hasNewline = (t: unknown) => /[\r\n]/.test(String(t ?? ""));
 
 /** The controls a browser tool call would press: its click target, and the focused element for Enter/Space. */
@@ -851,10 +859,15 @@ function pressesOf(name: string, a: Record<string, unknown>): Press[] {
     }
     if (!Array.isArray(acts)) return [];
     return (acts as Array<Record<string, unknown>>).flatMap((act): Press[] => {
+        // The tool's own order: label, then x/y, then selector, then text.
         if (act.action === "click")
             return act.label !== undefined || (act.x !== undefined && act.y !== undefined)
                 ? pressesOf("browser_click_at", act)
-                : pressesOf("browser_click", act);
+                : act.selector
+                  ? [{ sel: String(act.selector) }]
+                  : act.text
+                    ? [{ text: String(act.text) }]
+                    : [];
         if (act.action === "keyboard") return pressesOf("browser_keyboard", { combo: act.combo });
         if (act.action === "type") {
             const typed = pressesOf("browser_type", { label: act.label, key: act.key, text: act.text });
@@ -870,20 +883,21 @@ function pressesOf(name: string, a: Record<string, unknown>): Press[] {
     });
 }
 
+/** What pressing `p` would press on the page; null when its target isn't there within the tool's own wait. */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
-async function controlsOf(page: any, p: Press): Promise<Control[]> {
+async function controlsOf(page: any, p: Press): Promise<Control[] | null> {
     const fn = String(describeControls);
     if (p.text || p.sel) {
         const loc = p.text ? page.getByText(p.text, { exact: false }).first() : page.locator(p.sel).first();
         if (typeof loc.withEl === "function")
-            return (await page.evaluate(loc.withEl(`return el ? (${fn})(el, ${!!p.form}) : [];`))) ?? []; // Chrome bridge
-        return loc.evaluate(describeControls, !!p.form, { timeout: 1000 });
+            return (await page.evaluate(loc.withEl(`return el ? (${fn})(el, ${!!p.form}) : null;`))) ?? null; // Chrome bridge: no wait, its click has none either
+        return loc.evaluate(describeControls, !!p.form, { timeout: LOCATE_MS });
     }
     const el = p.label !== undefined ? getLastElementMap().find((e) => e.label === p.label) : undefined;
     if (p.label !== undefined && !el) return []; // the tool refuses an unknown label
     // biome-ignore lint/suspicious/noExplicitAny: Playwright ElementHandle or Locator
     const h = el?.handle as any;
-    if (typeof h?.evaluate === "function") return h.evaluate(describeControls, !!p.form, { timeout: 1000 });
+    if (typeof h?.evaluate === "function") return h.evaluate(describeControls, !!p.form, { timeout: LOCATE_MS });
     const x = el?.x ?? p.x;
     const y = el?.y ?? p.y;
     const target =
@@ -893,8 +907,11 @@ async function controlsOf(page: any, p: Press): Promise<Control[]> {
     return (await page.evaluate(`(${fn})(${target}, ${!!p.form})`)) ?? [];
 }
 
-/** Why this browser call would press a money-word control on the live page ("" when it wouldn't). */
-async function browserMoneyPress(name: string, args: Record<string, unknown>): Promise<string> {
+/**
+ * Why this browser call would press a money-word control on the live page ("" when it
+ * wouldn't; null when a target it names isn't on the page, so it can't be judged).
+ */
+async function browserMoneyPress(name: string, args: Record<string, unknown>): Promise<string | null> {
     if (!MONEY_PRESS_TOOLS.has(name)) return "";
     const presses = pressesOf(name, args);
     if (!presses.length) return "";
@@ -908,8 +925,12 @@ async function browserMoneyPress(name: string, args: Record<string, unknown>): P
     for (const p of presses) {
         // A text the model asked to click counts as its label: "Place order" is gated wherever it lands.
         const said: Control[] = p.text ? [{ labels: [p.text], submitLike: true }] : [];
-        const why = judge([...said, ...(await controlsOf(page, p).catch(() => []))], []);
-        if (!why) continue;
+        const seen = await controlsOf(page, p).catch(() => null);
+        const why = judge([...said, ...(seen ?? [])], []);
+        if (!why) {
+            if (seen === null) return null; // fail closed: it may render "Place order" a moment later
+            continue;
+        }
         let host = "";
         try {
             host = new URL(page.url()).host;
@@ -1118,6 +1139,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     // A raw browser press on "Place order" / "Pay now" is an order: the owner's yes, never a swarm's.
     // The control's label and host are part of the consent key, so a yes covers that control only.
     const moneyPress = await browserMoneyPress(name, actionArgs);
+    if (moneyPress === null)
+        return JSON.stringify({
+            error: "The control this would press isn't on the page now, so it can't be checked for a payment button. Wait for it (browser_scan), then press it in its own call.",
+        });
     // shell_exec runs `command` plus its `args` array: judge the whole line.
     const confirmCheck = moneyPress
         ? {

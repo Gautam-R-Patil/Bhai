@@ -16,6 +16,7 @@ import {
     IS_CODE_FIELD_JS,
     KEEP_OVERLAY_JS,
     MONEY_WORDS,
+    OVERLAY_SEL,
     REJECT_BUTTON_TEXT,
 } from "../../tools/browser/popup-guard.js";
 import type { ExpectSpec, SiteAction } from "./host.js";
@@ -347,7 +348,12 @@ export const describeControls = /* javascript-obfuscator:disable */ (el: Element
     const CONTROL = "button,a,[role=button],input[type=submit],input[type=button],input[type=image]";
     const scope = form ? (e as HTMLInputElement).form || e.closest("form") : null;
     const own = e.closest(CONTROL);
-    const list = scope ? [...scope.querySelectorAll(CONTROL)] : own ? [own] : [];
+    // form.elements adds a button outside the <form> tied to it by form="id" (Enter submits through it too).
+    const list = scope
+        ? [...new Set([...scope.querySelectorAll(CONTROL), ...[...scope.elements].filter((c) => c.matches(CONTROL))])]
+        : own
+          ? [own]
+          : [];
     return list.map((c) => {
         const h = c.getAttribute("href");
         return {
@@ -383,7 +389,7 @@ const PRESSES = /^(Enter|NumpadEnter|Space| )$/;
 //           says so (a frame, a password / card / code input, a money word, a price);
 //   click   a cookie banner's reject (never its accept), else a close control,
 //           stamped data-bhai-unblock=`mark`;
-//   escape  no such control, but it says something;
+//   escape  no such control, but it says something (keep while a keeper is open elsewhere);
 //   wait    an empty shield.
 const CLOSE_WORDS = /^(×|✕|✖|close|dismiss|no,? thanks|not now|maybe later|skip|later)$/i;
 const UNBLOCK_JS = (token: string, mark: string, commits: SiteAction[]) => `(() => {
@@ -417,7 +423,13 @@ const UNBLOCK_JS = (token: string, mark: string, commits: SiteAction[]) => `(() 
     || controls.find((c) => new RegExp(${JSON.stringify(CLOSE_WORDS.source)}, "i").test(label(c))
       || /^(close|dismiss)\\b/i.test(c.getAttribute("aria-label") || "") || c.matches("[data-dismiss],[data-close]"));
   if (close) { close.setAttribute("data-bhai-unblock", mark); return out("click", o); }
-  return out(said(o) ? "escape" : "wait", o);
+  // Escape goes to the whole page: never while a keeper is open anywhere (it could close that too).
+  const keeperOpen = [...document.querySelectorAll(${JSON.stringify(OVERLAY_SEL)})].some((n) => {
+    const s = getComputedStyle(n), b = n.getBoundingClientRect();
+    return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0" && b.width > 0 && b.height > 0
+      && (/^(fixed|absolute)$/.test(s.position) || n.matches("[role=dialog],[role=alertdialog],[aria-modal=true]")) && keep(n);
+  });
+  return out(said(o) ? (keeperOpen ? "keep" : "escape") : "wait", o);
 })()`;
 const UNBLOCK_TRIES = 2; // dismissals per action: a popup that keeps coming back can slow a run, never loop it
 
@@ -448,9 +460,10 @@ export async function locateTarget(page: any, target: SiteAction["target"], visi
 
 /**
  * `reopen` (optional) gives a fresh page when the user closed the tab: the
- * driver opens the last URL there and carries on. `signal` (the owner's Stop)
- * ends the driver's own waits, and no click, key or typing outside the
- * consented submit is dispatched after it.
+ * driver opens the last URL there and carries on, unless an order may exist
+ * (this driver ran the submit, or `afterCommit` says an earlier call did).
+ * `signal` (the owner's Stop) ends the driver's own waits, and no click, key or
+ * typing outside the consented submit is dispatched after it.
  */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
 export function pageDriver(
@@ -458,6 +471,7 @@ export function pageDriver(
     timeout = 5000,
     reopen?: () => Promise<any>,
     signal?: AbortSignal,
+    afterCommit?: () => boolean,
 ): PageDriver {
     let page = initial;
     // A wait Stop cuts short (throws "stopped").
@@ -502,7 +516,7 @@ export function pageDriver(
         watchDialogs(page);
         // Never after the submit: the order may exist, and a GET could replay a
         // one-time checkout step. The runtime reads the blank page as off the site.
-        if (lastUrl && !submitted) await page.goto(lastUrl, { waitUntil: "domcontentloaded" });
+        if (lastUrl && !submitted && !afterCommit?.()) await page.goto(lastUrl, { waitUntil: "domcontentloaded" });
         return true;
     };
     const locate = (a: SiteAction) => locateTarget(page, a.target);

@@ -176,7 +176,9 @@ export async function dismissCookieBanner(page: Page): Promise<boolean> {
 // placeholder that says so: "otp", "loginOtp", "one-time password",
 // "verification code", "passcode"; not "footprint"). Site Skills' page driver
 // uses both too.
-export const MONEY_WORDS = /\b(place (your )?order|pay( now)?|proceed to pay|book now|make payment)\b/i;
+// "Confirm order" and the like count only as the label's start ("Review & confirm order" is a step before it).
+export const MONEY_WORDS =
+    /\b(place (your )?order|buy now|pay( now)?|proceed to pay(ment)?|book now|make payment)\b|^\s*(confirm|complete|submit) (your )?(order|purchase|booking|payment)\b/i;
 export const IS_CODE_FIELD_JS = `((el) => el.tagName === "INPUT" && (el.autocomplete === "one-time-code" || el.maxLength === 1 ||
   ((s) => /(?:^|[^a-zA-Z])otp|[a-z]Otp|OTP/.test(s) || /one.?time|verification.?code|pass.?code/i.test(s))(
     [el.name, el.id, el.getAttribute("aria-label"), el.placeholder].join(" "))))`;
@@ -195,13 +197,16 @@ export const KEEP_OVERLAY_JS = `((o) => {
     .some((c) => money.test([c.innerText, c.value, c.getAttribute("aria-label")].join(" ")));
 })`;
 
-// In the page: the overlays on top now — a dialog, or a fixed / absolute
-// element named like a modal — each stamped data-bhai-overlay unless it is a
-// keeper. Returns how many of each.
+// What may be an overlay: a dialog, or an element named like a modal (open
+// only when shown, and fixed / absolute unless it is a dialog).
+export const OVERLAY_SEL =
+    "[class*='modal'],[class*='popup'],[class*='overlay']:not([class*='video']),[class*='newsletter'],[class*='subscribe-modal'],[class*='exit-intent'],[class*='backdrop'],[class*='dimmer'],[role=dialog],[role=alertdialog],[aria-modal=true]";
+
+// In the page: the overlays on top now, each stamped data-bhai-overlay unless
+// it is a keeper. Returns how many of each.
 const FIND_OVERLAYS_JS = `(() => {
   const keep = ${KEEP_OVERLAY_JS};
-  const sel = "[class*='modal'],[class*='popup'],[class*='overlay']:not([class*='video']),[class*='newsletter'],[class*='subscribe-modal'],"
-    + "[class*='exit-intent'],[class*='backdrop'],[class*='dimmer'],[role=dialog],[role=alertdialog],[aria-modal=true]";
+  const sel = ${JSON.stringify(OVERLAY_SEL)};
   let open = 0, kept = 0;
   for (const el of document.querySelectorAll("[data-bhai-overlay]")) el.removeAttribute("data-bhai-overlay");
   for (const el of document.querySelectorAll(sel)) {

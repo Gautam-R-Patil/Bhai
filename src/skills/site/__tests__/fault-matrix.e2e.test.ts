@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Fault matrix on the synthetic shop in headless Chromium: four faults
-// (selector renamed, page reload, a 5 s network drop, tab closed) at five
+// (selector renamed, page reload, a network drop, tab closed) at five
 // points of search → select → yes → confirm:
 //   P1 before search · P2 after options, before select · P3 after the confirm
 //   is shown, before the yes · P4 after the yes (token minted), before confirm ·
@@ -10,15 +10,17 @@
 // gives; here the last open page approximates its pick).
 // P1-P4 must RESUME: options → confirm ₹249 → done, one order. P5 can't: the
 // order exists and the reply is gone, so the only right end is SAFE_STOP (may
-// have been placed, never resubmitted). P5 is reported apart and never counted
-// as a recovery; a safe stop at P1-P4 counts as a failure.
+// have been placed, never resubmitted, and no page reopened or re-navigated
+// after the order: closed@P5 must end aborted/off_site). P5 is reported apart
+// and never counted as a recovery; a safe stop at P1-P4 counts as a failure.
 // N/A: selector@P5 (nothing is located after the submit; /done is read by
 // text) and closed@P1 (no task exists yet; search reads the live tab's URL and
 // a blank tab has no skill).
 // P3 and P4 differ only in when the token is minted (the yes is synchronous
 // here, no owner in between), so they are near-identical runs.
-// Plain `npm test` runs each cell once; SITE_FAULT_RUNS=25 is the acceptance
-// run (~100 per fault). 25 runs per cell give point estimates, not confidence bounds.
+// Plain `npm test` runs each cell once with a 1.5 s network drop; SITE_FAULT_RUNS=25
+// is the acceptance run (~100 per fault, a 5 s drop). 25 runs per cell give point
+// estimates, not confidence bounds.
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -30,6 +32,7 @@ import { SHOP_RESOLVER_ARG, startShop } from "./synthetic-shop.js";
 
 const RUNS = Number(process.env.SITE_FAULT_RUNS ?? 1);
 const RECOVERY_MS = 60_000;
+const OFFLINE_MS = RUNS > 1 ? 5000 : 1500; // the default run keeps CI time down
 const builtin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
 type Fault = "selector" | "reload" | "offline" | "closed";
@@ -96,6 +99,12 @@ async function run(fault: Fault, at: Point): Promise<Outcome> {
     let restore: Promise<void> | null = null;
     let t0 = Number.NaN;
     let t1 = Number.NaN;
+    // Page loads after the order reached the shop (P5 sets t0 there): a reopened tab
+    // must never go back to the cart (shop.requests() logs no GETs).
+    const navs: string[] = [];
+    ctx.on("request", (r: any) => {
+        if (at === "P5" && !Number.isNaN(t0) && r.isNavigationRequest()) navs.push(new URL(r.url()).pathname);
+    });
     const active = async (): Promise<any> =>
         ctx
             .pages()
@@ -104,7 +113,7 @@ async function run(fault: Fault, at: Point): Promise<Outcome> {
     const driver = async () => pageDriver(await active(), 5000, active);
     const drop = async () => {
         await ctx.setOffline(true);
-        restore = pause(5000).then(() => ctx.setOffline(false));
+        restore = pause(OFFLINE_MS).then(() => ctx.setOffline(false));
     };
     const inject = async () => {
         t0 = performance.now();
@@ -183,11 +192,14 @@ async function run(fault: Fault, at: Point): Promise<Outcome> {
             sent === 1 &&
             refused &&
             probe.reason === "commit_unresolved" &&
+            // A reload is the fault itself; nothing else may load a page after the order.
+            (fault === "reload" || navs.length === 0) &&
+            (fault !== "closed" || (d.status === "aborted" && d.reason === "off_site")) &&
             after === 1 &&
             posts() === 1;
         return safe
             ? { cls: "SAFE_STOP", ms: t1 - t0, detail: show(d) }
-            : fail(`${show(d)} orders+${delta} posts=${sent} refused=${refused} probe=${probe.reason}`);
+            : fail(`${show(d)} orders+${delta} posts=${sent} refused=${refused} probe=${probe.reason} navs=${navs}`);
     } finally {
         await restore; // a setOffline after close would throw
         shop.set({ renameSearch: false, renameIds: false });

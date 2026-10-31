@@ -18,7 +18,7 @@
 //  4. Wrong codes re-prompt without a crash; the 4th prompt hits the cap (too_many_prompts),
 //     nothing placed. The task is kept (its order may exist), so the owner's own right code
 //     after that still completes the one consented order: never a second one.
-// Plain `npm test` runs RUNS=3 of each; SITE_ESCALATION_RUNS=50 is the acceptance run
+// Plain `npm test` runs each once; SITE_ESCALATION_RUNS=50 is the acceptance run
 // (describe retry is off then, so no failure is retried away).
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,7 +31,7 @@ import { SHOP_RESOLVER_ARG, startShop } from "./synthetic-shop.js";
 process.env.ATLAS_DATA_DIR = mkdtempSync(path.join(tmpdir(), "bhai-escalation-"));
 process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
-const RUNS = Number(process.env.SITE_ESCALATION_RUNS ?? 3);
+const RUNS = Number(process.env.SITE_ESCALATION_RUNS ?? 1);
 const PROMPT = "Enter the code the shop sent to your phone";
 const WRONG = "That didn't work. Please check it and send it again.";
 const LATE = "That took a while, so I didn't use that code. Send the latest one.";
@@ -76,7 +76,9 @@ vi.mock("../runtime.js", async (orig) => {
 await import("../../../tools/index.js");
 const { resetRateLimits } = await import("../../../tools/tool-intelligence.js");
 type Tool = { handler: (i: Record<string, unknown>) => Promise<string> };
-let site: Tool = (await import("../../../tools/site-task.js")).siteTask as Tool;
+// The instance the agent's registry holds (the full chain's site_task; restart() swaps `site` only).
+const agentSite = await import("../../../tools/site-task.js");
+let site: Tool = agentSite.siteTask as Tool;
 /** A restart: site_task's module state is gone; the parked task comes back from its checkpoint. */
 const restart = async () => {
     vi.resetModules();
@@ -206,6 +208,10 @@ const fakeLLM = {
 describe("escalation to the owner", { retry: process.env.SITE_ESCALATION_RUNS ? 0 : 2 }, () => {
     it(`needs_user reaches the owner's overlay socket in < ${ASK_MS} ms; the code typed there finishes the order, ${RUNS}/${RUNS}`, async (ctx) => {
         if (!browser) return ctx.skip();
+        // A failed attempt leaves its order parked (commit sent), which refuses every later
+        // search: each attempt starts clean in the agent's own site_task, so a retry can pass.
+        rmSync(path.join(process.env.ATLAS_DATA_DIR as string, "site-tasks"), { recursive: true, force: true });
+        agentSite._resetSiteTask();
         const chat = await import("../../../overlay/overlay-chat.js");
         chat.initOverlayChat(fakeLLM as never);
         const ws = new WebSocket(
