@@ -428,6 +428,7 @@ export function pageDriver(
         });
     let lastUrl = "";
     let lastWasSubmit = false;
+    let submitted = false; // this driver ran the consented submit
     // One dialog handler per page, for its whole life (shared by every driver
     // on that page, so its state lives on the page): "Leave site?" is always
     // accepted (dismissing it cancels the navigation the skill asked for); ONE
@@ -451,7 +452,9 @@ export function pageDriver(
         if (!reopen) return false;
         page = await reopen();
         watchDialogs(page);
-        if (lastUrl) await page.goto(lastUrl, { waitUntil: "domcontentloaded" });
+        // Never after the submit: the order may exist, and a GET could replay a
+        // one-time checkout step. The runtime reads the blank page as off the site.
+        if (lastUrl && !submitted) await page.goto(lastUrl, { waitUntil: "domcontentloaded" });
         return true;
     };
     const locate = (a: SiteAction) => locateTarget(page, a.target);
@@ -536,12 +539,15 @@ export function pageDriver(
             return snap;
         },
         html: () => page.evaluate(CAPTURE_JS) as Promise<string>,
+        // A page that can't say (closed, the Chrome bridge) counts as online: the click goes as before.
+        online: async () => (await page.evaluate("navigator.onLine").catch(() => true)) !== false,
         async act(
             a: SiteAction,
             opts?: { submit?: boolean; commits?: SiteAction[]; domains?: string[] },
         ): Promise<ActResult> {
             if (page.isClosed?.()) await revive();
             lastWasSubmit = !!opts?.submit;
+            submitted ||= lastWasSubmit;
             const p = page;
             if (opts?.submit) {
                 p.__bhaiConfirmLeft = 1;

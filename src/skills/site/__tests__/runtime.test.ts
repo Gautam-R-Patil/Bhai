@@ -3,8 +3,8 @@
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
-import { SkillHost, type SiteAction } from "../host.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { type SiteAction, SkillHost } from "../host.js";
 import { MAX_STEPS, mintConsent, runSiteTask } from "../runtime.js";
 
 const dir = mkdtempSync(path.join(tmpdir(), "site-skills-"));
@@ -622,5 +622,139 @@ describe("Stop", () => {
         expect(again.reason).toBe("commit_unresolved");
         expect(d.calls.filter((a) => a.target?.sel === "#checkout").length).toBe(1);
         delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+    });
+});
+
+// ── Faults around the yes (fault-matrix.e2e.test.ts runs them in Chromium) ──
+describe("offline at the yes, a closed tab", () => {
+    // cartSkill, but the page after the submit says done.
+    const skillPath = withManifest(
+        cartSkill
+            .replace('|| phase === "after_confirm"', "")
+            .replace(
+                'return { fail: { reason: "x" } }',
+                'return phase === "after_confirm" ? { done: { summary: "ok" } } : { fail: { reason: "x" } }',
+            ),
+        manifest,
+    );
+    // Earlier describes booked orders against today's in-memory spend.
+    beforeAll(() => {
+        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+    });
+    afterAll(() => {
+        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+    });
+    const toConfirm = async (url = () => "https://shop.test/cart?id=p1&s=tok", online?: () => Promise<boolean>) => {
+        const d = { ...pageDriver({ url }), online };
+        const c = await runSiteTask({ skillPath, phase: "select", driver: d });
+        expect(c.status).toBe("confirm");
+        return { c, d, clicks: () => d.calls.filter((a) => a.target?.sel === "#checkout").length };
+    };
+
+    it("an offline browser is waited out before the mark: one click once it's back", async () => {
+        let n = 0;
+        const { c, d, clicks } = await toConfirm(undefined, async () => ++n > 3);
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        expect([r.writeStatus, clicks(), n]).toEqual(["applied", 1, 4]);
+    });
+
+    it("still offline after 20 s: network_error, nothing sent, the owner can say yes again", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
+            const { c, d, clicks } = await toConfirm(undefined, async () => {
+                vi.setSystemTime(Date.now() + 6000); // each check is 6 s later
+                return false;
+            });
+            const token = mintConsent(c.task);
+            const r = await runSiteTask({
+                task: c.task,
+                phase: "confirm",
+                consentToken: token,
+                driver: d,
+                checkpointDir: dir,
+            });
+            expect([r.status, r.reason, r.writeStatus, r.retry, clicks()]).toEqual([
+                "failed",
+                "network_error",
+                "not_attempted",
+                "later",
+                0,
+            ]);
+            expect(JSON.parse(readFileSync(path.join(dir, `${r.task.taskId}.json`), "utf8")).commit).toBeUndefined();
+            expect(() => mintConsent(r.task)).not.toThrow();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("Stop during the offline wait: aborted, nothing marked, nothing clicked", async () => {
+        const ctl = new AbortController();
+        const { c, d, clicks } = await toConfirm(undefined, async () => {
+            setTimeout(() => ctl.abort(), 100);
+            return false;
+        });
+        const r = await runSiteTask({
+            task: c.task,
+            phase: "confirm",
+            consentToken: mintConsent(c.task),
+            driver: d,
+            signal: ctl.signal,
+        });
+        expect([r.status, r.reason, r.writeStatus, r.task.commit, clicks()]).toEqual([
+            "aborted",
+            "stopped",
+            "not_attempted",
+            undefined,
+            0,
+        ]);
+    });
+
+    it("a blank page before the commit reopens the last page; the checkpoint keeps no query", async () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
+        let url = "https://shop.test/cart?id=p1&s=tok";
+        const { c, d, clicks } = await toConfirm(() => url);
+        url = "about:blank"; // the owner closed the tab; the next call starts on a blank page
+        const navs: string[] = [];
+        const act = async (a: SiteAction) => {
+            if (a.op === "navigate") url = navs[navs.push(a.value ?? "") - 1];
+            return d.act(a);
+        };
+        const r = await runSiteTask({
+            task: c.task,
+            phase: "confirm",
+            consentToken: mintConsent(c.task),
+            driver: { ...d, act },
+            checkpointDir: dir,
+        });
+        expect([r.writeStatus, clicks(), navs]).toEqual(["applied", 1, ["https://shop.test/cart?id=p1&s=tok"]]);
+        expect(JSON.parse(readFileSync(path.join(dir, `${r.task.taskId}.json`), "utf8")).lastUrl).toBe(
+            "https://shop.test/cart",
+        );
+    });
+
+    it("a blank page after the submit is never reopened: may have been placed, never retried", async () => {
+        const { c, d, clicks } = await toConfirm();
+        let url = "https://shop.test/cart?id=p1";
+        const navs: SiteAction[] = [];
+        const act = async (a: SiteAction) => {
+            if (a.op === "navigate") navs.push(a);
+            if (a.target?.sel === "#checkout") url = "about:blank"; // the tab closed as the order went out
+            return d.act(a);
+        };
+        const r = await runSiteTask({
+            task: c.task,
+            phase: "confirm",
+            consentToken: mintConsent(c.task),
+            driver: { ...d, act, snapshot: async () => ({ ...(await d.snapshot()), url }) },
+        });
+        expect([r.status, r.reason, r.writeStatus, r.retry, clicks(), navs]).toEqual([
+            "aborted",
+            "off_site",
+            "may_have_applied",
+            "never",
+            1,
+            [],
+        ]);
     });
 });

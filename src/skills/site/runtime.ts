@@ -35,6 +35,10 @@
 //     behind. Before the write-ahead mark nothing was sent; after it the
 //     consented submit still goes out (it is the commit point) and the result
 //     says the order may have been placed;
+//   • before the mark, a browser that reports itself offline is waited out
+//     (≤ 20 s, else network_error, nothing sent), and a tab the owner closed
+//     between calls is reopened at the task's last page; never after it
+//     (__tests__ here and in fault-matrix.e2e.test.ts);
 //   • a minted skill's runs are logged, and a run that stopped because the
 //     site changed (drift, nothing sent) leaves a capture for its repair
 //     (drift.ts; __tests__ in mint/__tests__/self-heal.test.ts).
@@ -54,6 +58,7 @@ const MAX_USER_PROMPTS = 3;
 export const PAY_ON_PAGE = "Finish the payment on the page, then tell me when it's done.";
 export const QUESTION_TTL_MS = 10 * 60_000;
 const TRANSIENT = /net::ERR_|ECONNRESET|ECONNREFUSED|ENOTFOUND|socket hang up|Navigation failed|NS_ERROR_NET/i;
+const ONLINE_WAIT_MS = 20_000; // a dropped connection at the yes is waited out this long, before the mark
 
 export interface Snapshot {
     url: string;
@@ -87,6 +92,8 @@ export interface PageDriver {
     ): Promise<ActResult | void>;
     /** The page's DOM as the user saw it (for a drift capture); optional. */
     html?(): Promise<string>;
+    /** False while the browser itself reports no network (navigator.onLine); optional. */
+    online?(): Promise<boolean>;
 }
 
 export type Phase = "search" | "select" | "confirm" | "after_confirm" | "resume";
@@ -131,6 +138,7 @@ export interface SiteTask {
     searchInput?: unknown; // what search was given (a drift capture keeps it, locally)
     options?: Array<{ id: string; label: string }>; // what search offered
     choice?: string; // the label of the option select was given (a drift capture keeps it, locally)
+    lastUrl?: string; // the last on-site page: a tab closed before the commit reopens there (checkpoints keep no query)
 }
 
 export interface SiteTaskResult {
@@ -281,7 +289,8 @@ export function saveCheckpoint(dir: string | undefined, task: SiteTask): void {
     if (!dir) return;
     mkdirSync(dir, { recursive: true });
     const p = path.join(dir, `${task.taskId}.json`);
-    writeFileSync(`${p}.tmp`, JSON.stringify(task));
+    // A query can carry a session or one-time token: on disk the last page is its path only.
+    writeFileSync(`${p}.tmp`, JSON.stringify({ ...task, lastUrl: task.lastUrl && pageKey(task.lastUrl) }));
     renameSync(`${p}.tmp`, p); // atomic: a crash never leaves half a checkpoint
 }
 
@@ -482,6 +491,24 @@ export async function runSiteTask(opts: {
             saveCheckpoint(opts.checkpointDir, task);
             return null;
         };
+        // A snapshot. The owner closed the tab between calls: the next call's fresh
+        // driver starts on a blank page, so before the commit the task reopens the
+        // page it was on. Never after it: a GET could replay a one-time checkout step.
+        const look = async (): Promise<Snapshot | SiteTaskResult> => {
+            let snap = await live(() => opts.driver.snapshot());
+            if (
+                snap.url === "about:blank" &&
+                task.lastUrl &&
+                !task.commit &&
+                (task.phase === "select" || task.phase === "confirm")
+            ) {
+                const stop = await exec({ op: "navigate", value: task.lastUrl });
+                if (stop) return stop;
+                snap = await live(() => opts.driver.snapshot());
+            }
+            if (/^https?:/i.test(snap.url) && onSite(snap.url, manifest.domains)) task.lastUrl = snap.url;
+            return snap;
+        };
 
         let answer = opts.answer;
         task.waitingUntil = undefined;
@@ -501,7 +528,8 @@ export async function runSiteTask(opts: {
             for (let round = 0; round < 3; round++) {
                 halt();
                 task.stepCount++;
-                const snap = await live(() => opts.driver.snapshot());
+                const snap = await look();
+                if ("status" in snap) return snap;
                 pageUrl = snap.url;
                 if (pageKey(snap.url) !== pending.page) return end("failed", { reason: "page_changed" });
                 again = await live(() => host.call("select", { snapshot: snap, input: undefined, state: task.state }));
@@ -529,6 +557,14 @@ export async function runSiteTask(opts: {
                     reason: "total_changed",
                     confirm: { summary: again.confirm.summary, amount: again.confirm.amount },
                 });
+            }
+            // The connection dropped around the yes: wait it out here, above the mark (Stop
+            // ends the wait), so the click never goes out offline only to read as "may have
+            // been placed". Still offline after ONLINE_WAIT_MS: nothing was sent.
+            const online = async () => (await opts.driver.online?.()) !== false;
+            for (const t0 = Date.now(); !(await live(online)); ) {
+                if (Date.now() - t0 >= ONLINE_WAIT_MS) return end("failed", { reason: "network_error" });
+                await wait(250, undefined, { signal }); // poll
             }
             if (!spendAllowed(pending.amount)) return end("failed", { reason: "spend_cap" });
             // Stop's last chance: after the mark, the submit goes. Any wait between the
@@ -561,7 +597,8 @@ export async function runSiteTask(opts: {
             halt();
             if (task.stepCount >= MAX_STEPS) return end("aborted", { reason: "max_steps" });
             task.stepCount++;
-            const snapshot = await live(() => opts.driver.snapshot());
+            const snapshot = await look();
+            if ("status" in snapshot) return snapshot;
             pageUrl = snapshot.url;
             if (snapshot.url.startsWith("chrome-error://")) return end("failed", { reason: "network_error" });
             if (!onSite(snapshot.url, manifest.domains)) {
