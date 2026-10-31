@@ -4,7 +4,8 @@
 
 // ── /api/memory/import/* — the desktop's "Import from another AI" ──
 // Owner-token only (never the web widget): preview reads a file the desktop picked and
-// shows what's in it; save adds facts to the owner's memory.
+// shows what's in it; save adds facts to the owner's memory. /api/memory/search is the
+// Memory page's search box: ids of the memories recall() finds for a query, by meaning.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
@@ -87,6 +88,14 @@ export async function handleMemoryImportRoute(
             const body = JSON.parse(await readBoundedBody(req, SAVE_BODY_LIMIT)) as Record<string, unknown>;
             if (!Array.isArray(body.facts)) return send(res, 400, { error: "facts must be a list" });
             return send(res, 200, await saveImportedFacts(body.facts, str(body.source), true));
+        }
+        if (pathname === "/api/memory/search" && req.method === "POST") {
+            const body = JSON.parse(await readBoundedBody(req, 4096)) as Record<string, unknown>;
+            const query = str(body.query)?.slice(0, 500);
+            if (!query?.trim()) return send(res, 400, { error: "query is required" });
+            const { recall } = await import("../memory/sqlite.js");
+            const rows = await recall(query, 50, undefined, undefined, undefined, undefined, { touch: false });
+            return send(res, 200, { ids: rows.map((r) => r.id) });
         }
         if (pathname === "/api/memory/import/undo" && req.method === "POST") {
             const body = JSON.parse(await readBoundedBody(req, 4096)) as Record<string, unknown>;

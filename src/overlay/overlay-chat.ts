@@ -478,8 +478,8 @@ export function initOverlayChat(llm: LLMClient): void {
             });
             res.end(getWidgetScript(wsUrl));
 
-        // ── Import memory from another AI (desktop Memory Studio; owner token only) ──
-        } else if (url.pathname.startsWith("/api/memory/import/")) {
+        // ── Import memory from another AI, and the Memory page's search (desktop; owner token only) ──
+        } else if (url.pathname.startsWith("/api/memory/import/") || url.pathname === "/api/memory/search") {
             const { handleMemoryImportRoute } = await import("./memory-import-routes.js");
             await handleMemoryImportRoute(req, res, url.pathname, authorizeRequest(req), llmClient);
 

@@ -58,6 +58,17 @@
                     </svg>
                     <span>Dashboard</span>
                 </button>
+                <button class="nav-item" data-tab="memory" onclick="switchTab('memory')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <circle cx="5" cy="5" r="2"></circle>
+                        <circle cx="19" cy="5" r="2"></circle>
+                        <circle cx="12" cy="20" r="2"></circle>
+                        <path d="M6.5 6.5 9.8 9.8M17.5 6.5l-3.3 3.3M12 15v3"></path>
+                    </svg>
+                    <span>Memory</span>
+                </button>
                 <button class="nav-item" data-tab="research" onclick="switchTab('research')">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -1113,47 +1124,59 @@
             <!-- TAB: Memory Studio             -->
             <!-- ═══════════════════════════════ -->
             <div class="tab-content" id="tab-memory">
-                <div class="tab-header">
-                    <div style="display:flex;align-items:center;gap:10px;">
-                        <button class="btn btn-secondary btn-sm" onclick="switchTab('settings')" title="Back to Settings">← Settings</button>
+                <header class="studio-head">
+                    <div>
                         <h2 class="tab-title">Memory</h2>
+                        <p class="studio-summary" id="studioSummary">&nbsp;</p>
                     </div>
-                    <div style="display:flex;gap:8px">
-                        <button class="btn btn-secondary btn-sm" id="studioImportOpen">Import from another AI</button>
-                        <button class="btn btn-secondary btn-sm" id="studioDeletedToggle">View deleted</button>
-                        <button class="btn btn-secondary btn-sm" id="studioAdvancedToggle">Show advanced</button>
-                        <button class="btn btn-primary btn-sm" id="studioRecomputeInsights">Recompute insights</button>
+                    <div class="studio-head-actions">
+                        <button type="button" class="studio-quiet-btn" id="studioImportOpen">Import</button>
+                        <details class="studio-more" id="studioMore">
+                            <summary class="studio-icon-btn" aria-label="More options">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+                            </summary>
+                            <div class="studio-more-menu">
+                                <button type="button" id="studioAdvancedToggle">Show goals and learnings</button>
+                                <button type="button" id="studioDeletedToggle">Forget log</button>
+                            </div>
+                        </details>
                     </div>
-                </div>
+                </header>
                 <div class="studio-deleted-pane" id="studioDeletedPane" data-open="false"></div>
 
-                <div class="surface-card studio-search-card">
-                    <input class="clean-input" id="studioSearch" placeholder="Search memories, people, episodes…" autocomplete="off" />
-                    <div class="studio-filters">
-                        <button class="studio-chip active" data-filter="memory">Memories</button>
-                        <button class="studio-chip active" data-filter="entity">People &amp; Things</button>
-                        <button class="studio-chip active" data-filter="episode">Episodes</button>
-                        <button class="studio-chip active" data-filter="trait">Traits</button>
-                        <label class="studio-chip"><input type="checkbox" id="studioSimilarity" checked />Similarity edges</label>
+                <div class="studio-main" id="studioMain">
+                    <input type="search" class="studio-search" id="studioSearch" placeholder="Search — try “my sister” or “what I eat”" aria-label="Search memories" autocomplete="off" />
+                    <div class="studio-bar">
+                        <div class="studio-tabs" id="studioTabs" role="group" aria-label="Show">
+                            <button type="button" data-kind="all" aria-pressed="true">All</button>
+                            <button type="button" data-kind="memory" aria-pressed="false">Memories</button>
+                            <button type="button" data-kind="entity" aria-pressed="false">People</button>
+                            <button type="button" data-kind="trait" aria-pressed="false">Traits</button>
+                        </div>
+                        <div class="studio-views" id="studioViews" role="group" aria-label="View">
+                            <button type="button" data-view="list" aria-pressed="true">List</button>
+                            <button type="button" data-view="graph" aria-pressed="false">Graph</button>
+                        </div>
+                    </div>
+                    <div class="studio-body">
+                        <section class="studio-list" id="studioList" aria-label="Memories"></section>
+                        <section class="studio-graph-wrap" id="studioGraphWrap" aria-label="Memory graph" hidden>
+                            <p class="studio-count" id="studioNodeCount"></p>
+                            <div id="studioGraph"></div>
+                            <div class="studio-zoom">
+                                <button type="button" class="studio-icon-btn" data-zoom="in" aria-label="Zoom in">+</button>
+                                <button type="button" class="studio-icon-btn" data-zoom="out" aria-label="Zoom out">−</button>
+                                <button type="button" class="studio-icon-btn" data-zoom="fit" aria-label="Fit to view">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>
+                                </button>
+                            </div>
+                        </section>
+                        <aside class="studio-detail" id="studioDetail" data-open="false" aria-label="Selected"></aside>
                     </div>
                 </div>
 
-                <div class="studio-body" data-detail-open="false">
-                    <div class="surface-card studio-canvas-card">
-                        <div id="studioGraph"></div>
-                        <div class="studio-canvas-toolbar">
-                            <span id="studioNodeCount" class="studio-pill">Loading…</span>
-                            <div class="studio-zoom-controls">
-                                <button class="btn-icon" data-zoom="in" title="Zoom in">+</button>
-                                <button class="btn-icon" data-zoom="out" title="Zoom out">−</button>
-                                <button class="btn-icon" data-zoom="reset" title="Reset view">⟲</button>
-                            </div>
-                        </div>
-                        <div class="studio-legend" id="studioLegend"></div>
-                    </div>
-                    <aside class="surface-card studio-detail" id="studioDetail" data-open="false"></aside>
-                </div>
-                <div class="studio-insights" id="studioInsights"></div>
+                <section class="studio-review" id="studioReview" aria-label="Review new memories" hidden></section>
+                <div class="studio-toast" id="studioToast" role="status" hidden></div>
             </div>
 
             <!-- ═══════════════════════════════ -->
@@ -1467,7 +1490,7 @@
         function switchTab(tabId) {
             const tabEl = document.getElementById(`tab-${tabId}`);
             // Pages without a sidebar item light up the item they're opened from.
-            const SUBPAGE_OF = { memory: 'settings', chats: 'dashboard' };
+            const SUBPAGE_OF = { chats: 'dashboard' };
             const navEl = document.querySelector(`.nav-item[data-tab="${SUBPAGE_OF[tabId] || tabId}"]`);
             if (!tabEl || !navEl) return; // tab removed or unknown — ignore silently
 

@@ -13,6 +13,8 @@ vi.mock("../memory/memory-import.js", () => ({
     saveImportedFacts: vi.fn(async () => ({ added: 0, duplicates: 0, rejected: 0, ids: [] })),
 }));
 vi.mock("../tools/import-memory.js", () => ({ readImportFile: vi.fn() }));
+const recall = vi.fn(async () => [{ id: 7 }, { id: 3 }]);
+vi.mock("../memory/sqlite.js", () => ({ recall }));
 vi.mock("../memory/forget.js", () => ({
     undoImportBatch: vi.fn((b: string) => (b.startsWith("import:") ? { forgotten: 3 } : { error: "Not an import batch." })),
 }));
@@ -59,6 +61,13 @@ describe("/api/memory/import/*", () => {
         expect((await call("POST", "/api/memory/import/undo", "web-widget", body)).status).toBe(403);
         expect(await call("POST", "/api/memory/import/undo", "native-overlay", body)).toEqual({ status: 200, body: { forgotten: 3 } });
         expect((await call("POST", "/api/memory/import/undo", "native-overlay", '{"batch":"x"}')).status).toBe(400);
+    });
+
+    it("searches memories by meaning for the owner only, without touching them", async () => {
+        expect((await call("POST", "/api/memory/search", "web-widget", '{"query":"sister"}')).status).toBe(403);
+        expect((await call("POST", "/api/memory/search", "native-overlay", '{"query":" "}')).status).toBe(400);
+        expect(await call("POST", "/api/memory/search", "native-overlay", '{"query":"my sister"}')).toEqual({ status: 200, body: { ids: [7, 3] } });
+        expect(recall).toHaveBeenCalledWith("my sister", 50, undefined, undefined, undefined, undefined, { touch: false });
     });
 
     it("refuses a body over the limit with 413", async () => {

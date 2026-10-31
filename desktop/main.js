@@ -3852,6 +3852,126 @@ function registerIPC() {
         }
     });
 
+    // ── Memory page: list, search, weekly review ─────────────────────
+    // Rows for the list view, in the same id scheme as the graph (mem:/ent:/trait:).
+    const STUDIO_MEM_COLS = "id, content, category, source, importance, created_at, COALESCE(pinned, 0) AS pinned";
+    const _memItem = (r) => ({
+        id: `mem:${r.id}`, kind: "memory", text: r.content, category: r.category || "general",
+        source: r.source || "", importance: r.importance, createdAt: r.created_at, pinned: !!r.pinned,
+    });
+    const _entItem = (r) => ({ id: `ent:${r.id}`, kind: "entity", text: r.name, category: r.type || "thing", createdAt: r.created_at });
+    const _traitItem = (r) => {
+        const name = r.trait_key.replace(/_/g, " ");
+        const value = r.value && r.value !== "true" ? `: ${r.value}` : "";
+        return { id: `trait:${r.trait_key}`, kind: "trait", text: name[0].toUpperCase() + name.slice(1) + value, confidence: r.confidence, createdAt: r.created_at };
+    };
+    // Facts about the owner; Bhai's own research notes and chat summaries aren't asked about.
+    const REVIEW_SKIP = "category NOT IN ('research', 'session_summary', 'bhai_did') AND COALESCE(source, '') NOT LIKE 'import%'";
+
+    ipcMain.handle("memory:studio-list", async (_, opts) => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const o = opts || {};
+                const limit = Math.min(Math.max(1, Number(o.limit) || 100), 500);
+                const offset = Math.max(0, Number(o.offset) || 0);
+                const count = (sql, params) => (_safeGet(db, sql, params) || {}).c || 0;
+                if (o.kind === "entity") {
+                    return {
+                        success: true, total: count("SELECT COUNT(*) AS c FROM entities"),
+                        items: _safeAll(db, "SELECT id, name, type, created_at FROM entities ORDER BY last_accessed_at DESC LIMIT ? OFFSET ?", [limit, offset]).map(_entItem),
+                    };
+                }
+                if (o.kind === "trait") {
+                    return {
+                        success: true, total: count("SELECT COUNT(*) AS c FROM behavioral_traits WHERE confidence > 0.3"),
+                        items: _safeAll(db, "SELECT trait_key, value, confidence, created_at FROM behavioral_traits WHERE confidence > 0.3 ORDER BY confidence DESC LIMIT ? OFFSET ?", [limit, offset]).map(_traitItem),
+                    };
+                }
+                const where = "consolidated_into IS NULL" + (o.category ? " AND category = ?" : "");
+                const params = o.category ? [String(o.category)] : [];
+                return {
+                    success: true, total: count(`SELECT COUNT(*) AS c FROM memories WHERE ${where}`, params),
+                    items: _safeAll(db, `SELECT ${STUDIO_MEM_COLS} FROM memories WHERE ${where}
+                        ORDER BY pinned DESC, importance DESC, created_at DESC LIMIT ? OFFSET ?`, [...params, limit, offset]).map(_memItem),
+                };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // By meaning through the bot's recall(); by words when the bot isn't running.
+    ipcMain.handle("memory:studio-find", async (_, query) => {
+        const q = typeof query === "string" ? query.trim().slice(0, 500) : "";
+        if (!q) return { success: true, items: [] };
+        const found = await _importCallBot("search", { query: q }, 8000);
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                let memRows;
+                if (found.success && Array.isArray(found.ids)) {
+                    const ids = found.ids.filter(Number.isInteger);
+                    const byId = new Map(ids.length
+                        ? _safeAll(db, `SELECT ${STUDIO_MEM_COLS} FROM memories WHERE consolidated_into IS NULL AND id IN (${ids.map(() => "?").join(",")})`, ids).map((r) => [r.id, r])
+                        : []);
+                    memRows = ids.map((id) => byId.get(id)).filter(Boolean);
+                } else {
+                    const words = q.split(/\s+/).slice(0, 8);
+                    memRows = _safeAll(db, `SELECT ${STUDIO_MEM_COLS} FROM memories WHERE consolidated_into IS NULL AND ${words.map(() => "content LIKE ?").join(" AND ")}
+                        ORDER BY importance DESC, created_at DESC LIMIT 50`, words.map((w) => `%${w}%`));
+                }
+                const like = `%${q}%`;
+                return {
+                    success: true,
+                    byMeaning: !!found.success,
+                    items: [
+                        ..._safeAll(db, "SELECT id, name, type, created_at FROM entities WHERE name LIKE ? LIMIT 10", [like]).map(_entItem),
+                        ..._safeAll(db, "SELECT trait_key, value, confidence, created_at FROM behavioral_traits WHERE confidence > 0.3 AND (trait_key LIKE ? OR value LIKE ?) LIMIT 10", [like.replace(/ /g, "_"), like]).map(_traitItem),
+                        ...memRows.map(_memItem),
+                    ],
+                };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // New facts from the last 7 days the owner hasn't kept, fixed or forgotten yet.
+    ipcMain.handle("memory:studio-review", async () => {
+        try {
+            const db = _studioOpenWriteDb(); // creates memory_reviewed on first use
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const rows = db.prepare(`SELECT ${STUDIO_MEM_COLS} FROM memories
+                    WHERE consolidated_into IS NULL AND created_at > datetime('now', '-7 days') AND ${REVIEW_SKIP}
+                      AND id NOT IN (SELECT memory_id FROM memory_reviewed)
+                    ORDER BY created_at DESC LIMIT 200`).all();
+                return { success: true, items: rows.map(_memItem) };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-reviewed", async (_, ids) => {
+        const nums = (Array.isArray(ids) ? ids : []).map(Number).filter(Number.isInteger);
+        if (!nums.length) return { success: true };
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const ins = db.prepare("INSERT OR IGNORE INTO memory_reviewed (memory_id) VALUES (?)");
+                _studioRunWithRetry(() => db.transaction(() => { for (const id of nums) ins.run(id); })());
+                return { success: true };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
     // ── Memory Studio: write paths ──────────────────────────────────
     // Open a R/W handle, run the change in a transaction, retry on
     // SQLITE_BUSY (the bot child process holds its own write handle and
@@ -3880,6 +4000,8 @@ function registerIPC() {
             )`).run();
         } catch { /* */ }
         try { handle.prepare("CREATE INDEX IF NOT EXISTS idx_forget_log_kind ON memory_forget_log(kind, forgotten_at)").run(); } catch { /* */ }
+        // Memories the owner kept or fixed in the weekly review (the page's own table; the bot never reads it).
+        try { handle.prepare("CREATE TABLE IF NOT EXISTS memory_reviewed (memory_id INTEGER PRIMARY KEY, reviewed_at TEXT DEFAULT (datetime('now')))").run(); } catch { /* */ }
         // Forgotten means gone: older rows kept the content.
         try { handle.prepare("UPDATE memory_forget_log SET content_snapshot = NULL WHERE content_snapshot IS NOT NULL").run(); } catch { /* */ }
         try {
@@ -4304,7 +4426,7 @@ function registerIPC() {
                 success: false,
                 error: err.name === "AbortError" ? "That took too long. Try importing a smaller part." : "Bhai isn't running. Start Bhai and try again.",
             });
-            const req = require("http").request(`${OVERLAY_URL}/api/memory/import/${route}`, {
+            const req = require("http").request(`${OVERLAY_URL}/api/memory/${route}`, {
                 method: data ? "POST" : "GET",
                 headers: { Authorization: `Bearer ${tok}`, ...(data ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } : {}) },
                 signal: AbortSignal.timeout(timeoutMs),
@@ -4326,7 +4448,7 @@ function registerIPC() {
         });
     }
 
-    ipcMain.handle("memory:import-prompt", () => _importCallBot("prompt", null, 5000));
+    ipcMain.handle("memory:import-prompt", () => _importCallBot("import/prompt", null, 5000));
 
     ipcMain.handle("memory:import-pick-file", async () => {
         const result = await dialog.showOpenDialog(mainWindow, {
@@ -4343,7 +4465,7 @@ function registerIPC() {
         const { text, filePath, source } = opts || {};
         if (typeof text === "string" && text.trim()) {
             if (text.length > 20 * 1024 * 1024) return { success: false, error: "That's too much text. Try a smaller part." };
-            return _importCallBot("preview", { text, source }, IMPORT_PREVIEW_MS);
+            return _importCallBot("import/preview", { text, source }, IMPORT_PREVIEW_MS);
         }
         if (!filePath || filePath !== _importPickedPath) return { success: false, error: "Choose the file again." };
         // Export .zips go as they are: the bot picks conversations.json (or the biggest text) out itself.
@@ -4352,17 +4474,17 @@ function registerIPC() {
         } catch (err) {
             return { success: false, error: `Couldn't read that file: ${err.message}` };
         }
-        return _importCallBot("preview", { path: filePath, source }, IMPORT_PREVIEW_MS);
+        return _importCallBot("import/preview", { path: filePath, source }, IMPORT_PREVIEW_MS);
     });
 
     ipcMain.handle("memory:import-save", (_, facts, source) => {
         if (!Array.isArray(facts) || !facts.length) return { success: false, error: "Nothing selected." };
-        return _importCallBot("save", { facts, source }, 120_000);
+        return _importCallBot("import/save", { facts, source }, 120_000);
     });
 
     ipcMain.handle("memory:import-undo", (_, batch) => {
         if (typeof batch !== "string" || !batch) return { success: false, error: "Nothing to undo." };
-        return _importCallBot("undo", { batch }, 60_000);
+        return _importCallBot("import/undo", { batch }, 60_000);
     });
 
     // Setup: save user profile

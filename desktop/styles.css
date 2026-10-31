@@ -5554,8 +5554,7 @@ body.hig .toast {
 }
 body.hig .toast.error { background: #c9372c; border: 0; }
 
-/* ── Memory tab (studio.css owns layout; align controls) ─────────── */
-body.hig .studio-search-card { padding: 12px !important; }
+/* ── Memory tab (studio.css owns its layout) ─────────── */
 body.hig .trait-item { background: var(--bg-group); border: 1px solid var(--separator); }
 body.hig :is(.rel-bar, .trait-conf-bar) { background: var(--fill-quaternary); }
 body.hig :is(.rel-fill, .trait-conf-fill) { background: var(--accent-primary); }
@@ -5569,7 +5568,6 @@ body.hig .episode-item { border-bottom-color: var(--separator); }
         transition-duration: 0.01ms !important;
     }
 }
-body.hig .studio-detail { background: var(--bg-elevated); border-color: var(--separator); }
 
 /* ════════════════════════════════════════════════════════════════════
    LIQUID GLASS — panel.html only (body.hig), layered on the HIG skin
@@ -5727,15 +5725,6 @@ body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .upd
     pointer-events: none;
 }
 
-/* Content-heavy surfaces (the memory graph and its detail pane) take a thicker
-   material so nodes and text don't compete with the orbs. */
-body.hig :is(.studio-canvas-card, .studio-detail) { --lg-frost: blur(20px); --lg-tint: rgba(255, 251, 248, 0.56); }
-body.hig.theme-dark :is(.studio-canvas-card, .studio-detail) { --lg-tint: rgba(28, 22, 19, 0.64); }
-/* The Memory tab animates these itself (studio.css); keep those transitions
-   instead of the shared glass spring. */
-body.hig .studio-detail { transition: transform 220ms ease, opacity 220ms ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
-body.hig .studio-body .studio-canvas-card { transition: margin-right 220ms ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
-body.hig .studio-insight-card { transition: transform 0.15s ease, box-shadow 0.15s ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
 
 /* Radii */
 body.hig :is(.surface-card, .settings-section, .info-cards, .update-banner) { border-radius: var(--r-group) !important; }
