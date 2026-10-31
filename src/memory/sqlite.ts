@@ -1605,7 +1605,8 @@ async function embedAndStore(memoryId: number, content: string): Promise<void> {
 export const normFact = (t: string) =>
     t
         .toLowerCase()
-        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/[\uFE00-\uFE0F\u20E3]/g, "") // emoji variation selectors/keycaps: marks, not word parts
+        .replace(/[^\p{L}\p{M}\p{N}]+/gu, " ") // \p{M}: matras/virama are part of words ("पापा" ≠ "पपा")
         .trim();
 
 /** Id of a stored memory in this scope with the same text, ignoring case and punctuation. */

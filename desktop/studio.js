@@ -1071,7 +1071,10 @@
                 undo.textContent = "Undoing…";
                 let r;
                 try {
-                    r = await window.atlas.studio.bulkForget(ids, "import_undo");
+                    // The bot's batch undo also takes back the people, projects and profile fields
+                    // this import added; deleting the rows here is the fallback when it can't.
+                    if (res.batch && window.atlas.studio.importUndo) r = await window.atlas.studio.importUndo(res.batch);
+                    if (!r?.success) r = await window.atlas.studio.bulkForget(ids, "import_undo");
                 } catch (err) {
                     r = { success: false, error: err.message };
                 }

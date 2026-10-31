@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("atlas", {
         importPrompt: () => ipcRenderer.invoke("memory:import-prompt"),
         importPreview: (opts) => ipcRenderer.invoke("memory:import-preview", opts),
         importSave: (facts, source) => ipcRenderer.invoke("memory:import-save", facts, source),
+        importUndo: (batch) => ipcRenderer.invoke("memory:import-undo", batch),
         pickImportFile: () => ipcRenderer.invoke("memory:import-pick-file"),
     },
 

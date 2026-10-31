@@ -13,6 +13,9 @@ vi.mock("../memory/memory-import.js", () => ({
     saveImportedFacts: vi.fn(async () => ({ added: 0, duplicates: 0, rejected: 0, ids: [] })),
 }));
 vi.mock("../tools/import-memory.js", () => ({ readImportFile: vi.fn() }));
+vi.mock("../memory/forget.js", () => ({
+    undoImportBatch: vi.fn((b: string) => (b.startsWith("import:") ? { forgotten: 3 } : { error: "Not an import batch." })),
+}));
 
 const { handleMemoryImportRoute } = await import("./memory-import-routes.js");
 
@@ -49,6 +52,13 @@ describe("/api/memory/import/*", () => {
         expect((await call("POST", "/api/memory/import/save", "native-overlay", '{"facts":1}')).status).toBe(400);
         expect((await call("POST", "/api/memory/import/save", "native-overlay", '{"facts":[]}')).status).toBe(200);
         expect((await call("POST", "/api/memory/import/preview", "native-overlay", '{"path":"rel.json"}')).status).toBe(400);
+    });
+
+    it("undoes one import by its batch, for the owner only", async () => {
+        const body = '{"batch":"import:2026-10-31T07:30:12-ab12"}';
+        expect((await call("POST", "/api/memory/import/undo", "web-widget", body)).status).toBe(403);
+        expect(await call("POST", "/api/memory/import/undo", "native-overlay", body)).toEqual({ status: 200, body: { forgotten: 3 } });
+        expect((await call("POST", "/api/memory/import/undo", "native-overlay", '{"batch":"x"}')).status).toBe(400);
     });
 
     it("refuses a body over the limit with 413", async () => {

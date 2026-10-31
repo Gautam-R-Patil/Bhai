@@ -3,7 +3,14 @@
 // See LICENSE.md for details.
 
 import { normalizeTags } from "../memory/cards.js";
-import { executeForget, forgetMemoryById, forgetPreviewPending, forgetTerms, previewForget } from "../memory/forget.js";
+import {
+    executeForget,
+    forgetMemoryById,
+    forgetPreviewPending,
+    forgetTerms,
+    IMPORT_BATCH_RE,
+    previewForget,
+} from "../memory/forget.js";
 import {
     addGoal,
     addProject,
@@ -306,7 +313,7 @@ export const memoryForget: ToolDefinition = {
         function: {
             name: "memory_forget",
             description:
-                "Forget something everywhere Bhai keeps it: memories, traits, identity, episodes, task learnings, chat transcripts and session summaries. Owner only. Two steps: (1) call with `query`, a short distinctive phrase of the fact (every word must appear, e.g. 'Priya' or 'blood pressure'); show the owner the numbered preview and ask them to confirm. (2) After the owner says yes in a new message, call with the same `query`, the preview's `token`, `user_quote` (their exact confirming words) and `reason` (why, in their words if they gave one). Afterwards never repeat what was forgotten. When the owner says 'forget #N' about Bhai's weekly 'what I picked up about you' digest, pass only `digest_item: N`: that one item is deleted right away.",
+                "Forget something everywhere Bhai keeps it: memories, traits, identity, episodes, task learnings, chat transcripts and session summaries. Owner only. Two steps: (1) call with `query`, a short distinctive phrase of the fact (every word must appear, e.g. 'Priya' or 'blood pressure'); show the owner the numbered preview and ask them to confirm. (2) After the owner says yes in a new message, call with the same `query`, the preview's `token`, `user_quote` (their exact confirming words) and `reason` (why, in their words if they gave one). Afterwards never repeat what was forgotten. When the owner says 'forget #N' about Bhai's weekly 'what I picked up about you' digest, pass only `digest_item: N`: that one item is deleted right away. To undo a whole memory import ('undo that import', 'remove everything you imported'), pass `import_batch` (the import's `batch`, e.g. 'import:2026-10-31T14:05:50-ab12') instead of `query`: same two steps, and only what that import added goes (its memories, the people it put in the graph, the profile fields and projects it filled).",
             parameters: {
                 type: "object",
                 properties: {
@@ -317,6 +324,11 @@ export const memoryForget: ToolDefinition = {
                     digest_item: {
                         type: "number",
                         description: 'N from the owner\'s "forget #N" about the weekly digest',
+                    },
+                    import_batch: {
+                        type: "string",
+                        description:
+                            "The `batch` import_memory returned (import:YYYY-MM-DDTHH:MM:SS-xxxx): forget everything that import added",
                     },
                 },
                 required: [],
@@ -356,9 +368,17 @@ export const memoryForget: ToolDefinition = {
                 hint: "Tell the owner exactly which item you forgot, quoting it once.",
             });
         }
-        const query = typeof input.query === "string" ? input.query.trim() : "";
+        const batch = typeof input.import_batch === "string" ? input.import_batch.trim() : "";
+        if (batch && !IMPORT_BATCH_RE.test(batch)) {
+            return JSON.stringify({
+                success: false,
+                error: "import_batch must look like import:YYYY-MM-DDTHH:MM:SS-xxxx.",
+            });
+        }
+        // forget.ts reads a batch tag as "that import's memories" rather than as words.
+        const query = batch || (typeof input.query === "string" ? input.query.trim() : "");
         // Whole words match, so a query of only short words ("my ex") would sweep up far too much.
-        if (!forgetTerms(query).some((t) => t.length >= 3)) {
+        if (!batch && !forgetTerms(query).some((t) => t.length >= 3)) {
             return JSON.stringify({ success: false, error: "query is too broad; use a distinctive phrase." });
         }
         if (typeof input.token !== "string" || !input.token) {

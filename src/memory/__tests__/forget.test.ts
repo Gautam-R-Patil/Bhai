@@ -232,6 +232,92 @@ describe("memory_forget across tiers", () => {
         const log = raw.prepare("SELECT reason FROM memory_forget_log ORDER BY id DESC LIMIT 1").get() as { reason: string };
         expect(log.reason).toBe("given");
     });
+
+    it("the import window's Undo tap takes back exactly that batch, no quote needed", () => {
+        const batch = "import:2026-10-31T09:00:05-beef";
+        const ins = raw.prepare("INSERT INTO memories (content, category, tags) VALUES (?, 'fact', ?)");
+        const id = Number(ins.run("Owner keeps bees", `imported,${batch}`).lastInsertRowid);
+        ins.run("Owner keeps goats", "imported,import:2026-10-31T09:00:05-cafe");
+        const before = count("SELECT COUNT(*) n FROM memories");
+        expect(forget.undoImportBatch("bees")).toEqual({ error: "Not an import batch." });
+        expect(forget.undoImportBatch(batch)).toEqual({ forgotten: 1 });
+        expect(count(`SELECT COUNT(*) n FROM memories WHERE id = ${id}`)).toBe(0);
+        expect(count("SELECT COUNT(*) n FROM memories")).toBe(before - 1);
+    });
+
+    it("undoes one import by its batch tag, after the owner's yes, and touches nothing else", async () => {
+        consent._resetConsent();
+        const batch = "import:2026-10-31T12:00";
+        const ins = raw.prepare("INSERT INTO memories (content, category, tags) VALUES (?, 'fact', ?)");
+        const ours = [
+            Number(ins.run("Owner plays the sitar", `hobby,${batch}`).lastInsertRowid),
+            Number(ins.run("Owner was born in Indore", ` ${batch} `).lastInsertRowid),
+        ];
+        ins.run("Owner runs on Sundays", "import:2026-10-31T12:01"); // another import
+        ins.run("Owner drinks oolong", `${batch}9`); // same prefix, not the tag
+        ins.run(`Note: ${batch} was a big one`, "note"); // the tag in content only
+        raw.prepare("INSERT INTO memory_embeddings (memory_id, embedding, model) VALUES (?, x'00', 'm')").run(ours[0]);
+        (await import("../traits.js")).upsertTrait("plays_sitar", "true", 0.8);
+        const chatLog = await import("../../overlay/chat-log.js");
+        chatLog.logChatMessage("overlay", "assistant", `Imported 2 facts (${batch}), Owner plays the sitar`);
+        const before = count("SELECT COUNT(*) n FROM memories");
+
+        const { memoryForget } = await import("../../tools/memory-tools.js");
+        const { runWithCallerContext } = await import("../../tools/cron-tool.js");
+        const call = async (input: Record<string, unknown>) =>
+            JSON.parse(await runWithCallerContext({ isOwner: true, isPrivate: true }, () => memoryForget.handler(input)));
+        expect((await call({ import_batch: "import:yesterday" })).error).toMatch(/import:YYYY/);
+        const p = await call({ import_batch: batch });
+        expect(p).toMatchObject({ success: true, count: 2 });
+        expect(p.preview).toMatch(/^2 items: 2 memory \(fact\)\n/);
+        expect(p.preview).toContain("sitar");
+        expect(p.preview).toContain("Indore");
+
+        expect(forget.executeForget(p.token, "yes", "redo it")).toHaveProperty("error"); // no yes after the preview
+        expect(count("SELECT COUNT(*) n FROM memories")).toBe(before);
+        consent.noteOwnerMessage("yes undo the import");
+        expect(forget.executeForget(p.token, "yes undo the import", "wrong account")).toEqual({ forgotten: 2 });
+
+        expect(count(`SELECT COUNT(*) n FROM memories WHERE id IN (${ours})`)).toBe(0);
+        expect(count(`SELECT COUNT(*) n FROM memory_embeddings WHERE memory_id = ${ours[0]}`)).toBe(0);
+        expect(count("SELECT COUNT(*) n FROM memories")).toBe(before - 2);
+        expect(count("SELECT COUNT(*) n FROM behavioral_traits WHERE trait_key = 'plays_sitar'")).toBe(1);
+        expect(chatLog.recentChatContext(60_000, 10).map((m) => m.content)).toContain(
+            `Imported 2 facts (${batch}), Owner plays the sitar`,
+        );
+        const log = raw.prepare("SELECT kind, original_id, reason FROM memory_forget_log ORDER BY id DESC LIMIT 1").get();
+        expect(log).toEqual({ kind: "forget", original_id: "2 items", reason: "wrong account" });
+    });
+
+    it("an import undo also takes back the graph people and profile fields it added, unless since changed", async () => {
+        consent._resetConsent();
+        const id = await import("../identity.js");
+        const batch = "import:2026-10-31T12:05:10-ab12";
+        const other = "import:2026-10-31T12:05:40-cd34"; // same minute, another import
+        raw.prepare("INSERT INTO memories (content, category, tags) VALUES ('Owner bakes bread', 'fact', ?)").run(batch);
+        const ent = raw.prepare("INSERT INTO entities (name, type, properties) VALUES (?, 'person', ?)");
+        const ours = Number(ent.run("Zoya", JSON.stringify({ source: "import", batch })).lastInsertRowid);
+        ent.run("Ravi", JSON.stringify({ source: "import", batch: other }));
+        id.updateIdentityProfile({
+            location: { value: "Goa", verified: false },
+            role: "baker", // the owner corrected the imported "chef" since
+            projects: [...(id.getIdentityProfile().projects ?? []), "Lantern"],
+            extra: { [batch]: { fields: { location: "Goa", role: "chef" }, projects: ["Lantern"] } },
+        });
+
+        const p = forget.previewForget(batch);
+        expect(p.preview).toMatch(/^5 items: 1 memory \(fact\), 1 graph entity, 3 identity\n/);
+        consent.noteOwnerMessage("yes undo it");
+        expect(forget.executeForget(p.token as string, "yes undo it", "")).toEqual({ forgotten: 5 });
+
+        expect(count(`SELECT COUNT(*) n FROM entities WHERE id = ${ours}`)).toBe(0);
+        expect(count("SELECT COUNT(*) n FROM entities WHERE name = 'Ravi'")).toBe(1);
+        const after = id.getIdentityProfile();
+        expect(after.location).toBeUndefined();
+        expect(after.role).toBe("baker");
+        expect(after.projects).not.toContain("Lantern");
+        expect(after.extra?.[batch]).toBeUndefined();
+    });
 });
 
 describe("Forget that button", () => {

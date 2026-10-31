@@ -27,7 +27,9 @@ let mi: typeof import("./memory-import.js");
 beforeAll(async () => {
     sqlite = await import("./sqlite.js");
     mi = await import("./memory-import.js");
-    await sqlite.initMemoryDB();
+    const db = await sqlite.initMemoryDB();
+    (await import("./knowledge-graph.js")).initKnowledgeGraph(db);
+    (await import("./identity.js")).initIdentityDB(db);
 });
 
 const chatgptConvo = (title: string, t: number, msgs: [string, string][]) => ({
@@ -274,6 +276,11 @@ describe("validateImportedFacts", () => {
         const r = mi.validateImportedFacts([{ content: "Likes tea", category: "preference", tags: "from:claude,evil,person:Ma" }]);
         expect(r.facts[0].tags).toBe("imported,from:claude,person:ma");
     });
+
+    it("keeps Devanagari matras in tag names", () => {
+        const r = mi.validateImportedFacts([{ content: "पापा को चाय पसंद है", category: "family", person: "पापा" }]);
+        expect(r.facts[0].tags).toContain("person:पापा");
+    });
 });
 
 describe("extractMemoryFacts", () => {
@@ -383,7 +390,7 @@ describe("saveImportedFacts", () => {
         expect(r).toMatchObject({ added: 1, duplicates: 1, rejected: 0 });
         expect(spy).toHaveBeenCalledTimes(1);
         expect(r.overCap).toBe(0);
-        expect(r.batch).toMatch(/^import:\d{4}-\d\d-\d\dT\d\d:\d\d$/);
+        expect(r.batch).toMatch(/^import:\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d-[0-9a-f]{4}$/);
         expect(spy.mock.calls[0]).toEqual([
             "Plays badminton on Sundays",
             "general",
@@ -462,5 +469,141 @@ describe("saveImportedFacts", () => {
         } finally {
             vi.mocked(emb.isReady).mockReturnValue(false);
         }
+    });
+});
+
+const isoDay = (daysAgo: number) => new Date(Date.now() - daysAgo * 864e5).toISOString().slice(0, 10);
+
+describe("dates", () => {
+    it("keeps a real past date from 2015 on; drops future, impossible and too-old ones", () => {
+        const r = mi.validateImportedFacts([
+            { content: "Runs a book club", category: "general", date: isoDay(30) },
+            { content: "Runs marathons", category: "general", date: isoDay(-3) },
+            { content: "Plays chess", category: "general", date: "2023-02-30" },
+            { content: "Owns a scooter", category: "general", date: "2014-12-31" },
+            { content: "Bakes bread", category: "general", date: "2023-13" },
+            { content: "Learning Japanese", category: "general", date: "yesterday" },
+            { content: "Drives an EV", category: "general", date: "2022-05" },
+        ]);
+        expect(r.facts.map((f) => [f.content, f.date])).toEqual([
+            ["Runs a book club", isoDay(30)], // recent: no suffix
+            ["Runs marathons", undefined],
+            ["Plays chess", undefined],
+            ["Owns a scooter", undefined],
+            ["Bakes bread", undefined],
+            ["Learning Japanese", undefined],
+            ["Drives an EV (as of 2022)", "2022-05"],
+        ]);
+        expect(r.facts[0].tags).toBe(`imported,from:other,as_of:${isoDay(30)}`);
+        expect(r.facts[1].tags).toBe("imported,from:other");
+    });
+
+    it("the as_of tag survives the UI round trip and save; the suffix isn't doubled; created_at isn't backdated", async () => {
+        const [preview] = mi.validateImportedFacts(
+            [{ content: "Teaches salsa on Fridays", category: "general", importance: 5, date: "2021-06-01" }],
+            "chatgpt",
+        ).facts;
+        expect(preview.content).toBe("Teaches salsa on Fridays (as of 2021)");
+        expect(preview.tags).toBe("imported,from:chatgpt,as_of:2021-06-01");
+        // What the desktop sends back: no date field, only the tags.
+        const { content, category, tags, importance } = preview;
+        const again = mi.validateImportedFacts([{ content, category, tags, importance }]).facts[0];
+        expect(again).toEqual(preview);
+        // A bad as_of tag from the UI is dropped.
+        expect(mi.validateImportedFacts([{ content: "Sails", tags: "as_of:2099-01-01" }]).facts[0].tags).toBe(
+            "imported,from:other",
+        );
+
+        const r = await mi.saveImportedFacts([{ content, category, tags, importance }], "chatgpt", true);
+        expect(r.added).toBe(1);
+        const row = sqlite.getRawDb()?.prepare("SELECT content, tags, created_at FROM memories WHERE id = ?").get(r.ids[0]) as {
+            content: string;
+            tags: string;
+            created_at: string;
+        };
+        expect(row.content).toBe("Teaches salsa on Fridays (as of 2021)");
+        expect(row.tags.split(",")).toContain("as_of:2021-06-01");
+        expect(row.created_at.slice(0, 4)).toBe(String(new Date().getUTCFullYear()));
+    });
+});
+
+describe("saveImportedFacts: knowledge graph and identity, fill empty only", () => {
+    it("adds new people, projects and empty profile fields; leaves existing ones alone", async () => {
+        const kgMod = await import("./knowledge-graph.js");
+        const id = await import("./identity.js");
+        const kg = kgMod.getKnowledgeGraphDB();
+        if (!kg) throw new Error("knowledge graph not up");
+        const riya = kgMod.addEntity(kg, "Riya", "person", { note: "mine" });
+        id.updateIdentityProfile({ name: "", role: "", company: "", location: "Mumbai", projects: ["Garden Planner"] });
+
+        const fact = (content: string, category: string, tags = "", date?: string) => ({
+            content,
+            category,
+            tags,
+            importance: 6,
+            ...(date ? { date } : {}),
+        });
+        const r = await mi.saveImportedFacts(
+            [
+                fact("Has a sister named Riya", "person", "person:Riya"),
+                fact("Has a brother named Kabir", "person", "person:kabir"),
+                fact("Building a garden planner app", "project", "project:garden planner"),
+                fact("Building Tidepool, a sleep tracker", "project", "project:Tidepool"),
+                fact("Contributes to Bhai", "project", "project:Bhai"),
+                fact("Name is Dheeraj", "personal"),
+                fact("Lives in Pune", "personal"),
+                fact("Works as a product designer at Acme", "work"),
+                fact("Shipped Lantern, a budgeting app", "project", "project:Lantern", "2019-03"),
+            ],
+            "chatgpt",
+            true,
+        );
+        expect(r).toMatchObject({ added: 9, entitiesAdded: 1, projectsAdded: 1, profileFieldsFilled: 3 });
+
+        // Riya was already there: one row, her data as it was.
+        const rows = kg.exec("SELECT id, properties FROM entities WHERE lower(name) = 'riya'")[0].values;
+        expect(rows).toEqual([[riya, JSON.stringify({ note: "mine" })]]);
+        expect(kg.exec("SELECT properties FROM entities WHERE name = 'Kabir' AND type = 'person'")[0].values).toHaveLength(1);
+
+        const p = id.getIdentityProfile();
+        expect(p.projects).toEqual(["Garden Planner", "Tidepool"]); // not Bhai, not the 2019 one
+        expect(p.location).toBe("Mumbai");
+        expect(p.name).toEqual({ value: "Dheeraj", verified: true }); // the owner picked it in the review
+        expect(p.role).toBe("product designer");
+        expect(p.company).toBe("Acme");
+        // What it filled is recorded under the batch, so undoing the import can take it back out.
+        expect(p.extra?.[r.batch]).toEqual({
+            fields: { name: "Dheeraj", role: "product designer", company: "Acme" },
+            projects: ["Tidepool"], // Garden Planner was already there
+        });
+
+        // Filled fields stay as they are on the next import.
+        const next = await mi.saveImportedFacts([
+            fact("Name is Arjun Rao", "personal"),
+            fact("Works at Globex", "work"),
+            fact("Has a sister named riya", "person", "person:riya"),
+        ]);
+        expect(next).toMatchObject({ entitiesAdded: 0, profileFieldsFilled: 0 });
+        expect(id.getIdentityProfile()).toMatchObject({ name: { value: "Dheeraj" }, company: "Acme" });
+    });
+
+    it("guards: no ownership claims; unreviewed fills stay unverified", async () => {
+        const id = await import("./identity.js");
+        id.updateIdentityProfile({ name: "", role: "", company: "" });
+        const r = await mi.saveImportedFacts(
+            [
+                { content: "Works as a founder at XAGI Labs", category: "work", tags: "", importance: 6 },
+                { content: "Their name is Meera Iyer", category: "personal", tags: "", importance: 6 },
+            ],
+            "claude",
+        );
+        expect(r.profileFieldsFilled).toBe(1);
+        const p = id.getIdentityProfile();
+        expect(id.getFieldValue(p.role)).toBeFalsy();
+        expect(id.getFieldValue(p.company)).toBeFalsy();
+        expect(p.name).toEqual({ value: "Meera Iyer", verified: false });
+        const [confirmed, inferred = ""] = id.getIdentityPromptSnippet().split("⚠️"); // a raw name would read as confirmed
+        expect(confirmed).not.toContain("Meera");
+        expect(inferred).toContain("Meera Iyer");
     });
 });

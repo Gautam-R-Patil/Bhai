@@ -4348,6 +4348,11 @@ function registerIPC() {
         return _importCallBot("save", { facts, source }, 120_000);
     });
 
+    ipcMain.handle("memory:import-undo", (_, batch) => {
+        if (typeof batch !== "string" || !batch) return { success: false, error: "Nothing to undo." };
+        return _importCallBot("undo", { batch }, 60_000);
+    });
+
     // Setup: save user profile
     ipcMain.handle("setup:save-profile", async (_, profile) => {
         try {

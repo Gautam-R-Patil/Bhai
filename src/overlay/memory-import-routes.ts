@@ -88,6 +88,12 @@ export async function handleMemoryImportRoute(
             if (!Array.isArray(body.facts)) return send(res, 400, { error: "facts must be a list" });
             return send(res, 200, await saveImportedFacts(body.facts, str(body.source), true));
         }
+        if (pathname === "/api/memory/import/undo" && req.method === "POST") {
+            const body = JSON.parse(await readBoundedBody(req, 4096)) as Record<string, unknown>;
+            const { undoImportBatch } = await import("../memory/forget.js");
+            const r = undoImportBatch(str(body.batch) ?? "");
+            return send(res, "error" in r ? 400 : 200, r);
+        }
         return send(res, 404, { error: "Not found" });
     } catch (err) {
         const status = (err as { status?: number }).status ?? (err instanceof SyntaxError ? 400 : 500);

@@ -226,7 +226,7 @@ export const importMemory: ToolDefinition = {
                 .slice(0, 20)
                 .map((f) => f.content),
             ids: r.ids,
-            hint: `Tell the owner how many facts you added. Say back the few most defining ones in your own words (nothing sensitive) and ask which is wrong.${r.added ? " To drop one, use memory_forget with words from it; to undo the whole import, the owner can remove them in the desktop app's Memory." : ""}`,
+            hint: `Tell the owner how many facts you added. Say back the few most defining ones in your own words (nothing sensitive) and ask which is wrong.${r.added ? ` To drop one, use memory_forget with words from it; to undo the whole import, call memory_forget with import_batch "${r.batch}" (preview first, then the owner's confirmation).` : ""}`,
         });
     },
 };
