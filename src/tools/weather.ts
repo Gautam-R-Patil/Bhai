@@ -206,11 +206,15 @@ export const weatherTool: ToolDefinition = {
             if (action === "current") {
                 const c = data.current_condition?.[0];
                 if (!c) return JSON.stringify({ error: "No current weather data available." });
+                // "Should I take an umbrella?" is about today, not this minute: without the day's rain
+                // chance Bhai said "take one" and "no sign of rain" in the same reply.
+                const today = data.weather?.[0];
                 return JSON.stringify({
                     success: true,
                     location,
                     units,
                     current: formatCurrent(c, metric),
+                    ...(today?.hourly?.length ? { today: formatForecast([today], metric, 1)[0] } : {}),
                 });
             }
 
