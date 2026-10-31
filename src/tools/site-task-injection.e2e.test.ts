@@ -410,5 +410,5 @@ describe("prompt injection on the synthetic shop", { retry: 2 }, () => {
                 await shop.close();
             }
         }
-    }, 120_000);
+    }, 60_000 + RAW_RUNS * 15_000);
 });
