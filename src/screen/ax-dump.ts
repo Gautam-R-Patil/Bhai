@@ -290,7 +290,7 @@ export async function dumpDock(): Promise<AxDump | null> {
 async function dumpWindows(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump> {
     const script = join(getScriptsDir(), "dump_uia.ps1");
     const args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script];
-    if (opts.pid && opts.pid > 0) args.push("-Pid", String(opts.pid));
+    if (opts.pid && opts.pid > 0) args.push("-TargetPid", String(opts.pid)); // not -Pid: PowerShell's read-only $PID
     if (opts.depth) args.push("-MaxDepth", String(opts.depth));
     if (opts.bboxOnly) args.push("-BboxOnly");
     const { stdout } = await execFileAsync("powershell", args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 });
