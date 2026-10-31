@@ -535,7 +535,8 @@ export function antiGivingUpFailures(
         if (m.role !== "tool") return false;
         const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
         return (
-            txt.includes('"error"') ||
+            // A successful result can carry "error":null; only a set error counts.
+            /"error":\s*(?!null\b|false\b|"")/.test(txt) ||
             txt.includes('"success":false') ||
             txt.includes("NOT_PLAYING") ||
             txt.includes("NO_RESULTS") ||
@@ -572,7 +573,8 @@ export function antiGivingUpFailures(
         "unable to",
     ].some((p) => lower.includes(p));
     // Substantial replies (>200 chars) delegating to the user are likely genuine instructions.
-    const fire = (isDelegatingToUser && isActionTask && responseText.length < 200) || isGivingUp;
+    // "Not available" is an honest answer to a plain question; it is giving up only on a task.
+    const fire = isActionTask && ((isDelegatingToUser && responseText.length < 200) || isGivingUp);
     return fire ? failures : 0;
 }
 
@@ -1953,6 +1955,7 @@ async function _runAgentBody(
     const verifyGate = newVerifyGateState();
     let lookNudged = false; // asksLeaveToLook fires once per run
     let ackNudged = false; // the ack-without-action nudge, once per run
+    let antiGiveUpNudged = false; // the anti-giving-up retry, once per run
     const receiptFor = async (text: string): Promise<Receipt | undefined> => {
         const receipt = pickReceipt(verifyGate, {
             stuck: takeStuckMarker(text).stuck,
@@ -4053,8 +4056,11 @@ PLAN:`,
             // the user instead of trying alternative approaches → it's giving up.
             // If the agent is asking a DISAMBIGUATION question (no errors) → legitimate.
 
-            const recentFailures = antiGivingUpFailures(messages, lastUserText, responseText, totalToolCalls);
+            const recentFailures = antiGiveUpNudged
+                ? 0
+                : antiGivingUpFailures(messages, lastUserText, responseText, totalToolCalls);
             if (recentFailures > 0) {
+                antiGiveUpNudged = true;
                 const hasVisualTools = toolSelection.categories.includes("os_control");
                 const continuationHint = hasVisualTools
                     ? "Use os_smart_click with a natural-language instruction (e.g. 'the Wi-Fi row') — it cascades AX → OmniParser → UI-TARS/cloud grounding automatically and is far more reliable than os_ocr_click, which has been failing here. Only fall back to os_screenshot + os_click if os_smart_click returns cascade_miss. You have full mouse+keyboard control."

@@ -88,6 +88,18 @@ describe("antiGivingUpFailures", () => {
             antiGivingUpFailures(history, "open my bank site and download the statement", `${handoff}\n[[STUCK]]`, 2),
         ).toBe(0);
     });
+    it("leaves an honest 'not available' answer to a plain question alone", () => {
+        const search: ChatCompletionMessageParam = {
+            role: "tool",
+            tool_call_id: "t2",
+            content: JSON.stringify({ success: true, error: null, results: [{ title: "Pixel 10 Pro Fold" }] }),
+        };
+        const q = "is the pixel 10 pro fold out in india yet?";
+        const reply = "The Pixel 10 Pro Fold is not available in India yet.";
+        expect(antiGivingUpFailures([msg(q), search], q, reply, 1)).toBe(0);
+        // "error":null is not a failure even on an action task
+        expect(antiGivingUpFailures([msg("find the fold"), search], "find the fold", reply, 1)).toBe(0);
+    });
 });
 
 describe("asksLeaveToLook", () => {
