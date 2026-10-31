@@ -14,7 +14,7 @@ import { getExportsDir } from "../config/paths.js";
 import { isPathAllowed, isProtectedPath } from "../security/allowlist.js";
 import { isSensitivePath, outboundFileRefusal } from "../security/sensitive-paths.js";
 import type { ToolDefinition } from "./get-current-time.js";
-import { IS_MAC, IS_WIN, nativeOpen, runPowerShell, runPowerShellInline } from "./platform.js";
+import { IS_MAC, IS_WIN, nativeOpen, psQuote, runPowerShell, runPowerShellInline } from "./platform.js";
 import { manageRefusal } from "./files.js";
 import { getTelegramContext } from "./send-file.js";
 
@@ -499,9 +499,10 @@ export const compressFiles: ToolDefinition = {
                 } else {
                     // Windows/Linux: use zip command or PowerShell
                     if (IS_WIN) {
-                        const pathList = paths.map((p: string) => `"${p}"`).join(", ");
+                        // Single-quoted: in "…" PowerShell runs a $(…) that a file name can carry.
+                        const pathList = paths.map(psQuote).join(", ");
                         await runPowerShellInline(
-                            `Compress-Archive -Path ${pathList} -DestinationPath "${archivePath}" -Force`,
+                            `Compress-Archive -LiteralPath ${pathList} -DestinationPath ${psQuote(archivePath)} -Force`,
                             60000,
                         );
                     } else {
@@ -542,7 +543,7 @@ export const compressFiles: ToolDefinition = {
                         await execFileAsync("ditto", ["-x", "-k", archivePath, outputDir], { timeout: 60000 });
                     } else if (IS_WIN) {
                         await runPowerShellInline(
-                            `Expand-Archive -Path "${archivePath}" -DestinationPath "${outputDir}" -Force`,
+                            `Expand-Archive -LiteralPath ${psQuote(archivePath)} -DestinationPath ${psQuote(outputDir)} -Force`,
                             60000,
                         );
                     } else {
@@ -618,7 +619,7 @@ export const trashManager: ToolDefinition = {
                         await runPowerShell(
                             `
 $shell = New-Object -ComObject Shell.Application
-$item = $shell.NameSpace(0).ParseName("${absPath.replace(/\\/g, "\\\\")}")
+$item = $shell.NameSpace(0).ParseName(${psQuote(absPath)})
 if ($item) { $item.InvokeVerb("delete") } else { Write-Error "Item not found" }
 `,
                             10000,
