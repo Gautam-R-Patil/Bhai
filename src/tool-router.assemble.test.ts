@@ -59,6 +59,9 @@ describe("assembleToolNames", () => {
         expect(asksChangingFact("I haven't slept yet")).toBe(false); // not a question
         expect(asksChangingFact("What's the latest stable version of Python right now? one line")).toBe(true);
         expect(asksChangingFact("what is the latest iPhone")).toBe(true); // no "?" typed
+        expect(asksChangingFact("how are you doing right now?")).toBe(false); // small talk
+        expect(asksChangingFact("what are you up to currently?")).toBe(false);
+        expect(asksChangingFact("do you know the latest iPhone right now?")).toBe(true);
         expect(boosts("which app is in front right now, and which other apps are running?")).toContain("app_management");
         expect(boosts("what is an app store review?")).not.toContain("app_management");
         expect(boosts("Without switching apps: what's the Finder window called?")).toContain("os_control");

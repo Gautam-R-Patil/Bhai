@@ -917,7 +917,9 @@ export const needsTools = (message: string): boolean => CHAT_LANE_OVERRIDES.some
 
 export const asksChangingFact = (message: string): boolean =>
     (message.includes("?") || /^\s*(what|which|who|when|where|has|have|is|are|did|does|do|how)\b/i.test(message)) &&
-    CHANGING_FACT.test(message);
+    CHANGING_FACT.test(message) &&
+    // Small talk about Bhai itself ("how are you doing right now?", "what are you up to currently?")
+    !/\b(?:how (?:are|r) (?:you|u)|how(?:'s| is) it going|what(?: are|'re| r) (?:you|u) (?:doing|up to)|how (?:you|u) doing)\b/i.test(message);
 
 export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
     // Music / Media
