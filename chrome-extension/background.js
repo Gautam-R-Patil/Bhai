@@ -1015,7 +1015,7 @@ async function scanElements(payload) {
       const key = `${el.x},${el.y}`;
       if (seenCoords.has(key)) continue;
       seenCoords.add(key);
-      allElements.push(el);
+      allElements.push({ ...el, frameId: frame.frameId });
     }
   }
 
@@ -1034,6 +1034,7 @@ async function scanElements(payload) {
     bhaiId: el.bhaiId,
     atlasId: el.bhaiId, // for a bot from before the rename; drop after a release
     editorType: el.editorType,
+    frameId: el.frameId, // 0 = the top page, where the bot can find a light-DOM element again by its id
   }));
 
   return { elements: labeled };

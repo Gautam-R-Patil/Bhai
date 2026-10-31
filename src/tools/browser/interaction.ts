@@ -221,6 +221,10 @@ export const browserClickAt: ToolDefinition = {
                             }
                         } else if (gone || /detached|not attached|not visible/.test(errMsg)) {
                             return JSON.stringify({ error: VANISHED, raw_error: errMsg });
+                        } else if (/command "click_at" timed out/.test(errMsg)) {
+                            // The click may still land (an alert() the extension can't close holds it), and a
+                            // second one would land too once the owner closes it: report the failed click.
+                            throw handleErr;
                         } else if (/not enabled|disabled/i.test(errMsg)) {
                             // Clicking it anyway "succeeds" and does nothing.
                             return JSON.stringify({
@@ -1198,7 +1202,7 @@ export const browserScrollElement: ToolDefinition = {
             if (!el) {
                 return JSON.stringify({ error: `Label ${input.label} not found. Run browser_scan first.` });
             }
-            if (!el.handle) {
+            if (typeof el.handle?.evaluate !== "function") {
                 return JSON.stringify({
                     error: `No DOM handle for label ${input.label}. Run browser_scan to refresh.`,
                 });

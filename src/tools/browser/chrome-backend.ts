@@ -86,7 +86,7 @@ export class ChromePageProxy {
      * navigation starts a beat after the click, so look again shortly after and, while
      * the tab is loading, wait for it (up to 8s) instead of reporting the old page.
      */
-    private async syncTab(): Promise<void> {
+    async syncTab(): Promise<void> {
         const read = () =>
             getActiveExtensionTab().catch(() => null) as Promise<{
                 url: string;
@@ -401,14 +401,35 @@ async function chromeScreenshot(format: "png" | "jpeg", quality?: number): Promi
     return Buffer.from(result.base64, "base64");
 }
 
+/** A scan label's handle: its scanned point, and the page proxy's sync to run after a click. */
+type ScanLabel = { x: number; y: number; afterClick: () => Promise<void> };
+
+/** In-page: rect `r` has a box (display:none and a collapsed item have none, their centre is the viewport's corner). */
+const HAS_BOX_JS = (r: string) => `(${r}.width > 0 && ${r}.height > 0)`;
+/** In-page: rect `r`'s centre, where a click lands, is off-screen (a tall editor or card whose centre shows isn't). */
+const CENTRE_OFF_SCREEN_JS = (r: string) =>
+    `(${r}.top + ${r}.height / 2 < 0 || ${r}.left + ${r}.width / 2 < 0 || ${r}.top + ${r}.height / 2 >= innerHeight || ${r}.left + ${r}.width / 2 >= innerWidth)`;
+
 export class ChromeLocatorProxy {
     private selector: string;
     /** Which match: 0 = first (the first visible one), -1 = last, n = nth. */
     private index: number;
+    private label?: ScanLabel;
 
-    constructor(selector: string, index = 0) {
+    constructor(selector: string, index = 0, label?: ScanLabel) {
         this.selector = selector;
         this.index = index;
+        this.label = label;
+    }
+
+    /**
+     * execute_js failed (the debugger can't attach, CSP blocks the fallback, a bridge error): a scan
+     * label acts at its scanned point, as before it had a handle, and a real bridge error then surfaces
+     * from that click. Any other locator throws.
+     */
+    private orScanned<T>(e: unknown, value: T): T {
+        if (!this.label) throw e;
+        return value;
     }
 
     /** A JS expression for every element the selector (CSS or xpath=) matches. */
@@ -439,32 +460,57 @@ export class ChromeLocatorProxy {
         return sendBridgeCommand("execute_js", { code: this.withEl(body) }, timeoutMs) as Promise<T>;
     }
 
-    private async findElement(): Promise<{ x: number; y: number; found: boolean }> {
-        const r = await this.run<{ x: number; y: number; found: boolean } | null>(
-            `if (!el) return { found: false, x: 0, y: 0 };
-            el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
-            const rect = el.getBoundingClientRect();
-            return { found: true, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };`,
+    /**
+     * The element's centre, scrolled to only when that point is off-screen; throws when the element is
+     * gone or has no box. A visibility:hidden element that has a box (a row's Delete button shown on
+     * :hover) is clicked there: the click's mouse move shows it first. Only a scan label's handle does
+     * this; any other locator is scrolled to centre and clicked at its centre, as it always was.
+     */
+    private async findElement(): Promise<{ x: number; y: number }> {
+        if (!this.label) {
+            const r = await this.run<{ x: number; y: number } | null>(
+                `if (!el) return null;
+                el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+                const rect = el.getBoundingClientRect();
+                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };`,
+                10000,
+            );
+            if (!r) throw new Error(`Element not found: ${this.selector}`);
+            return r;
+        }
+        const l = this.label;
+        type Found = { x: number; y: number; hidden?: boolean } | null;
+        const r = await this.run<Found>(
+            `if (!el) return null;
+            let rect = el.getBoundingClientRect();
+            if (!${HAS_BOX_JS("rect")}) return { hidden: true, x: 0, y: 0 };
+            if (${CENTRE_OFF_SCREEN_JS("rect")}) {
+                el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+                rect = el.getBoundingClientRect();
+            }
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };`,
             10000,
-        );
-        return r || { found: false, x: 0, y: 0 };
+        ).catch((e) => this.orScanned<Found>(e, { x: l.x, y: l.y }));
+        if (!r) throw new Error(`Element not found: ${this.selector}`);
+        // A zero box (display:none dropdown item or tab panel) has its centre at the viewport's corner: never click there.
+        if (r.hidden) throw new Error(`Element is not visible: ${this.selector}`);
+        return r;
     }
 
     async click(opts?: { timeout?: number }): Promise<void> {
         const el = await this.findElement();
-        if (!el.found) throw new Error(`Element not found: ${this.selector}`);
         await sendBridgeCommand("click_at", { x: el.x, y: el.y, modifiers: [...heldModifiers] });
+        await this.label?.afterClick();
     }
 
     async dblclick(): Promise<void> {
         const el = await this.findElement();
-        if (!el.found) throw new Error(`Element not found: ${this.selector}`);
         await sendBridgeCommand("click_at", { x: el.x, y: el.y, doubleClick: true, modifiers: [...heldModifiers] });
+        await this.label?.afterClick();
     }
 
     async fill(text: string): Promise<void> {
         const el = await this.findElement();
-        if (!el.found) throw new Error(`Element not found: ${this.selector}`);
         await sendBridgeCommand("click_at", { x: el.x, y: el.y }); // focus
         await sendBridgeCommand("type_text", { text, clear: true }); // replace, like Playwright fill()
     }
@@ -479,9 +525,10 @@ export class ChromeLocatorProxy {
     }
 
     boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> {
-        return this.run(
+        const l = this.label;
+        return this.run<{ x: number; y: number; width: number; height: number } | null>(
             "if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height };",
-        );
+        ).catch((e) => this.orScanned(e, l ? { x: l.x - 1, y: l.y - 1, width: 2, height: 2 } : null));
     }
 
     textContent(): Promise<string | null> {
@@ -503,8 +550,8 @@ export class ChromeLocatorProxy {
     async scrollIntoViewIfNeeded(): Promise<void> {
         // Instant, and only when needed: callers measure the box right after.
         await this.run(
-            "if (!el) return; const r = el.getBoundingClientRect(); if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });",
-        );
+            `if (!el) return; const r = el.getBoundingClientRect(); if (${this.label ? CENTRE_OFF_SCREEN_JS("r") : "r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth"}) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });`,
+        ).catch((e) => this.orScanned(e, undefined));
     }
 
     async selectOption(value: SelectValue | SelectValue[]): Promise<string[]> {
@@ -524,25 +571,34 @@ export class ChromeLocatorProxy {
 
     async hover(): Promise<void> {
         const el = await this.findElement();
-        if (!el.found) throw new Error(`Element not found: ${this.selector}`);
         await sendBridgeCommand("hover", { x: el.x, y: el.y });
     }
 
     async focus(): Promise<void> {
-        await this.run("if (el && el.focus) el.focus();");
+        if (!this.label) {
+            await this.run("if (el && el.focus) el.focus();");
+            return;
+        }
+        // A scan label's handle throws when the element is gone or hidden (focus() on it does nothing), so callers don't type
+        // into whatever has focus; browser_type then clicks its live box, if it has one.
+        const r = await this.run<string>(
+            `if (!el) return "missing"; if (!${HAS_BOX_JS("el.getBoundingClientRect()")} || el.checkVisibility?.({ visibilityProperty: true }) === false) return "hidden"; el.focus?.(); return "ok";`,
+        );
+        if (r === "hidden") throw new Error(`Element is not visible: ${this.selector}`);
+        if (r !== "ok") throw new Error(`Element not found: ${this.selector}`);
     }
 
     // Playwright semantics: the first / last / index-th MATCH (not :first-of-type).
     first(): ChromeLocatorProxy {
-        return new ChromeLocatorProxy(this.selector, 0);
+        return new ChromeLocatorProxy(this.selector, 0, this.label);
     }
 
     last(): ChromeLocatorProxy {
-        return new ChromeLocatorProxy(this.selector, -1);
+        return new ChromeLocatorProxy(this.selector, -1, this.label);
     }
 
     nth(index: number): ChromeLocatorProxy {
-        return new ChromeLocatorProxy(this.selector, index);
+        return new ChromeLocatorProxy(this.selector, index, this.label);
     }
 }
 
@@ -662,20 +718,38 @@ export class ChromeExtensionBackend implements BrowserBackend {
                 bhaiId?: string;
                 atlasId?: string; // an extension from before the rename sends this instead
                 editorType?: string;
+                frameId?: number;
             }>;
         };
 
-        // Map to InteractiveElement format (no handle for Chrome mode)
-        return (result.elements || []).map((e, i) => ({
-            label: i + 1,
-            x: e.x,
-            y: e.y,
-            tag: e.tag,
-            text: e.text,
-            bhaiId: e.bhaiId ?? e.atlasId ?? "",
-            handle: undefined, // No Playwright handles in Chrome mode
-            editorType: e.editorType as InteractiveElement["editorType"],
-        }));
+        // Top-page light-DOM elements get a live handle by their stamped id, so a label acts where the
+        // element is now (or fails as gone or hidden), not at the scan's coordinates; where page scripts
+        // can't run, it acts at the scanned point as before. Shadow controls (the top
+        // document can't query them, and one host's controls share an id), iframe elements and scans
+        // from older extensions keep coordinates.
+        const syncPage = async () => {
+            await this.pageProxy?.syncTab();
+        };
+        return (result.elements || []).map((e, i) => {
+            const bhaiId = e.bhaiId ?? e.atlasId ?? "";
+            return {
+                label: i + 1,
+                x: e.x,
+                y: e.y,
+                tag: e.tag,
+                text: e.text,
+                bhaiId,
+                handle:
+                    e.frameId === 0 && /^bhai-(el|editor)-/.test(bhaiId)
+                        ? new ChromeLocatorProxy(`[data-bhai-id="${bhaiId}"]`, 0, {
+                              x: e.x,
+                              y: e.y,
+                              afterClick: syncPage,
+                          })
+                        : undefined,
+                editorType: e.editorType as InteractiveElement["editorType"],
+            };
+        });
     }
 
     // ── Interaction ──
