@@ -50,7 +50,7 @@ export async function waitBridgeReady(maxMs = 3000, quietMs = 300, since = 0): P
         );
         if (r === "ready" || r === "stale") return; // stale = settled on the same document
         if (++errors >= 3) return; // the bridge keeps failing: don't spin, let the caller carry on
-        await new Promise((res) => setTimeout(res, 150));
+        await new Promise((res) => setTimeout(res, 150)); // poll
     }
 }
 
@@ -84,15 +84,22 @@ export class ChromePageProxy {
                 pendingUrl?: string;
             } | null>;
         const before = this._url;
-        await new Promise((r) => setTimeout(r, 250));
+        // A click or Enter may start a navigation a moment later: give it up to
+        // 250 ms to show, and carry on as soon as it does.
         let tab = await read();
+        const first = tab?.url;
+        const grace = Date.now() + 250;
+        while (tab && tab.status !== "loading" && tab.url === first && Date.now() < grace) {
+            await new Promise((r) => setTimeout(r, 50)); // poll
+            tab = await read();
+        }
         const end = Date.now() + 8000;
         while (
             tab &&
             (tab.status === "loading" || (tab.pendingUrl && tab.pendingUrl !== tab.url)) &&
             Date.now() < end
         ) {
-            await new Promise((r) => setTimeout(r, 200));
+            await new Promise((r) => setTimeout(r, 200)); // poll
             tab = await read();
         }
         if (tab?.url) {

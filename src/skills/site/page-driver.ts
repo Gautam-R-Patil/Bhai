@@ -156,7 +156,7 @@ export async function pickTarget(page: any, a: SiteAction, visible: (loc: any) =
     for (;;) {
         labels = (await page.evaluate(PICK_JS(sel))) as string[] | null;
         if (!labels || labels.length || Date.now() > until) break;
-        await sleep(100);
+        await sleep(100); // poll
     }
     if (!labels?.length) throw new Error(`not_found: ${JSON.stringify(a.target)}`);
     const choices = labels.map((label, i) => ({ label, i }));
@@ -552,7 +552,7 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
                 if (now - quiet >= expectIdleMs() || now - start >= expectCapMs()) {
                     throw new Error(`no_outcome: none of ${Object.keys(spec).join(", ")} after ${now - start}ms`);
                 }
-                await sleep(100);
+                await sleep(100); // poll
             }
         } finally {
             if (net) {
@@ -607,7 +607,7 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
                     const now = Date.now();
                     if (got.length === answers.length && now - Math.max(last, from) >= WRITE_QUIET_MS) break;
                     if (now - from >= 10_000) break;
-                    await sleep(50);
+                    await sleep(50); // poll
                 }
                 stop();
                 if (!answers.length || answers.some((a) => !a.v)) return UNCLEAR;

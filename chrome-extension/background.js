@@ -460,6 +460,14 @@ function sendToAtlas(text, meta = {}, image = null) {
 // screen), with their drawing if they made one; the drawing is removed once
 // captured. null on pages Chrome won't let extensions capture.
 const drawnTabs = new Set();
+// Resolves once the tab has painted twice (rAF runs only in a visible tab), at most capMs.
+function painted(tabId, capMs = 300) {
+  return chrome.scripting.executeScript({
+    target: { tabId },
+    func: (cap) => new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(() => r(true))); setTimeout(() => r(false), cap); }),
+    args: [capMs],
+  }).catch(() => []);
+}
 async function captureTab(tab) {
   if (!tab?.id || !/^(https?|file):/.test(tab.url || "")) return null;
   let drew = false;
@@ -474,7 +482,7 @@ async function captureTab(tab) {
       },
     }).catch(() => []);
     drew = !!probe?.result;
-    await new Promise((r) => setTimeout(r, 80)); // let the toolbar disappear before the capture
+    await painted(tab.id); // the toolbar is gone from the screen before the capture
   }
   try {
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
@@ -1996,7 +2004,7 @@ async function captureScreenshot(payload) {
   // window, bring Bhai's tab back to front (another window is left alone).
   if (tab?.id && !tab.active) {
     await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 150));
+    await painted(tab.id);
   }
   const overlay = (hide) => !tab?.id ? Promise.resolve(false) : chrome.scripting.executeScript({
     target: { tabId: tab.id },

@@ -258,7 +258,7 @@ export const browserWait: ToolDefinition = {
                     break;
                 }
                 default:
-                    await page.waitForTimeout(2000);
+                    await waitForPageReady(page, 2000);
             }
             invalidateCache(); // waited for the page to change
             const newElementMap = await getInteractiveElements(page);
@@ -498,7 +498,7 @@ export const browserUploadFile: ToolDefinition = {
                 await fileInputs.first().setInputFiles(filePath);
             }
 
-            await page.waitForTimeout(1500);
+            await waitForPageReady(page, 1500);
             const fileName = path.basename(filePath);
             return JSON.stringify({
                 success: true,

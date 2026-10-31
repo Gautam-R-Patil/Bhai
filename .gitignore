@@ -83,6 +83,8 @@ desktop/hostinger-upload/
 # Individual test files that should ship with the repo go here so
 # they survive the broad ignore. Add a new entry when you commit a
 # test you want to keep.
+# Session 2026-10-31: launch guards (no fixed sleeps, no macOS-only calls in the browser path)
+!src/tools/browser/bridge-guards.test.ts
 # Session 2026-10-31: WhatsApp media and chat actions
 !src/whatsapp-media.test.ts
 # Session 2026-10-29: personalization/soul pure-logic fixes

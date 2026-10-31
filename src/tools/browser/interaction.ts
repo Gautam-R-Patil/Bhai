@@ -180,7 +180,7 @@ export const browserClickAt: ToolDefinition = {
             const attemptRecovery = async () => {
                 console.log("Attempting error recovery: Dismissing active modal/overlay");
                 await page.keyboard.press("Escape");
-                await page.waitForTimeout(300);
+                await waitForPageReady(page, 1000);
             };
 
             try {
@@ -215,7 +215,6 @@ export const browserClickAt: ToolDefinition = {
                                 const live = await liveCenter(handle);
                                 if (!live) return JSON.stringify({ error: VANISHED, raw_error: errMsg });
                                 executionMethod = "coordinates_fallback";
-                                await page.waitForTimeout(150);
                                 await (input.double_click
                                     ? page.mouse.dblclick(live.x, live.y)
                                     : page.mouse.click(live.x, live.y));
@@ -232,7 +231,6 @@ export const browserClickAt: ToolDefinition = {
                             const live = await liveCenter(handle);
                             if (!live) return JSON.stringify({ error: VANISHED, raw_error: errMsg });
                             executionMethod = "coordinates_fallback";
-                            await page.waitForTimeout(150);
                             await (input.double_click
                                 ? page.mouse.dblclick(live.x, live.y)
                                 : page.mouse.click(live.x, live.y));
@@ -437,9 +435,8 @@ export const browserRightClick: ToolDefinition = {
             const y = input.y as number;
 
             await agentCursor(page, { x, y }, "right");
-            await page.waitForTimeout(200);
             await page.mouse.click(x, y, { button: "right" });
-            await page.waitForTimeout(200);
+            await waitForPageReady(page, 1000); // a page-drawn context menu
             invalidateCache();
 
             return JSON.stringify({ success: true, right_clicked_at: { x, y } });
@@ -560,7 +557,7 @@ export const browserDrag: ToolDefinition = {
             if (input.shift) await page.keyboard.up("Shift");
             if (input.ctrl) await page.keyboard.up("Control");
 
-            await page.waitForTimeout(200);
+            await waitForPageReady(page, 1000);
             invalidateCache();
 
             return JSON.stringify({
@@ -738,7 +735,7 @@ export const browserType: ToolDefinition = {
                     } else {
                         await page.mouse.click(el.x, el.y);
                     }
-                    await page.waitForTimeout(300);
+                    await waitForPageReady(page, 1500);
                 } else {
                     return JSON.stringify({
                         error: `Label ${input.label} not found. Run browser_scan to refresh elements.`,
@@ -747,7 +744,7 @@ export const browserType: ToolDefinition = {
             } else if (input.x !== undefined && input.y !== undefined) {
                 await agentCursor(page, { x: input.x as number, y: input.y as number }, "click");
                 await page.mouse.click(input.x as number, input.y as number);
-                await page.waitForTimeout(300);
+                await waitForPageReady(page, 1500);
             }
 
             // A saved secret (vault.ts) is typed only after its origin check, here, after the click above.
@@ -766,7 +763,6 @@ export const browserType: ToolDefinition = {
                         const clear = input.clear_first !== false;
                         if (clear) {
                             await page.keyboard.press("ControlOrMeta+a");
-                            await page.waitForTimeout(50);
                         }
                         const refused = await typeVaultText(page, input.text as string, clear);
                         if (refused) return JSON.stringify({ error: refused });
@@ -850,7 +846,6 @@ export const FOCUS_KIND_JS = `(() => {
 async function typeHumanLike(page: any, text: string, clear: boolean): Promise<void> {
     if (clear) {
         await page.keyboard.press("ControlOrMeta+a"); // cross-platform; selects the field only
-        await page.waitForTimeout(50);
     }
     // Rust humanTypingDelayMs gives realistic WPM-based delays per character
     // Fall back to 35ms uniform if native unavailable
@@ -1159,7 +1154,7 @@ export const browserKeyboard: ToolDefinition = {
 
                 // Enter submits forms / sends messages: let the page settle before reporting.
                 if (key === "Enter") await waitForPageReady(page, 1500);
-                else await page.waitForTimeout(150);
+                else await waitForPageReady(page, 1000);
                 invalidateCache();
                 return JSON.stringify({ success: true, combo, url: page.url(), ...takePageEvents() });
             }

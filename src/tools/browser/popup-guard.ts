@@ -172,7 +172,8 @@ export async function dismissOverlayModals(page: Page): Promise<void> {
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (page as any).keyboard.press("Escape");
-        await new Promise((r) => setTimeout(r, 250));
+        const { waitForPageReady } = await import("./core.js"); // core imports this module
+        await waitForPageReady(page, 1000);
     } catch {
         /* ignore */
     }
