@@ -123,9 +123,9 @@ $hwnd = [WinAPI]::GetForegroundWindow()
 $sb = New-Object System.Text.StringBuilder(256)
 [WinAPI]::GetWindowText($hwnd, $sb, 256) | Out-Null
 $title = $sb.ToString()
-$pid = 0
-[WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid) | Out-Null
-$proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+$procId = 0
+[WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
+$proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
 $appName = if ($proc) { $proc.ProcessName } else { "unknown" }
 "$appName|||$title"
             `.trim(),
