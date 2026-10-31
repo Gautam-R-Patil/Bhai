@@ -56,6 +56,14 @@ describe("personality-sync", () => {
         expect(fs.existsSync(path.join(dir, ".user-personality.synced.json"))).toBe(true);
     });
 
+    it("caps the owner's notes at Settings' 800 characters, whatever the file holds", async () => {
+        fs.writeFileSync(file(), JSON.stringify({ preset: "casual_playful", notes: `${"n".repeat(5000)}END`, updatedAt: Date.now() }));
+        await syncPersonalityIfPresent({ userDataDir: dir });
+        expect(pushed[0]).toContain("n".repeat(800));
+        expect(pushed[0]).not.toContain("n".repeat(801));
+        expect(pushed[0]).not.toContain("END");
+    });
+
     it("keeps a newer save made during the push for the next sync", async () => {
         write("warm_supportive");
         duringPush = () => write("professional_concise");

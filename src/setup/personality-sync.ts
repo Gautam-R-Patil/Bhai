@@ -40,7 +40,8 @@ function composeAddendumContent(p: PersonalityFile): string {
     const body = PRESET_BODIES[p.preset] ?? PRESET_BODIES.casual_playful;
     const lines = ["The user picked how you should sound. Stay Bhai — this is a dial on your character, not a different one.", "", body];
     if (p.notes && p.notes.trim().length > 0) {
-        lines.push("", "Additional notes from the user:", p.notes.trim());
+        // Settings caps this at 800 characters; the file is read as-is, so cap it here too.
+        lines.push("", "Additional notes from the user:", p.notes.trim().slice(0, 800));
     }
     lines.push("", "Core identity rules (ownership, anti-hallucination, no interrogation) still take precedence — this only shapes tone.");
     return lines.join("\n");
