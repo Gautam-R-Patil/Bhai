@@ -77,6 +77,8 @@ function inline(s) {
 }
 
 function renderMarkdown(text) {
+  // Chat-bar markers: a collapse becomes a bold title over its content; buttons and widgets are dropped.
+  text = String(text).replace(/<!--\s*COLLAPSE:([^>]*?)-->\n?/g, '**$1**\n').replace(/<!--\s*\/COLLAPSE\s*-->/g, '').replace(/<!--\s*(?:QUICK_ACTIONS|WIDGET)\b[\s\S]*?-->/g, '');
   const parts = escapeHtml(text).split(/```(?:[a-z0-9-]*)\n?([\s\S]*?)```/i);
   let html = '';
   parts.forEach((part, i) => {
