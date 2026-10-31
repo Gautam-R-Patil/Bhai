@@ -115,12 +115,13 @@ export function offloadIfLarge(
 
     try {
         const abs = saveToolOutput(toolName, toolCallId, turnId, result);
-        // Preview: a head+tail slice of what was saved (masked).
-        const preview = buildPreview(protect(result, { credentials: !CODE_TOOLS.has(toolName) }));
+        const note = `[Output truncated — ${size} bytes total. Full content saved to ${abs}. Call \`read\` with file_path="${abs}" if you need more.]`;
+        // Preview: a head+tail slice of what was saved (masked). Preview plus note fit the tool's
+        // own cap (glob's is 2000), or the cut that follows drops the note and the path with it.
+        const room = ownLimit > 0 ? Math.min(PREVIEW_BYTES, ownLimit - note.length - 2) : PREVIEW_BYTES;
+        const preview = buildPreview(protect(result, { credentials: !CODE_TOOLS.has(toolName) }), room);
         return {
-            content:
-                `${preview}\n\n` +
-                `[Output truncated — ${size} bytes total. Full content saved to ${abs}. Call \`read\` with file_path="${abs}" if you need more.]`,
+            content: `${preview}\n\n${note}`,
             savedAt: abs,
             offloaded: true,
         };
@@ -182,13 +183,13 @@ function readableForm(result: string): string {
         .join("\n\n");
 }
 
-function buildPreview(result: string): string {
+function buildPreview(result: string, max = PREVIEW_BYTES): string {
     // Head+tail preview works for every shape — more reliable than trying
     // to parse (tool results from Bhai are usually JSON strings, but
     // shell_exec output and many others aren't).
-    if (result.length <= PREVIEW_BYTES) return result;
-    const headBytes = Math.floor(PREVIEW_BYTES * 0.6);
-    const tailBytes = PREVIEW_BYTES - headBytes - 40;
+    if (result.length <= max) return result;
+    const headBytes = Math.floor(max * 0.6);
+    const tailBytes = Math.max(0, max - headBytes - 40);
     const head = result.slice(0, headBytes);
     const tail = result.slice(result.length - tailBytes);
     return `${head}\n\n...[preview cut]...\n\n${tail}`;

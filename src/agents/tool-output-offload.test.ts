@@ -26,6 +26,17 @@ describe("offloadIfLarge", () => {
         vi.unstubAllEnvs();
     });
 
+    it("an offloaded preview fits the tool's own cap, so the saved path survives the cut after it", async () => {
+        vi.stubEnv("BHAI_DATA_DIR", mkdtempSync(join(tmpdir(), "offload-")));
+        const { offloadIfLarge } = await import("./tool-output-offload.js");
+        const paths = Array.from({ length: 1000 }, (_, n) => `src/components/widget-${n}.tsx`).join("\n");
+        const r = offloadIfLarge("glob", "t6", "turn-6", paths, 2000);
+        expect(r.offloaded).toBe(true);
+        expect(r.content.length).toBeLessThanOrEqual(2000);
+        expect(r.content).toContain(`file_path="${r.savedAt}"`);
+        vi.unstubAllEnvs();
+    });
+
     it("a result cut below the offload line still leaves a path to the rest", async () => {
         vi.stubEnv("BHAI_DATA_DIR", mkdtempSync(join(tmpdir(), "offload-")));
         const { keepRestReadable } = await import("./tool-output-offload.js");
