@@ -35,6 +35,13 @@
     margin: 0;
 }
 
+/* The header sits under macOS's 52px window-drag strip (styles.css); its
+   controls have to opt out or the window eats their clicks. */
+.studio-head :is(button, summary, a),
+.studio-more-menu {
+    -webkit-app-region: no-drag;
+}
+
 .studio-summary {
     margin: 4px 0 0;
     color: var(--text-secondary);
