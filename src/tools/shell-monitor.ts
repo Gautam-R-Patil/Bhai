@@ -9,10 +9,10 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { basename, join } from "node:path";
-import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
+import { join } from "node:path";
+import { isShellBypass, isSystemDestructive } from "../security/allowlist.js";
 import { shellNamesBhaiState } from "../security/sensitive-paths.js";
-import { posixCommandLine } from "./shell.js";
+import { hasGitConfigEnvOverride, isGitConfigCall, posixCommandLine, shellWriteTargetsProtected } from "./shell.js";
 import { auditLog } from "../security/audit-log.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
@@ -157,9 +157,7 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
 
         auditLog("shell_exec_background", { command, args, cwd });
 
-        // Mirror shell.ts's triple-check: system-destructive base command,
-        // shell-bypass for destructive inline command, and protected-path
-        // codebase targeting via destructive utilities.
+        // Same guards as shell_exec: system-destructive, shell bypass, git config, codebase writes.
         const fullCommand = args.length > 0 ? `${command} ${args.join(" ")}` : command;
         // Same rule as shell_exec: Bhai's own state never goes through a shell (its output is read back).
         const ownState = shellNamesBhaiState(fullCommand, cwd);
@@ -178,15 +176,16 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
                 error: `Blocked: inline command contains a system-destructive operation.`,
             });
         }
-        const DESTRUCTIVE_CMDS = new Set(["rm", "mv", "cp", "rsync", "dd"]);
-        const baseCmd = basename(command).replace(/\.exe$/i, "");
-        if (DESTRUCTIVE_CMDS.has(baseCmd)) {
-            const hit = shellArgsTargetProtectedPath([command, ...args]);
-            if (hit) {
-                return JSON.stringify({
-                    error: `Blocked: command "${command}" targets the bot's own codebase path "${hit}".`,
-                });
-            }
+        if (isGitConfigCall(command, args) || hasGitConfigEnvOverride(process.env)) {
+            return JSON.stringify({
+                error: `Blocked: git config / -c flag / GIT_CONFIG_* env overrides are not permitted.`,
+            });
+        }
+        const hit = shellWriteTargetsProtected(fullCommand, cwd);
+        if (hit) {
+            return JSON.stringify({
+                error: `Blocked: command "${command}" writes to the bot's own codebase path "${hit}".`,
+            });
         }
 
         await ensureLogDir();
