@@ -24,6 +24,7 @@ import {
 } from "../memory/identity.js";
 import { ownWords } from "../memory/playbooks.js";
 import {
+    findExactMemory,
     getMemoryStats,
     getRawDb,
     listMemories,
@@ -211,6 +212,8 @@ export const memoryStore: ToolDefinition = {
         // Use smart write (LLM deduplication) for important memories (>= 7); not on a supersede,
         // which may merge or drop the new row the old one now points at.
         const useSmartWrite = imp >= 7 && !supersede && !pin && !dueAt;
+        // Said again, remember() only reinforces the row the owner already had and returns its id.
+        const had = findExactMemory(input.content as string);
         const id = await remember(
             input.content as string,
             // bhai_did rows come only from actions that went through (bhai-did.ts), never from the model.
@@ -227,8 +230,9 @@ export const memoryStore: ToolDefinition = {
         if (dueAt) setCommitmentDue(id, dueAt);
         if (canPinMemory()) markOwnerStated(id);
         const retired = supersede && id !== oldId && supersedeMemory(oldId, id);
-        // Smart write may merge or drop this row moments later, so its id can't back an undo.
-        if (!useSmartWrite) noteStoredMemory(id, retired);
+        // Smart write may merge or drop this row moments later, so its id can't back an undo;
+        // nor can a memory the owner already had, which the undo would delete.
+        if (!useSmartWrite && id !== had) noteStoredMemory(id, retired);
         if (input.supersedes == null || id === oldId)
             return JSON.stringify({
                 success: true,

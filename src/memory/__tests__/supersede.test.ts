@@ -111,11 +111,19 @@ describe("memory_store supersedes", () => {
         expect(live(e)).toBe(true);
     });
 
+    it("storing a memory the owner already had offers no Forget that", async () => {
+        const id = old("Owner prefers window seats on flights");
+        const ctx: CronCallerContext = { isOwner: true, isPrivate: true, message: "I like window seats" };
+        expect(await store(ctx, { content: "Owner prefers window seats on flights" })).toMatchObject({ id });
+        expect(ctx.storedMemory).toBeUndefined();
+    });
+
     it("a later store in the turn doesn't take the correction's undo away", async () => {
         const { memoryUndoAction, undoMemoryTap } = await import("../forget.js");
         const f = old("Owner's sister lives in Mumbai");
         const ctx: CronCallerContext = { isOwner: true, isPrivate: true, message: "actually I moved to Pune, office in Baner", shownMemories: shown(f) };
-        const out = await store(ctx, { content: "Owner lives in Pune", supersedes: f });
+        // Not a fact stored earlier in this file: that one is only reinforced, with no undo.
+        const out = await store(ctx, { content: "Owner lives in Pune, near Baner", supersedes: f });
         await store(ctx, { content: "Owner's office is in Baner" });
         expect(ctx.storedMemory?.id).toBe(out.id);
         undoMemoryTap(memoryUndoAction(ctx.storedMemory as { id: number; at: number }));
