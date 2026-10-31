@@ -611,6 +611,11 @@ const OUT_OF_CREDITS_REPLY =
 
 // ── Milestone tool descriptions ───────────────
 
+/** A short reply that only promises to go and do it ("I'll check", "nikaalta hoon") instead of doing it. */
+export const announcesWithoutDoing = (reply: string): boolean =>
+    reply.trim().length < 220 &&
+    /\b(?:I'?ll|I will|let me|I'm going to|gonna) (?:quickly |just |go )?(?:check|look|find|search|pull|grab|fetch|get|see|open|read|dig)\b|\b(?:checking|looking (?:it )?up) (?:now|that|it)\b|\b(?:nikaal|dekh|check kar|pata kar)(?:ta|ti) (?:hoon|hu|hun)\b/i.test(reply);
+
 /** "Answer in two sentences", "one line", "briefly": the owner asked for a short answer. */
 export const askedToBeBrief = (text: string): boolean =>
     /\b(one|two|three|1|2|3) (line|lines|sentence|sentences|words?)\b|\b(briefly|in short|tl;?dr|short answer|quick answer)\b/i.test(text);
@@ -2157,6 +2162,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
     // Metacognition state — self-monitoring for loop/struggle detection
     const metaState = createMetacognitionState();
     let metaNudged = false;
+    let promiseNudged = false; // "I'll check" with no tool call: one push to actually do it
     let lastMetaNudgeIter = -100;
     // P5.3: at most ONE adversarial progress-judge call per stuck turn (Haiku),
     // and only when ATLAS_PROGRESS_JUDGE=true. Turn-scoped, reset per runAgent.
@@ -4110,6 +4116,26 @@ PLAN:`,
                 pushRetry(messages, responseText, buildVerifyReminder(verifyGate));
                 if (turnContract) pushNudge(messages, contractCheckNudge(turnContract));
                 lastToolCalls = undefined; // bump model selection to PRO for the verify-and-respond turn
+                continue;
+            }
+
+            // ── Promised, didn't do it ──
+            // On Grok (unhinged), "kal baarish hogi?" got "Kal ka asli haal nikaalta hoon" (I'll go
+            // check) with the weather tool offered and no call, and the turn ended there.
+            if (
+                !promiseNudged &&
+                totalToolCalls === 0 &&
+                !toolSelection.categories.includes("chat_only") &&
+                !isAskingUser &&
+                announcesWithoutDoing(responseText)
+            ) {
+                promiseNudged = true;
+                console.log("  🤝 Promise nudge: the reply says it will check, but no tool ran");
+                pushRetry(
+                    messages,
+                    responseText,
+                    "You said you'd look it up but called no tool. Call the tool now and answer with the result; don't mention this check.",
+                );
                 continue;
             }
 
