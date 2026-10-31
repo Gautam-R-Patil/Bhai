@@ -54,6 +54,12 @@ export async function waitBridgeReady(maxMs = 3000, quietMs = 300, since = 0): P
     }
 }
 
+// Playwright's selectOption also takes { label } / { value }; the extension matches plain strings.
+type SelectValue = string | { value?: string; label?: string };
+function selectValues(value: SelectValue | SelectValue[]): string[] {
+    return (Array.isArray(value) ? value : [value]).map((v) => (typeof v === "string" ? v : (v.label ?? v.value ?? "")));
+}
+
 export class ChromePageProxy {
     private _url = "";
     private _title = "";
@@ -344,9 +350,8 @@ export class ChromePageProxy {
         );
     }
 
-    async selectOption(selector: string, value: string | string[]): Promise<void> {
-        const values = Array.isArray(value) ? value : [value];
-        await sendBridgeCommand("select_option", { selector, values });
+    async selectOption(selector: string, value: SelectValue | SelectValue[]): Promise<void> {
+        await sendBridgeCommand("select_option", { selector, values: selectValues(value) });
     }
 
     // Element query shorthand ($ operator)
@@ -490,8 +495,8 @@ export class ChromeLocatorProxy {
         );
     }
 
-    async selectOption(value: string | string[]): Promise<string[]> {
-        const values = Array.isArray(value) ? value : [value];
+    async selectOption(value: SelectValue | SelectValue[]): Promise<string[]> {
+        const values = selectValues(value);
         await sendBridgeCommand("select_option", { selector: this.selector, values });
         return values;
     }

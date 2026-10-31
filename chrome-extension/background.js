@@ -2176,21 +2176,27 @@ async function selectOption(payload) {
   const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
-  await chrome.scripting.executeScript({
+  const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (selector, values) => {
       const el = document.querySelector(selector);
-      if (!el || el.tagName !== "SELECT") return;
-      for (const option of el.options) {
-        option.selected = values.includes(option.value) || values.includes(option.text);
-      }
+      if (!el || el.tagName !== "SELECT") return { error: `No <select> matches ${selector}` };
+      // Like Playwright: no match is an error, and the current choice stays as it was.
+      const picked = Array.from(el.options).filter(
+        (o) => values.includes(o.value) || values.includes(o.text) || values.includes(o.label),
+      );
+      if (!picked.length) return { error: `No option matches ${values.join(", ")}` };
+      for (const option of el.options) option.selected = picked.includes(option);
       el.dispatchEvent(new Event("change", { bubbles: true }));
       el.dispatchEvent(new Event("input", { bubbles: true }));
+      return { matched: picked.length };
     },
     args: [payload.selector, payload.values],
   });
 
-  return { success: true };
+  const out = results[0]?.result;
+  if (!out || out.error) throw new Error(out?.error || "select_option failed");
+  return { success: true, matched: out.matched };
 }
 
 async function waitFor(payload) {
