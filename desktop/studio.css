@@ -85,6 +85,11 @@
     padding: 6px 10px;
 }
 
+/* Memory opens from Settings: a way back, sitting flush with the title. */
+.studio-back {
+    margin: 0 0 4px -10px;
+}
+
 .studio-icon-btn {
     width: 30px;
     height: 30px;
