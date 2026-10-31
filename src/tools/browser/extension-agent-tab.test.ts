@@ -99,6 +99,17 @@ describe("extension: Bhai's own new tabs", () => {
         expect(tabs).toHaveLength(3); // the owner's tab + Bhai's two, not four
     });
 
+    it("leaves a Bhai tab alone once its page changed, even on the same site (the owner's draft)", async () => {
+        const clock = { now: 0 };
+        const { tabs, openPageInNewTab } = loadWithCreate(clock);
+        const first = await openPageInNewTab("https://mail.example.com/inbox");
+        (tabs.find((t) => t.id === first.id) as { url: string }).url = "https://mail.example.com/compose";
+        await openPageInNewTab("https://example.org/"); // first is no longer in front
+        clock.now += 300_000;
+        const next = await openPageInNewTab("https://nodejs.org/");
+        expect(next.id).not.toBe(first.id);
+    });
+
     it("leaves a tab the owner took elsewhere alone", async () => {
         const clock = { now: 0 };
         const { tabs, openPageInNewTab } = loadWithCreate(clock);
