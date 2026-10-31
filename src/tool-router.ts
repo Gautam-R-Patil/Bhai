@@ -891,9 +891,21 @@ const CHANGING_FACT =
 
 /** "Has X happened yet?", "what's the latest on Y?": the answer may have changed since anything in context. */
 // A question anywhere: "…right now? one line" ends with the ask for brevity, not the "?".
-/** A message with an unmistakable tool need: it skips the tool-less chat lane. */
-export const needsTools = (message: string): boolean =>
-    KEYWORD_BOOSTS.some((b) => b.pattern !== CHANGING_FACT && b.minScore >= 0.7 && b.pattern.test(message));
+/**
+ * A message that needs a tool even though it reads like chat: it skips the tool-less chat
+ * lane. A short, deliberate list: reusing every high-confidence keyword boost took "another
+ * word for happy" (os_control), "an issue with my boss" (github) and "I love rain" out of the
+ * lane, some of them into the 14K-token Sonnet plan.
+ */
+const CHAT_LANE_OVERRIDES = [
+    // "Without switching apps: what's the Finder window called?"
+    /\b(finder|sidebar|menu ?bar|the dock)\b|\b(?:app|finder|front|open|this) window\b/i,
+    // asking about the weather, in English or Hinglish
+    /\b(weather|forecast|mausam|chhat(?:a|ri)|umbrella)\b|\bwill it (?:rain|snow)\b|\bbaa?rish hog/i,
+    // asking what was said before (not just mentioning yesterday)
+    /\b(?:did (?:I|we) (?:ask|tell|say|talk|discuss|mention)|what did (?:I|we) (?:ask|say|talk|discuss|tell)|earlier (?:today|tonight),? (?:I|we|you) (?:asked|told|said|talked|discussed))\b/i,
+];
+export const needsTools = (message: string): boolean => CHAT_LANE_OVERRIDES.some((re) => re.test(message));
 
 export const asksChangingFact = (message: string): boolean =>
     (message.includes("?") || /^\s*(what|which|who|when|where|has|have|is|are|did|does|do|how)\b/i.test(message)) &&
@@ -1921,8 +1933,7 @@ export async function selectTools(opts: {
     // a guessed chat lane would turn real requests into chat.
     // A question about something that changes needs a search, not the tool-less chat lane.
     const askingChangingFact = asksChangingFact(opts.message);
-    // An unmistakable tool need (a high-confidence keyword pattern) never takes the tool-less chat lane.
-    // (Not the changing-fact pattern: "I haven't slept yet" is chat; asksChangingFact wants a question.)
+    // A tool need that reads like chat (Finder, the weather, what was said before) skips the lane.
     const clearToolNeed = needsTools(opts.message);
     const chatResult = askingChangingFact || clearToolNeed
         ? null

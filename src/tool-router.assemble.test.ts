@@ -65,6 +65,10 @@ describe("assembleToolNames", () => {
         expect(boosts("I'd like a window seat on the flight")).not.toContain("os_control");
         expect(needsTools("Without switching apps: what's the Finder window called?")).toBe(true);
         expect(needsTools("I haven't slept yet")).toBe(false); // chat, not a changing fact
+        // Ordinary chat keeps the chat lane even when a broad keyword boost matches a word in it.
+        for (const chat of ["what's another word for happy?", "I have an issue with my boss, any advice?", "Windows or Mac, which is better?",
+            "I went to the gym yesterday", "I love rain", "my new year's resolution is to read more", "tell me a joke about numbers"])
+            expect(needsTools(chat), chat).toBe(false);
         expect(needsTools("thanks bhai, good night")).toBe(false);
         expect(needsTools("bhai aaj Bengaluru mein mausam kaisa hai? chhata le jaun kya?")).toBe(true);
         expect(boosts("Earlier tonight I asked you about keyboard layouts. Which ones?")).toContain("memory");
