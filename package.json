@@ -44,7 +44,7 @@
         "acorn": "^8.16.0",
         "apify-client": "^2.23.0",
         "better-sqlite3": "^12.11.1",
-        "clipboardy": "^4.0.0",
+        "clipboardy": "^5.3.2",
         "discord.js": "^14.26.3",
         "dockerode": "^4.0.5",
         "docx": "^9.6.1",
