@@ -26,6 +26,7 @@ import {
   imageConfigFromEnv,
   imageCreditCost,
   imageErrorResponse,
+  releaseImageSlotRetrying,
   validateImageRequest,
 } from "./image";
 import {
@@ -1099,9 +1100,7 @@ http.route({
         return reply(errBody, status);
       }
     } finally {
-      await ctx
-        .runMutation(internal.image.releaseImageSlot, slot)
-        .catch((e: unknown) => console.error("[Image] slot release failed:", e));
+      await releaseImageSlotRetrying(() => ctx.runMutation(internal.image.releaseImageSlot, slot));
     }
   }),
 });

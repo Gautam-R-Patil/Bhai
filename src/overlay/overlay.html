@@ -530,6 +530,9 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px;
     }
     .img-lightbox .lb-img { max-width: 100%; max-height: calc(100vh - 90px); object-fit: contain; border-radius: 8px; }
+    /* A checkerboard behind a PNG (the only thumbnails that keep alpha) so transparency shows. */
+    .img-lightbox .lb-img[src^="data:image/png"] { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+    .img-lightbox .lb-close { position: absolute; top: 12px; right: 12px; font-size: 16px; line-height: 1; padding: 5px 9px; }
     .img-lightbox .lb-bar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; }
     .img-lightbox .lb-btn {
       font: inherit; font-size: 12px; color: #fff; text-decoration: none; cursor: pointer;
@@ -3753,6 +3756,16 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           replyBox.offsetHeight;
           replyBox.classList.add('visible');
         }
+        else if (msg.type === 'saved_image') {
+          const pending = savingImages.get(msg.id);
+          savingImages.delete(msg.id);
+          if (!pending) return;
+          // Not saved (a file outside Bhai Files, or moved since): the preview downloads instead, as it used to.
+          if (!msg.ok) pending.fallback();
+          pending.btn.textContent = msg.ok ? 'Saved' : 'Downloaded preview';
+          pending.btn.title = msg.ok ? `Saved to Bhai Files › Downloads as ${msg.name}` : 'Download image';
+          setTimeout(() => { pending.btn.textContent = 'Download'; }, 1800);
+        }
         else if (msg.type === 'placeholder') {
           serverPlaceholder = msg.text || 'Tell Bhai what needs sorting…';
           clearTimeout(placeholderTimer);
@@ -3915,6 +3928,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
       }
 
+      const SHOW_IN_FOLDER = /win/i.test(navigator.platform) ? 'Show in Explorer' : /mac/i.test(navigator.platform) ? 'Show in Finder' : 'Show in folder';
+      const savingImages = new Map(); // save_image id → the Download waiting for the bot's saved_image
+      let saveImageSeq = 0;
       let closeLightbox = () => {};
       function openLightbox(images, start) {
         closeLightbox();
@@ -3939,6 +3955,9 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           b.onclick = () => fn(b);
           return b;
         };
+        const close = button('×', 'Close', () => closeLightbox());
+        close.classList.add('lb-close');
+        box.append(close);
         function show() {
           const im = images[i];
           img.src = im.url;
@@ -3950,20 +3969,28 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             n.textContent = `${i + 1} / ${images.length}`;
             bar.append(n);
           }
-          const dl = document.createElement('a');
-          dl.className = 'lb-btn';
-          dl.href = im.url;
-          dl.download = String(im.name || 'bhai-image').replace(/\.\w+$/, '') + (im.url.startsWith('data:image/png') ? '.png' : '.jpg');
-          dl.textContent = 'Download';
-          dl.setAttribute('aria-label', 'Download image');
-          bar.append(dl);
+          // The owner's saved file (im.path): the bot copies the original into Downloads. Otherwise the thumbnail.
+          const file = typeof im.path === 'string' && im.path ? im.path : null;
+          const downloadPreview = () => {
+            const dl = document.createElement('a');
+            dl.href = im.url;
+            dl.download = String(im.name || 'bhai-image').replace(/\.\w+$/, '') + (im.url.startsWith('data:image/png') ? '.png' : '.jpg');
+            dl.click();
+          };
+          bar.append(button('Download', 'Download image', (b) => {
+            if (file && ws && ws.readyState === 1) {
+              const id = ++saveImageSeq;
+              savingImages.set(id, { btn: b, fallback: downloadPreview });
+              ws.send(JSON.stringify({ type: 'save_image', path: file, id }));
+            } else downloadPreview();
+          }));
           bar.append(button('Copy', 'Copy image', async (b) => {
             try { await copyImage(im.url); b.textContent = 'Copied'; } catch { b.textContent = "Couldn't copy"; }
             setTimeout(() => { b.textContent = 'Copy'; }, 1500);
           }));
-          if (typeof im.path === 'string' && im.path) {
-            bar.append(button('Show in Finder', 'Show the file in Finder', () => {
-              if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'reveal_file', path: im.path }));
+          if (file) {
+            bar.append(button(SHOW_IN_FOLDER, SHOW_IN_FOLDER, () => {
+              if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'reveal_file', path: file }));
             }));
           }
           if (typeof im.before === 'string' && im.before.startsWith('data:image/')) {
@@ -3979,6 +4006,12 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           if (e.key === 'Escape') closeLightbox();
           else if (e.key === 'ArrowRight' && images.length > 1) { i = (i + 1) % images.length; show(); }
           else if (e.key === 'ArrowLeft' && images.length > 1) { i = (i - 1 + images.length) % images.length; show(); }
+          else if (e.key === 'Tab') {
+            // Focus stays in the viewer while it's open.
+            const f = [...box.querySelectorAll('button, a[href]')];
+            const at = f.indexOf(document.activeElement);
+            f[e.shiftKey ? (at <= 0 ? f.length - 1 : at - 1) : (at + 1) % f.length].focus();
+          }
           else return;
           e.preventDefault();
           e.stopImmediatePropagation(); // Esc here closes the viewer, never stops the task

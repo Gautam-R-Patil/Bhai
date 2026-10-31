@@ -1721,6 +1721,7 @@
             const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
             await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         }
+        const SHOW_IN_FOLDER = /win/i.test(navigator.platform) ? 'Show in Explorer' : /mac/i.test(navigator.platform) ? 'Show in Finder' : 'Show in folder';
         let closeImageViewer = () => {};
         function openImageViewer(images, start) {
             closeImageViewer();
@@ -1745,6 +1746,9 @@
                 b.onclick = () => fn(b);
                 return b;
             };
+            const close = button('×', 'Close', () => closeImageViewer());
+            close.classList.add('lb-close');
+            box.append(close);
             function show() {
                 const im = images[i];
                 img.src = im.url;
@@ -1779,7 +1783,7 @@
                     setTimeout(() => { b.textContent = 'Copy'; }, 1500);
                 }));
                 if (file) {
-                    bar.append(button('Show in Finder', 'Show the file in Finder', async () => {
+                    bar.append(button(SHOW_IN_FOLDER, SHOW_IN_FOLDER, async () => {
                         if (!(await atlas.revealImage(file).catch(() => false))) showToast("That file isn't there any more.", true);
                     }));
                 }
@@ -1796,6 +1800,12 @@
                 if (e.key === 'Escape') closeImageViewer();
                 else if (e.key === 'ArrowRight' && images.length > 1) { i = (i + 1) % images.length; show(); }
                 else if (e.key === 'ArrowLeft' && images.length > 1) { i = (i - 1 + images.length) % images.length; show(); }
+                else if (e.key === 'Tab') {
+                    // Focus stays in the viewer while it's open.
+                    const f = [...box.querySelectorAll('button, a[href]')];
+                    const at = f.indexOf(document.activeElement);
+                    f[e.shiftKey ? (at <= 0 ? f.length - 1 : at - 1) : (at + 1) % f.length].focus();
+                }
                 else return;
                 e.preventDefault();
                 e.stopImmediatePropagation();
@@ -2078,7 +2088,7 @@
         // The turn ended: the live line becomes "Worked for {N}s · {K} steps" (still opens the panel;
         // just "Worked for {N}s", not a toggle, when there's nothing behind it); the reply lands under it.
         // A quick turn whose line never showed leaves just the reply.
-        function finishLiveChat(text, isError, worked, images) {
+        function finishLiveChat(text, isError, worked, images, chips) {
             const lc = liveChat;
             if (!lc) return;
             renderLiveChat();
@@ -2106,7 +2116,23 @@
             setComposerBusy(false);
             const thread = document.getElementById('chatsThread');
             if (chatsOpenId === id && (text || images?.length)) {
-                thread.append(chatBubble('assistant', text, Date.now(), isError, null, images));
+                const row = chatBubble('assistant', text, Date.now(), isError, null, images);
+                // One-tap replies ("Describe it", "Make another version"): plain-text ones only.
+                const labels = (Array.isArray(chips) ? chips : []).filter((c) => typeof c === 'string' && c.trim()).slice(0, 4);
+                if (labels.length) {
+                    const bar = document.createElement('div');
+                    bar.className = 'chats-chips';
+                    for (const label of labels) {
+                        const b = document.createElement('button');
+                        b.type = 'button';
+                        b.className = 'btn btn-secondary btn-sm';
+                        b.textContent = label;
+                        b.onclick = () => { bar.remove(); sendChat(label, id); };
+                        bar.append(b);
+                    }
+                    row.insertBefore(bar, row.querySelector('.chats-when'));
+                }
+                thread.append(row);
                 thread.scrollTop = thread.scrollHeight;
             }
             if (document.getElementById('tab-chats').classList.contains('active')) loadChats(true); // list only: the thread is already live
@@ -2175,7 +2201,7 @@
             }
             if (msg.type !== 'response' && msg.type !== 'error') return;
             if (lc.turn && turnRoute(lc.turn, true, msg) === 'ignore') return; // another surface's turn
-            if (msg.type === 'response') finishLiveChat(msg.text || (msg.stopped ? 'Stopped.' : ''), false, msg.worked, msg.images);
+            if (msg.type === 'response') finishLiveChat(msg.text || (msg.stopped ? 'Stopped.' : ''), false, msg.worked, msg.images, msg.quickActions);
             else finishLiveChat(msg.text || 'Something went wrong.', true);
         });
 

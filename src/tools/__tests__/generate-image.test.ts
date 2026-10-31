@@ -315,9 +315,9 @@ describe("generate_image", () => {
         expect(JSON.parse(h.fetch.mock.calls[0][1].body).size).toBe("auto");
     });
 
-    it("a chat that doesn't show images (cron, Matrix, email) is told to send_file", async () => {
+    it("a chat that doesn't show images (cron without deliverTo, Bhai-mail) is told to send_file", async () => {
         h.fetch.mockResolvedValue(reply(200, { images: [{ data: jpeg, mimeType: "image/jpeg" }] }));
-        const { res } = await call({ prompt: "A sunrise" }, { conversationKey: "matrix:1" });
+        const { res } = await call({ prompt: "A sunrise" }, { conversationKey: "cron:1" });
         expect(res.note).toMatch(/send_file/);
     });
 

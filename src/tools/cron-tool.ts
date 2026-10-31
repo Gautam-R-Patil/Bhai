@@ -21,6 +21,8 @@ export interface CronCallerContext {
     noOutward?: boolean;
     /** A private chat with Bhai (not a group or shared channel): owner memories may be shown. */
     isPrivate?: boolean;
+    /** ChannelContext.showsImages: the reply carries generated images (unset: the channel decides). */
+    showsImages?: boolean;
     /** The owner's words this turn: memory_store supersedes only when they read like a correction. */
     message?: string;
     /** The last memory memory_store saved in this owner turn, for the reply's "Forget that" button. */
@@ -141,10 +143,18 @@ export const turnImages = (): Array<{ base64: string; mimeType: string }> | unde
 /** This turn's conversation key (media/image-memory.ts), or undefined outside a turn. */
 export const turnConversationKey = (): string | undefined => _callerStorage.getStore()?.conversationKey;
 
-/** This turn's reply shows its images by itself (cron, Matrix, email and mail turns only send text). */
+/**
+ * This turn's reply delivers its images by itself: a chat turn on these channels (email as
+ * attachments), or a run that says so (a scheduled task with deliverTo). Bhai-mail and
+ * autonomous runs without deliverTo only send text.
+ */
 export const turnShowsImages = (): boolean => {
     const c = _callerStorage.getStore();
-    return !!c && !c.autonomous && /^(telegram|whatsapp|discord|slack|overlay):/.test(c.conversationKey ?? "");
+    if (!c) return false;
+    return (
+        c.showsImages ??
+        (!c.autonomous && /^(telegram|whatsapp|discord|slack|overlay|matrix|email):/.test(c.conversationKey ?? ""))
+    );
 };
 
 /** generate_image made these this turn (deduped by path); the turn's reply carries them. */

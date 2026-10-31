@@ -78,6 +78,8 @@ export function bhaiMailContext(
         userName: mail.fromOwner ? undefined : mail.fromName || undefined,
         isOwner: mail.fromOwner,
         isPrivate: mail.fromOwner && mail.direct === true,
+        // /api/mail/send carries text only: generate_image tells the model so (send_file instead).
+        showsImages: false,
     };
 }
 
@@ -103,8 +105,14 @@ async function handle(llm: LLMClient, owner: string, mail: MailItem): Promise<vo
         undefined,
         bhaiMailContext(owner, mail),
     );
-    const reply = withStuckReplyLine(result, mail.fromOwner);
+    let reply = withStuckReplyLine(result, mail.fromOwner);
     if (!reply.trim() || reply.trim() === "[NO_REPLY]") return;
+    // Not silently dropped: the owner learns where they're saved, a guest that they couldn't come.
+    const made = result.images?.map((i) => i.path) ?? [];
+    if (made.length)
+        reply += mail.fromOwner
+            ? `\n\n(This email can't carry images yet; ${made.length > 1 ? "they're" : "it's"} saved at ${made.join(", ")})`
+            : "\n\n(The image couldn't be attached to this email.)";
     if (!mail.fromOwner)
         sendOverlayNotification(`📧 Bhai answered an email from ${who}: ${mail.subject || "(no subject)"}`);
     const sent = await sendBhaiMail({

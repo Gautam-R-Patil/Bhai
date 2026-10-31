@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Images in an overlay reply: thumbnails, the path only for the owner, and "Show in Finder"
-// only for files under Bhai's workspace.
+// only for files under Bhai's workspace; a photo the owner sends with no words.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,8 +10,19 @@ import type { AgentResponse } from "../agent.js";
 
 // Before overlay-chat is imported: paths.ts caches the workspace on first use.
 process.env.ATLAS_WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "overlay-images-"));
-const { _isScreenQueryForTest: isScreenQuery, imageQuickActions, overlayImages, revealablePath, saveSentPhoto } = await import("./overlay-chat.js");
-const { getImagesDir } = await import("../config/paths.js");
+process.env.ATLAS_DATA_DIR = process.env.ATLAS_WORKSPACE;
+const {
+    _handleFileAttachmentForTest: handleFileAttachment,
+    _isScreenQueryForTest: isScreenQuery,
+    imageQuickActions,
+    overlayImages,
+    revealablePath,
+    saveImageToDownloads,
+    saveSentPhoto,
+} = await import("./overlay-chat.js");
+const { getDownloadsDir, getImagesDir } = await import("../config/paths.js");
+const { readChatLog } = await import("./chat-log.js");
+const { lastInboundImages, takePhotoQuestion } = await import("../media/image-memory.js");
 
 const png = (file: string, alpha: boolean) =>
     sharp({ create: { width: 2400, height: 1200, channels: alpha ? 4 : 3, background: { r: 200, g: 80, b: 20, alpha: alpha ? 0.5 : 1 } } })
@@ -50,6 +61,20 @@ it("thumbnails the reply's images; the path and Finder only for the owner's own 
     expect(revealablePath(123)).toBeNull();
 });
 
+it("Download copies the original into Downloads without overwriting; only revealable files", () => {
+    const src = path.join(getImagesDir(), "cat.png");
+    fs.writeFileSync(src, "original");
+    expect(saveImageToDownloads(src)).toBe("cat.png");
+    expect(saveImageToDownloads(src)).toBe("cat (1).png");
+    fs.writeFileSync(path.join(getDownloadsDir(), "cat.png"), "mine");
+    expect(saveImageToDownloads(src)).toBe("cat (2).png");
+    expect(fs.readFileSync(path.join(getDownloadsDir(), "cat.png"), "utf8")).toBe("mine");
+    expect(fs.readFileSync(path.join(getDownloadsDir(), "cat (2).png"), "utf8")).toBe("original");
+    expect(saveImageToDownloads("/etc/hosts")).toBeNull();
+    expect(saveImageToDownloads(path.join(getImagesDir(), "missing.png"))).toBeNull();
+    expect(saveImageToDownloads({ path: src })).toBeNull();
+});
+
 it("an image reply's follow-up chips don't grab a screenshot", () => {
     for (const q of imageQuickActions([{ kind: "edited", before: "data:" }])) expect(isScreenQuery(q), q).toBe(false);
     expect(isScreenQuery("undo that")).toBe(true); // only the chips' own text
@@ -62,4 +87,35 @@ it("a photo the owner sends is kept for Chats' thumbnail; other files aren't", (
     expect(saved && fs.readFileSync(saved, "utf8")).toBe("jpegbytes");
     expect(saveSentPhoto("notes.pdf", "AAAA", "application/pdf")).toBeUndefined();
     expect(saveSentPhoto("shot.heic", "AAAA", "image/heic")).toBeUndefined();
+});
+
+it("asks the owner what to do with a photo sent with no words, without a model call", async () => {
+    const sent: Array<{ type: string; text?: string; quickActions?: string[] }> = [];
+    const ws = { _connKind: "native-overlay", readyState: 1, send: (j: string) => sent.push(JSON.parse(j)) };
+    const base64 = Buffer.from("pngbytes").toString("base64");
+    await handleFileAttachment(ws as never, "cat.png", base64, "image/png", "");
+    expect(sent).toEqual([
+        expect.objectContaining({
+            type: "response",
+            text: "What should I do with it?",
+            quickActions: ["Describe it", "Take out the background", "Improve the lighting", "Make it a cartoon"],
+        }),
+    ]);
+    // agent.ts's key for the owner's overlay turns: a chip's generate_image "attached" is this photo.
+    expect(lastInboundImages("overlay:local")).toEqual([{ base64, mimeType: "image/png" }]);
+    const log = readChatLog().slice(-2);
+    expect(log.map((e) => [e.role, e.text])).toEqual([["user", ""], ["assistant", "What should I do with it?"]]);
+    expect(log[0].images?.[0]).toContain(path.join(getImagesDir(), "Sent"));
+    for (const chip of sent[0].quickActions ?? []) expect(isScreenQuery(chip), chip).toBe(false);
+    // The next message, a chip or typed ("make it brighter"), gets this photo, once.
+    expect(takePhotoQuestion("overlay:local")).toEqual([{ base64, mimeType: "image/png" }]);
+    expect(takePhotoQuestion("overlay:local")).toEqual([]);
+});
+
+it("a photo too big to keep gets the usual turn, not a question about a photo it can't find", async () => {
+    const sent: Array<{ type: string; text?: string }> = [];
+    const ws = { _connKind: "native-overlay", readyState: 1, send: (j: string) => sent.push(JSON.parse(j)) };
+    await handleFileAttachment(ws as never, "huge.png", "A".repeat(11_300_000), "image/png", "");
+    expect(sent.map((m) => m.text)).not.toContain("What should I do with it?");
+    expect(takePhotoQuestion("overlay:local")).toEqual([]);
 });

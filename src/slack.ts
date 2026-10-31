@@ -310,7 +310,7 @@ export async function sendImages(
     images: GeneratedImage[] | undefined,
     say: SayFn,
     channel: string,
-    threadTs: string,
+    threadTs: string | undefined,
     senderIsOwner: boolean,
 ): Promise<void> {
     if (!images?.length) return;
@@ -525,8 +525,9 @@ function splitSlackMessage(text: string, maxLen: number): string[] {
  * Send a proactive message to a Slack channel or DM.
  * Used by the heartbeat/notification system.
  */
-export async function sendSlackProactiveMessage(message: string): Promise<boolean> {
-    if (!slackApp) return false;
+export async function sendSlackProactiveMessage(message: string, images?: GeneratedImage[]): Promise<boolean> {
+    const app = slackApp;
+    if (!app) return false;
 
     // Proactive messages carry the owner's private data: to the owner's DM. The default
     // channel is used only when no owner id is set (it may be shared).
@@ -536,17 +537,21 @@ export async function sendSlackProactiveMessage(message: string): Promise<boolea
 
     try {
         if (ownerId) {
-            const opened = await slackApp.client.conversations.open({ users: ownerId });
+            const opened = await app.client.conversations.open({ users: ownerId });
             channelId = opened.channel?.id;
             if (!channelId) return false;
         }
         if (!channelId) return false;
         const blocks = formatBlockKit(message);
-        await slackApp.client.chat.postMessage({
+        await app.client.chat.postMessage({
             channel: channelId,
             blocks,
             text: message,
         });
+        // The images follow as their own message; a failed upload tells only the owner's DM where they're saved.
+        const to = channelId;
+        const say = ((m: { text: string }) => app.client.chat.postMessage({ channel: to, text: m.text })) as unknown as SayFn;
+        await sendImages(images, say, to, undefined, !!ownerId);
         return true;
     } catch (err) {
         console.error("[SLACK] Failed to send proactive message:", (err as Error).message);

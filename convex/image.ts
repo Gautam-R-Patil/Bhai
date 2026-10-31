@@ -82,6 +82,13 @@ export const releaseImageSlot = internalMutation({
     },
 });
 
+/** The route's release, tried twice: one lost release would hold the slot until IN_FLIGHT_STALE_MS of quiet. */
+export async function releaseImageSlotRetrying(release: () => Promise<unknown>): Promise<void> {
+    await release()
+        .catch(release)
+        .catch((e: unknown) => console.error("[Image] slot release failed:", e));
+}
+
 export interface ImageConfig {
     endpoint: string;
     apiKey: string;

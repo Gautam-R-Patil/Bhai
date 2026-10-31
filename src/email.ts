@@ -223,7 +223,13 @@ export async function sendEmailFromAtlas(
     to: string,
     subject: string,
     body: string,
-    options?: { cc?: string; bcc?: string; inReplyTo?: string; references?: string },
+    options?: {
+        cc?: string;
+        bcc?: string;
+        inReplyTo?: string;
+        references?: string;
+        attachments?: SendMailOptions["attachments"];
+    },
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     if (!smtpTransport || !emailConfig?.emailUser) {
         return { success: false, error: "Email not configured" };
@@ -242,6 +248,7 @@ export async function sendEmailFromAtlas(
         if (options?.bcc) mailOptions.bcc = options.bcc;
         if (options?.inReplyTo) mailOptions.inReplyTo = options.inReplyTo;
         if (options?.references) mailOptions.references = options.references;
+        if (options?.attachments) mailOptions.attachments = options.attachments;
 
         const info = await smtpTransport.sendMail(mailOptions);
         console.log(`  📧 Email sent to ${to}: ${info.messageId}`);
@@ -546,10 +553,21 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                         continue;
                     }
                     const replySubject = email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`;
-                    const result = await sendEmailFromAtlas(email.senderEmail, replySubject, replyText, {
-                        inReplyTo: email.messageId,
-                        references: email.messageId,
+                    const thread = { inReplyTo: email.messageId, references: email.messageId };
+                    // The turn's generated images ride along as attachments.
+                    const images = response.images ?? [];
+                    let result = await sendEmailFromAtlas(email.senderEmail, replySubject, replyText, {
+                        ...thread,
+                        ...(images.length ? { attachments: images.map((i) => ({ path: i.path })) } : {}),
                     });
+                    // Too big for the server (or unreadable): the reply still goes, saying so.
+                    if (!result.success && images.length)
+                        result = await sendEmailFromAtlas(
+                            email.senderEmail,
+                            replySubject,
+                            `${replyText}\n\n(The image couldn't be attached to this email.)`,
+                            thread,
+                        );
                     if (result.success) {
                         console.log(`  ✅ Email reply sent to ${email.senderEmail}`);
                     } else {

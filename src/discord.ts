@@ -878,6 +878,7 @@ export async function sendDiscordProactiveMessage(
     message: string,
     filePath?: string,
     toUserId?: string,
+    images?: GeneratedImage[],
 ): Promise<boolean> {
     if (!discordClient) return false;
 
@@ -925,6 +926,7 @@ export async function sendDiscordProactiveMessage(
         for (const chunk of chunks) {
             await (channel as TextChannel).send(chunk);
         }
+        await sendImages(images, (msg) => (channel as TextChannel).send(msg), !!ownerId);
         return true;
     } catch (err) {
         console.warn("[DISCORD] Failed to send proactive message:", (err as Error).message);

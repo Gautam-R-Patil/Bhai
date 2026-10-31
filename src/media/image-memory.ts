@@ -131,6 +131,22 @@ export function lastInboundImages(key: string): InboundImage[] {
     return e.images;
 }
 
+// A photo sent with no words got "What should I do with it?": the owner's next message there is
+// about that photo, chip or typed. Process memory only; a restart just loses the question.
+const photoQuestions = new Map<string, number>();
+const PHOTO_QUESTION_TTL_MS = 30 * 60 * 1000;
+
+export function markPhotoQuestion(key: string): void {
+    photoQuestions.set(key, Date.now());
+}
+
+/** The photo the question was about, once: the next message's media. Empty when none is pending. */
+export function takePhotoQuestion(key: string): InboundImage[] {
+    const at = photoQuestions.get(key);
+    photoQuestions.delete(key);
+    return at !== undefined && Date.now() - at <= PHOTO_QUESTION_TTL_MS ? lastInboundImages(key) : [];
+}
+
 /** One call's result: a single version, or a batch of variations (one undo step, "last" = its last one). */
 export function pushGenerated(key: string, paths: string | string[]): void {
     load();

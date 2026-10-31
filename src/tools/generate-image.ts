@@ -314,7 +314,7 @@ export async function blendLocal(src: Buffer, out: Buffer): Promise<Buffer | nul
 // ── Output ───────────────────────────────────
 
 const NOTE =
-    "The image is already shown to the user in this chat. Don't call send_file and don't paste the file path; reply in one short line.";
+    "The image is already shown to the user with your reply (an email reply attaches it). Don't call send_file and don't paste the file path; reply in one short line.";
 const SEND_NOTE =
     "This chat doesn't show images by itself: send it to the user with send_file (file_path above), then reply in one short line.";
 const noteFor = () => (turnShowsImages() ? NOTE : SEND_NOTE);

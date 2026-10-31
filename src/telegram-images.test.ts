@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Generated images on Telegram: the follow-up buttons, how files go out, albums as one turn,
-// and the "sending a photo…" action while generate_image runs.
+// and the "sending a photo…" action while generate_image runs; the owner's photo with no words.
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,12 +8,23 @@ import sharp from "sharp";
 import { afterEach, expect, it, vi } from "vitest";
 import type { GeneratedImage } from "./agent.js";
 
+const runAgent = vi.hoisted(() => vi.fn(async () => ({ text: "[NO_REPLY]", toolCalls: 0 })));
+vi.mock("./agent.js", async (orig) => ({ ...(await orig<object>()), runAgent }));
+
 const dir = mkdtempSync(join(tmpdir(), "tg-images-"));
 process.env.ATLAS_DATA_DIR = dir;
 process.env.ATLAS_WORKSPACE = dir;
-const { bufferMediaGroup, chatActionFor, imageCallbackMessage, imageKeyboard, sendImages } = await import(
-    "./telegram.js"
-);
+const {
+    bufferMediaGroup,
+    chatActionFor,
+    imageCallbackMessage,
+    imageKeyboard,
+    photoCallbackMessage,
+    photoKeyboard,
+    runMediaTurn,
+    sendImages,
+} = await import("./telegram.js");
+const { lastInboundImages, takePhotoQuestion } = await import("./media/image-memory.js");
 const { noteGeneratedImages, runWithCallerContext } = await import("./tools/cron-tool.js");
 const { sendFileTool, setTelegramContext } = await import("./tools/send-file.js");
 
@@ -99,7 +110,7 @@ it("send_file skips an image generate_image already showed this turn, sends it w
         });
     expect(await run("telegram:1")).toEqual({ success: true, note: "already shown in the chat" });
     expect(sent).toEqual([]);
-    expect(await run("matrix:1")).toMatchObject({ success: true, type: "photo" });
+    expect(await run("cron:1")).toMatchObject({ success: true, type: "photo" });
     expect(sent).toEqual(["photo"]);
 });
 
@@ -162,4 +173,52 @@ it("sends several images as an album, then the buttons on their own line", async
     expect(calls[1].opts?.reply_parameters).toEqual({ message_id: 7 });
     expect(calls[0].media?.map((m) => m.type)).toEqual(["photo", "photo"]);
     expect(calls[0].media?.some((m) => "caption" in m)).toBe(false);
+});
+
+it("asks the owner what to do with a photo sent with no words, once per album, without a model call", async () => {
+    vi.stubGlobal("fetch", async () => new Response("jpegbytes"));
+    type Reply = [string, { reply_markup?: { inline_keyboard: Array<Array<{ callback_data: string }>> } }?];
+    const replies: Reply[] = [];
+    const ctx = (from: number, type: string, caption?: string) => ({
+        message: { photo: [{ file_id: "f" }], caption },
+        from: { id: from, first_name: "A" },
+        chat: { id: from, type },
+        reply: async (...a: Reply) => replies.push(a),
+        replyWithChatAction: async () => {},
+    });
+    const bot = { api: { getFile: async () => ({ file_path: "p", file_size: 9 }) } };
+    const config = { allowedUserIds: [7], telegramBotToken: "t" };
+    const llm = { chat: async () => Promise.reject(new Error("no model")) };
+    const run = (c: ReturnType<typeof ctx>, n = 2) =>
+        runMediaTurn(
+            c as never,
+            bot as never,
+            config as never,
+            llm as never,
+            Array(n).fill({ message: c.message, mediaType: "image" }),
+            undefined,
+            false,
+        );
+
+    await run(ctx(7, "private"));
+    expect(replies).toHaveLength(1);
+    expect(replies[0][0]).toBe("What should I do with it?");
+    const buttons = replies[0][1]?.reply_markup?.inline_keyboard.flat() ?? [];
+    expect(buttons.map((b) => b.callback_data)).toEqual(["photo:describe", "photo:nobg", "photo:light", "photo:cartoon"]);
+    expect(lastInboundImages("telegram:7")).toHaveLength(2); // agent.ts's key: a tap's "attached"
+    expect(takePhotoQuestion("telegram:7")).toHaveLength(2); // the next message (tap or typed) sees them, once
+    expect(takePhotoQuestion("telegram:7")).toEqual([]);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(photoCallbackMessage("photo:describe")).toBe("Describe the photo I just sent");
+    expect(photoCallbackMessage("photo:toString")).toBeUndefined();
+    expect(photoKeyboard().inline_keyboard.map((r) => r.length)).toEqual([2, 2]);
+
+    // A caption, a guest or a group: a turn as before.
+    await run(ctx(7, "private", "make it pop"), 1);
+    await run(ctx(8, "private"), 1);
+    await run(ctx(7, "group"), 1);
+    expect(replies).toHaveLength(1);
+    expect(runAgent).toHaveBeenCalledTimes(3);
+    expect(lastInboundImages("telegram:8")).toEqual([]);
+    vi.unstubAllGlobals();
 });

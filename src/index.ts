@@ -1179,7 +1179,7 @@ async function boot() {
         startCronTicker({
             runPrompt: async (prompt, ctx) => {
                 const channel = (ctx.deliverTo || "cron") as string;
-                const response = await runAgent(
+                return runAgent(
                     llm,
                     prompt,
                     undefined,
@@ -1193,12 +1193,15 @@ async function boot() {
                         userId: ctx.userId || "cron",
                         isOwner: ctx.isOwner,
                         autonomous: true,
+                        // deliver() below sends the run's images after its text on these channels.
+                        showsImages: /^(telegram|slack|discord|matrix|overlay)$/.test(channel),
                     },
                 );
-                return response.text;
             },
-            deliver: async (job, response) => {
+            deliver: async (job, response, images) => {
                 const channel = job.deliverTo;
+                // A run that only made images still delivers them, with a line to carry them.
+                if (!response && images?.length) response = images.length > 1 ? "Here are the images." : "Here's the image.";
                 if (!response) return true;
                 // No channel named: the owner's channels, as reminders do (it used to go nowhere).
                 if (!channel) {
@@ -1211,32 +1214,39 @@ async function boot() {
                     const {
                         getTelegramBot,
                         getTelegramConfig,
+                        parseTelegramOwners,
+                        sendImages,
                         sendProactiveMessage: sendTg,
                     } = await import("./telegram.js");
                     const tb = getTelegramBot();
                     const cfg = getTelegramConfig();
                     if (!tb || !cfg) return false;
-                    await sendTg(tb, cfg, response);
+                    // The images follow the text to the same owners (not when DND or offline held it).
+                    if ((await sendTg(tb, cfg, response)) && images?.length)
+                        for (const id of parseTelegramOwners(cfg)) await sendImages(tb.api, id, images, job.isOwner);
                     return true;
                 }
                 if (channel === "slack") {
                     const { sendSlackProactiveMessage } = await import("./slack.js");
-                    await sendSlackProactiveMessage(response);
+                    await sendSlackProactiveMessage(response, images);
                     return true;
                 }
                 if (channel === "discord") {
                     const { sendDiscordProactiveMessage } = await import("./discord.js");
-                    await sendDiscordProactiveMessage(response);
+                    await sendDiscordProactiveMessage(response, undefined, undefined, images);
                     return true;
                 }
                 if (channel === "matrix") {
                     const { sendMatrixProactiveMessage } = await import("./matrix.js");
-                    await sendMatrixProactiveMessage(response);
+                    await sendMatrixProactiveMessage(response, images);
                     return true;
                 }
                 if (channel === "overlay") {
-                    const { sendOverlayNotification } = await import("./overlay/overlay-chat.js");
-                    return sendOverlayNotification(response, { requested: true });
+                    const { sendOverlayImage, sendOverlayNotification } = await import("./overlay/overlay-chat.js");
+                    const shown = await sendOverlayNotification(response, { requested: true });
+                    // Asked for, like the text: DND doesn't hold the images back.
+                    if (shown) for (const img of images ?? []) await sendOverlayImage(img.path, "", { requested: true });
+                    return shown;
                 }
                 console.error(
                     `[CRON] MISROUTED — job ${job.id} had deliverTo="${channel}" which has no handler. Response (${response.length} chars) was dropped.`,

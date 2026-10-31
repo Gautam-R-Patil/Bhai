@@ -8,8 +8,8 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
-import { readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
-import { basename, join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, realpathSync, copyFileSync, constants as fsConstants } from "node:fs";
+import { basename, extname, join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir, homedir } from "node:os";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
@@ -36,6 +36,15 @@ import { consentAskedSince } from "../security/consent.js";
 import { logChatMessage, markChatReset, recentChatContext, unansweredAsk } from "./chat-log.js";
 import { createTurnRelay } from "./turn-relay.js";
 import { classifyQuery } from "../memory/classifier.js";
+import {
+    conversationKey,
+    lastInboundImages,
+    markPhotoQuestion,
+    rememberInboundImages,
+    takePhotoQuestion,
+    toReadableImage,
+    type InboundImage,
+} from "../media/image-memory.js";
 import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
 import { captureScreenshot } from "../tools/platform.js";
 import { getUserPresence } from "../proactive/activity.js";
@@ -176,6 +185,7 @@ function resolveSafePath(userPath: string): string | null {
 export { resolveSafePath as _resolveSafePathForTest };
 export { isDeniedServePath as _isDeniedServePathForTest };
 export { isScreenQuery as _isScreenQueryForTest };
+export { handleFileAttachment as _handleFileAttachmentForTest };
 export { parseInteractiveElements as _parseInteractiveElementsForTest };
 
 let httpServer: ReturnType<typeof createServer> | null = null;
@@ -791,6 +801,14 @@ export function initOverlayChat(llm: LLMClient): void {
                     return;
                 }
 
+                if (msg.type === "save_image") {
+                    // An image's "Download": the original file, not the thumbnail. Same paths as reveal_file.
+                    if (!wsIsOwner(ws)) return;
+                    const name = saveImageToDownloads(msg.path);
+                    sendToClient(ws, { type: "saved_image", ok: !!name, name, id: msg.id });
+                    return;
+                }
+
                 if (msg.type === "chat" && msg.text) {
                     const messageSource = msg.meta?.source || (isWidget ? "web-widget" : "overlay");
                     console.log(`💬 [${messageSource}] message received`);
@@ -999,7 +1017,8 @@ function isScreenQuery(msg: string): boolean {
     // A stuck report's handoff reply ("retry it", "skip it") is about the task, not the screen.
     if (isStuckReplyPhrase(msg)) return false;
     // An image reply's follow-up chips ("Undo that edit") are about that image.
-    if (IMAGE_FOLLOWUPS.some((t) => t.toLowerCase() === lower)) return false;
+    // So are the chips under a photo sent with no words ("Describe it").
+    if ([...IMAGE_FOLLOWUPS, ...PHOTO_CHIPS].some((t) => t.toLowerCase() === lower)) return false;
     // "how much battery do i have" is a quick command, answered without a screenshot or a model.
     if (parseQuickCommand(msg)) return false;
 
@@ -1240,6 +1259,7 @@ async function handleOverlayMessage(
 
     // Auto-detect screen queries and capture screenshot
     let media: MediaAttachment[] | undefined;
+    let photoAsked: InboundImage[] = [];
 
     // Inject Chrome extension status so the agent knows which browser to use.
     // "here", "this page", "this email" in overlay messages = the user's real Chrome tab.
@@ -1271,6 +1291,11 @@ ${
                 ? "Attached: an image the user shared with you (pasted in, or picked on a page). Answer about it directly."
                 : `Attached: a screenshot of the Chrome tab the user is looking at (the page only). Orange strokes or boxes on it are the user's own drawing: focus on what they marked. Answer as if you can see the page, without "based on the screenshot". To act on the page, use the browser tools on this tab; to point something out to them, use browser_mark.`
         }]${chromeCtxNote}`;
+    } else if (wsIsOwner(ws) && (photoAsked = takePhotoQuestion(OVERLAY_PHOTO_KEY)).length) {
+        // The answer to "What should I do with it?", a chip or typed: it's about that photo, not
+        // the screen. Already remembered, so `capture` keeps it from being added twice.
+        media = photoAsked.map((i) => ({ type: "image", ...i, capture: true }));
+        taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. The user just sent this photo (attached) and was asked what to do with it, so this is most likely the answer; to change the photo, use generate_image with source "attached".]${chromeCtxNote}`;
     } else if (wsIsOwner(ws) && source !== "chrome-extension" && isScreenQuery(userMessage)) {
         // Only the owner's own chat bar may look at the screen — never a web-widget visitor,
         // and not the Chrome panel, which sends its tab instead.
@@ -1447,11 +1472,6 @@ async function handleFileAttachment(
     mimeType: string,
     userText: string,
 ): Promise<void> {
-    const llm = llmClient;
-    if (!llm) {
-        sendToClient(ws, { type: "error", text: "LLM not initialized" });
-        return;
-    }
     // A reloaded chat bar, a second owner window or the extension must not start a second
     // turn on the shared history: it would interleave with the running one and take over
     // its Stop handle.
@@ -1471,10 +1491,31 @@ async function handleFileAttachment(
         undefined,
         sentPhoto ? [sentPhoto] : undefined,
     );
+
+    const isImage = mimeType.startsWith("image/");
+    // The owner's photo with no words: ask what to do with it, no model call. A chip starts the turn.
+    let kept = false;
+    if (isImage && !userText.trim() && wsIsOwner(ws)) {
+        const photo = await toReadableImage({ base64, mimeType });
+        rememberInboundImages(OVERLAY_PHOTO_KEY, [photo]);
+        kept = lastInboundImages(OVERLAY_PHOTO_KEY).includes(photo);
+    }
+    // Asked only when this photo was kept (an oversized one isn't): else the usual turn sees it.
+    if (kept) {
+        markPhotoQuestion(OVERLAY_PHOTO_KEY);
+        const text = "What should I do with it?";
+        logChatMessage(chat, "assistant", text, "overlay");
+        sendToClient(ws, { type: "response", text, toolCalls: 0, quickActions: PHOTO_CHIPS, files: [], links: [], widgets: [] });
+        return;
+    }
+    const llm = llmClient;
+    if (!llm) {
+        sendToClient(ws, { type: "error", text: "LLM not initialized" });
+        return;
+    }
     const live = newTurn(ws, chat);
     sendToClient(ws, { type: "thinking", turn: live.turn });
 
-    const isImage = mimeType.startsWith("image/");
     let media: MediaAttachment[] | undefined;
     let fileContext = "";
 
@@ -1891,6 +1932,12 @@ export async function overlayImages(result: AgentResponse, owner: boolean): Prom
 
 const IMAGE_FOLLOWUPS = ["Make another version", "Make it higher quality", "Undo that edit"];
 
+/** The owner's photo with no words gets "What should I do with it?" and these; the first one describes it. */
+// "Take out", not "Remove": the chat bar paints remove/erase/delete chips red as destructive.
+const PHOTO_CHIPS = ["Describe it", "Take out the background", "Improve the lighting", "Make it a cartoon"];
+// agent.ts's key for the owner's overlay turns, so a chip's source "attached" is that photo.
+const OVERLAY_PHOTO_KEY = conversationKey("overlay", "local");
+
 /**
  * Follow-ups under an image reply; sent back as plain chat text. Undo only when there is a
  * version to go back to (`before`): a photo combine has none.
@@ -1912,10 +1959,28 @@ export function revealablePath(p: unknown): string | null {
     }
 }
 
+/** The owner's "Download": copies a revealable file into Downloads as "name (1).png" etc., never over one. */
+export function saveImageToDownloads(p: unknown): string | null {
+    const src = revealablePath(p);
+    if (!src) return null;
+    const ext = extname(src);
+    const stem = basename(src, ext);
+    for (let i = 0; i < 100; i++) {
+        const name = i ? `${stem} (${i})${ext}` : `${stem}${ext}`;
+        try {
+            copyFileSync(src, join(getDownloadsDir(), name), fsConstants.COPYFILE_EXCL);
+            return name;
+        } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "EEXIST") return null;
+        }
+    }
+    return null;
+}
+
 /** An image file sent to the overlay channel (send_file, a scheduled task): it shows as a reply. */
-export async function sendOverlayImage(filePath: string, caption: string): Promise<boolean> {
+export async function sendOverlayImage(filePath: string, caption: string, opts: { requested?: boolean } = {}): Promise<boolean> {
     const clients = ownerClients();
-    if (clients.length === 0 || (await dndSuppresses(caption))) return false;
+    if (clients.length === 0 || (!opts.requested && (await dndSuppresses(caption)))) return false;
     const url = await imageThumb(filePath);
     if (!url) return false;
     const images: OverlayImage[] = [{ url, name: basename(filePath), path: filePath, kind: "generated" }];

@@ -5,11 +5,13 @@
 // ── Matrix/Element Bot Channel ──────────────────────────────
 // Lightweight Matrix bot using the CS API directly via fetch.
 // No matrix-bot-sdk dependency — just REST calls.
-// Supports text messages only (no E2E encryption, no media).
+// Reads text messages only; sends text and generated images (no E2E encryption).
 
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
-import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
+import { runAgent, type MediaAttachment, type ChannelContext, type GeneratedImage } from "./agent.js";
 import { smartChunkMessage } from "./alive-ux.js";
 
 // ── Constants ────────────────────────────────────
@@ -143,24 +145,54 @@ async function login(userId: string, password: string): Promise<void> {
 
 // ── Send Message ─────────────────────────────────
 
-async function sendMessage(roomId: string, text: string): Promise<void> {
+async function putMessage(roomId: string, content: Record<string, unknown>): Promise<void> {
     const txnId = `atlas_${Date.now()}_${++txnCounter}`;
+    await matrixFetch(
+        `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(txnId)}`,
+        { method: "PUT", body: JSON.stringify(content) },
+    );
+}
 
+async function sendMessage(roomId: string, text: string): Promise<void> {
     // Convert basic markdown to Matrix HTML (org.matrix.custom.html)
     const htmlBody = markdownToMatrixHtml(text);
 
-    await matrixFetch(
-        `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(txnId)}`,
-        {
-            method: "PUT",
-            body: JSON.stringify({
-                msgtype: "m.text",
-                body: text,
-                format: "org.matrix.custom.html",
-                formatted_body: htmlBody,
-            }),
-        },
-    );
+    await putMessage(roomId, {
+        msgtype: "m.text",
+        body: text,
+        format: "org.matrix.custom.html",
+        formatted_body: htmlBody,
+    });
+}
+
+/**
+ * The turn's generated images after the reply: each uploaded to the homeserver's media repo and
+ * sent as an m.image. Only the owner's DM hears where a failed one was saved. Never throws.
+ */
+export async function sendImages(roomId: string, images: GeneratedImage[] | undefined, ownerDm: boolean): Promise<void> {
+    const failed: string[] = [];
+    for (const img of images ?? []) {
+        try {
+            const buf = await readFile(img.path);
+            const name = basename(img.path);
+            const { content_uri } = (await matrixFetch(`/_matrix/media/v3/upload?filename=${encodeURIComponent(name)}`, {
+                method: "POST",
+                headers: { "Content-Type": img.mimeType },
+                body: new Uint8Array(buf),
+            })) as { content_uri: string };
+            await putMessage(roomId, {
+                msgtype: "m.image",
+                body: name,
+                url: content_uri,
+                info: { mimetype: img.mimeType, size: buf.length },
+            });
+        } catch (err) {
+            console.warn("[MATRIX] Failed to send image:", (err as Error).message);
+            failed.push(img.path);
+        }
+    }
+    if (failed.length && ownerDm)
+        await sendMessage(roomId, `Couldn't send the image here; it's saved at ${failed.join(", ")}`).catch(() => {});
 }
 
 async function sendReply(roomId: string, text: string): Promise<void> {
@@ -309,6 +341,8 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
         if (result.text && result.text.trim() !== "[NO_REPLY]") {
             await sendReply(roomId, withStuckReplyLine(result, senderIsOwner));
         }
+        // Paid-for images arrive even when the reply itself is empty.
+        await sendImages(roomId, result.images, senderIsOwner);
 
         console.log(`[MATRIX] Response sent (${result.text.length} chars, ${result.toolCalls} tool calls)`);
     } catch (err) {
@@ -490,7 +524,7 @@ export async function initMatrix(llm: LLMClient): Promise<void> {
  * Used by heartbeat, notifications, and research completion.
  */
 /** Resolves whether any room got it. */
-export async function sendMatrixProactiveMessage(message: string): Promise<boolean> {
+export async function sendMatrixProactiveMessage(message: string, images?: GeneratedImage[]): Promise<boolean> {
     if (!accessToken || !homeserverUrl || !running) return false;
 
     // If no allowed rooms configured, skip
@@ -504,6 +538,7 @@ export async function sendMatrixProactiveMessage(message: string): Promise<boole
         try {
             await sendReply(roomId, message);
             delivered = true;
+            await sendImages(roomId, images, true);
         } catch (err) {
             console.warn(`[MATRIX] Failed to send proactive message to ${roomId}:`, (err as Error).message);
         }

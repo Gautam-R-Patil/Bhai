@@ -12,6 +12,7 @@ import {
     imageErrorResponse,
     type ImageRequest,
     releaseImageSlot,
+    releaseImageSlotRetrying,
     validateImageRequest,
 } from "./image";
 import { checkRequestRateLimit } from "./sessions";
@@ -278,6 +279,25 @@ describe("per-account image limits", () => {
         await run(releaseImageSlot, ctx, a);
         expect(await run(acquireImageSlot, ctx, { ...a, n: 2 })).toBe(false); // counted by images
         expect(await run(acquireImageSlot, ctx, a)).toBe(true);
+    });
+
+    it("retries a failed release once, so one blip doesn't hold the slot", async () => {
+        const ctx = fakeCtx();
+        const slot = { accountId: "a", n: 4 };
+        await run(acquireImageSlot, ctx, slot);
+        const release = vi
+            .fn()
+            .mockRejectedValueOnce(new Error("occ"))
+            .mockImplementation(() => run(releaseImageSlot, ctx, slot));
+        await releaseImageSlotRetrying(release);
+        expect(release).toHaveBeenCalledTimes(2);
+        expect(ctx.rows[0].requestCount).toBe(0);
+        const err = vi.spyOn(console, "error").mockImplementation(() => {});
+        const down = vi.fn().mockRejectedValue(new Error("down"));
+        await releaseImageSlotRetrying(down); // still never throws out of the route's finally
+        expect(down).toHaveBeenCalledTimes(2);
+        expect(err).toHaveBeenCalledOnce();
+        err.mockRestore();
     });
 
     it("stops counting a slot whose action died, after the stale window", async () => {

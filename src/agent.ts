@@ -830,6 +830,8 @@ export interface ChannelContext {
      * read and report, never send, post, buy, book or delete — it suggests, the owner acts.
      */
     noOutward?: boolean;
+    /** The reply carries the turn's generated images (unset: the channel decides, see turnShowsImages). */
+    showsImages?: boolean;
     /**
      * Live chat surfaces: structured turn events (status, steps, streamed answer, owner notes).
      * Set = main-loop model calls stream (and take the turn's abort signal); unset = no change.
@@ -1629,6 +1631,7 @@ export async function runAgent(
             autonomous: channelContext?.autonomous === true,
             noOutward: channelContext?.noOutward === true,
             isPrivate: channelContext?.isPrivate === true,
+            showsImages: channelContext?.showsImages,
             message: stripChannelTags(userMessage),
             turnImages,
             conversationKey: convKey,

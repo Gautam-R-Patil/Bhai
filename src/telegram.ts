@@ -50,6 +50,13 @@ import type { Config } from "./config.js";
 import { encryptedFetch } from "./crypto-transport.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
+import {
+    conversationKey,
+    lastInboundImages,
+    markPhotoQuestion,
+    rememberInboundImages,
+    takePhotoQuestion,
+} from "./media/image-memory.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { memoryUndoAction, pruneDigestTap, undoMemoryTap } from "./memory/forget.js";
 import { getSessionToken } from "./session.js";
@@ -256,6 +263,27 @@ export function imageCallbackMessage(data: string): string | undefined {
     const action = m[1] ?? m[3];
     return file ? `${IMAGE_ACTIONS[action]}: ${file}` : IMAGE_ACTIONS[action];
 }
+
+/** The owner's photo with no words gets "What should I do with it?": button label → the message a tap sends. */
+const PHOTO_CHOICES: Record<string, [string, string]> = {
+    describe: ["Describe it", "Describe the photo I just sent"],
+    nobg: ["Remove the background", "Remove the background from the photo I just sent"],
+    light: ["Improve the lighting", "Improve the lighting of the photo I just sent"],
+    cartoon: ["Make it a cartoon", "Make the photo I just sent a cartoon"],
+};
+
+export function photoKeyboard(): InlineKeyboard {
+    const kb = new InlineKeyboard();
+    Object.entries(PHOTO_CHOICES).forEach(([key, [label]], i) => {
+        kb.text(label, `photo:${key}`);
+        if (i === 1) kb.row(); // two rows of two
+    });
+    return kb;
+}
+
+/** photo:describe|nobg|light|cartoon → the owner's next message. */
+export const photoCallbackMessage = (data: string): string | undefined =>
+    Object.hasOwn(PHOTO_CHOICES, data.slice(6)) ? PHOTO_CHOICES[data.slice(6)][1] : undefined;
 
 /** sendPhoto re-encodes to a ≤1280px JPEG: past that, the full file goes too. */
 const PHOTO_MAX_EDGE = 1280;
@@ -475,7 +503,7 @@ export function getTelegramConfig(): Config | null {
 // F3: distinguish channel-allowed from platform-owner. OWNER_TELEGRAM_IDS
 // is a strict subset of ALLOWED_USER_IDS; defaults to ALLOWED_USER_IDS (with
 // a warning) for back-compat.
-function parseTelegramOwners(config: Config): Set<number> {
+export function parseTelegramOwners(config: Config): Set<number> {
     const raw = process.env.OWNER_TELEGRAM_IDS;
     if (!raw) {
         console.warn(
@@ -1301,11 +1329,18 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 // group the reply — and whatever a tool or memory put in it — is everyone's.
                 const senderIsOwner =
                     !!ctx.from?.id && telegramOwners.has(ctx.from.id) && ctx.chat?.type === "private";
+                // The answer to "What should I do with it?" (a button or typed) is about that photo:
+                // the model sees it (already remembered, so `capture` keeps it from being added twice).
+                const photo = senderIsOwner
+                    ? takePhotoQuestion(conversationKey("telegram", String(ctx.from.id))).map(
+                          (i): MediaAttachment => ({ type: "image", ...i, capture: true }),
+                      )
+                    : [];
                 const response = await runAgent(
                     llm,
                     agentMessage,
                     progressCallback,
-                    undefined,
+                    photo.length ? photo : undefined,
                     controller.signal,
                     historyFork,
                     modelHint,
@@ -1591,6 +1626,16 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             const imgMsg = ctx.callbackQuery.message;
             if (message && chatId && imgMsg)
                 bufferMessage(ctx, chatId, imgMsg.message_id, message, imgMsg.caption ?? imgMsg.reply_to_message?.text);
+            return;
+        }
+
+        // ── The question under a photo sent with no words: photo:<choice> → the owner's next message ──
+        if (data.startsWith("photo:")) {
+            await ctx.answerCallbackQuery().catch(() => {});
+            await ctx.editMessageReplyMarkup().catch(() => {});
+            const message = photoCallbackMessage(data);
+            const question = ctx.callbackQuery.message;
+            if (message && chatId && question) bufferMessage(ctx, chatId, question.message_id, message);
             return;
         }
 
@@ -1951,7 +1996,7 @@ async function fetchMedia(
 }
 
 /** One media turn for a photo/video, or for an album's parts together. */
-async function runMediaTurn(
+export async function runMediaTurn(
     ctx: MediaCtx,
     bot: Bot,
     config: Config,
@@ -1962,9 +2007,12 @@ async function runMediaTurn(
 ) {
     const userName = ctx.from.first_name || "User";
     const { mediaType } = items[0];
-    let caption =
-        items.map((i) => i.message.caption).find(Boolean) ||
-        (items.length > 1 ? "What's in these?" : `What's in this ${mediaType}?`);
+    const given = items.map((i) => i.message.caption).find(Boolean);
+    let caption = given || (items.length > 1 ? "What's in these?" : `What's in this ${mediaType}?`);
+    const senderIsOwner =
+        !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config) && (ctx.chat as { type?: string })?.type === "private";
+    // The owner's photos with no words at all: ask what to do with them, no model call.
+    let askFirst = senderIsOwner && !given && items.every((i) => i.message.photo);
 
     console.log(`\n📎 ${userName} sent ${items.length > 1 ? `${items.length} files` : `a ${mediaType}`}: ${caption}`);
 
@@ -1978,6 +2026,7 @@ async function runMediaTurn(
         if (buf && buf.messages.length > 0) {
             const extra = buf.messages.join("\n");
             caption += "\n" + extra;
+            askFirst = false;
             console.log(
                 `  📦 Absorbed ${buf.messages.length} follow-up text(s) into media context: "${extra.substring(0, 60)}"`,
             );
@@ -2004,6 +2053,18 @@ async function runMediaTurn(
             const failed = fetched.find((r) => r.status === "rejected");
             if (failed) throw failed.reason;
             return; // already told the user
+        }
+        if (askFirst) {
+            // Kept under agent.ts's key for this chat, so a tap's source "attached" is this photo.
+            const key = conversationKey("telegram", String(ctx.from.id));
+            const photos = saved.map(({ base64, mimeType }) => ({ base64, mimeType }));
+            rememberInboundImages(key, photos);
+            // Asked only when these photos were kept (an oversized one isn't): else the usual turn sees them.
+            if (photos.every((p) => lastInboundImages(key).includes(p))) {
+                markPhotoQuestion(key);
+                await ctx.reply("What should I do with it?", { reply_markup: photoKeyboard() });
+                return;
+            }
         }
 
         // Wrap attacker-controlled caption in delimiters and strip framing tokens.
@@ -2038,8 +2099,6 @@ async function runMediaTurn(
             if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, mediaAckId, msg.slice(6));
         };
 
-        const senderIsOwner =
-            !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config) && (ctx.chat as { type?: string })?.type === "private";
         const result = await runAgent(
             llm,
             caption,
