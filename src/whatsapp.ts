@@ -43,6 +43,7 @@ import {
     isClearNo,
     isClearYes,
     nameFromContext,
+    ownerGivenNames,
     noticeVerdict,
     queryForNotice,
     requestForNotice,
@@ -1960,17 +1961,10 @@ async function handleOwnerMessage(
 
 /**
  * What the owner has told Bhai about this person: the owner's memories that name them
- * (by name, first name, nickname or number). Contact turns see no other owner memory.
+ * (by the name or nickname the owner gave them). Contact turns see no other owner memory.
  */
-async function ownerNotesAbout(jid: string, contactName: string): Promise<string[]> {
-    const p = getContactProfile(jid);
-    const names = [
-        ...new Set(
-            [contactName, p?.pushName, p?.context?.ownerNickname]
-                .flatMap((n) => (n ? [n.trim(), n.trim().split(/\s+/)[0]] : []))
-                .filter((n) => n.length >= 3 && !/^\+?\d+$/.test(n)),
-        ),
-    ];
+async function ownerNotesAbout(jid: string): Promise<string[]> {
+    const names = ownerGivenNames(getContactProfile(jid));
     if (names.length === 0) return [];
     const phone = jidToPhone(jid);
     const mentions = new RegExp(`\\b(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "i");
@@ -2019,7 +2013,7 @@ async function handleContactMessage(
             updateContactProfile(jid, { displayName: named });
         }
     }
-    const ownerNotes = await ownerNotesAbout(jid, contactName);
+    const ownerNotes = await ownerNotesAbout(jid);
     const allowedTools = [...(persona.allowedToolNames ?? []), "ask_owner"]
         .filter((v, i, a) => a.indexOf(v) === i)
         .join(", ");

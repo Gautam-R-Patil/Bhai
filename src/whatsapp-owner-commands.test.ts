@@ -260,3 +260,13 @@ describe("a notice still matches after WhatsApp formatting", () => {
         expect(found?.question).toBe("Kunal wants from Zepto:; 2 Amul Lassi; 1 bread; delivery note: hostel 4");
     });
 });
+
+describe("owner notes about a contact", () => {
+    it("match only names the owner gave, never the contact's own WhatsApp name", () => {
+        const jid = "919822222222@s.whatsapp.net";
+        users.allowContact(jid, "The Boss", "The Boss"); // auto-allowed: displayName is their WhatsApp name
+        expect(users.ownerGivenNames(users.getContactProfile(jid))).toEqual([]);
+        users.updateContactProfile(jid, { notes: "his name is Kunal, my roommate", context: { ownerNickname: "Kuku" } });
+        expect(users.ownerGivenNames(users.getContactProfile(jid))).toEqual(["Kunal", "Kuku"]);
+    });
+});

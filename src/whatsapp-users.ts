@@ -638,6 +638,18 @@ export function nameFromContext(text: string): string | undefined {
     return m[1][0].toUpperCase() + m[1].slice(1);
 }
 
+/**
+ * The names the owner gave a contact: "his name is Kunal" in what they said when letting them
+ * in, and the owner's nickname for them. Never their WhatsApp name: the contact picks that, and
+ * whatever it matches decides which owner memories reach their chat.
+ */
+export function ownerGivenNames(profile: Pick<ContactProfile, "notes" | "context"> | null | undefined): string[] {
+    const names = [nameFromContext(profile?.notes ?? ""), profile?.context?.ownerNickname]
+        .map((n) => n?.trim() ?? "")
+        .filter((n) => n.length >= 3 && !/^\+?\d+$/.test(n));
+    return [...new Set(names)];
+}
+
 const NOT_NAMES = new Set(["also", "not", "in", "unknown", "something", "the", "a", "my", "your", "same", "secret", "private"]);
 
 /**
