@@ -255,6 +255,8 @@ function messageEl(m, arriving = false) {
       tools.append(b);
     }
     el.append(body);
+    const grid = imageGrid(m.images);
+    if (grid) el.append(grid);
     const safeLinks = (m.meta?.links || []).filter((u) => /^https?:\/\//.test(u));
     if (safeLinks.length) {
       const list = document.createElement('ul');
@@ -304,6 +306,117 @@ function messageEl(m, arriving = false) {
     el.append(retry);
   }
   return el;
+}
+
+// ── Images Bhai made: thumbnails under the reply, a lightbox on click ──
+// In memory only (the worker never stores them); data:image/ URLs only.
+function imageGrid(images) {
+  const ok = (Array.isArray(images) ? images : []).filter((im) => im && typeof im.url === 'string' && im.url.startsWith('data:image/'));
+  if (!ok.length) return null;
+  const grid = document.createElement('div');
+  grid.className = ok.length > 1 ? 'img-grid multi' : 'img-grid';
+  ok.forEach((im, i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'img-thumb';
+    btn.setAttribute('aria-label', `Open image ${i + 1} of ${ok.length}`);
+    const img = document.createElement('img');
+    img.alt = im.prompt || 'Image from Bhai';
+    img.onload = () => img.classList.add('loaded');
+    img.src = im.url;
+    btn.append(img);
+    btn.addEventListener('click', () => openLightbox(ok, i));
+    grid.append(btn);
+  });
+  return grid;
+}
+
+async function copyImage(url) {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  c.getContext('2d').drawImage(img, 0, 0);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+
+let closeLightbox = () => {};
+function openLightbox(images, start) {
+  closeLightbox();
+  const back = document.activeElement;
+  const box = document.createElement('div');
+  box.className = 'img-lightbox';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-label', 'Image viewer');
+  const img = document.createElement('img');
+  img.className = 'lb-img';
+  const bar = document.createElement('div');
+  bar.className = 'lb-bar';
+  box.append(img, bar);
+  let i = start;
+  const button = (label, aria, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'lb-btn';
+    b.textContent = label;
+    b.setAttribute('aria-label', aria);
+    b.addEventListener('click', () => fn(b));
+    return b;
+  };
+  function show() {
+    const im = images[i];
+    img.src = im.url;
+    img.alt = im.prompt || 'Image from Bhai';
+    bar.replaceChildren();
+    if (images.length > 1) {
+      const n = document.createElement('span');
+      n.className = 'lb-count';
+      n.textContent = `${i + 1} / ${images.length}`;
+      bar.append(n);
+    }
+    const dl = document.createElement('a');
+    dl.className = 'lb-btn';
+    dl.href = im.url;
+    dl.download = String(im.name || 'bhai-image').replace(/\.\w+$/, '') + (im.url.startsWith('data:image/png') ? '.png' : '.jpg');
+    dl.textContent = 'Download';
+    dl.setAttribute('aria-label', 'Download image');
+    bar.append(dl);
+    bar.append(button('Copy', 'Copy image', async (b) => {
+      try { await copyImage(im.url); b.textContent = 'Copied'; } catch { b.textContent = "Couldn't copy"; }
+      setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+    }));
+    if (typeof im.before === 'string' && im.before.startsWith('data:image/')) {
+      bar.append(button('Compare', 'Show the original', (b) => {
+        const on = b.getAttribute('aria-pressed') !== 'true';
+        b.setAttribute('aria-pressed', String(on));
+        b.textContent = on ? 'Original' : 'Compare';
+        img.src = on ? im.before : im.url;
+      }));
+    }
+  }
+  const onKey = (e) => {
+    if (e.key === 'Escape') closeLightbox();
+    else if (e.key === 'ArrowRight' && images.length > 1) { i = (i + 1) % images.length; show(); }
+    else if (e.key === 'ArrowLeft' && images.length > 1) { i = (i - 1 + images.length) % images.length; show(); }
+    else return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+  closeLightbox = () => {
+    window.removeEventListener('keydown', onKey, true);
+    box.remove();
+    closeLightbox = () => {};
+    back?.focus?.();
+  };
+  box.addEventListener('click', (e) => { if (e.target === box) closeLightbox(); });
+  window.addEventListener('keydown', onKey, true);
+  show();
+  document.body.append(box);
+  bar.querySelector('.lb-btn')?.focus();
 }
 
 let rendered = 0;

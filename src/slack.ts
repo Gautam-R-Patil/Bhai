@@ -7,10 +7,12 @@
 // Handles @mentions and DMs, threads long conversations,
 // formats with Block Kit, and processes file uploads.
 
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import type { App, SayFn } from "@slack/bolt";
 import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
-import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
+import { runAgent, type GeneratedImage, type MediaAttachment, type ChannelContext } from "./agent.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { mapStepStatus, parseStepLine } from "./step-status.js";
 
@@ -249,6 +251,8 @@ async function handleSlackMessage(
                     await slackApp.client.chat.delete({ channel, ts: statusMessageTs });
                 } catch { /* */ }
             }
+            // Paid-for images still arrive when the reply itself is empty.
+            await sendImages(result.images, say, channel, threadTs, senderIsOwner);
             return;
         }
 
@@ -281,6 +285,8 @@ async function handleSlackMessage(
             }
         }
 
+        await sendImages(result.images, say, channel, threadTs, senderIsOwner);
+
         console.log(`[SLACK] Responded (${result.toolCalls} tool calls, ${cleanText.length} chars)`);
     } catch (err) {
         console.error("[SLACK] Error handling message:", (err as Error).message);
@@ -292,6 +298,36 @@ async function handleSlackMessage(
         } catch { /* */ }
     } finally {
         activeThreads.delete(threadKey);
+    }
+}
+
+/**
+ * The turn's generated images, uploaded into the reply's thread as one message. Without the
+ * files:write scope the upload fails: the owner gets one line saying where they were saved
+ * instead. Never throws.
+ */
+export async function sendImages(
+    images: GeneratedImage[] | undefined,
+    say: SayFn,
+    channel: string,
+    threadTs: string,
+    senderIsOwner: boolean,
+): Promise<void> {
+    if (!images?.length) return;
+    try {
+        if (!slackApp) throw new Error("Slack not connected");
+        const file_uploads = await Promise.all(
+            images.map(async (img) => ({ file: await readFile(img.path), filename: basename(img.path) })),
+        );
+        await slackApp.client.files.uploadV2({ channel_id: channel, thread_ts: threadTs, file_uploads });
+    } catch (err) {
+        console.warn("[SLACK] Failed to upload images:", (err as Error).message);
+        const noScope = (err as { data?: { error?: string } }).data?.error === "missing_scope";
+        if (senderIsOwner)
+            await say({
+                text: `Couldn't post the image here${noScope ? " (the Slack app needs the files:write scope)" : ""}; it's saved at ${images.map((i) => i.path).join(", ")}`,
+                thread_ts: threadTs,
+            }).catch(() => {});
     }
 }
 

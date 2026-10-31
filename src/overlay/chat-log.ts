@@ -19,6 +19,8 @@ export interface ChatLogEntry {
     role: ChatRole;
     text: string;
     source: string;
+    /** Image files Bhai made in this reply (generate_image); the Chats page shows them. */
+    images?: string[];
 }
 
 export function chatLogPath(): string {
@@ -26,12 +28,19 @@ export function chatLogPath(): string {
 }
 
 // ponytail: append-only, never rotated; trim it if files over a few MB show up.
-export function logChatMessage(chat: string, role: ChatRole, text: string, source = "overlay"): void {
+export function logChatMessage(
+    chat: string,
+    role: ChatRole,
+    text: string,
+    source = "overlay",
+    images?: string[],
+): void {
     const clean = protect(text.trim()); // no card numbers, OTPs etc. on disk
-    if (!clean) return;
+    if (!clean && !images?.length) return;
     try {
         fs.mkdirSync(getDataDir(), { recursive: true });
-        fs.appendFileSync(chatLogPath(), `${JSON.stringify({ chat, ts: Date.now(), role, text: clean, source })}\n`);
+        const entry = { chat, ts: Date.now(), role, text: clean, source, ...(images?.length ? { images } : {}) };
+        fs.appendFileSync(chatLogPath(), `${JSON.stringify(entry)}\n`);
     } catch (err) {
         console.warn("[chat-log] write failed:", (err as Error).message);
     }
@@ -123,7 +132,7 @@ export function recentChatContext(maxAgeMs: number, limit: number, now = Date.no
     const afterReset = lines.slice(start);
     return afterReset
         .filter(isMessage)
-        .filter((e) => now - e.ts <= maxAgeMs && e.source !== "web-widget")
+        .filter((e) => e.text && now - e.ts <= maxAgeMs && e.source !== "web-widget") // an image-only reply has no text
         .slice(-limit)
         .map((e) => ({ role: e.role, content: sanitizeUntrustedContent(e.text) }));
 }

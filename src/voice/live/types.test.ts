@@ -88,6 +88,10 @@ describe("getVoiceToolNames — platform-gated voice tool list", () => {
         }
     });
 
+    it("leaves image generation to the agent, which can deliver it", () => {
+        expect(getVoiceToolNames()).not.toContain("generate_image");
+    });
+
     it("keeps the tool count tight for Gemini Live latency", () => {
         // If this grows past ~40 we'll regress response audio generation
         // (we learned this the hard way at 113 tools).

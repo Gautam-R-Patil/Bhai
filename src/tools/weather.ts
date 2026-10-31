@@ -116,9 +116,21 @@ function formatCurrent(c: CurrentCondition, metric: boolean) {
     };
 }
 
+/** "today", "tomorrow" or the weekday for a forecast date ("2026-10-31"), in the place's own calendar. */
+export function dayLabel(date: string, todayDate: string): string {
+    const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${todayDate}T00:00:00Z`)) / 86_400_000);
+    if (days === 0) return "today";
+    if (days === 1) return "tomorrow";
+    return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+}
+
 function formatForecast(days: WttrDay[], metric: boolean, count: number) {
+    // wttr.in's first day is the place's today. Bare dates got misread: Bhai called today's
+    // forecast "kal (Sunday)" and tomorrow's "parso".
+    const first = days[0]?.date ?? "";
     return days.slice(0, count).map((d) => ({
         date: d.date,
+        day: dayLabel(d.date, first),
         max_temp: metric ? `${d.maxtempC}°C` : `${d.maxtempF}°F`,
         min_temp: metric ? `${d.mintempC}°C` : `${d.mintempF}°F`,
         conditions: d.hourly[4]?.weatherDesc?.[0]?.value ?? "Unknown",
@@ -206,11 +218,15 @@ export const weatherTool: ToolDefinition = {
             if (action === "current") {
                 const c = data.current_condition?.[0];
                 if (!c) return JSON.stringify({ error: "No current weather data available." });
+                // "Should I take an umbrella?" is about today, not this minute: without the day's rain
+                // chance Bhai said "take one" and "no sign of rain" in the same reply.
+                const today = data.weather?.[0];
                 return JSON.stringify({
                     success: true,
                     location,
                     units,
                     current: formatCurrent(c, metric),
+                    ...(today?.hourly?.length ? { today: formatForecast([today], metric, 1)[0] } : {}),
                 });
             }
 

@@ -738,6 +738,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     web_search: 20_000,
     web_read: 60_000, // up to 3 tries of a 15s fetch, plus PDF parsing
     deep_research: 300_000, // 5 minutes for deep research
+    generate_image: 200_000, // a high-quality Azure edit takes up to ~3 min (its fetch gives up at 190s)
     // File operations (coding primitives)
     read: 10_000,
     edit: 10_000,

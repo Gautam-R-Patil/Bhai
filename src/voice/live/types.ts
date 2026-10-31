@@ -182,8 +182,8 @@ export function getVoiceToolNames(): string[] {
         "whatsapp_send", "contact_lookup",
         "set_reminder", "schedule_task",
 
-        // Creative / quick wins
-        "generate_image",
+        // No generate_image: a create takes 13-19s against the bridge's 8s timeout,
+        // and the voice loop has no caller context to deliver it. The agent does images.
 
         // Delegation — EVERYTHING complex routes through these.
         // The system prompt tells Gemini to speak a short ack and use

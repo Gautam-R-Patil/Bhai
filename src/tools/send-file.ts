@@ -5,8 +5,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { InputFile } from "grammy";
-import type { ToolDefinition } from "./get-current-time.js";
 import { outboundFileRefusal } from "../security/sensitive-paths.js";
+import { turnGeneratedImages, turnShowsImages } from "./cron-tool.js";
+import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Active chat state (set by telegram.ts) ────
 
@@ -73,6 +74,10 @@ export const sendFileTool: ToolDefinition = {
         try {
             const filePath = input.file_path as string;
             const caption = (input.caption as string) || undefined;
+
+            // generate_image's result goes out with this turn's reply; sending it too would show it twice.
+            if (turnShowsImages() && turnGeneratedImages().some((g) => path.resolve(g.path) === path.resolve(filePath)))
+                return JSON.stringify({ success: true, note: "already shown in the chat" });
 
             // Validate
             if (!_botInstance || !_activeChatId) {

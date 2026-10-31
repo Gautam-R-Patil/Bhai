@@ -6380,3 +6380,20 @@ body.hig .research-report h2 { font-size: 17px; margin: 14px 0 6px; }
 body.hig .research-report h3 { font-size: 14.5px; margin: 14px 0 6px; }
 body.hig .research-report h4 { font-size: 13px; margin: 12px 0 4px; }
 body.hig .research-link { color: var(--accent-text, var(--accent-primary)); }
+
+/* ── Chats: images Bhai made (one full width, 2-4 in two columns) + the image viewer ── */
+body.hig .chats-img-grid { display: grid; gap: 6px; width: min(360px, 100%); }
+body.hig .chats-img-grid.multi { grid-template-columns: 1fr 1fr; }
+body.hig .chats-img-thumb { padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--glass-input); overflow: hidden; cursor: zoom-in; display: block; }
+body.hig .chats-img-thumb:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+body.hig .chats-img-thumb img { display: block; width: 100%; max-height: 320px; object-fit: contain; opacity: 0; transition: opacity .35s ease; }
+body.hig .chats-img-grid.multi .chats-img-thumb img { height: 150px; object-fit: cover; }
+body.hig .chats-img-thumb img.loaded { opacity: 1; }
+.img-lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, 0.86); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; }
+.img-lightbox .lb-img { max-width: 100%; max-height: calc(100vh - 110px); object-fit: contain; border-radius: 10px; }
+.img-lightbox .lb-bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; }
+.img-lightbox .lb-btn { font: inherit; font-size: 13px; color: #fff; text-decoration: none; cursor: pointer; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 999px; padding: 6px 14px; }
+.img-lightbox .lb-btn:hover, .img-lightbox .lb-btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.24); }
+.img-lightbox .lb-btn:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+.img-lightbox .lb-count { font-size: 13px; color: rgba(255, 255, 255, 0.6); }
+@media (prefers-reduced-motion: reduce) { body.hig .chats-img-thumb img { transition: none; } }

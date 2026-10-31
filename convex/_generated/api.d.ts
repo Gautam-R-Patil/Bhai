@@ -22,6 +22,7 @@ import type * as devices from "../devices.js";
 import type * as errorLog from "../errorLog.js";
 import type * as grok from "../grok.js";
 import type * as http from "../http.js";
+import type * as image from "../image.js";
 import type * as llmCallLog from "../llmCallLog.js";
 import type * as llmStream from "../llmStream.js";
 import type * as llmUsage from "../llmUsage.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   errorLog: typeof errorLog;
   grok: typeof grok;
   http: typeof http;
+  image: typeof image;
   llmCallLog: typeof llmCallLog;
   llmStream: typeof llmStream;
   llmUsage: typeof llmUsage;

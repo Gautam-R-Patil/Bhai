@@ -71,7 +71,7 @@ export const imageEdit: ToolDefinition = {
         function: {
             name: "image_edit",
             description:
-                "Convert an image to another format (jpg, png, heic, tiff, gif, bmp, pdf), resize it, or read its size and format. Saves next to the original, never replacing a file.",
+                "Convert an image to another format (jpg, png, heic, tiff, gif, bmp, pdf), resize it, or read its size and format. Saves next to the original, never replacing a file. Only that: to change what's IN a picture (remove something, change the background, restyle) use generate_image with source.",
             parameters: {
                 type: "object",
                 properties: {

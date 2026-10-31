@@ -323,16 +323,13 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     media: {
         description:
-            "Full Spotify control (play/pause/skip/queue/volume/shuffle/repeat, search, playlists, library, devices) via the `spogo` CLI — which talks to Spotify's internal web-player endpoints using browser cookies, so it works for every user on Free or Premium without the closed public Web API. Local-app URI-launch fallback when spogo isn't installed. Apple Music control. Generating images and artwork, AI art, screen recording, searching for GIFs and memes, audio visualization and spectrograms, controlling Sonos speakers and smart home audio.",
-        tools: [
-            "spotify",
-            "music_control",
-            "generate_image",
-            "screen_record",
-            "gif_search",
-            "audio_visualize",
-            "sonos_control",
-        ],
+            "Full Spotify control (play/pause/skip/queue/volume/shuffle/repeat, search, playlists, library, devices) via the `spogo` CLI — which talks to Spotify's internal web-player endpoints using browser cookies, so it works for every user on Free or Premium without the closed public Web API. Local-app URI-launch fallback when spogo isn't installed. Apple Music control. Screen recording, searching for GIFs and memes, audio visualization and spectrograms, controlling Sonos speakers and smart home audio.",
+        tools: ["spotify", "music_control", "screen_record", "gif_search", "audio_visualize", "sonos_control"],
+    },
+    image: {
+        description:
+            "Creating, drawing or generating images from a description: pictures, art, logos, stickers, wallpapers, posters, thumbnails. AI photo editing of the user's photo: removing an object or person, changing or removing the background, restyling, recoloring, combining photos, making variations or undoing an edit. Plain format conversion and resizing go through image_edit.",
+        tools: ["generate_image", "image_edit", "send_file"],
     },
     video_editing: {
         description:
@@ -738,6 +735,7 @@ Rules:
 - "play a song" = media, NOT shell (don't confuse "play" with "run/execute")
 - The time, the date or a timezone needs no category: get_current_time is always available
 - "run npm install" = shell, NOT media
+- Creating a picture or AI-editing the user's photo (remove someone, change the background, restyle, variations) = image, NOT file_system
 - IMPORTANT: When the user names a desktop app the agent must DRIVE (open, click, type in, switch to) — e.g. "open WhatsApp and send …", "click the Send button in Photoshop", "switch to Figma and …" — include BOTH "app_management" AND "os_control" in addition to any messaging category. Protocol tools like whatsapp_send/imessage_send work for contacts the bot already has on file; UI-driving the actual desktop app needs os_smart_click + app_manager.
 - IMPORTANT: Use the conversation context to resolve ambiguous references. If the user was just discussing a website, "open file manager" likely means a button ON that website (browser), not the OS file manager (app_management). A follow-up like "yes do it" or "try again" continues the task in the conversation, with that task's categories.
 - The context may say what the user is looking at (a screenshot of their screen, a web page open in their Chrome). "this", "here", "it" then point at that: asking to DO something with it ("do this for me", "fill this in", "finish it") means acting on it, so a page in their Chrome is browser, a desktop app is os_control + app_management. Only asking what it is or how it works is chat.
@@ -831,10 +829,42 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
     { pattern: /\bapple notes?\b|\bnotes app\b|\b(a|new) note\b/i, tool: "apple_notes", category: "scheduling" },
     // A file named in the request ("Read task.txt and…") got no file tools at all.
     { pattern: /\b[\w-]+\.(txt|md|csv|json|log|pdf|docx?|rtf|html?)\b/i, tool: "read", category: "file_system" },
+    // Format and size only. A bare "make" is gone: "make a picture of a cat" and "make the
+    // sky bluer in this photo" are generate_image's; "make it a png" stays here.
     {
-        pattern: /\b(convert|resize|scale|shrink|make)\b.*\b(images?|photos?|pictures?|png|jpe?g|heic|tiff|gif|webp)\b|\b(dimensions|resolution)\b.*\b(images?|photos?|pictures?|png|jpe?g)\b/i,
+        pattern:
+            /\b(convert|resize|scale|shrink)\b.*\b(images?|photos?|pictures?|png|jpe?g|heic|tiff|gif|webp)\b|\b(make|save|turn)\b.{0,30}\b(a|an|into|as) (png|jpe?g|heic|tiff|gif|webp|bmp)\b|\b(dimensions|resolution)\b.*\b(images?|photos?|pictures?|png|jpe?g)\b/i,
         tool: "image_edit",
         category: "file_system",
+    },
+    // Creating a picture, or changing what's in the user's photo. "open Paint/Photoshop" is the app.
+    {
+        pattern:
+            /\b(draw(?!\s+up\b)|(?<!\b(open|launch|quit|close|in|using|use)\s+)(paint|sketch|photoshop)|illustrate|doodle|restyle|recolou?r|retouch)\b|\b(draw|generate|create|design|make|paint|render)\s+(\w+\s+){0,3}(images?|pictures?|pics?|photos?|illustrations?|logos?|art|artwork|wallpapers?|posters?|stickers?|icons?|avatars?|thumbnails?|drawings?|paintings?|portraits?)\b(?!\.\w)/i,
+        tool: "generate_image",
+        category: "image",
+    },
+    // [\s\S] in the background rule: a caption on its own line after "here's my pic" still counts.
+    {
+        pattern:
+            /\b(remove|erase|delete|get rid of|cut out)\b.{0,60}\b(from|in|out of|off)\s+(this|that|the|my|these|those)?\s*(\w+\s+)?(photo|picture|image|pic|selfie)s?\b(?!\s*(library|album|folder|app|roll)\b)|^(?![\s\S]*\b(desktop|wallpaper|lock ?screen|zoom|teams|meet|call|video|terminal|theme)\b)[\s\S]*\b(change|replace|remove|blur|swap)\b.{0,30}\b(background|bg)\b/i,
+        tool: "generate_image",
+        category: "image",
+    },
+    {
+        pattern:
+            /\bedit (this|that|my|the) (photo|picture|pic|image|selfie)\b|\bmake (it|this|that|him|her|me|them|us)\s+look (like|more)\b|\b(make|turn|change|add|put)\b.{0,40}\b(in|on|to|into) (this|that|the|my) (photo|picture|pic|image|selfie)\b|\bturn (this|that|my) (photo|picture|pic|image|selfie)s? into\b|\bmake (another|a different) (version|variation)\b|\b(another|different) (version|variation)s? of (that|this|the) (image|picture|pic|photo|logo|one)\b|\bundo (that|the) (last )?((image|photo|picture) )?edit\b|\bmake (it|that|this)\b(\s+(image|picture|pic|photo|one|again|in)){0,3}\s+high(er)?[- ]quality\b|\b(put|add)\b.{0,40}\b(in|into) (one|a|the same) (photo|picture|pic|image)\b|\badd (a|an|some) \w+( \w+)? (to|on) (him|her|them|me|us)\b/i,
+        tool: "generate_image",
+        category: "image",
+    },
+    // Hinglish (verb last) and bare follow-ups. "options/versions" needs a quantity and either a
+    // short message or a picture noun, so "what are my options" and "versions of node" don't match.
+    // "background badal do" carries the same desktop/call guard as the English rule above.
+    {
+        pattern:
+            /\b(photo|pic|picture|image|tasveer|logo|wallpaper|poster|sticker)s?\b.{0,40}\bbana(o|do)?\b|\b(photo|pic|picture|image|tasveer)s?\b.{0,40}\b(hata|hatao|badal|badlo)\b|^(?![\s\S]*\b(desktop|wallpaper|lock ?screen|zoom|teams|meet|call|video|terminal|theme)\b)[\s\S]*\bbackground\b.{0,40}\b(hata|hatao|badal|badlo)\b|\b(style|jaisa|jaisi|jaise)\s+(mein\s+|me\s+)?bana|\b(banda|bande|bandi|aadmi|ladka|ladke|ladki|insaan|log|logon)\s+ko\s+hata|^\s*undo\W*$|^(?=\s*\S+(\s+\S+){0,4}\s*$).*\b(a few|some|more|different|other|several|\d|two|three|four)\s+(options|versions|variations)\b|\b(a few|some|more|different|other|several|\d|two|three|four)\s+(options|versions|variations)\b.{0,30}\b(images?|photos?|pics?|pictures?|logos?|wallpapers?|posters?)\b/i,
+        tool: "generate_image",
+        category: "image",
     },
     {
         pattern: /\b(merge|combine|join|split|extract)\b.*\bpdfs?\b|\bpages?\b.*\bpdfs?\b|\bpdfs?\b.*\bpages?\b/i,
@@ -861,6 +891,10 @@ const CHANGING_FACT =
 
 /** "Has X happened yet?", "what's the latest on Y?": the answer may have changed since anything in context. */
 // A question anywhere: "…right now? one line" ends with the ask for brevity, not the "?".
+/** A message with an unmistakable tool need: it skips the tool-less chat lane. */
+export const needsTools = (message: string): boolean =>
+    KEYWORD_BOOSTS.some((b) => b.pattern !== CHANGING_FACT && b.minScore >= 0.7 && b.pattern.test(message));
+
 export const asksChangingFact = (message: string): boolean =>
     (message.includes("?") || /^\s*(what|which|who|when|where|has|have|is|are|did|does|do|how)\b/i.test(message)) &&
     CHANGING_FACT.test(message);
@@ -881,7 +915,8 @@ export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: numb
     { pattern: /\b(sonos|speaker|airplay)\b/i, category: "media", minScore: 0.6 },
     { pattern: /\b(spectrogram|waveform|audio.?viz)\b/i, category: "media", minScore: 0.7 },
     // Weather / Search
-    { pattern: /\b(weather|forecast|temperature|rain|sunny|humid)\b/i, category: "web_search", minScore: 0.7 },
+    // Hinglish too: "aaj mausam kaisa hai? chhata le jaun?" took the chat lane and a request_tools round trip.
+    { pattern: /\b(weather|forecast|temperature|rain|sunny|humid|mausam|baa?rish|garmi|thand|chhat(?:a|ri)|umbrella)\b/i, category: "web_search", minScore: 0.7 },
     // Facts that change: "has Node 26 become LTS yet?" went to the classifier as chat (0.53)
     // and was answered from stale context with no search tool offered.
     { pattern: CHANGING_FACT, category: "web_search", minScore: 0.7 },
@@ -903,6 +938,8 @@ export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: numb
         category: "app_management",
         minScore: 0.7,
     },
+    // "Without switching apps: what's the Finder window called?" was classed chat and got no tools.
+    { pattern: /\b(finder|sidebar|menu ?bar|the dock|(?:app|finder|front|open|this) window|on (?:my|the) screen)\b/i, category: "os_control", minScore: 0.7 },
     // OS / Screenshots
     { pattern: /\b(screenshot|screen.?shot|screen.?capture)\b/i, category: "os_control", minScore: 0.7 },
     // Desktop-app automation — "open WhatsApp", "click in Photoshop", "open
@@ -1877,7 +1914,10 @@ export async function selectTools(opts: {
     // a guessed chat lane would turn real requests into chat.
     // A question about something that changes needs a search, not the tool-less chat lane.
     const askingChangingFact = asksChangingFact(opts.message);
-    const chatResult = askingChangingFact
+    // An unmistakable tool need (a high-confidence keyword pattern) never takes the tool-less chat lane.
+    // (Not the changing-fact pattern: "I haven't slept yet" is chat; asksChangingFact wants a question.)
+    const clearToolNeed = needsTools(opts.message);
+    const chatResult = askingChangingFact || clearToolNeed
         ? null
         : llmResult?.tier === "chat" && llmResult.confidence >= 0.6
             ? llmResult

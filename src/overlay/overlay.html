@@ -511,6 +511,35 @@
       margin-top: 2px;
     }
 
+    /* Images Bhai made: one full width, 2-4 in two columns; a click opens the lightbox. */
+    .img-grid { display: grid; gap: 6px; margin: 8px 0 4px; }
+    .img-grid.multi { grid-template-columns: 1fr 1fr; }
+    .img-thumb {
+      padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, 0.18); overflow: hidden; cursor: zoom-in; display: block;
+    }
+    .img-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    :is(#reply-text, #reply-history) .img-thumb img {
+      margin: 0; border-radius: 0; width: 100%; max-height: 320px; object-fit: contain;
+      opacity: 0; transition: opacity 0.35s ease;
+    }
+    :is(#reply-text, #reply-history) .img-grid.multi .img-thumb img { height: 140px; object-fit: cover; }
+    :is(#reply-text, #reply-history) .img-thumb img.loaded { opacity: 1; }
+    .img-lightbox {
+      position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, 0.86);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px;
+    }
+    .img-lightbox .lb-img { max-width: 100%; max-height: calc(100vh - 90px); object-fit: contain; border-radius: 8px; }
+    .img-lightbox .lb-bar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; }
+    .img-lightbox .lb-btn {
+      font: inherit; font-size: 12px; color: #fff; text-decoration: none; cursor: pointer;
+      background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px; padding: 5px 12px;
+    }
+    .img-lightbox .lb-btn:hover, .img-lightbox .lb-btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.24); }
+    .img-lightbox .lb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .img-lightbox .lb-count { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+
     /* Progress */
     #progress {
       display: none;
@@ -3640,7 +3669,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           // The live turn's reply (errors carry no turn): it lands under its "Worked for…" line.
           const streamed = route === 'finish';
           if (!streamed) replyArriving('Message from Bhai');
-          const rawText = msg.text || '(no response)';
+          const rawText = msg.text || (Array.isArray(msg.images) && msg.images.length ? '' : '(no response)'); // an image-only reply
           console.log('[OVERLAY] Response text length:', rawText.length, 'preview:', rawText.substring(0, 100));
           const renderedText = msg.type === 'error' ? `⚠️ ${esc(rawText)}` : renderMd(rawText);
           console.log('[OVERLAY] Rendered HTML length:', renderedText.length);
@@ -3652,6 +3681,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             receiptImg.alt = 'Screen after the task';
             replyText.appendChild(receiptImg);
           }
+          const grid = imageGrid(msg.images);
+          if (grid) replyText.appendChild(grid);
           if (!streamed) { // a streamed reply's box is already up: no second spring
             replyBox.classList.remove('visible');
             replyBox.offsetHeight;
@@ -3710,14 +3741,14 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           grabFocus();
         }
         else if (msg.type === 'image') {
-          icon.classList.remove('thinking');
+          // An image file sent to this channel (send_file, a scheduled task). A running turn keeps its view.
+          const grid = imageGrid(msg.images);
+          if (!grid) return;
+          if (liveRunning()) { replyText.appendChild(grid); return; }
           setMood('happy', 1600);
-          progress.classList.remove('visible');
-          progress.innerHTML = '';
-          let imgHtml = `<img src="${esc(msg.url)}" alt="Generated image" />`;
-          if (msg.caption) imgHtml += `<div class="img-caption">${esc(msg.caption)}</div>`;
           replyArriving('Image from Bhai');
-          replyText.innerHTML = imgHtml;
+          replyText.innerHTML = msg.text ? `<div class="img-caption">${esc(msg.text)}</div>` : '';
+          replyText.appendChild(grid);
           replyBox.classList.remove('visible');
           replyBox.offsetHeight;
           replyBox.classList.add('visible');
@@ -3849,6 +3880,123 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       }
 
       // ── Quick Action Buttons ──
+      // ── Images Bhai made: thumbnails under the reply, a lightbox on click ──
+      // Only data:image/ URLs (thumbnails overlay-chat builds); never a navigable URL.
+      function imageGrid(images) {
+        const ok = (Array.isArray(images) ? images : []).filter((im) => im && typeof im.url === 'string' && im.url.startsWith('data:image/'));
+        if (!ok.length) return null;
+        const grid = document.createElement('div');
+        grid.className = ok.length > 1 ? 'img-grid multi' : 'img-grid';
+        ok.forEach((im, i) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'img-thumb';
+          btn.setAttribute('aria-label', `Open image ${i + 1} of ${ok.length}`);
+          const img = document.createElement('img');
+          img.alt = typeof im.prompt === 'string' && im.prompt ? im.prompt : 'Image from Bhai';
+          img.onload = () => img.classList.add('loaded');
+          img.src = im.url;
+          btn.appendChild(img);
+          btn.onclick = () => openLightbox(ok, i);
+          grid.appendChild(btn);
+        });
+        return grid;
+      }
+
+      async function copyImage(url) {
+        const img = new Image();
+        img.src = url;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      }
+
+      let closeLightbox = () => {};
+      function openLightbox(images, start) {
+        closeLightbox();
+        const back = document.activeElement;
+        const box = document.createElement('div');
+        box.className = 'img-lightbox';
+        box.setAttribute('role', 'dialog');
+        box.setAttribute('aria-modal', 'true');
+        box.setAttribute('aria-label', 'Image viewer');
+        const img = document.createElement('img');
+        img.className = 'lb-img';
+        const bar = document.createElement('div');
+        bar.className = 'lb-bar';
+        box.append(img, bar);
+        let i = start;
+        const button = (label, aria, fn) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'lb-btn';
+          b.textContent = label;
+          b.setAttribute('aria-label', aria);
+          b.onclick = () => fn(b);
+          return b;
+        };
+        function show() {
+          const im = images[i];
+          img.src = im.url;
+          img.alt = im.prompt || 'Image from Bhai';
+          bar.replaceChildren();
+          if (images.length > 1) {
+            const n = document.createElement('span');
+            n.className = 'lb-count';
+            n.textContent = `${i + 1} / ${images.length}`;
+            bar.append(n);
+          }
+          const dl = document.createElement('a');
+          dl.className = 'lb-btn';
+          dl.href = im.url;
+          dl.download = String(im.name || 'bhai-image').replace(/\.\w+$/, '') + (im.url.startsWith('data:image/png') ? '.png' : '.jpg');
+          dl.textContent = 'Download';
+          dl.setAttribute('aria-label', 'Download image');
+          bar.append(dl);
+          bar.append(button('Copy', 'Copy image', async (b) => {
+            try { await copyImage(im.url); b.textContent = 'Copied'; } catch { b.textContent = "Couldn't copy"; }
+            setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+          }));
+          if (typeof im.path === 'string' && im.path) {
+            bar.append(button('Show in Finder', 'Show the file in Finder', () => {
+              if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'reveal_file', path: im.path }));
+            }));
+          }
+          if (typeof im.before === 'string' && im.before.startsWith('data:image/')) {
+            bar.append(button('Compare', 'Show the original', (b) => {
+              const on = b.getAttribute('aria-pressed') !== 'true';
+              b.setAttribute('aria-pressed', String(on));
+              b.textContent = on ? 'Original' : 'Compare';
+              img.src = on ? im.before : im.url;
+            }));
+          }
+        }
+        const onKey = (e) => {
+          if (e.key === 'Escape') closeLightbox();
+          else if (e.key === 'ArrowRight' && images.length > 1) { i = (i + 1) % images.length; show(); }
+          else if (e.key === 'ArrowLeft' && images.length > 1) { i = (i - 1 + images.length) % images.length; show(); }
+          else return;
+          e.preventDefault();
+          e.stopImmediatePropagation(); // Esc here closes the viewer, never stops the task
+        };
+        closeLightbox = () => {
+          window.removeEventListener('keydown', onKey, true);
+          box.remove();
+          closeLightbox = () => {};
+          if (back && back.focus) back.focus();
+        };
+        box.addEventListener('click', (e) => { if (e.target === box) closeLightbox(); });
+        window.addEventListener('keydown', onKey, true);
+        show();
+        document.body.appendChild(box);
+        const first = bar.querySelector('.lb-btn');
+        if (first) first.focus();
+      }
+
       function renderQuickActions(actions) {
         quickActionsBox.innerHTML = '';
         const DANGER_WORDS = ['delete', 'remove', 'destroy', 'drop', 'erase', 'nuke', 'wipe', 'uninstall'];
@@ -4301,7 +4449,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       // Fetch tools and the picker's root folder from server once
       async function loadMentionData() {
         try {
-          const r = await fetch('/api/mentions');
+          const r = await authFetch('/api/mentions');
           const d = await r.json();
           allTools = d.tools || [];
           allSkills = d.skills || [];

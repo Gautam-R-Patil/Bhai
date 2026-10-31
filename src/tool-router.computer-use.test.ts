@@ -64,6 +64,8 @@ vi.mock("./tools/index.js", () => ({
             "image_edit",
             "pdf_edit",
             "calculator",
+            "generate_image",
+            "send_file",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -107,6 +109,32 @@ const CASES: [string, string][] = [
     ["Create a note in Apple Notes titled 'Bhai eval note' with the text 'it works'", "apple_notes"],
     ["convert this heic photo to a jpg", "image_edit"],
     ["make photo.png 100 pixels wide and resize the image", "image_edit"],
+    // Creating or AI-editing a picture is generate_image, not a format conversion.
+    ["draw a cat in a spacesuit", "generate_image"],
+    ["remove the man from this photo", "generate_image"],
+    ["make a picture of a sunset", "generate_image"],
+    ["make me a logo for my bakery", "generate_image"],
+    ["make the sky bluer in this photo", "generate_image"],
+    ["change the background to a beach", "generate_image"],
+    ["make another version of that image", "generate_image"],
+    ["Make that image again in high quality", "generate_image"],
+    ["undo that last image edit", "generate_image"],
+    // The overlay's follow-up chips.
+    ["Make another version", "generate_image"],
+    ["Make it higher quality", "generate_image"],
+    ["Undo that edit", "generate_image"],
+    ["here is my pic\nchange the background to a beach", "generate_image"],
+    // Phrases the fallback missed: Hinglish, bare follow-ups, combining and adding.
+    ["isko Ghibli style mein bana do", "generate_image"],
+    ["peeche wale bande ko hata do", "generate_image"],
+    ["mere chai stall ke liye logo bana do", "generate_image"],
+    ["undo", "generate_image"],
+    ["give me a few options", "generate_image"],
+    ["put me and my dog in one picture", "generate_image"],
+    ["add a hat to him", "generate_image"],
+    ["is pic ka background badal do", "generate_image"],
+    ["peeche wale log ko hata do", "generate_image"],
+    ["make this a png", "image_edit"],
     ["combine these two pdfs into one", "pdf_edit"],
     ["how many pages does the report pdf have", "pdf_edit"],
     // Every model got Calculator wrong some way; one call does it.
@@ -115,6 +143,16 @@ const CASES: [string, string][] = [
     ["find out which version of macos i'm running and write it into version.txt", "system_info"],
     ["Find the capital of Australia on Wikipedia and create an Apple Note titled Capital with the answer", "apple_notes"],
     ["Read task.txt in the BhaiEval folder on my Desktop and create a reminder for tomorrow at 10am with its text", "read"],
+];
+
+// A desktop wallpaper is a setting, not a photo edit.
+const NOT_CASES: [string, string][] = [
+    ["change my desktop background", "generate_image"],
+    ["open photoshop and click save", "generate_image"],
+    ["install a different version of node", "generate_image"],
+    ["what are my options", "generate_image"],
+    ["show me three options for flights to Goa tomorrow", "generate_image"],
+    ["undo my last git commit", "generate_image"],
 ];
 
 describe("computer-use routing without the classifier", () => {
@@ -126,5 +164,10 @@ describe("computer-use routing without the classifier", () => {
     it.each(CASES)("%s → %s", async (message, tool) => {
         const sel = await selectTools({ message, iteration: 1 });
         expect(sel.tools.map((t) => t.function.name)).toContain(tool);
+    });
+
+    it.each(NOT_CASES)("%s → no %s", async (message, tool) => {
+        const sel = await selectTools({ message, iteration: 1 });
+        expect(sel.tools.map((t) => t.function.name)).not.toContain(tool);
     });
 });

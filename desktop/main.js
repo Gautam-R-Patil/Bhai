@@ -2890,8 +2890,75 @@ function registerIPC() {
         return [...chats.values()].sort((a, b) => b.end - a.end);
     });
     ipcMain.handle("chats:list", () => chatList());
+    // Bhai's own folders (src/config/paths.ts getWorkspaceDir's candidates): images it made live there.
+    function workspaceRoots() {
+        const home = app.getPath("home");
+        return [loadEnvKey("ATLAS_WORKSPACE"), store.get("workspace"), path.join(app.getPath("desktop"), "Bhai Files"),
+            path.join(home, "Documents", "Bhai Files"), path.join(home, ".atlas", "files"), path.join(home, "Bhai Files")]
+            .filter((d) => typeof d === "string" && d)
+            .map((d) => { try { return fs.realpathSync(d); } catch { return null; } })
+            .filter(Boolean);
+    }
+    /** An image file inside Bhai's workspace, resolved; null for anything else. */
+    function workspaceImage(p) {
+        if (typeof p !== "string" || !/\.(png|jpe?g|webp|gif)$/i.test(p)) return null;
+        try {
+            const real = fs.realpathSync(p);
+            if (!fs.statSync(real).isFile()) return null;
+            return workspaceRoots().some((r) => real.startsWith(r + path.sep)) ? real : null;
+        } catch { return null; }
+    }
+    // Thumbnails by path+mtime: reopening a chat doesn't re-decode every image on the main thread.
+    // JPEG stays JPEG (smaller); PNG/WebP/GIF stay PNG so a transparent sticker keeps its alpha.
+    const thumbCache = new Map();
+    function imageThumb(p) {
+        const key = `${p}|${fs.statSync(p).mtimeMs}`;
+        let url = thumbCache.get(key);
+        if (url === undefined) {
+            const img = nativeImage.createFromPath(p).resize({ width: 640 });
+            const jpeg = /\.jpe?g$/i.test(p);
+            const buf = jpeg ? img.toJPEG(80) : img.toPNG();
+            url = buf.length ? `data:image/${jpeg ? "jpeg" : "png"};base64,${buf.toString("base64")}` : "";
+            if (thumbCache.size >= 100) thumbCache.delete(thumbCache.keys().next().value);
+            thumbCache.set(key, url);
+        }
+        return url;
+    }
+    const fromMainWindow = (evt) => mainWindow && !mainWindow.isDestroyed() && evt.sender === mainWindow.webContents;
     ipcMain.handle("chats:get", (_, id) =>
-        readChatLog().filter((e) => e.chat === id).map(({ role, text, ts }) => ({ role, text, ts })));
+        readChatLog().filter((e) => e.chat === id).map(({ role, text, ts, images }) => {
+            // Images Bhai made in that reply, as small thumbnails; a deleted file is skipped.
+            const thumbs = (Array.isArray(images) ? images : []).map(workspaceImage).filter(Boolean)
+                .map((p) => { try { return { url: imageThumb(p), name: path.basename(p), path: p }; } catch { return { url: "" }; } })
+                .filter((im) => im.url);
+            return thumbs.length ? { role, text, ts, images: thumbs } : { role, text, ts };
+        }));
+    ipcMain.handle("chats:revealImage", (evt, p) => {
+        if (!fromMainWindow(evt)) return false;
+        const real = workspaceImage(p);
+        if (real) shell.showItemInFolder(real);
+        return !!real;
+    });
+    // Download/Copy in the image viewer act on the original file, not the 640px thumbnail.
+    // true = saved, null = the owner cancelled, false = not a workspace image or the copy failed.
+    ipcMain.handle("chats:saveImage", async (evt, p) => {
+        if (!fromMainWindow(evt)) return false;
+        const real = workspaceImage(p);
+        if (!real) return false;
+        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+            defaultPath: path.join(app.getPath("downloads"), path.basename(real)),
+        });
+        if (canceled || !filePath) return null;
+        try { await fs.promises.copyFile(real, filePath); return true; } catch { return false; }
+    });
+    ipcMain.handle("chats:copyImage", (evt, p) => {
+        if (!fromMainWindow(evt)) return false;
+        const real = workspaceImage(p);
+        const img = real && nativeImage.createFromPath(real);
+        if (!img || img.isEmpty()) return false;
+        require("electron").clipboard.writeImage(img);
+        return true;
+    });
     ipcMain.handle("chats:clear", () => {
         fs.rmSync(CHAT_LOG, { force: true });
         return true;
@@ -4996,7 +5063,7 @@ function registerIPC() {
     // separate task (E3c); this IPC only opens the browser-based authorize page.
     ipcMain.handle("setup:slack-oauth-start", async () => {
         const clientId = process.env.SLACK_CLIENT_ID || "REPLACE_ME";
-        const url = "https://slack.com/oauth/v2/authorize?scope=chat:write,app_mentions:read,im:history&client_id=" + encodeURIComponent(clientId);
+        const url = "https://slack.com/oauth/v2/authorize?scope=chat:write,files:write,app_mentions:read,im:history&client_id=" + encodeURIComponent(clientId);
         const popup = new BrowserWindow({
             width: 520,
             height: 720,

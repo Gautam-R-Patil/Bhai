@@ -2,7 +2,10 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import type {
+    AttachmentBuilder,
     Client,
     SlashCommandBuilder,
     EmbedBuilder,
@@ -16,6 +19,7 @@ import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
 import {
     runAgent,
+    type GeneratedImage,
     type MediaAttachment,
     type ProgressCallback,
     type ChannelContext,
@@ -214,6 +218,37 @@ async function sendFollowUps(
     }
 }
 
+// ── The turn's generated images, as attachments after the reply (Discord shows them inline) ──
+
+export async function sendImages(
+    images: GeneratedImage[] | undefined,
+    send: (msg: string | { files: AttachmentBuilder[] }) => Promise<unknown>,
+    ownerDm: boolean,
+): Promise<void> {
+    if (!images?.length) return;
+    const { AttachmentBuilder } = await import("discord.js");
+    const attach = async (img: GeneratedImage) =>
+        new AttachmentBuilder(await readFile(img.path), { name: basename(img.path) });
+    try {
+        await send({ files: await Promise.all(images.map(attach)) });
+        return;
+    } catch (err) {
+        console.warn("[DISCORD] Failed to send images:", (err as Error).message);
+    }
+    // One file per send, so one too big or unreadable doesn't lose the rest.
+    const failed: string[] = [];
+    for (const img of images) {
+        try {
+            await send({ files: [await attach(img)] });
+        } catch (err) {
+            console.warn("[DISCORD] Failed to send image:", (err as Error).message);
+            failed.push(img.path);
+        }
+    }
+    if (failed.length && ownerDm)
+        await send(`Couldn't send the image here; it's saved at ${failed.join(", ")}`).catch(() => {});
+}
+
 // ── Run agent and send the result ──
 
 async function runAndReply(
@@ -249,11 +284,13 @@ async function runAndReply(
             // Never end on the promise: the reply holds the contract line, so the close goes below it.
             if (contractShown) await interaction.followUp("Done -- no additional output.");
             else await interaction.editReply("Done -- no additional output.");
+            await sendImages(result.images, (msg) => interaction.followUp(msg), senderIsOwner);
             return;
         }
 
         const replyText = discordStuckReplyText(result, senderIsOwner, !interaction.inGuild());
         await sendFollowUps(interaction, replyText, contractShown);
+        await sendImages(result.images, (msg) => interaction.followUp(msg), senderIsOwner);
     } finally {
         clearSwarmProgress();
         clearDeepResearchProgress();
@@ -345,6 +382,7 @@ async function runInThread(
 
         if (result.text.trim() === "[NO_REPLY]") {
             await thread.send("Completed -- no additional output.");
+            await sendImages(result.images, (msg) => thread.send(msg), senderIsOwner);
             return;
         }
 
@@ -376,6 +414,7 @@ async function runInThread(
                 try { await thread.send(chunk); } catch { /* */ }
             }
         }
+        await sendImages(result.images, (msg) => thread.send(msg), senderIsOwner);
     } catch (err) {
         const errorType = categorizeError(err as Error);
         try {
@@ -785,6 +824,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             if (result.text.trim() === "[NO_REPLY]") {
                 // Never end on the promise: close the contract line.
                 if (contractShown) await message.reply("Done -- no additional output.").catch(() => {});
+                await sendImages(result.images, (msg) => message.reply(msg), senderIsOwner);
                 return;
             }
 
@@ -805,6 +845,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                     }
                 }
             }
+            await sendImages(result.images, (msg) => message.reply(msg), senderIsOwner);
         } catch (err) {
             console.error("[DISCORD] Message handler error:", err);
             const errorType = categorizeError(err as Error);
