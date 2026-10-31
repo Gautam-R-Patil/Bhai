@@ -15,7 +15,10 @@ import { homedir } from "node:os";
 type Result = Record<string, unknown>;
 /** Tools that deliver something to someone, with the fields naming who and what. */
 const SENDS: Record<string, { to: string[]; content: string[]; actions?: string[]; sent?: (r: Result) => boolean }> = {
-    whatsapp_send: { to: ["to"], content: ["message", "file_path"] },
+    whatsapp_send: {
+        to: ["to"],
+        content: ["message", "file_path", "as_voice_note", "location", "poll", "event", "vote", "rsvp"],
+    },
     whatsapp_sticker: { to: ["to"], content: ["image_path"] },
     email_send: { to: ["to", "cc", "bcc"], content: ["subject", "body"] },
     gmail: { to: ["account", "to", "message_id"], content: ["subject", "body"], actions: ["send", "reply"] },
@@ -56,7 +59,12 @@ export function withSendLedger<T>(fn: () => T): T {
 }
 
 const text = (v: unknown): string =>
-    Array.isArray(v) ? v.map(text).join(",") : v == null ? "" : String(v).toLowerCase().replace(/\s+/g, " ").trim();
+    Array.isArray(v)
+        ? v.map(text).join(",")
+        : v == null
+          ? ""
+          : // A poll or a location is an object: two different ones mustn't read as one "[object Object]".
+            (typeof v === "object" ? JSON.stringify(v) : String(v)).toLowerCase().replace(/\s+/g, " ").trim();
 // "+91 98765-43210" and "+919876543210", "a@x.com, b@x.com" and "b@x.com,a@x.com" are the same
 // recipient. Separators are dropped only from phone numbers: john-doe@ and johndoe@ are two people.
 const recipient = (v: unknown): string =>

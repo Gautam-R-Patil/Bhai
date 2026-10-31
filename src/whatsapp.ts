@@ -12,6 +12,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { type MediaAttachment, runAgent } from "./agent.js";
 import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
 import { isStopCommand, STUCK_REPLY_LINE, takeReaction, withStuckReplyLine } from "./channel-text.js";
+import type { ChatActions } from "./whatsapp-media.js";
 import { getDataDir } from "./config/paths.js";
 import type { LLMClient } from "./llm.js";
 import {
@@ -450,6 +451,28 @@ async function reactTo(message: WAMessage | null | undefined, emoji: string | un
         .catch((err: Error) => console.warn("[WA] Reaction failed:", err.message));
 }
 
+/**
+ * Acts on a reply's markers in `chat` (reaction, vote, RSVP, poll, location, event) and
+ * returns what's left to say, and whether to say it as a voice note. Anything that couldn't
+ * be done is said, not skipped silently.
+ */
+async function actOnReply(
+    chat: string,
+    reply: string,
+    message: WAMessage | null | undefined,
+): Promise<{ text: string; voice: boolean }> {
+    const { takeChatActions } = await import("./whatsapp-media.js");
+    const reacted = takeReaction(reply);
+    await reactTo(message, reacted.emoji);
+    const { text, actions } = takeChatActions(reacted.text);
+    const problems = await performChatActions(chat, actions);
+    const note = problems.length ? `(I couldn't do that: ${problems.join("; ")})` : "";
+    return { text: [text, note].filter(Boolean).join("\n"), voice: !!actions.voice };
+}
+
+/** A voice note can carry a reply of a minute or two, not an essay. */
+const VOICE_MAX_CHARS = 1500;
+
 /** Bhai's own number, by phone JID or (newer WhatsApp) LID, ignoring device suffixes. */
 function isBotJid(jid: string | null | undefined): boolean {
     if (!jid) return false;
@@ -605,17 +628,37 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
 
         if (contentType === "videoMessage" && msg.videoMessage) {
             const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
-            const mimeType = msg.videoMessage.mimetype || "video/mp4";
-            const base64 = buffer.toString("base64");
+            const isGif = msg.videoMessage.gifPlayback === true;
 
             const mediaDir = join(tmpdir(), "atlas_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const tmpFilePath = join(mediaDir, `whatsapp_video_${randomUUID()}.mp4`);
             await fs.writeFile(tmpFilePath, buffer);
 
-            media.push({ type: "video", base64, mimeType });
-            const caption = sanitizeIncomingChannelText(msg.videoMessage.caption || "User sent a video.");
-            enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Video saved at ${tmpFilePath}.]`;
+            // The model can't watch video: it sees a few frames and reads what was said.
+            const { videoFrames, videoSound } = await import("./whatsapp-media.js");
+            const seconds = msg.videoMessage.seconds;
+            const frames = await videoFrames(tmpFilePath, seconds, isGif ? 3 : 4);
+            for (const f of frames) media.push({ type: "image", base64: f.toString("base64"), mimeType: "image/jpeg" });
+            let said = "";
+            let heardSounds = "";
+            const sound = isGif ? null : await videoSound(tmpFilePath);
+            if (sound) {
+                try {
+                    const { hearBuffer } = await import("./voice/transcribe.js");
+                    const heard = await hearBuffer(sound, "video-sound.ogg");
+                    said = heard.text;
+                    heardSounds = heard.sounds;
+                } catch {
+                    // nothing could listen: frames only
+                }
+            }
+            const kind = isGif ? "GIF" : `video${seconds ? ` (${seconds}s)` : ""}`;
+            const caption = sanitizeIncomingChannelText(msg.videoMessage.caption || `User sent a ${kind}.`);
+            const seen = frames.length
+                ? `${frames.length} frames from it are attached in order${said ? `; what's said in it: "${sanitizeIncomingChannelText(said).slice(0, 2000)}"` : ""}${heardSounds ? `; also heard: ${sanitizeIncomingChannelText(heardSounds)}` : ""}`
+                : "it couldn't be opened";
+            enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: They sent a ${kind}; ${seen}. Saved at ${tmpFilePath}.]`;
         }
 
         if (contentType === "audioMessage" && msg.audioMessage) {
@@ -627,23 +670,27 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const tmpFilePath = join(mediaDir, `whatsapp_audio_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
 
+            // Heard, not just transcribed: the words plus background, music, other voices, tone.
+            let heard: { text: string; sounds: string } | null = null;
+            try {
+                const { hearBuffer } = await import("./voice/transcribe.js");
+                heard = await hearBuffer(buffer, `audio.${ext}`);
+            } catch {
+                heard = null;
+            }
+            const sounds = heard?.sounds ? `\n[Also heard: ${sanitizeIncomingChannelText(heard.sounds)}]` : "";
             if (isVoiceNote) {
-                // Voice note — transcribe
-                try {
-                    const { transcribeBuffer } = await import("./voice/transcribe.js");
-                    const transcript = await transcribeBuffer(buffer, `audio.${ext}`);
-                    if (transcript?.trim()) {
-                        enrichedText = transcript.trim();
-                    } else {
-                        enrichedText =
-                            "[VOICE NOTE FROM USER -- no speech detected. Ask them to try again or type their message.]";
-                    }
-                } catch {
+                if (heard?.text) {
+                    enrichedText = `${heard.text}${sounds}`;
+                } else if (heard) {
+                    enrichedText = `[VOICE NOTE FROM USER -- no speech detected.${sounds ? ` ${sounds.trim()}` : " Ask them to try again or type their message."}]`;
+                } else {
                     enrichedText = "[VOICE NOTE FROM USER -- transcription failed. Ask them to type their message.]";
                 }
             } else {
                 // Regular audio file (music, recording, etc.)
-                enrichedText = `User sent an audio file (${msg.audioMessage.mimetype || "audio"}, ${msg.audioMessage.seconds || "?"}s).\n\n[ATLAS-INTERNAL — not from user: Audio saved at ${tmpFilePath}. Use file tools to process it.]`;
+                const said = heard?.text ? `\nWhat's said in it: "${sanitizeIncomingChannelText(heard.text).slice(0, 2000)}"` : "";
+                enrichedText = `User sent an audio file (${msg.audioMessage.mimetype || "audio"}, ${msg.audioMessage.seconds || "?"}s).${said}${sounds}\n\n[ATLAS-INTERNAL — not from user: Audio saved at ${tmpFilePath}. Use file tools to process it.]`;
             }
         }
 
@@ -1587,9 +1634,9 @@ async function handleOwnerMessage(
         ownerConversations.set(jid, history);
         lastConvoActivity.set(jid, Date.now());
 
-        const { text: responseText, emoji } = takeReaction(withStuckReplyLine(result, true));
-        console.log(`[WA] Response: ${emoji ? `[${emoji}] ` : ""}${responseText.substring(0, 200)}...`);
-        await reactTo(message, emoji);
+        const acted = await actOnReply(jid, result.text, message);
+        const responseText = withStuckReplyLine({ text: acted.text, stuck: result.stuck }, true);
+        console.log(`[WA] Response: ${acted.voice ? "[voice] " : ""}${responseText.substring(0, 200)}...`);
 
         if (responseText.trim() === "[NO_REPLY]" || !responseText.trim()) {
             console.log("  [WA] No reply needed");
@@ -1606,10 +1653,10 @@ async function handleOwnerMessage(
         const hasMultipleTasks = (activeTasks.get(jid)?.length || 0) > 1;
         const shouldQuote = message && (userWasReplying || hasMultipleTasks);
 
-        // Voice note response: if incoming was a voice note and response is short, reply with audio
+        // Voice note: when they sent one and the answer is short, or when Bhai chose [[voice]].
         const wasVoiceNote = message?.message?.audioMessage?.ptt === true;
-        const spoken = takeReaction(result.text).text;
-        if (wasVoiceNote && spoken.length < 300) {
+        const spoken = acted.text;
+        if (spoken && ((wasVoiceNote && spoken.length < 300) || (acted.voice && spoken.length <= VOICE_MAX_CHARS))) {
             await sendVoiceReply(jid, spoken);
             // The handoff line is for reading, not hearing: send it as text.
             if (result.stuck) await sendMessage(jid, STUCK_REPLY_LINE);
@@ -1801,11 +1848,14 @@ ${persona.systemPrompt}`.trimEnd() +
         const baseAllowlist = persona.allowedToolNames?.length ? persona.allowedToolNames : [];
         const toolAllowlist = baseAllowlist.includes("ask_owner") ? baseAllowlist : [...baseAllowlist, "ask_owner"];
 
+        // Their photo, video, voice note or document: seen and heard, like the owner's are.
+        const { media, enrichedText } =
+            message && !ownerAnswer ? await extractMedia(message) : { media: [], enrichedText: null };
         const runTurn = () => runAgent(
             llm,
-            turnText,
+            enrichedText || turnText,
             progressCallback,
-            undefined,
+            media.length > 0 ? media : undefined,
             undefined,
             historyFork,
             "simple", // Contact messages default to lighter model
@@ -1824,8 +1874,8 @@ ${persona.systemPrompt}`.trimEnd() +
 
         if (contactProgressTimer) clearTimeout(contactProgressTimer);
 
-        const { text: replyText, emoji } = takeReaction(result.text ?? "");
-        await reactTo(message, emoji);
+        const acted = await actOnReply(jid, result.text ?? "", message);
+        const replyText = acted.text;
 
         // Save to contact history (a relay has no message from them, only Bhai's)
         if (!ownerAnswer) appendContactMessage(jid, "user", text);
@@ -1843,7 +1893,8 @@ ${persona.systemPrompt}`.trimEnd() +
         // Voice note response: if incoming was a voice note and response is short, reply with audio
         const wasVoiceNote = message?.message?.audioMessage?.ptt === true;
         // ([NO_REPLY] falls through to sendTypingThenMessage, which stays silent.)
-        if (wasVoiceNote && replyText && replyText !== "[NO_REPLY]" && replyText.length < 300) {
+        const speak = (wasVoiceNote && replyText.length < 300) || (acted.voice && replyText.length <= VOICE_MAX_CHARS);
+        if (speak && replyText && replyText !== "[NO_REPLY]") {
             await sendVoiceReply(jid, replyText);
         } else {
             // Only quote-reply when the contact's message was itself a reply (swipe-reply)
@@ -2063,10 +2114,11 @@ Respond to ${senderName}'s latest message. Be concise, natural, and match the gr
 
         await socket?.sendPresenceUpdate("paused", groupJid).catch(() => {});
 
-        const { text: replyText, emoji } = takeReaction(result.text ?? "");
-        await reactTo(message, emoji);
+        const acted = await actOnReply(groupJid, result.text ?? "", message);
+        const replyText = acted.text;
         if (replyText && replyText !== "[NO_REPLY]") {
-            await sendMessage(groupJid, replyText, message);
+            if (acted.voice && replyText.length <= VOICE_MAX_CHARS) await sendVoiceReply(groupJid, replyText, message);
+            else await sendMessage(groupJid, replyText, message);
 
             // Log bot's response
             appendGroupMessage(groupJid, {
@@ -2174,6 +2226,126 @@ function autoAllowRecord(): void {
     autoAllowHistory.push(Date.now());
 }
 
+// ── Polls and events ─────────────────────────
+// The latest poll and event in each chat, kept whole: voting or answering needs the
+// message's key and secret. ponytail: last one per chat, in memory; a restart forgets it.
+
+const lastPoll = new Map<string, WAMessage>();
+const lastEvent = new Map<string, WAMessage>();
+const POLL_TYPES = new Set(["pollCreationMessage", "pollCreationMessageV2", "pollCreationMessageV3", "pollCreationMessageV5"]);
+
+function pollOf(message: WAMessage) {
+    const m = message.message as Record<string, any> | null | undefined;
+    const p = m?.pollCreationMessage || m?.pollCreationMessageV2 || m?.pollCreationMessageV3 || m?.pollCreationMessageV5;
+    if (!p?.name) return null;
+    const options: string[] = (p.options ?? []).map((o: { optionName?: string }) => o.optionName ?? "").filter(Boolean);
+    return { question: String(p.name), options, selectable: Number(p.selectableOptionsCount) || 1 };
+}
+
+/** Remembers a poll or event and says what it is, for the agent; null for anything else. */
+function rememberPollOrEvent(message: WAMessage, contentType: string): string | null {
+    const chat = message.key.remoteJid;
+    if (!chat) return null;
+    if (POLL_TYPES.has(contentType)) {
+        const poll = pollOf(message);
+        if (!poll) return null;
+        lastPoll.set(chat, message);
+        const opts = poll.options.map((o, i) => `${i + 1}) ${o}`).join("  ");
+        const pick = poll.selectable > 1 ? ` (up to ${poll.selectable} choices)` : poll.selectable === 0 ? " (any number of choices)" : "";
+        return `[Poll: "${poll.question}" — ${opts}${pick}. To vote, start your reply with [[vote:<option>]] (several: [[vote:A|B]]).]`;
+    }
+    if (contentType === "eventMessage") {
+        const ev = message.message?.eventMessage;
+        if (!ev?.name) return null;
+        lastEvent.set(chat, message);
+        const when = ev.startTime ? new Date(Number(ev.startTime) * 1000).toLocaleString() : "no time given";
+        const where = ev.location?.name || ev.location?.address;
+        return `[Event invite: "${ev.name}" — ${when}${where ? ` at ${where}` : ""}${ev.isCanceled ? " (cancelled)" : ""}${ev.description ? `. ${ev.description}` : ""}. To answer, start your reply with [[rsvp:going]], [[rsvp:maybe]] or [[rsvp:no]].]`;
+    }
+    return null;
+}
+
+/** A JID as WhatsApp's vote/RSVP encryption wants it: the phone JID, never a LID. */
+async function phoneJidFor(jid: string): Promise<string> {
+    const n = baileys.jidNormalizedUser(jid);
+    if (!n.endsWith("@lid")) return n;
+    const pn = await (socket as any)?.signalRepository?.lidMapping?.getPNForLID?.(n).catch(() => null);
+    return pn ? baileys.jidNormalizedUser(pn) : n;
+}
+
+/**
+ * Does what a reply's markers (or whatsapp_send) ask in `chat`: vote, RSVP, start a poll,
+ * send a location or create an event. Returns a line for each thing that couldn't be done.
+ */
+async function performChatActions(chat: string, actions: ChatActions): Promise<string[]> {
+    const problems: string[] = [];
+    if (!socket) return actions.vote || actions.rsvp || actions.poll || actions.location || actions.event ? ["WhatsApp isn't connected"] : [];
+    const { encryptAddOn, optionHash, pickPollOptions } = await import("./whatsapp-media.js");
+    const me = await phoneJidFor(socket.user?.id ?? "");
+    const author = (k: WAMessage["key"]) =>
+        k.fromMe ? me : (k as any).participantAlt || (k as any).remoteJidAlt || k.participant || k.remoteJid || "";
+    try {
+        if (actions.vote) {
+            const pm = lastPoll.get(chat);
+            const poll = pm && pollOf(pm);
+            const secret = pm?.message?.messageContextInfo?.messageSecret;
+            const picks = poll ? pickPollOptions(poll.options, actions.vote) : [];
+            if (!pm || !poll || !secret || !pm.key.id) problems.push("there's no poll here I can vote on");
+            else if (!picks.length) problems.push(`no poll option matches "${actions.vote.join(", ")}"`);
+            else {
+                const plain = baileys.proto.Message.PollVoteMessage.encode({ selectedOptions: picks.map(optionHash) }).finish();
+                const vote = encryptAddOn(plain, "Poll Vote", {
+                    secret,
+                    msgId: pm.key.id,
+                    creatorJid: await phoneJidFor(author(pm.key)),
+                    actorJid: me,
+                });
+                await socket.relayMessage(
+                    chat,
+                    { pollUpdateMessage: { pollCreationMessageKey: pm.key, vote, senderTimestampMs: Date.now() } },
+                    {},
+                );
+            }
+        }
+        if (actions.rsvp) {
+            const em = lastEvent.get(chat);
+            const secret = em?.message?.messageContextInfo?.messageSecret;
+            if (!em || !secret || !em.key.id) problems.push("there's no event here I can answer");
+            else {
+                const T = baileys.proto.Message.EventResponseMessage.EventResponseType;
+                const response = actions.rsvp === "going" ? T.GOING : actions.rsvp === "maybe" ? T.MAYBE : T.NOT_GOING;
+                const plain = baileys.proto.Message.EventResponseMessage.encode({ response, timestampMs: Date.now() }).finish();
+                const enc = encryptAddOn(plain, "Event Response", {
+                    secret,
+                    msgId: em.key.id,
+                    creatorJid: await phoneJidFor(author(em.key)),
+                    actorJid: me,
+                });
+                await socket.relayMessage(chat, { encEventResponseMessage: { eventCreationMessageKey: em.key, ...enc } }, {});
+            }
+        }
+        if (actions.poll) {
+            await socket.sendMessage(chat, {
+                poll: { name: actions.poll.question, values: actions.poll.options, selectableCount: 1 },
+            });
+        }
+        if (actions.location) {
+            const { lat, lng, name } = actions.location;
+            await socket.sendMessage(chat, { location: { degreesLatitude: lat, degreesLongitude: lng, name } });
+        }
+        if (actions.event) {
+            const { name, start, place } = actions.event;
+            await socket.sendMessage(chat, {
+                event: { name, startDate: start, ...(place ? { location: { name: place } } : {}) },
+            });
+        }
+    } catch (err) {
+        console.warn("[WA] Chat action failed:", (err as Error).message);
+        problems.push((err as Error).message);
+    }
+    return problems;
+}
+
 // ── Message Router (multi-user) ─────────────
 
 async function handleIncomingMessage(message: WAMessage, llm: LLMClient): Promise<void> {
@@ -2219,6 +2391,7 @@ async function handleIncomingMessage(message: WAMessage, llm: LLMClient): Promis
     // Determine the effective text for routing (for media-only, use a default)
     let effectiveText =
         text ||
+        rememberPollOrEvent(message, contentType) ||
         (contentType === "imageMessage"
             ? msg.imageMessage?.caption || "What's in this image?"
             : contentType === "videoMessage"
@@ -2247,7 +2420,6 @@ async function handleIncomingMessage(message: WAMessage, llm: LLMClient): Promis
             "protocolMessage",
             "senderKeyDistributionMessage",
             "reactionMessage",
-            "pollCreationMessage",
             "pollUpdateMessage",
             "callLogMessage",
             "appStateSyncKeyShare",
@@ -2740,8 +2912,9 @@ export const whatsappSendTool: ToolDefinition = {
             name: "whatsapp_send",
             description:
                 "Send a WhatsApp message to a contact or group. The recipient can be a person's name, phone number, " +
-                "JID, or a GROUP NAME (e.g., 'Work Group', 'Family'). Use this to send messages, files, images, " +
-                "and documents to individuals or groups on WhatsApp.",
+                "JID, or a GROUP NAME (e.g., 'Work Group', 'Family'). Sends text, files, images, videos, GIFs, " +
+                "documents, a voice note (as_voice_note), a location pin, a poll or an event; can also vote on the " +
+                "chat's latest poll or answer its latest event.",
             parameters: {
                 type: "object",
                 properties: {
@@ -2756,16 +2929,49 @@ export const whatsappSendTool: ToolDefinition = {
                     },
                     file_path: {
                         type: "string",
-                        description: "Optional absolute path to a file to send as a document attachment.",
+                        description:
+                            "Optional absolute path to a file: images and videos go as media (a .gif plays as a GIF), audio as audio, anything else as a document.",
+                    },
+                    as_voice_note: {
+                        type: "boolean",
+                        description: "Speak `message` and send it as a voice note instead of text.",
+                    },
+                    location: {
+                        type: "object",
+                        description: "Send a location pin.",
+                        properties: { lat: { type: "number" }, lng: { type: "number" }, name: { type: "string" } },
+                        required: ["lat", "lng"],
+                    },
+                    poll: {
+                        type: "object",
+                        description: "Start a poll (2-12 options).",
+                        properties: { question: { type: "string" }, options: { type: "array", items: { type: "string" } } },
+                        required: ["question", "options"],
+                    },
+                    event: {
+                        type: "object",
+                        description: "Create a WhatsApp event. start is local time, e.g. 2026-11-02 19:00.",
+                        properties: { name: { type: "string" }, start: { type: "string" }, place: { type: "string" } },
+                        required: ["name", "start"],
+                    },
+                    vote: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Vote on the latest poll in this chat: option text(s) or numbers.",
+                    },
+                    rsvp: {
+                        type: "string",
+                        enum: ["going", "maybe", "no"],
+                        description: "Answer the latest event in this chat.",
                     },
                 },
-                required: ["to", "message"],
+                required: ["to"],
             },
         },
     },
     handler: async (input: Record<string, unknown>): Promise<string> => {
         const to = input.to as string;
-        const message = input.message as string;
+        const message = typeof input.message === "string" ? input.message : "";
         const filePath = input.file_path as string | undefined;
 
         if (!socket) {
@@ -2857,6 +3063,13 @@ export const whatsappSendTool: ToolDefinition = {
                     await socket.sendMessage(jid, {
                         sticker: fileBuffer,
                     });
+                } else if (ext === "gif") {
+                    // A .gif sent as an image doesn't move: WhatsApp GIFs are MP4s played as GIFs.
+                    const { gifToMp4 } = await import("./whatsapp-media.js");
+                    const mp4 = join(tmpdir(), `bhai_gif_${randomUUID()}.mp4`);
+                    await gifToMp4(filePath, mp4);
+                    await socket.sendMessage(jid, { video: { url: mp4 }, gifPlayback: true, caption: message || undefined });
+                    await fs.rm(mp4, { force: true }).catch(() => {});
                 } else if (imageExts.has(ext)) {
                     await socket.sendMessage(jid, {
                         image: { url: filePath },
@@ -2890,9 +3103,28 @@ export const whatsappSendTool: ToolDefinition = {
                         mimetype,
                     });
                 }
-            } else {
+            } else if (input.as_voice_note === true && message) {
+                await sendVoiceReply(jid, message);
+            } else if (message) {
                 await sendMessage(jid, message);
             }
+
+            const loc = input.location as { lat?: number; lng?: number; name?: string } | undefined;
+            const poll = input.poll as { question?: string; options?: string[] } | undefined;
+            const ev = input.event as { name?: string; start?: string; place?: string } | undefined;
+            const start = ev?.start ? new Date(ev.start) : null;
+            const problems = await performChatActions(jid, {
+                ...(Array.isArray(input.vote) && input.vote.length ? { vote: input.vote.map(String) } : {}),
+                ...(input.rsvp === "going" || input.rsvp === "maybe" || input.rsvp === "no" ? { rsvp: input.rsvp } : {}),
+                ...(poll?.question && (poll.options?.length ?? 0) >= 2
+                    ? { poll: { question: poll.question, options: [...new Set(poll.options!.map(String))].slice(0, 12) } }
+                    : {}),
+                ...(loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng)
+                    ? { location: { lat: loc.lat!, lng: loc.lng!, name: loc.name } }
+                    : {}),
+                ...(ev?.name && start && !Number.isNaN(start.getTime()) ? { event: { name: ev.name, start, place: ev.place } } : {}),
+            });
+            if (problems.length) return JSON.stringify({ error: problems.join("; "), sent_to: jid });
 
             return JSON.stringify({
                 success: true,

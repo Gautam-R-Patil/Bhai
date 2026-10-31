@@ -39,6 +39,7 @@ import type * as streamFrames from "../streamFrames.js";
 import type * as stt from "../stt.js";
 import type * as systemContent from "../systemContent.js";
 import type * as telegramManaged from "../telegramManaged.js";
+import type * as tts from "../tts.js";
 import type * as updateFeed from "../updateFeed.js";
 import type * as userAddenda from "../userAddenda.js";
 import type * as waitlist from "../waitlist.js";
@@ -82,6 +83,7 @@ declare const fullApi: ApiFromModules<{
   stt: typeof stt;
   systemContent: typeof systemContent;
   telegramManaged: typeof telegramManaged;
+  tts: typeof tts;
   updateFeed: typeof updateFeed;
   userAddenda: typeof userAddenda;
   waitlist: typeof waitlist;

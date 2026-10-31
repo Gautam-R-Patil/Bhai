@@ -34,6 +34,10 @@ function getWhisperClient(): OpenAI | null {
 export const STT_NOT_CONFIGURED = "Voice transcription isn't set up yet, so I can't read voice messages.";
 
 async function transcribeViaServer(buffer: Buffer, filename: string, mimeType: string): Promise<string> {
+    return (await sttRequest({ audio: buffer.toString("base64"), mimeType, filename })).text;
+}
+
+async function sttRequest(body: Record<string, unknown>): Promise<{ text: string; sounds: string }> {
     const { getSessionToken } = await import("../session.js");
     const { getConvexSiteUrl } = await import("../config/keys.js");
     const { encryptedFetch } = await import("../crypto-transport.js");
@@ -43,15 +47,53 @@ async function transcribeViaServer(buffer: Buffer, filename: string, mimeType: s
     const res = await encryptedFetch(`${site}/api/stt`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ audio: buffer.toString("base64"), mimeType, filename }),
-        signal: AbortSignal.timeout(90_000),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
     });
     // 503: no provider key on the server; 404: a backend without /api/stt yet.
     if (res.status === 503 || res.status === 404) throw new Error(STT_NOT_CONFIGURED);
     if (res.status === 402) throw Object.assign(new Error("You've run out of AI credits."), { status: 402 });
-    const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+    const data = (await res.json().catch(() => ({}))) as { text?: string; sounds?: string; error?: string };
     if (!res.ok) throw new Error(`Transcription failed: ${res.status} ${data.error ?? ""}`.trim());
-    return (data.text ?? "").trim();
+    return { text: (data.text ?? "").trim(), sounds: (data.sounds ?? "").trim() };
+}
+
+/** Any recording as MP3, the format audio-hearing models take (voice notes are Ogg/Opus). */
+async function toMp3(buffer: Buffer, filename: string): Promise<Buffer> {
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { ffmpegPath } = await import("../video-studio/util/ffmpeg-bin.js");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-hear-"));
+    try {
+        const src = path.join(dir, `in.${filename.split(".").pop() || "ogg"}`);
+        const out = path.join(dir, "out.mp3");
+        fs.writeFileSync(src, buffer);
+        await promisify(execFile)(ffmpegPath(), ["-y", "-i", src, "-ac", "1", "-ar", "24000", "-b:a", "48k", out], {
+            timeout: 60_000,
+        });
+        return fs.readFileSync(out);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+/**
+ * What's in a recording: the words, and what else can be heard (background noise, music,
+ * other voices, tone) when the server has an audio model; otherwise the words alone.
+ */
+export async function hearBuffer(buffer: Buffer, filename = "audio.ogg"): Promise<{ text: string; sounds: string }> {
+    if (getWhisperClient()) return { text: await transcribeBuffer(buffer, filename), sounds: "" };
+    const mp3 = await toMp3(buffer, filename).catch(() => null);
+    if (!mp3) return { text: await transcribeBuffer(buffer, filename), sounds: "" };
+    return sttRequest({
+        audio: mp3.toString("base64"),
+        mimeType: "audio/mpeg",
+        filename: "audio.mp3",
+        analyze: true,
+        format: "mp3",
+    });
 }
 
 const MIME_BY_EXT: Record<string, string> = {

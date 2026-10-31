@@ -10,7 +10,15 @@ import { toClaudeRequest, toOpenAIResponse } from "./claude";
 import { pipeClaudeStream, streamCompletion } from "./llmStream";
 import { encodeFrame } from "./streamFrames";
 import { callAzure, clientAttemptMs, isAzureModel } from "./grok";
-import { decodeBase64, STT_CREDIT_COST, STT_MAX_AUDIO_BYTES, sttConfigFromEnv, transcribeWithProvider } from "./stt";
+import {
+  analyzeWithProvider,
+  decodeBase64,
+  STT_CREDIT_COST,
+  STT_MAX_AUDIO_BYTES,
+  sttConfigFromEnv,
+  transcribeWithProvider,
+} from "./stt";
+import { encodeBase64, speakWithProvider, TTS_CREDIT_COST, TTS_MAX_CHARS, ttsConfigFromEnv } from "./tts";
 import {
   generateServerKeyPair,
   deriveSharedKey,
@@ -835,8 +843,77 @@ http.route({
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// POST /api/tts — speech for voice replies (convex/tts.ts). Body (E2E):
+// { text, voice? } → { audio: base64 Ogg/Opus, mimeType }. 503 when no TTS provider is set.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/tts",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const cfg = ttsConfigFromEnv(process.env);
+    if (!cfg) return buildResponse({ error: "tts_not_configured" }, 503, false, null);
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    const text = typeof body?.text === "string" ? body.text.trim() : "";
+    if (!text) return reply({ error: "text required" }, 400);
+    if (text.length > TTS_MAX_CHARS) return reply({ error: "text too long" }, 413);
+    const voice = typeof body.voice === "string" && /^[\w-]{1,32}$/.test(body.voice) ? body.voice : undefined;
+
+    const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+      otplessUserId: account.otplessUserId,
+      amount: TTS_CREDIT_COST,
+    });
+    if (!deducted?.success) return reply({ error: "Insufficient credits" }, 402);
+
+    const startedAt = Date.now();
+    const log = (status: "success" | "failed", errorMessage?: string) =>
+      ctx
+        .runMutation(internal.llmCallLog.record, {
+          accountId: account.accountId,
+          otplessUserId: account.otplessUserId,
+          model: `tts:${cfg.model}`,
+          status,
+          credits: status === "success" ? TTS_CREDIT_COST : 0,
+          latencyMs: Date.now() - startedAt,
+          errorMessage,
+          hasMedia: true,
+        })
+        .catch(() => {});
+    try {
+      const audio = await speakWithProvider(cfg, text, voice);
+      await log("success");
+      return reply({ audio: encodeBase64(audio), mimeType: "audio/ogg; codecs=opus" }, 200);
+    } catch (err) {
+      const message = (err as Error).message;
+      await ctx
+        .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: TTS_CREDIT_COST })
+        .catch((e: unknown) => console.error("[TTS] refund failed:", e));
+      await log("failed", message);
+      return reply({ error: "speech failed" }, 502);
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // POST /api/stt — voice-note transcription (convex/stt.ts). Body (E2E):
-// { audio: base64, mimeType, filename }. 503 when no STT provider is set.
+// { audio: base64, mimeType, filename, analyze?, format? } → { text, sounds }.
+// 503 when no STT provider is set.
 // ══════════════════════════════════════════════════════════════════════════
 
 http.route({
@@ -893,10 +970,21 @@ http.route({
           hasMedia: true,
         })
         .catch(() => {});
+    // "analyze": the words plus what else can be heard, when an audio model is set (mp3/wav only).
+    const format = body.format === "mp3" || body.format === "wav" ? body.format : null;
+    if (body.analyze === true && cfg.audioModel && format) {
+      try {
+        const heard = await analyzeWithProvider(cfg, audio, format);
+        await log("success");
+        return reply(heard, 200);
+      } catch (err) {
+        console.warn("[STT] audio model failed, transcribing instead:", (err as Error).message);
+      }
+    }
     try {
       const text = await transcribeWithProvider(cfg, audio, mimeType, filename);
       await log("success");
-      return reply({ text }, 200);
+      return reply({ text, sounds: "" }, 200);
     } catch (err) {
       const message = (err as Error).message;
       await ctx

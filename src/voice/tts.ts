@@ -90,7 +90,56 @@ export async function textToSpeech(
         });
         return { audio: Buffer.from(await response.arrayBuffer()), mimetype: "audio/ogg; codecs=opus" };
     }
+    // No key of the user's own: the server's voice (Azure), then the Mac's built-in one.
+    const served = await speakViaServer(text).catch((err: Error) => {
+        console.log(`[TTS] server voice unavailable: ${err.message}`);
+        return null;
+    });
+    if (served) return served;
+    if (process.platform === "darwin") return { audio: await macSay(text), mimetype: "audio/ogg; codecs=opus" };
     throw new Error(
         "No TTS provider configured — set ELEVENLABS_API_KEY or OPENAI_API_KEY",
     );
+}
+
+/** /api/tts (convex/tts.ts): null when the server has no voice configured. */
+async function speakViaServer(text: string): Promise<{ audio: Buffer; mimetype: string } | null> {
+    const { getSessionToken } = await import("../session.js");
+    const { getConvexSiteUrl } = await import("../config/keys.js");
+    const { encryptedFetch } = await import("../crypto-transport.js");
+    const token = await getSessionToken();
+    const site = getConvexSiteUrl();
+    if (!token || !site) return null;
+    const res = await encryptedFetch(`${site}/api/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text: text.slice(0, 4000) }),
+        signal: AbortSignal.timeout(90_000),
+    });
+    // 503: no provider on the server; 404: a backend without /api/tts yet.
+    if (res.status === 503 || res.status === 404) return null;
+    const data = (await res.json().catch(() => ({}))) as { audio?: string; mimeType?: string; error?: string };
+    if (!res.ok || !data.audio) throw new Error(`${res.status} ${data.error ?? ""}`.trim());
+    return { audio: Buffer.from(data.audio, "base64"), mimetype: data.mimeType || "audio/ogg; codecs=opus" };
+}
+
+/** macOS `say`, as Ogg/Opus (what a WhatsApp voice note is). */
+async function macSay(text: string): Promise<Buffer> {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const fsp = await import("node:fs/promises");
+    const run = promisify(execFile);
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "bhai-say-"));
+    try {
+        const aiff = path.join(dir, "say.aiff");
+        const ogg = path.join(dir, "say.ogg");
+        await run("/usr/bin/say", ["-o", aiff, "--", text], { timeout: 60_000 });
+        const { ffmpegPath } = await import("../video-studio/util/ffmpeg-bin.js");
+        await run(ffmpegPath(), ["-y", "-i", aiff, "-ac", "1", "-c:a", "libopus", "-b:a", "32k", ogg], { timeout: 60_000 });
+        return await fsp.readFile(ogg);
+    } finally {
+        await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
 }
