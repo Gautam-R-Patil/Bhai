@@ -957,7 +957,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
             seenCoords.add(sKey);
             const sText = sel.innerText?.replace(/\\n/g, ' ').substring(0, 40) ||
                           sel.getAttribute?.('aria-label') || '';
-            candidateMap.push({ index: -1, x: sx, y: sy, width: sRect.width, height: sRect.height, tag: sTag, text: sText.trim(), score: 10 });
+            candidateMap.push({ index: -1, node: sel, x: sx, y: sy, width: sRect.width, height: sRect.height, tag: sTag, text: sText.trim(), score: 10 });
         }
     }
 
@@ -971,7 +971,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = 'bhai-editor-monaco-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, editorType: 'monaco' });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, editorType: 'monaco' });
     });
     // CodeMirror 6
     document.querySelectorAll('.cm-editor').forEach((el, i) => {
@@ -979,7 +979,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = 'bhai-editor-cm6-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror6' });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror6' });
     });
     // CodeMirror 5
     document.querySelectorAll('.CodeMirror').forEach((el, i) => {
@@ -988,7 +988,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = 'bhai-editor-cm5-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror5' });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror5' });
     });
     // Ace
     document.querySelectorAll('.ace_editor').forEach((el, i) => {
@@ -996,7 +996,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = 'bhai-editor-ace-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, editorType: 'ace' });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, editorType: 'ace' });
     });
     // Quill
     document.querySelectorAll('.ql-editor[contenteditable]').forEach((el, i) => {
@@ -1004,7 +1004,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = 'bhai-editor-quill-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, editorType: 'quill' });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, editorType: 'quill' });
     });
     // TinyMCE
     document.querySelectorAll('.tox-tinymce').forEach((el, i) => {
@@ -1012,7 +1012,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = 'bhai-editor-tinymce-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, editorType: 'tinymce' });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, editorType: 'tinymce' });
     });
     // ProseMirror / Tiptap
     document.querySelectorAll('.ProseMirror[contenteditable]').forEach((el, i) => {
@@ -1022,7 +1022,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         const type = isTiptap ? 'tiptap' : 'prosemirror';
         const eid = 'bhai-editor-' + type + '-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (' + (isTiptap ? 'Tiptap' : 'ProseMirror') + ')', score: 25, editorType: type });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (' + (isTiptap ? 'Tiptap' : 'ProseMirror') + ')', score: 25, editorType: type });
     });
     // Slate
     document.querySelectorAll('[data-slate-editor]').forEach((el, i) => {
@@ -1030,7 +1030,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = 'bhai-editor-slate-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, editorType: 'slate' });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, editorType: 'slate' });
     });
     // Draft.js
     document.querySelectorAll('.DraftEditor-root').forEach((el, i) => {
@@ -1038,7 +1038,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         if (rect.width < 50 || rect.height < 50) return;
         const eid = 'bhai-editor-draftjs-' + edTs + '-' + i;
         el.setAttribute('data-bhai-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, editorType: 'draftjs' });
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, editorType: 'draftjs' });
     });
 
     // Merge: editors first, then deduplicate by coords
@@ -1058,10 +1058,9 @@ export const SCAN_FRAME_JS = `function scanFrame() {
     // Cap at 150 elements — more than enough for any page, saves token budget.
     const finalMap = candidateMap.slice(0, 150).map((c, i) => {
         const id = 'bhai-el-' + Date.now() + '-' + i;
-        if (c.index >= 0) {
-            const el = els[c.index];
-            el.setAttribute('data-bhai-id', id);
-        }
+        // Editors and shadow-DOM hits aren't in els: without the id they get no handle and are dropped.
+        const el = c.index >= 0 ? els[c.index] : c.node;
+        if (el) el.setAttribute('data-bhai-id', id);
         return {
             label: -1,
             x: c.x,
