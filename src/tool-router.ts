@@ -891,6 +891,10 @@ const CHANGING_FACT =
 
 /** "Has X happened yet?", "what's the latest on Y?": the answer may have changed since anything in context. */
 // A question anywhere: "…right now? one line" ends with the ask for brevity, not the "?".
+/** A message with an unmistakable tool need: it skips the tool-less chat lane. */
+export const needsTools = (message: string): boolean =>
+    KEYWORD_BOOSTS.some((b) => b.pattern !== CHANGING_FACT && b.minScore >= 0.7 && b.pattern.test(message));
+
 export const asksChangingFact = (message: string): boolean =>
     (message.includes("?") || /^\s*(what|which|who|when|where|has|have|is|are|did|does|do|how)\b/i.test(message)) &&
     CHANGING_FACT.test(message);
@@ -933,6 +937,8 @@ export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: numb
         category: "app_management",
         minScore: 0.7,
     },
+    // "Without switching apps: what's the Finder window called?" was classed chat and got no tools.
+    { pattern: /\b(finder|sidebar|menu ?bar|the dock|(?:app|finder|front|open|this) window|on (?:my|the) screen)\b/i, category: "os_control", minScore: 0.7 },
     // OS / Screenshots
     { pattern: /\b(screenshot|screen.?shot|screen.?capture)\b/i, category: "os_control", minScore: 0.7 },
     // Desktop-app automation — "open WhatsApp", "click in Photoshop", "open
@@ -1907,7 +1913,10 @@ export async function selectTools(opts: {
     // a guessed chat lane would turn real requests into chat.
     // A question about something that changes needs a search, not the tool-less chat lane.
     const askingChangingFact = asksChangingFact(opts.message);
-    const chatResult = askingChangingFact
+    // An unmistakable tool need (a high-confidence keyword pattern) never takes the tool-less chat lane.
+    // (Not the changing-fact pattern: "I haven't slept yet" is chat; asksChangingFact wants a question.)
+    const clearToolNeed = needsTools(opts.message);
+    const chatResult = askingChangingFact || clearToolNeed
         ? null
         : llmResult?.tier === "chat" && llmResult.confidence >= 0.6
             ? llmResult

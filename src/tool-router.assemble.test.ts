@@ -1,6 +1,6 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { assembleToolNames, asksChangingFact, KEYWORD_BOOSTS } from "./tool-router.js";
+import { assembleToolNames, asksChangingFact, KEYWORD_BOOSTS, needsTools } from "./tool-router.js";
 
 const OS = ["os_smart_click", "os_inspect", "os_click_id", "os_type", "os_screenshot", "os_click", "os_visual_verify",
     "os_keyboard_shortcuts", "os_context", "apple_script", "os_computer_action", "os_zoom_region", "os_ocr_click", "os_nav"];
@@ -61,5 +61,10 @@ describe("assembleToolNames", () => {
         expect(asksChangingFact("what is the latest iPhone")).toBe(true); // no "?" typed
         expect(boosts("which app is in front right now, and which other apps are running?")).toContain("app_management");
         expect(boosts("what is an app store review?")).not.toContain("app_management");
+        expect(boosts("Without switching apps: what's the Finder window called?")).toContain("os_control");
+        expect(boosts("I'd like a window seat on the flight")).not.toContain("os_control");
+        expect(needsTools("Without switching apps: what's the Finder window called?")).toBe(true);
+        expect(needsTools("I haven't slept yet")).toBe(false); // chat, not a changing fact
+        expect(needsTools("thanks bhai, good night")).toBe(false);
     });
 });
