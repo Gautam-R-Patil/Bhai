@@ -37,7 +37,12 @@ We gratefully acknowledge their authors and communities.
 
 | Package | License | Description |
 |---------|---------|-------------|
-| [Google APIs](https://github.com/googleapis/google-api-nodejs-client) (`googleapis`) | Apache-2.0 | Google Calendar, Gmail, OAuth2 |
+| [Google Calendar API](https://github.com/googleapis/google-api-nodejs-client) (`@googleapis/calendar`) | Apache-2.0 | Google Calendar client |
+| [Gmail API](https://github.com/googleapis/google-api-nodejs-client) (`@googleapis/gmail`) | Apache-2.0 | Gmail client |
+| [Google OAuth2 API](https://github.com/googleapis/google-api-nodejs-client) (`@googleapis/oauth2`) | Apache-2.0 | Google account info |
+| [Google Tasks API](https://github.com/googleapis/google-api-nodejs-client) (`@googleapis/tasks`) | Apache-2.0 | Google Tasks client |
+| [YouTube Data API](https://github.com/googleapis/google-api-nodejs-client) (`@googleapis/youtube`) | Apache-2.0 | YouTube client |
+| [Google Auth Library](https://github.com/googleapis/google-auth-library-nodejs) (`google-auth-library`) | Apache-2.0 | OAuth2 sign-in and tokens |
 
 ## Database & Storage
 
@@ -50,7 +55,7 @@ We gratefully acknowledge their authors and communities.
 
 | Package | License | Description |
 |---------|---------|-------------|
-| [Playwright](https://playwright.dev) (`playwright`) | Apache-2.0 | Browser automation & testing |
+| [Playwright](https://playwright.dev) (`playwright-core`) | Apache-2.0 | Browser automation (Chromium backend) |
 
 ## Email
 
@@ -175,7 +180,28 @@ We gratefully acknowledge their authors and communities.
 | [javascript-obfuscator](https://github.com/javascript-obfuscator/javascript-obfuscator) (`javascript-obfuscator`) | BSD-2-Clause | Release obfuscation |
 | [jsdom](https://github.com/jsdom/jsdom) (`jsdom`) | MIT | DOM tests |
 
-The desktop app also uses Baileys, better-sqlite3 and imapflow (listed above) and Vitest.
+The desktop app also uses better-sqlite3 and Vitest, and loads Baileys and imapflow from the bundled bot (all listed above).
+
+## Web portals (`portals/`)
+
+The admin panel and developer portal are separate Next.js apps.
+
+| Package | License | Description |
+|---------|---------|-------------|
+| [Next.js](https://nextjs.org) (`next`) | MIT | React framework |
+| [React](https://react.dev) (`react`, `react-dom`) | MIT | UI library |
+| [Tailwind CSS](https://tailwindcss.com) (`tailwindcss`) | MIT | Utility-first CSS |
+| [PostCSS](https://postcss.org) (`postcss`) | MIT | CSS processing |
+| [Autoprefixer](https://github.com/postcss/autoprefixer) (`autoprefixer`) | MIT | Vendor prefixes |
+| [Lucide](https://lucide.dev) (`lucide-react`) | ISC | Icons |
+| [jose](https://github.com/panva/jose) (`jose`) | MIT | JWT signing and verification |
+| [bcrypt.js](https://github.com/dcodeIO/bcrypt.js) (`bcryptjs`) | MIT | Password hashing |
+| [date-fns](https://date-fns.org) (`date-fns`) | MIT | Date utilities (admin panel) |
+| [Recharts](https://recharts.org) (`recharts`) | MIT | Charts (admin panel) |
+| [react-dropzone](https://react-dropzone.js.org) (`react-dropzone`) | MIT | File uploads (developer portal) |
+| [react-markdown](https://github.com/remarkjs/react-markdown) (`react-markdown`) | MIT | Markdown rendering (developer portal) |
+
+Both portals also use Convex, TypeScript and Vitest (listed above).
 
 ---
 

@@ -1,6 +1,6 @@
 # Technical Overview — Bhai v0.2.1
 
-> **Bhai** (Advanced Technology for Logical Autonomous Systems) is a continuously running personal AI agent built by [XAGI Labs](https://xagilab.com). This document covers how it is built — its architecture, tech stack, key components, and deployment.
+> **Bhai** is a continuously running personal AI agent built by [XAGI Labs](https://xagilab.com). This document covers how it is built — its architecture, tech stack, key components, and deployment.
 
 ---
 
@@ -108,24 +108,24 @@ Bhai runs as a single long-lived Node.js process on the user's own machine. This
 | Parallelism | `rayon` | 1.10 | CPU-parallel batch ops in Rust |
 | Encryption (native) | `aes-gcm` + `scrypt` | 0.10 / 0.11 | AES-256-GCM + Argon2-class KDF |
 | Local database | SQLite (better-sqlite3) | ^12.11 | WAL mode, 64 MB cache, 256 MB mmap |
-| Serverless backend | Convex | ^1.34 | Auth, LLM proxy, credits, store |
+| Serverless backend | Convex | ^1.48 | Auth, LLM proxy, credits, store |
 | LLM backend | Claude API via Convex (`convex/claude.ts`) | — | Haiku / Sonnet / Opus; keys only in Convex env |
 | Embeddings | `@xenova/transformers` | ^2.17 | MiniLM L6 v2 (384-dim), Nomic optional |
-| Browser automation | Playwright | ^1.51 | Chromium headless, persistent profile |
+| Browser automation | Playwright (`playwright-core`) | ^1.58 | Chromium headless, persistent profile |
 | Chrome bridge | Custom extension | MV3 | Real Chrome via WebSocket IPC |
 | Desktop app | Electron | ^42 | macOS + Windows, auto-updater |
-| Telegram | grammY | ^1.35 | Bot API |
-| Discord | discord.js | ^14.26 | Text |
+| Telegram | grammY | ^1.40 | Bot API |
+| Discord | discord.js | ^14.27 | Text |
 | Slack | @slack/bolt | ^4.7 | Socket Mode |
 | WhatsApp | @whiskeysockets/baileys | ^7.0.0-rc14 | WhatsApp Web protocol |
 | Email | IMAPFlow + Nodemailer | ^1.2 / ^8.0 | IMAP read + SMTP send |
 | Video processing | fluent-ffmpeg | ^2.1 | FFmpeg wrapper |
 | Code parsing | tree-sitter | ^0.22 | TS/JS default; Python/Rust/Go gated behind `ATLAS_MULTI_TREE_SITTER`; regex fallback covers 15 langs |
-| Schema validation | Zod | ^4.3 | All tool parameter schemas |
+| Schema validation | Zod | ^4.6 | All tool parameter schemas |
 | Linter/formatter | Biome | ^2.4 | Replaces ESLint + Prettier |
 | Test runner | Vitest | ^4.1 | Unit + integration tests |
 | Swift helpers | Swift 5.9 | macOS 13+ | OCR (`ocr_screen.swift`), GPS (`get_location.swift`), AX dump (`dump_ax.swift`) |
-| MCP | @modelcontextprotocol/sdk | ^1.9 | External tool providers |
+| MCP | @modelcontextprotocol/sdk | ^1.32 | External tool providers |
 
 ### LLM Providers (Claude API via Convex)
 
@@ -389,6 +389,8 @@ All memory is local SQLite (`data/memory.db`) with WAL journal mode, 64 MB page 
 5. **Diversity filter** — MMR-style deduplication to avoid returning near-identical memories
 6. **Token-aware trimming** — pack results to fit the caller's token budget, preferring shorter high-score entries
 
+**Import from other AIs** (`src/memory/memory-import.ts`, `src/tools/import-memory.ts`, `src/overlay/memory-import-routes.ts`): the owner pastes another assistant's answer to Bhai's export prompt, or picks a data export (ChatGPT/Claude `.zip` incl. every conversations shard and Claude's `memories.json`, Pi history, `.txt`/`.md`/`.json`). A tool-less model call extracts single facts as data; instruction-like lines, secrets, ID numbers and links are dropped and counted, and zip inflation is capped across entries. The owner reviews the facts (already-known ones greyed out) in the Memory tab or Ready Hub, imports them additively (reviewed imports skip the value gate) and can undo the whole import in one click. Routes `/api/memory/import/{prompt,preview,save}` on the overlay server take the owner token only; the `import_memory` tool runs only in the owner's private chat when the owner's own message asks for it.
+
 ---
 
 ### 3.7 Native Rust Layer (80 modules)
@@ -531,6 +533,8 @@ In-flight request coalescing ensures concurrent callers requesting the same slug
 4. Admin reviews → approve: row moves to `store_items` and becomes publicly discoverable; reject: submission stays in queue with notes
 5. User installs → `store_installs` row created; hot-reload injects the item into the running agent
 6. User reviews → `store_reviews` row; affects item ranking and featured placement
+
+**Image generation** (`convex/image.ts`, `src/media/image-memory.ts`): `generate_image` calls `/api/image`, which proxies an Azure `gpt-image` deployment with the key kept in Convex env. Credits per image: low 1, medium 2, high 4; a failed or partly failed call is refunded. Each account gets at most 6 requests a minute and 4 images in flight, checked before credits are taken (`429 image_busy`). The owner's image history (file paths only, `data/image-history.json`) survives restarts and is shared across channels, so "make it brighter" on the desktop edits what Bhai just made on Telegram; guests stay per chat.
 
 **Bhai's own email** (`convex/bhaiMail*.ts`, `src/bhai-mail.ts`): "Get Bhai's email" claims `<name>.bhai@<domain>` on a catch-all Hostinger mailbox. A Convex cron reads the mailbox over IMAP every minute and routes mail to its user; each user's bot collects its mail through `/api/mail/*`, runs the agent and replies via SMTP. Mail from the owner's address gets full Bhai; everyone else gets guest mode (own conversation, `NON_OWNER_TOOLS`). Newsletters and auto-replies are only announced, never answered, and sends are capped per day so the company domain cannot be used to spam. The mailbox password lives only in Convex env.
 
@@ -1703,4 +1707,4 @@ Bhai/
 ---
 
 *Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.*
-*Website: [tryatlasagi.com](https://tryatlasagi.com) · [xagilab.com](https://xagilab.com)*
+*Website: [xagilab.com](https://xagilab.com) · Legal: [tryatlasagi.com/legal](https://tryatlasagi.com/legal) · Credits: [CREDITS.md](./CREDITS.md)*

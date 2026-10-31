@@ -36,12 +36,15 @@ TERMS
 
 CONTACT
 
-For licensing inquiries, please contact XAGI Labs Private Limited at https://xagilab.com.
+For licensing inquiries, please contact XAGI Labs Private Limited at https://xagilab.com
+or tech@xagilab.com.
 
-Privacy Policy: https://www.tryatlasagi.com/privacy-policy
-Terms of Service: https://www.tryatlasagi.com/terms
+Legal hub: https://tryatlasagi.com/legal
+Privacy Policy: https://tryatlasagi.com/privacy
+Terms of Service: https://tryatlasagi.com/terms
 
 --------------------------------------------------------------------------------
 
 This project uses open-source libraries listed in CREDITS.md. Those
-libraries retain their respective licenses. This license applies only to the proprietary source code authored by XAGI Labs Private Limited.
+libraries retain their respective licenses. This license applies only to the proprietary
+source code authored by XAGI Labs Private Limited.

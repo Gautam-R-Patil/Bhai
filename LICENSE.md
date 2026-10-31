@@ -4,7 +4,7 @@
 
 **Copyright © 2024-2026 XAGI Labs Private Limited. All Rights Reserved.**
 
-Website: [tryatlasagi.com](https://tryatlasagi.com)
+Website: [xagilab.com](https://xagilab.com)
 
 This software and its associated documentation files (the "Software") are the exclusive
 property of **XAGI Labs Private Limited**. The Software is protected by copyright laws and
@@ -40,8 +40,10 @@ international treaty provisions.
 
 For licensing inquiries, please contact **XAGI Labs Private Limited**:
 
-- Website: [xagilab.com]((http://xagilab.com/))
-- Privacy Policy: [tryatlasagi.com/privacy-policy](https://tryatlasagi.com/privacy-policy)
+- Website: [xagilab.com](https://xagilab.com)
+- Email: [tech@xagilab.com](mailto:tech@xagilab.com)
+- Legal hub: [tryatlasagi.com/legal](https://tryatlasagi.com/legal)
+- Privacy Policy: [tryatlasagi.com/privacy](https://tryatlasagi.com/privacy)
 - Terms of Service: [tryatlasagi.com/terms](https://tryatlasagi.com/terms)
 
 ---
