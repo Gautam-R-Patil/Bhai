@@ -277,3 +277,12 @@ describe("DNS-rebinding guard", () => {
     });
 });
 
+
+describe("/api/mentions auth", () => {
+    it("the @ picker's tool list and workspace path need the local token", async () => {
+        expect((await fetch(`${BASE}/api/mentions`)).status).toBe(401);
+        const r = await fetch(`${BASE}/api/mentions`, { headers: { Authorization: `Bearer ${localToken}` } });
+        expect(r.status).toBe(200);
+        expect(await r.json()).toHaveProperty("rootDir");
+    });
+});

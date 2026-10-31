@@ -4449,7 +4449,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       // Fetch tools and the picker's root folder from server once
       async function loadMentionData() {
         try {
-          const r = await fetch('/api/mentions');
+          const r = await authFetch('/api/mentions');
           const d = await r.json();
           allTools = d.tools || [];
           allSkills = d.skills || [];

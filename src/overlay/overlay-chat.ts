@@ -350,7 +350,13 @@ export function initOverlayChat(llm: LLMClient): void {
             res.end(JSON.stringify({ status: "ok", clients: overlayClients.size }));
 
         } else if (url.pathname === "/api/mentions") {
-            // Return tool list + home dir for the @ picker
+            // Return tool list + home dir for the @ picker. Auth like /api/browse: the
+            // workspace path names the owner's account, and any local process could ask.
+            if (!authorizeRequest(req)) {
+                res.writeHead(401, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Authorization required" }));
+                return;
+            }
             const { getToolNames } = await import("../tools/index.js");
             const { getLoadedSkills } = await import("../skills/loader.js");
             const tools = getToolNames().map(name => ({ type: "tool", name, label: name.replace(/_/g, " ") }));
