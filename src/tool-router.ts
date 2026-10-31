@@ -905,15 +905,21 @@ const CHANGING_FACT =
  * word for happy" (os_control), "an issue with my boss" (github) and "I love rain" out of the
  * lane, some of them into the 14K-token Sonnet plan.
  */
-const CHAT_LANE_OVERRIDES = [
+const CHAT_LANE_OVERRIDES: { re: RegExp; category: string }[] = [
     // "Without switching apps: what's the Finder window called?"
-    /\b(finder|sidebar|menu ?bar|the dock)\b|\b(?:app|finder|front|open|this) window\b/i,
+    { re: /\b(finder|sidebar|menu ?bar|the dock)\b|\b(?:app|finder|front|open|this) window\b/i, category: "os_control" },
     // asking about the weather, in English or Hinglish
-    /\b(weather|forecast|mausam|chhat(?:a|ri)|umbrella)\b|\bwill it (?:rain|snow)\b|\bbaa?rish hog/i,
+    { re: /\b(weather|forecast|mausam|chhat(?:a|ri)|umbrella)\b|\bwill it (?:rain|snow)\b|\bbaa?rish hog/i, category: "web_search" },
     // asking what was said before (not just mentioning yesterday)
-    /\b(?:did (?:I|we) (?:ask|tell|say|talk|discuss|mention)|what did (?:I|we) (?:ask|say|talk|discuss|tell)|earlier (?:today|tonight),? (?:I|we|you) (?:asked|told|said|talked|discussed))\b/i,
+    {
+        re: /\b(?:did (?:I|we) (?:ask|tell|say|talk|discuss|mention)|what did (?:I|we) (?:ask|say|talk|discuss|tell)|earlier (?:today|tonight),? (?:I|we|you) (?:asked|told|said|talked|discussed))\b/i,
+        category: "memory",
+    },
 ];
-export const needsTools = (message: string): boolean => CHAT_LANE_OVERRIDES.some((re) => re.test(message));
+/** The one category a chat-sounding message needs (it gets just that, as a simple single step), or null. */
+export const toolNeedCategory = (message: string): string | null =>
+    CHAT_LANE_OVERRIDES.find((o) => o.re.test(message))?.category ?? null;
+export const needsTools = (message: string): boolean => toolNeedCategory(message) !== null;
 
 export const asksChangingFact = (message: string): boolean =>
     (message.includes("?") || /^\s*(what|which|who|when|where|has|have|is|are|did|does|do|how)\b/i.test(message)) &&
@@ -1943,9 +1949,38 @@ export async function selectTools(opts: {
     // a guessed chat lane would turn real requests into chat.
     // A question about something that changes needs a search, not the tool-less chat lane.
     const askingChangingFact = asksChangingFact(opts.message);
-    // A tool need that reads like chat (Finder, the weather, what was said before) skips the lane.
-    const clearToolNeed = needsTools(opts.message);
-    const chatResult = askingChangingFact || clearToolNeed
+    // A tool need that reads like chat (Finder, the weather, what was said before) gets that one
+    // category as a simple single step. Sent through the full router instead, "Earlier tonight I
+    // asked you…" picked up browser and os_control and went to the Sonnet plan, which asked the
+    // owner to clarify.
+    const overrideCategory = toolNeedCategory(opts.message);
+    if (
+        overrideCategory &&
+        CATEGORIES[overrideCategory] &&
+        !opts.requestedCategories &&
+        activeRequestedCategories.categories.length === 0 &&
+        (!llmResult || llmResult.tier === "chat" || llmResult.categories.length === 0)
+    ) {
+        const names = assembleToolNames(
+            [overrideCategory],
+            CATEGORIES[overrideCategory].tools,
+            new Set(allSchemas.map((t) => t.function.name)),
+            getMaxToolsTotal(),
+        );
+        const schemas = allSchemas.filter((t) => names.has(t.function.name));
+        lastClassifiedIntent = llmResult?.intent ?? overrideCategory;
+        lastClassification = { intent: lastClassifiedIntent, specific_tools: [], confidence: 0.9, categories: [overrideCategory] };
+        console.log(`🎯 Tool Router: ${schemas.length} tools [${overrideCategory}, one step] (${Date.now() - startTime}ms)`);
+        return {
+            tools: [...schemas, REQUEST_TOOLS_SCHEMA],
+            categories: [overrideCategory],
+            skillSlugs: [],
+            totalAvailable: allSchemas.length,
+            selectedCount: schemas.length + 1,
+            classification: { ...lastClassification, tier: "simple", multi_step: false },
+        };
+    }
+    const chatResult = askingChangingFact
         ? null
         : llmResult?.tier === "chat" && llmResult.confidence >= 0.6
             ? llmResult

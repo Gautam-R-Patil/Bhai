@@ -61,6 +61,9 @@ vi.mock("./tools/index.js", () => ({
             "music_control",
             "whatsapp_send",
             "send_message_on_channel",
+            "memory_store",
+            "memory_search",
+            "session_search",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -201,5 +204,25 @@ describe("selectTools when the classifier answers with no categories", () => {
         const sel = await selectTools({ message: "lmao roast me, 40 tabs open and the code still won't build", iteration: 1 });
         expect(sel.categories).toEqual(["chat_only"]);
         expect(sel.tools.map((t) => t.function.name)).toEqual(["request_tools"]);
+    });
+});
+
+describe("a chat-sounding message that needs one kind of tool", () => {
+    const chatLLM = {
+        chat: async () => ({
+            choices: [{ message: { content: JSON.stringify({ intent: "recall", categories: [], tools: [], confidence: 0.73, tier: "chat" }) } }],
+        }),
+    } as never;
+    beforeAll(async () => {
+        await initToolRouter();
+        setToolRouterLLM(chatLLM);
+    });
+
+    it("asking what was said earlier gets the memory tools as a simple step (no plan)", async () => {
+        const sel = await selectTools({ message: "Earlier tonight I asked you to read some keyboard layout articles on Wikipedia. Which ones?", iteration: 1 });
+        expect(sel.categories).toEqual(["memory"]);
+        expect(sel.tools.map((t) => t.function.name)).toContain("session_search");
+        expect(sel.tools.map((t) => t.function.name)).not.toContain("browser_navigate");
+        expect(sel.classification).toMatchObject({ tier: "simple", multi_step: false });
     });
 });
