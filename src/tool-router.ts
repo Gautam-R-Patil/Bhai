@@ -940,6 +940,13 @@ export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: numb
     },
     // "Without switching apps: what's the Finder window called?" was classed chat and got no tools.
     { pattern: /\b(finder|sidebar|menu ?bar|the dock|(?:app|finder|front|open|this) window|on (?:my|the) screen)\b/i, category: "os_control", minScore: 0.7 },
+    // "Earlier tonight I asked you about keyboard layouts. Which ones?" took the chat lane, so
+    // session_search wasn't there and Bhai recalled only what memory injection happened to hold.
+    {
+        pattern: /\b(earlier (?:today|tonight)|last (?:night|week|time)|yesterday|the other day|did (?:I|we) (?:ask|tell|say|talk|discuss)|what did (?:I|we) (?:ask|say|talk|discuss)|we (?:talked|discussed|spoke) about)\b/i,
+        category: "memory",
+        minScore: 0.7,
+    },
     // OS / Screenshots
     { pattern: /\b(screenshot|screen.?shot|screen.?capture)\b/i, category: "os_control", minScore: 0.7 },
     // Desktop-app automation — "open WhatsApp", "click in Photoshop", "open

@@ -67,5 +67,8 @@ describe("assembleToolNames", () => {
         expect(needsTools("I haven't slept yet")).toBe(false); // chat, not a changing fact
         expect(needsTools("thanks bhai, good night")).toBe(false);
         expect(needsTools("bhai aaj Bengaluru mein mausam kaisa hai? chhata le jaun kya?")).toBe(true);
+        expect(boosts("Earlier tonight I asked you about keyboard layouts. Which ones?")).toContain("memory");
+        expect(boosts("what did we talk about yesterday?")).toContain("memory");
+        expect(boosts("I'll do it later today")).not.toContain("memory");
     });
 });
