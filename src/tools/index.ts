@@ -763,7 +763,13 @@ async function executeWithTimeout<T>(promise: Promise<T>, timeoutMs: number, too
     let timeoutId: NodeJS.Timeout;
     const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
-            reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs / 1000}s`));
+            // The handler isn't cancelled: a change it makes may still land. Saying so keeps
+            // the model from repeating an event, a push or a purchase that went through.
+            reject(
+                new Error(
+                    `Tool "${toolName}" timed out after ${timeoutMs / 1000}s and may still finish in the background. If it changes something, check whether it happened before running it again.`,
+                ),
+            );
         }, timeoutMs);
     });
 

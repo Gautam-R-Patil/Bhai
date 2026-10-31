@@ -1430,7 +1430,9 @@ async function executeToolCallsBatch(
     // land before the click that focuses its field. Those run in call order.
     const TOOL_BATCH_TIMEOUT_MS = 120_000;
     const done = new Map<string, ToolCallResult>();
+    const started = new Set<string>();
     const run = async (tc: (typeof toolCalls)[number]) => {
+        started.add(tc.id);
         const r = await executeAndProcessToolCall(
             tc,
             ctx.onToolRequest,
@@ -1483,21 +1485,24 @@ async function executeToolCallsBatch(
               ]).catch((err) => {
                   gaveUp = true;
                   console.error(`  ⚠️ Non-browser tool batch error: ${(err as Error).message}`);
-                  // Keep the results of steps that did finish; only the rest are errors.
-                  return nonBrowserCalls.map(
-                      (tc) =>
-                          done.get(tc.id) ?? {
-                              toolCallId: tc.id,
-                              fnName: tc.function.name,
-                              fnArgs: {} as Record<string, unknown>,
-                              result: JSON.stringify({ error: `${(err as Error).message}; this step did not finish` }),
-                              finalContent: JSON.stringify({
-                                  error: `${(err as Error).message}; this step did not finish`,
-                              }),
-                              isBrowser: false,
-                              isError: true,
-                          },
-                  );
+                  // Keep the results of steps that did finish; only the rest are errors. A step
+                  // still running when we gave up isn't cancelled: its change may yet land.
+                  return nonBrowserCalls.map((tc) => {
+                      const finished = done.get(tc.id);
+                      if (finished) return finished;
+                      const error = started.has(tc.id)
+                          ? `${(err as Error).message}; this step was still running and may yet finish. If it changes something, check whether it happened before running it again`
+                          : `${(err as Error).message}; this step was not started`;
+                      return {
+                          toolCallId: tc.id,
+                          fnName: tc.function.name,
+                          fnArgs: {} as Record<string, unknown>,
+                          result: JSON.stringify({ error }),
+                          finalContent: JSON.stringify({ error }),
+                          isBrowser: false,
+                          isError: true,
+                      };
+                  });
               })
             : Promise.resolve([] as ToolCallResult[]);
 

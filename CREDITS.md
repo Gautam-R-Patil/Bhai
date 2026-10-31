@@ -242,6 +242,14 @@ The native performance layer is built in Rust via napi-rs. It links the followin
 | [windows-sys](https://github.com/microsoft/windows-rs) (`windows-sys`) | MIT OR Apache-2.0 | Win32 bindings (Windows sandbox) |
 | [webrtc-vad](https://github.com/kpcyrd/webrtc-vad-rs) (`webrtc-vad`) | MIT OR Apache-2.0 | libfvad-backed voice activity detection (gated behind cargo feature `vad`, used by `pcm_vad.rs`) |
 
+## Design ideas we follow
+
+Not dependencies: rules Bhai's own code implements, credited to where they come from.
+
+| Project | Idea |
+|---------|------|
+| [MELRA](https://github.com/XAGI-Lab/melra) (XAGI Labs) | A change whose outcome is uncertain is checked, never blindly repeated. A tool that times out may still land its change, so Bhai tells the model to check before running it again, and never sends the same message twice while one is still in flight. |
+
 ---
 
 *All trademarks and registered trademarks are the property of their respective owners.
