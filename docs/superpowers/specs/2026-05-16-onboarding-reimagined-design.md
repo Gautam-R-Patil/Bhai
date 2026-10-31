@@ -254,7 +254,7 @@ All weights in `[0.7, 1.4]` so they nudge, not override. Default weight is `1.0`
 
 ### 8.4. Integration points
 
-- **`src/prompts/dynamic-assembler.ts`** — read `profile.persona` and inject `getPersonaIdentityLine()` into the dynamic-context block. Gated by `ATLAS_NO_PERSONA_BIAS=true`.
+- **`src/prompts/dynamic-assembler.ts`** — read `profile.persona` and inject `getPersonaIdentityLine()` into the dynamic-context block. Gated by `BHAI_NO_PERSONA_BIAS=true`.
 - **`src/tool-router.ts`** — after cosine scoring, before top-K selection, multiply each category's score by `getPersonaToolWeights(persona)[cat.id] ?? 1.0`. Same gate.
 - **`convex/schema.ts`** — extend `accounts.profile` validator with optional `persona`, `personaConfidence`, `personaSelectedAt`. Backfill is no-op.
 
@@ -315,7 +315,7 @@ const PATTERNS: Array<{ match: (apps: AppSnapshot) => boolean, signal: MagicMome
 #### IPC contract
 
 ```js
-atlas.detectMagicMoment() → Promise<MagicMomentSignal[]>
+bhai.detectMagicMoment() → Promise<MagicMomentSignal[]>
 ```
 
 Called once on Ready Hub mount. Result feeds the existing `magic-moment.js` component built in W1.
@@ -375,8 +375,8 @@ onboarding.graduatedAt                → set when all three fire OR user opts o
 
 Existing `src/proactive/dispatch.ts`. Posture rules:
 - Nudges go out only in `active` posture, never in DND, never during the night window.
-- Existing kill switches apply (`ATLAS_PROACTIVE_DISABLE`, `ATLAS_PROACTIVE_DISABLE_SOURCES=onboarding-graduation`).
-- New dedicated switch: `ATLAS_NO_ONBOARDING_NUDGES=true` → source registers as a no-op.
+- Existing kill switches apply (`BHAI_PROACTIVE_DISABLE`, `BHAI_PROACTIVE_DISABLE_SOURCES=onboarding-graduation`).
+- New dedicated switch: `BHAI_NO_ONBOARDING_NUDGES=true` → source registers as a no-op.
 
 #### Opt-out
 
@@ -410,12 +410,12 @@ All default to off (feature on) unless noted. Set `"true"` to disable.
 
 | Switch | Effect |
 |---|---|
-| `ATLAS_NO_AWAKENING` | Skip the awakening step on first install. Goes straight to terms. |
-| `ATLAS_NO_PERSONA_BIAS` | Disable identity-line injection AND tool-router overlay. Persona still stored, just not consumed. |
-| `ATLAS_NO_MAGIC_MOMENT` | Hide the magic-moment card on Ready Hub. |
-| `ATLAS_NO_MAGIC_MOMENT_RICH` | Use best-effort signals only; never call `detectMagicMoment()`. |
-| `ATLAS_NO_ONBOARDING_NUDGES` | Adaptive nudge source registers as a no-op. |
-| `ATLAS_NO_ONBOARDING_AUDIO` | Force-disable wizard audio regardless of `personalize.audio.enabled`. |
+| `BHAI_NO_AWAKENING` | Skip the awakening step on first install. Goes straight to terms. |
+| `BHAI_NO_PERSONA_BIAS` | Disable identity-line injection AND tool-router overlay. Persona still stored, just not consumed. |
+| `BHAI_NO_MAGIC_MOMENT` | Hide the magic-moment card on Ready Hub. |
+| `BHAI_NO_MAGIC_MOMENT_RICH` | Use best-effort signals only; never call `detectMagicMoment()`. |
+| `BHAI_NO_ONBOARDING_NUDGES` | Adaptive nudge source registers as a no-op. |
+| `BHAI_NO_ONBOARDING_AUDIO` | Force-disable wizard audio regardless of `personalize.audio.enabled`. |
 
 These follow the existing pattern documented in `CLAUDE.md` → "Env Kill-Switches".
 

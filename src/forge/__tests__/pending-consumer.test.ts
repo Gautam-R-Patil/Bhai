@@ -23,18 +23,18 @@ describe("pending-queue consumer", () => {
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-pc-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
-        process.env.ATLAS_FORGE_STUB_LLM = "true";
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
+        process.env.BHAI_FORGE_STUB_LLM = "true";
         await initForge({ embedFn: async () => vector(0) });
     });
 
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        delete process.env.ATLAS_FORGE_STUB_LLM;
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        delete process.env.BHAI_FORGE_STUB_LLM;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("consumes one queued candidate", async () => {

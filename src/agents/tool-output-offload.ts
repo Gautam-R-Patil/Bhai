@@ -27,7 +27,7 @@ import { CODE_TOOLS, protect } from "../security/pii-vault.js";
  * enough that we don't spam the disk for normal tool calls, but small
  * enough to matter: a 4KB preview is already plenty to see what happened.
  */
-const OFFLOAD_THRESHOLD_BYTES = 8 * 1024;
+export const OFFLOAD_THRESHOLD_BYTES = 8 * 1024;
 
 /**
  * Size of the preview emitted into LLM context when we offload. Keep
@@ -98,34 +98,30 @@ export interface OffloadResult {
  * any filesystem error falls through to returning the original output
  * untouched.
  */
-export function offloadIfLarge(toolName: string, toolCallId: string, turnId: string, result: string): OffloadResult {
+export function offloadIfLarge(
+    toolName: string,
+    toolCallId: string,
+    turnId: string,
+    result: string,
+    ownLimit = 0,
+): OffloadResult {
     const size = Buffer.byteLength(result, "utf-8");
-    if (size <= OFFLOAD_THRESHOLD_BYTES) {
+    // A tool whose own cap is above this line (a finished research report) stays
+    // inline while it fits that cap: a 2KB preview would hide most of it. Past the
+    // cap it is offloaded, so the model still gets the saved path to the rest.
+    if (size <= Math.max(OFFLOAD_THRESHOLD_BYTES, ownLimit)) {
         return { content: result, offloaded: false };
     }
 
-    // What goes to disk is what the model may read back: masked the same way
-    // (a typed secret, a dashboard showing an API key), never the raw values.
-    result = protect(result, { credentials: !CODE_TOOLS.has(toolName) });
     try {
-        ensureRoot();
-        const turnDir = path.join(OFFLOAD_ROOT, slug(turnId));
-        if (!existsSync(turnDir)) mkdirSync(turnDir, { recursive: true });
-        const name = `${slug(toolName)}-${slug(toolCallId || String(Date.now()))}.txt`;
-        const abs = path.join(turnDir, name);
-        writeFileSync(abs, result, "utf-8");
-
-        // Preview: prefer parse-aware compaction. If result is JSON, keep
-        // the top-level keys; otherwise take a head+tail slice.
-        const preview = buildPreview(result);
-
-        // Best-effort GC so the dir doesn't grow unbounded across sessions.
-        gcOldTurnDirs();
-
+        const abs = saveToolOutput(toolName, toolCallId, turnId, result);
+        const note = `[Output truncated — ${size} bytes total. Full content saved to ${abs}. Call \`read\` with file_path="${abs}" if you need more.]`;
+        // Preview: a head+tail slice of what was saved (masked). Preview plus note fit the tool's
+        // own cap (glob's is 2000), or the cut that follows drops the note and the path with it.
+        const room = ownLimit > 0 ? Math.min(PREVIEW_BYTES, ownLimit - note.length - 2) : PREVIEW_BYTES;
+        const preview = buildPreview(protect(result, { credentials: !CODE_TOOLS.has(toolName) }), room);
         return {
-            content:
-                `${preview}\n\n` +
-                `[Output truncated — ${size} bytes total. Full content saved to ${abs}. Call \`read\` with file_path="${abs}" if you need more.]`,
+            content: `${preview}\n\n${note}`,
             savedAt: abs,
             offloaded: true,
         };
@@ -137,13 +133,63 @@ export function offloadIfLarge(toolName: string, toolCallId: string, turnId: str
     }
 }
 
-function buildPreview(result: string): string {
+/**
+ * Save a tool's full output where the model can `read` it back; returns the path.
+ * What goes to disk is what the model may read back: masked the same way
+ * (a typed secret, a dashboard showing an API key), never the raw values. Throws on fs errors.
+ */
+export function saveToolOutput(toolName: string, toolCallId: string, turnId: string, result: string): string {
+    ensureRoot();
+    const turnDir = path.join(OFFLOAD_ROOT, slug(turnId));
+    if (!existsSync(turnDir)) mkdirSync(turnDir, { recursive: true });
+    const abs = path.join(turnDir, `${slug(toolName)}-${slug(toolCallId || String(Date.now()))}.txt`);
+    writeFileSync(abs, protect(readableForm(result), { credentials: !CODE_TOOLS.has(toolName) }), "utf-8");
+    // Best-effort GC so the dir doesn't grow unbounded across sessions.
+    gcOldTurnDirs();
+    return abs;
+}
+
+/**
+ * `cut` is what's left of `full` after truncation. When something was cut, save
+ * the whole output and say where, or the rest is gone for good (results under
+ * the offload line are cut, not offloaded).
+ */
+export function keepRestReadable(toolName: string, toolCallId: string, turnId: string, full: string, cut: string): string {
+    if (cut.length >= full.length) return cut;
+    try {
+        const abs = saveToolOutput(toolName, toolCallId, turnId, full);
+        return `${cut}\n[Full output saved to ${abs}. Call \`read\` with file_path="${abs}" if you need the rest.]`;
+    } catch {
+        return cut;
+    }
+}
+
+/**
+ * `read` pages a file by line, and a JSON result is one line with every newline
+ * escaped (a 47K page came back as its first 5K, no way further). Write a JSON
+ * object's string fields out with real newlines; anything else as it was.
+ */
+function readableForm(result: string): string {
+    let v: unknown;
+    try {
+        v = JSON.parse(result);
+    } catch {
+        return result;
+    }
+    if (!v || typeof v !== "object") return result;
+    if (Array.isArray(v)) return JSON.stringify(v, null, 2);
+    return Object.entries(v)
+        .map(([k, x]) => `## ${k}\n${typeof x === "string" ? x : JSON.stringify(x, null, 2)}`)
+        .join("\n\n");
+}
+
+function buildPreview(result: string, max = PREVIEW_BYTES): string {
     // Head+tail preview works for every shape — more reliable than trying
     // to parse (tool results from Bhai are usually JSON strings, but
     // shell_exec output and many others aren't).
-    if (result.length <= PREVIEW_BYTES) return result;
-    const headBytes = Math.floor(PREVIEW_BYTES * 0.6);
-    const tailBytes = PREVIEW_BYTES - headBytes - 40;
+    if (result.length <= max) return result;
+    const headBytes = Math.floor(max * 0.6);
+    const tailBytes = Math.max(0, max - headBytes - 40);
     const head = result.slice(0, headBytes);
     const tail = result.slice(result.length - tailBytes);
     return `${head}\n\n...[preview cut]...\n\n${tail}`;

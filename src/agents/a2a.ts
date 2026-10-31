@@ -24,7 +24,7 @@ export interface AgentCard {
     maxConcurrentTasks: number;
 }
 
-const ATLAS_VERSION = "0.2.0";
+const BHAI_VERSION = "0.2.0";
 const MAX_CONCURRENT_TASKS = 5;
 
 /** Returns Bhai's Agent Card — a JSON capability descriptor. */
@@ -33,7 +33,7 @@ export function getAgentCard(): AgentCard {
     return {
         name: "Bhai",
         description: "Autonomous personal AI agent with research, coding, browser automation, system control, and memory capabilities.",
-        version: ATLAS_VERSION,
+        version: BHAI_VERSION,
         capabilities: ["research", "coding", "browser", "system", "memory"],
         tools: getToolNames(),
         endpoint: `http://127.0.0.1:${port}/a2a`,
@@ -268,12 +268,12 @@ export async function handleAgentToolCall(
 
 /**
  * Constant-time bearer-token check. Returns true when the supplied
- * Authorization header matches the ATLAS_A2A_TOKEN env var. Returns
+ * Authorization header matches the BHAI_A2A_TOKEN env var. Returns
  * false when the token is missing on either side — i.e. without a
  * configured token, every authenticated route is denied.
  */
 function authorizeA2A(authHeader: string | null | undefined): boolean {
-    const expected = process.env.ATLAS_A2A_TOKEN;
+    const expected = process.env.BHAI_A2A_TOKEN;
     if (!expected || !authHeader) return false;
     const m = /^Bearer\s+(\S+)\s*$/.exec(authHeader);
     if (!m) return false;
@@ -290,7 +290,7 @@ const UNAUTHORIZED = {
     status: 401,
     body: JSON.stringify({
         error: "Unauthorized",
-        message: "A2A mutating routes require Authorization: Bearer <ATLAS_A2A_TOKEN>. Set ATLAS_A2A_TOKEN in env to enable A2A.",
+        message: "A2A mutating routes require Authorization: Bearer <BHAI_A2A_TOKEN>. Set BHAI_A2A_TOKEN in env to enable A2A.",
     }),
     contentType: "application/json",
 };
@@ -304,7 +304,7 @@ const UNAUTHORIZED = {
  *   GET  /a2a/tasks/:id           — Get task status (AUTH)
  *   POST /a2a/tasks/:id/cancel    — Cancel task (AUTH)
  *
- * Auth model: ATLAS_A2A_TOKEN env var must be set, and clients must send
+ * Auth model: BHAI_A2A_TOKEN env var must be set, and clients must send
  * `Authorization: Bearer <token>`. Without an env-set token, no mutating
  * route works — closes the drive-by-RCE primitive where any visited webpage
  * could POST tasks because the overlay HTTP server listens on 127.0.0.1.

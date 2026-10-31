@@ -21,7 +21,7 @@
 - **§0 — Conventions & spec corrections.** Read before Task 1.
 - **Phase A — Magic Moment (rich) (Tasks 1–5).** Cross-OS running-app helper, IPC handler, preload bridge, ranker, magic-moment.js consumer + tests.
 - **Phase B — Adaptive nudges (Tasks 6–10).** New IntentSource type, nudge-state store, the source module itself, registration in the source registry, tests.
-- **Phase C — Kill-switches + end-to-end gate (Tasks 11–13).** ATLAS_NO_ONBOARDING_NUDGES + ATLAS_NO_MAGIC_MOMENT_RICH wiring, acceptance checklist, full test + typecheck verification.
+- **Phase C — Kill-switches + end-to-end gate (Tasks 11–13).** BHAI_NO_ONBOARDING_NUDGES + BHAI_NO_MAGIC_MOMENT_RICH wiring, acceptance checklist, full test + typecheck verification.
 
 ---
 
@@ -55,12 +55,12 @@ These rules override anything in the task bodies if they conflict.
 3. **gitignore carve-outs**: every new test file needs an explicit `!<path>.test.{js,ts}` adjacent to the W1/W2 entries.
 
 4. **Kill-switches**:
-   - `ATLAS_NO_MAGIC_MOMENT=true` (W1) hides the card entirely
-   - `ATLAS_NO_MAGIC_MOMENT_RICH=true` (W3, new) keeps the W1 card but skips the rich detection (use static W1 signals only)
-   - `ATLAS_NO_ONBOARDING_NUDGES=true` (W3, new) — source registers as a no-op
-   - `ATLAS_PROACTIVE_DISABLE_SOURCES=onboarding_graduation` (existing) — covered by the existing kill-switch infra
+   - `BHAI_NO_MAGIC_MOMENT=true` (W1) hides the card entirely
+   - `BHAI_NO_MAGIC_MOMENT_RICH=true` (W3, new) keeps the W1 card but skips the rich detection (use static W1 signals only)
+   - `BHAI_NO_ONBOARDING_NUDGES=true` (W3, new) — source registers as a no-op
+   - `BHAI_PROACTIVE_DISABLE_SOURCES=onboarding_graduation` (existing) — covered by the existing kill-switch infra
 
-5. **Persona-aware Magic Moment**: rich detection's ranker may consult `profile.persona` (from `identity.extra.persona`, available post-W2) to prefer cluster-matching observations. Read once, narrow via `asPersona`, gate behind `ATLAS_NO_PERSONA_BIAS` too.
+5. **Persona-aware Magic Moment**: rich detection's ranker may consult `profile.persona` (from `identity.extra.persona`, available post-W2) to prefer cluster-matching observations. Read once, narrow via `asPersona`, gate behind `BHAI_NO_PERSONA_BIAS` too.
 
 6. **No `Co-Authored-By: Claude` attribution** in commits.
 
@@ -71,10 +71,10 @@ These rules override anything in the task bodies if they conflict.
 | `desktop/detection/running-apps.js` | create | Cross-OS running-app snapshot helper (osascript / tasklist / wmctrl) |
 | `desktop/detection/running-apps.test.js` | create | Parser tests (no real OS calls; feed canned output) |
 | `desktop/main.js` | modify | Add `ipcMain.handle("setup:detect-magic-moment", …)` |
-| `desktop/preload.js` | modify | Expose `atlas.detectMagicMoment()` |
+| `desktop/preload.js` | modify | Expose `bhai.detectMagicMoment()` |
 | `desktop/components/magic-moment-ranker.js` | create | Pure ranker mapping `AppSnapshot → MagicMomentSignal[]` |
 | `desktop/components/magic-moment-ranker.test.js` | create | Per-cluster rule tests + persona preference |
-| `desktop/components/magic-moment.js` | modify | Call `atlas.detectMagicMoment()` on mount; fall back to W1 static signals if rich fails or is disabled |
+| `desktop/components/magic-moment.js` | modify | Call `bhai.detectMagicMoment()` on mount; fall back to W1 static signals if rich fails or is disabled |
 | `desktop/tests/magic-moment.test.js` | modify | Add fallback-on-failure + rich-takeover tests |
 | `src/proactive/intent.ts` | modify | Add `"onboarding_graduation"` to `IntentSource` union + `VALID_SOURCES` |
 | `src/proactive/sources/onboarding-graduation.ts` | create | The new `IntentSourceModule` |
@@ -337,7 +337,7 @@ describe("getRunningApps — unknown platform", () => {
 - [ ] **Step 3: Run.**
 
 ```bash
-cd /Users/user/Desktop/ATLAS/.claude/worktrees/onboarding-w3
+cd /Users/user/Desktop/BHAI/.claude/worktrees/onboarding-w3
 npm test --prefix desktop -- running-apps 2>&1 | tail -10
 ```
 
@@ -370,9 +370,9 @@ Find a logical home for the new handler — near other `setup:` handlers (search
 ```javascript
     // W3: Magic Moment rich detection. Returns running-app snapshot.
     // Called once per Ready Hub mount. Best-effort: empty array on
-    // failure or when ATLAS_NO_MAGIC_MOMENT_RICH=true.
+    // failure or when BHAI_NO_MAGIC_MOMENT_RICH=true.
     ipcMain.handle("setup:detect-magic-moment", async () => {
-        if (process.env.ATLAS_NO_MAGIC_MOMENT_RICH === "true") {
+        if (process.env.BHAI_NO_MAGIC_MOMENT_RICH === "true") {
             return { names: [], platform: process.platform, disabled: true };
         }
         try {
@@ -406,8 +406,8 @@ git add desktop/main.js desktop/preload.js
 git commit -m "feat(setup): IPC bridge for Magic Moment rich detection
 
 setup:detect-magic-moment handler in main.js calls
-desktop/detection/running-apps.js. atlas.detectMagicMoment() exposed
-to the renderer via preload. Kill-switch ATLAS_NO_MAGIC_MOMENT_RICH
+desktop/detection/running-apps.js. bhai.detectMagicMoment() exposed
+to the renderer via preload. Kill-switch BHAI_NO_MAGIC_MOMENT_RICH
 returns { names: [], disabled: true } so the renderer falls back to
 W1 static signals."
 ```
@@ -777,7 +777,7 @@ describe("rankSignals — caps at 4", () => {
 Open the file. Find the existing W1 `pickObservations` function (it has a 50-line static table). Keep it as the fallback. Add a new entry-point that prefers rich detection. Replace the `mount` function (which currently calls `pickObservations(state)`) so it:
 
 1. Synchronously renders the W1 fallback so there's no flicker.
-2. Asynchronously calls `atlas.detectMagicMoment()`.
+2. Asynchronously calls `bhai.detectMagicMoment()`.
 3. If the result has a non-empty `names[]`, re-runs the ranker via `MagicMomentRanker.rankSignals(...)` and swaps the observations in place.
 
 Find the existing `mount(container, state)` function. Replace it with:
@@ -821,10 +821,10 @@ async function mount(container, state) {
     scheduleRotation();
 
     // 2. Async rich detection (best-effort).
-    if (typeof window !== "undefined" && window.atlas && typeof window.atlas.detectMagicMoment === "function"
+    if (typeof window !== "undefined" && window.bhai && typeof window.bhai.detectMagicMoment === "function"
         && window.MagicMomentRanker) {
         try {
-            const snapshot = await window.atlas.detectMagicMoment();
+            const snapshot = await window.bhai.detectMagicMoment();
             if (snapshot && Array.isArray(snapshot.names) && snapshot.names.length > 0) {
                 const rich = window.MagicMomentRanker.rankSignals({
                     snapshot: snapshot,
@@ -862,11 +862,11 @@ Also load `magic-moment-ranker.js` BEFORE `magic-moment.js` in `desktop/ready-hu
 - [ ] **Step 4: Run the ranker test + existing magic-moment test.**
 
 ```bash
-cd /Users/user/Desktop/ATLAS/.claude/worktrees/onboarding-w3
+cd /Users/user/Desktop/BHAI/.claude/worktrees/onboarding-w3
 npm test --prefix desktop -- magic-moment 2>&1 | tail -10
 ```
 
-Expected: ranker tests (15+) pass + existing magic-moment.test.js still passes (the W1 tests don't care about rich detection because window.atlas is unset in jsdom).
+Expected: ranker tests (15+) pass + existing magic-moment.test.js still passes (the W1 tests don't care about rich detection because window.bhai is unset in jsdom).
 
 - [ ] **Step 5: Commit.**
 
@@ -876,13 +876,13 @@ git commit -m "feat(wizard): magic-moment.js takes rich AppSnapshot when availab
 
 magic-moment.js mount() now: (1) synchronously renders W1 static
 fallback so the card is never empty, (2) asynchronously calls
-atlas.detectMagicMoment(), (3) on success, re-ranks via
+bhai.detectMagicMoment(), (3) on success, re-ranks via
 MagicMomentRanker.rankSignals() and swaps in place. ready-hub.html
 loads magic-moment-ranker.js before magic-moment.js so the global
 is available when mount() needs it.
 
 15+ tests cover the pure ranker; the existing magic-moment tests
-continue to pass (rich detection is gated on window.atlas which is
+continue to pass (rich detection is gated on window.bhai which is
 unset in jsdom, so they exercise the W1 fallback only)."
 ```
 
@@ -931,7 +931,7 @@ const VALID_SOURCES: IntentSource[] = [
 - [ ] **Step 2: Typecheck.**
 
 ```bash
-cd /Users/user/Desktop/ATLAS/.claude/worktrees/onboarding-w3
+cd /Users/user/Desktop/BHAI/.claude/worktrees/onboarding-w3
 npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E "intent\.ts" | head
 ```
 
@@ -1175,16 +1175,16 @@ async function getOnboardingEmbedding(): Promise<number[]> {
 
 function userDataDirGuess(): string | undefined {
     // The bot runs inside the packaged Electron app and is spawned with
-    // ATLAS_USER_DATA_DIR set. Falls back to undefined in pure-Node tests.
-    return process.env.ATLAS_USER_DATA_DIR;
+    // BHAI_USER_DATA_DIR set. Falls back to undefined in pure-Node tests.
+    return process.env.BHAI_USER_DATA_DIR;
 }
 
 export const onboardingGraduationSource: IntentSourceModule = {
     name: SOURCE_NAME,
     async collectIntents(ctx: SourceCtx): Promise<ProactiveIntent[]> {
         // W3 dedicated kill-switch (in addition to the existing
-        // ATLAS_PROACTIVE_DISABLE_SOURCES=onboarding_graduation path).
-        if (process.env.ATLAS_NO_ONBOARDING_NUDGES === "true") return [];
+        // BHAI_PROACTIVE_DISABLE_SOURCES=onboarding_graduation path).
+        if (process.env.BHAI_NO_ONBOARDING_NUDGES === "true") return [];
 
         const state = readState();
         const firstLaunchAt = resolveFirstLaunchAt(state, userDataDirGuess());
@@ -1233,7 +1233,7 @@ export const _internals = {
 - [ ] **Step 2: Typecheck.**
 
 ```bash
-cd /Users/user/Desktop/ATLAS/.claude/worktrees/onboarding-w3
+cd /Users/user/Desktop/BHAI/.claude/worktrees/onboarding-w3
 npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E "onboarding-graduation\.ts" | head
 ```
 
@@ -1249,7 +1249,7 @@ Three day-gated nudges: personalize-shortcuts (Day-2),
 browser-memory (Day-3), voice-speed (Day-5). State persists to
 identity.extra.onboardingNudges so the same nudge never fires twice.
 firstLaunchAt resolves from the wizard-seed marker's mtime.
-ATLAS_NO_ONBOARDING_NUDGES kill-switch short-circuits the source.
+BHAI_NO_ONBOARDING_NUDGES kill-switch short-circuits the source.
 Once all three fire, state.graduatedAt is set; subsequent calls
 return [] forever. decideNudge is exported pure for testability."
 ```
@@ -1425,7 +1425,7 @@ describe("buildIntent", () => {
 - [ ] **Step 3: Run.**
 
 ```bash
-cd /Users/user/Desktop/ATLAS/.claude/worktrees/onboarding-w3
+cd /Users/user/Desktop/BHAI/.claude/worktrees/onboarding-w3
 npx vitest run src/proactive/sources/onboarding-graduation.test.ts 2>&1 | tail -10
 ```
 
@@ -1472,7 +1472,7 @@ registry.register(onboardingGraduationSource);
 - [ ] **Step 3: Typecheck.**
 
 ```bash
-cd /Users/user/Desktop/ATLAS/.claude/worktrees/onboarding-w3
+cd /Users/user/Desktop/BHAI/.claude/worktrees/onboarding-w3
 npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E "(index|boot)\.ts" | head
 ```
 
@@ -1485,8 +1485,8 @@ git add src/index.ts   # adjust path if registration lives elsewhere
 git commit -m "feat(proactive): register onboarding-graduation source at boot
 
 The new IntentSourceModule is registered alongside the other
-proactive sources so collectAll() picks it up. ATLAS_NO_ONBOARDING_NUDGES
-or ATLAS_PROACTIVE_DISABLE_SOURCES=onboarding_graduation kill-switches
+proactive sources so collectAll() picks it up. BHAI_NO_ONBOARDING_NUDGES
+or BHAI_PROACTIVE_DISABLE_SOURCES=onboarding_graduation kill-switches
 turn it into a no-op without removing the registration."
 ```
 
@@ -1494,14 +1494,14 @@ turn it into a no-op without removing the registration."
 
 ## Phase C — Kill-switches + end-to-end gate
 
-### Task 10: Wire ATLAS_NO_MAGIC_MOMENT_RICH at the IPC handler (already done in Task 3)
+### Task 10: Wire BHAI_NO_MAGIC_MOMENT_RICH at the IPC handler (already done in Task 3)
 
 **Files:**
 - Verify only.
 
 - [ ] **Step 1: Confirm the kill-switch path.**
 
-Run: `grep -n 'ATLAS_NO_MAGIC_MOMENT_RICH\|ATLAS_NO_ONBOARDING_NUDGES' desktop/main.js src/proactive/sources/onboarding-graduation.ts`
+Run: `grep -n 'BHAI_NO_MAGIC_MOMENT_RICH\|BHAI_NO_ONBOARDING_NUDGES' desktop/main.js src/proactive/sources/onboarding-graduation.ts`
 
 Expected:
 - `desktop/main.js`: one match, short-circuits `setup:detect-magic-moment` to `{ names: [], disabled: true }` (from Task 3).
@@ -1514,10 +1514,10 @@ If both checks present, no action needed.
 ```bash
 git commit --allow-empty -m "chore(wizard): W3 kill-switches verified
 
-- ATLAS_NO_MAGIC_MOMENT_RICH: gated in setup:detect-magic-moment
+- BHAI_NO_MAGIC_MOMENT_RICH: gated in setup:detect-magic-moment
   handler (Task 3). Returns { names: [], disabled: true } so the
   renderer falls back to W1 static signals.
-- ATLAS_NO_ONBOARDING_NUDGES: gated in onboarding-graduation source's
+- BHAI_NO_ONBOARDING_NUDGES: gated in onboarding-graduation source's
   collectIntents() (Task 7). Returns [] without touching state."
 ```
 
@@ -1550,8 +1550,8 @@ Append to `desktop/onboarding-demo/ACCEPTANCE.md`:
 - [ ] Persona-aware filler: if persona=developer, the rotation should include
   "I'll prioritize codebase context."
 - [ ] Late-night session adds a "minimal mode" signal.
-- [ ] `ATLAS_NO_MAGIC_MOMENT_RICH=true` → card stays on W1 static signals.
-- [ ] `ATLAS_NO_MAGIC_MOMENT=true` → card hidden entirely.
+- [ ] `BHAI_NO_MAGIC_MOMENT_RICH=true` → card stays on W1 static signals.
+- [ ] `BHAI_NO_MAGIC_MOMENT=true` → card hidden entirely.
 
 ## Adaptive Nudges
 - [ ] Open the bot 2 days after first install. The personalize-shortcuts
@@ -1559,7 +1559,7 @@ Append to `desktop/onboarding-demo/ACCEPTANCE.md`:
 - [ ] Day 3: browser-memory nudge fires.
 - [ ] Day 5: voice-speed nudge fires.
 - [ ] After all three fire, no further onboarding nudges (graduatedAt set).
-- [ ] `ATLAS_NO_ONBOARDING_NUDGES=true` → no nudges fire ever.
+- [ ] `BHAI_NO_ONBOARDING_NUDGES=true` → no nudges fire ever.
 - [ ] Tapping "Don't suggest more" on any nudge → graduatedAt set immediately;
   no further nudges.
 
@@ -1585,7 +1585,7 @@ git commit -m "docs(wizard): W3 acceptance checklist appended"
 - [ ] **Step 1: Desktop tests.**
 
 ```bash
-cd /Users/user/Desktop/ATLAS/.claude/worktrees/onboarding-w3
+cd /Users/user/Desktop/BHAI/.claude/worktrees/onboarding-w3
 npm test --prefix desktop 2>&1 | tail -6
 ```
 

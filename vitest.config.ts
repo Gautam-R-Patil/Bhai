@@ -10,6 +10,7 @@ export default defineConfig({
             "src/*.test.ts",
             "src/video-studio/**/*.test.ts",
             "src/tools/**/*.test.ts",
+            "src/media/**/*.test.ts",
             "src/setup/**/*.test.ts",
             "src/proactive/**/*.test.ts",
             "src/memory/**/*.test.ts",
@@ -26,16 +27,19 @@ export default defineConfig({
             "src/voice/**/*.test.ts",
             "src/forge/**/*.test.ts",
             "src/store/**/*.test.ts",
+            "src/hooks/**/*.test.ts",
+            "src/mcp/**/*.test.ts",
             "src/screen/**/*.test.ts",
             "src/research/**/*.test.ts",
             "src/social/**/*.test.ts",
             "src/diagnostics/**/*.test.ts",
             "src/overlay/**/*.test.ts",
+            "src/widget/**/*.test.ts",
             "src/__tests__/**/*.test.ts",
             "convex/**/*.test.ts",
         ],
         environment: "node",
-        // An empty home per test file: tests must never touch the owner's ~/.atlas.
+        // An empty home per test file: tests must never touch the owner's ~/.bhai.
         setupFiles: ["./vitest.setup.ts"],
         testTimeout: 30_000,
         // Closing Chromium or an HTTP server can take >10s on a Windows runner —

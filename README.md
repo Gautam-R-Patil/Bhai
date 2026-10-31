@@ -33,6 +33,8 @@ Security and privacy are foundational rather than bolted on. Every LLM call is p
 - **Site Skills** — Per-site task recipes (`skill.json` + `skill.cjs`, run by `src/skills/site/`) that Bhai can mint from a successful run, with drift detection, consent gates and spend caps.
 - **E2E Encrypted LLM Proxy** — ECDH P-256 + AES-256-GCM on top of HTTPS; 24h session tokens; atomic credit deduction; system prompts assembled server-side.
 - **Proactive Behaviors** — Heartbeat engine with per-channel postures (calm / active / ambient), nightly dream replay during detected sleep windows, quiet-hours guard, urgency bypass rules, shadow mode for dry runs. 110+ files spanning observer pipeline, composer fast-path, intent sources (calendar, news, stale email, weather, tasks, onboarding graduation, source gates), telemetry, and the proactive inbox.
+- **Import Memory from Other AIs** — Bring over what ChatGPT, Claude, Gemini, Pi and others know about you: paste their answer to Bhai's export prompt, or pick a data export (ChatGPT/Claude `.zip`, Pi history, `.txt`/`.md`/`.json`). A tool-less model call pulls single facts out as data (instruction-like lines, secrets, ID numbers and links are dropped); the owner reviews, imports, and can undo the whole import in one click (`src/memory/memory-import.ts`, `import_memory` tool).
+- **Image Generation & Editing** — `generate_image` creates and edits images (remove or change things in a sent photo, variations, transparent logos, wallpapers, undo) through Convex `/api/image`, which proxies an Azure `gpt-image` deployment with the key kept server-side; 1/2/4 credits per image by quality, refunded on failure. Results show on every surface, and the owner's image history survives restarts and follows them across channels.
 - **Memory Studio** — Interactive graph viewer (opened from desktop Settings) with edit/pin/forget controls and AI-generated insights over the local memory database (`src/memory/studio-graph.ts`, `studio-insights.ts`).
 - **Video Studio** — Project-scoped video pipeline (49 files) with AI edit planning, scene detection, beat sync, FFmpeg render stage, and reproducible hash-addressed inputs.
 - **Meta-Harness Self-Optimizer** — 30+ tunable dimensions (weights, thresholds, k-values, phase ratios) tuned via NSGA-II Pareto search, GP surrogate modeling, and TextGrad-style prompt refinement.
@@ -116,9 +118,9 @@ src/                                  # ~910 TypeScript files (incl. tests)
 │   ├── metacognition.ts multi-critic.ts code-critic.ts
 │   ├── textgrad-refiner.ts self-editor.ts self-heal.ts
 │   ├── agent-worktree.ts             # Per-coder git worktree isolation
-│   ├── code-action-agent.ts computer-use-agent.ts
+│   ├── code-action-agent.ts
 │   ├── circuit-breaker.ts human-interrupt.ts tool-output-offload.ts a2a.ts
-│   └── error-recovery.ts handoff.ts blackboard.ts decomposition-library.ts
+│   └── error-recovery.ts handoff.ts decomposition-library.ts
 │
 ├── memory/                           # 89 files — organic memory system
 │   ├── sqlite.ts                     # Primary store (remember / recall / core)
@@ -168,7 +170,6 @@ src/                                  # ~910 TypeScript files (incl. tests)
 ├── marketing/                        # 29 files — 9-platform marketing brain
 ├── proactive/                        # 94 files — heartbeat, dreaming, composer, dispatch, inbox, monitors, sources
 ├── planning/                         # 4 files — MCTS, hierarchical planner, logic verifier
-├── execution/                        # Speculative execution patterns
 ├── social/                           # emotion-detector.ts (lexicon + punctuation heuristic)
 ├── models/                           # 5 files — Local ASR/TTS/OCR/vision + FunctionGemma
 ├── voice/                            # 30 files (incl. live/) — TTS, transcription, live voice
@@ -206,7 +207,7 @@ native/src/                           # 80 Rust modules (napi-rs + SIMD)
 ├── proactive_calendar.rs proactive_news.rs proactive_stale_email.rs
 ├── proactive_tasks.rs proactive_weather.rs proactive_source_gate.rs
 ├── browser_agent.rs browser_guard.rs chrome_bridge.rs
-├── ax_walker.rs                      # Cross-OS AX tree walker (opt-in via ATLAS_NATIVE_AX)
+├── ax_walker.rs                      # Cross-OS AX tree walker (opt-in via BHAI_NATIVE_AX)
 ├── pcm_vad.rs                        # libfvad-backed barge-in detection (opt-in, cargo feature `vad`)
 ├── secrets_sanitizer.rs              # Multi-pattern outbound secrets scrubber (default-ON)
 ├── harness_optimizer.rs              # NSGA-II + GP surrogate
@@ -244,7 +245,7 @@ scripts/                              # Swift helpers (OCR, GPS, AX dump), Conve
 
 ### LLM Client & Transport
 
-The `LLMClient` is created once at boot by `createLLMClient(config)` and dependency-injected into every subsystem (agent, swarm, research, memory writes, marketing, etc.). `.chat()` builds messages, adds dynamic context (clock, widget hints), and POSTs to `${convexSiteUrl}/api/llm/chat` via `encryptedFetch()`, which runs ECDH P-256 key exchange on first use and wraps every subsequent request body in AES-256-GCM. The server prepends its own system prompt from the `system_prompts` table before forwarding to the Claude API (`convex/claude.ts` translates the OpenAI-format request; unhinged mode routes to Grok in `convex/grok.ts`). Client-side layers add a semantic response cache (cosine ≥ 0.97 (`ATLAS_LLM_CACHE_THRESHOLD`), 10 min TTL, 200-entry LRU; bypassed for tool-call and thinking-mode requests) and adaptive language matching across Devanagari, CJK, Cyrillic, Arabic, Hangul, Thai, Latin scripts, and Romanized Hindi.
+The `LLMClient` is created once at boot by `createLLMClient(config)` and dependency-injected into every subsystem (agent, swarm, research, memory writes, marketing, etc.). `.chat()` builds messages, adds dynamic context (clock, widget hints), and POSTs to `${convexSiteUrl}/api/llm/chat` via `encryptedFetch()`, which runs ECDH P-256 key exchange on first use and wraps every subsequent request body in AES-256-GCM. The server prepends its own system prompt from the `system_prompts` table before forwarding to the Claude API (`convex/claude.ts` translates the OpenAI-format request; unhinged mode routes to Grok in `convex/grok.ts`). Client-side layers add a semantic response cache (cosine ≥ 0.97 (`BHAI_LLM_CACHE_THRESHOLD`), 10 min TTL, 200-entry LRU; bypassed for tool-call and thinking-mode requests) and adaptive language matching across Devanagari, CJK, Cyrillic, Arabic, Hangul, Thai, Latin scripts, and Romanized Hindi.
 
 ### Model Router
 
@@ -256,7 +257,7 @@ A thin TypeScript wrapper (`src/model-router.ts`) around a native Rust binary (`
 | Pro | 1 credit | Claude Sonnet | Browser automation, tool calling, coding, planning |
 | Heavy | 2 credits | Claude Opus | Complex reasoning; gated to explicit asks, `complex` hints, or 3+ errors |
 
-On the first iteration the tool router's classifier also returns a tier (chat / simple / standard / complex): chat runs on Haiku with thinking off, complex gets at least Sonnet, and the planner runs only for multi-step or complex work. Coding intent forces a Pro-tier model via `maybeEscalateForCoding`. Errors accumulate → cascade escalation steps up the ladder (Haiku → Sonnet → Opus). The router is context-window-aware, driving token-aware pruning and failover; `ATLAS_NO_COST_ROUTING` disables the Opus-cap net. A dedicated `tool_synthesis` task type routes Skill Forge synthesis to Sonnet (or Opus in dream-replay).
+On the first iteration the tool router's classifier also returns a tier (chat / simple / standard / complex): chat runs on Haiku with thinking off, complex gets at least Sonnet, and the planner runs only for multi-step or complex work. Coding intent forces a Pro-tier model via `maybeEscalateForCoding`. Errors accumulate → cascade escalation steps up the ladder (Haiku → Sonnet → Opus). The router is context-window-aware, driving token-aware pruning and failover; `BHAI_NO_COST_ROUTING` disables the Opus-cap net. A dedicated `tool_synthesis` task type routes Skill Forge synthesis to Sonnet (or Opus in dream-replay).
 
 ### Memory System
 
@@ -290,11 +291,11 @@ All local SQLite (`data/memory.db`) — no memory ever leaves the device. Twelve
 
 Inside swarm runs, explicit external-action tools and shell launchers are held until the owner's fresh yes (`swarm_task confirmed: true`); payments and orders never run in a swarm.
 
-Additional optimization and reliability layers: evaluator scoring, replanner, mixture-of-agents, speculative racing, metacognition, multi-critic review, code-critic (compile/test/lint/SAST with Semgrep), TextGrad refinement, self-editor, self-heal, per-coder git worktrees, shared blackboard.
+Additional optimization and reliability layers: evaluator scoring, replanner, mixture-of-agents, speculative racing, metacognition, multi-critic review, code-critic (compile/test/lint/SAST with Semgrep), TextGrad refinement, self-editor, self-heal, per-coder git worktrees.
 
 ### Tool Router
 
-Semantic selection using MiniLM embeddings (384-dim, `@xenova/transformers`). On boot each tool category description is embedded and cached. Per message: user query is embedded, cosine similarity selects the top-K categories, tool schemas for those categories are loaded into the LLM call. A `request_tools` meta-tool lets the agent request additional categories mid-task. Optional FunctionGemma fallback (270M model via Ollama) provides zero-cost routing at ~85% accuracy. 20+ categories cover core, memory, browser, file_system, shell, system_control, media, integrations, research, coding, marketing, and more.
+Semantic selection using MiniLM embeddings (384-dim, `@xenova/transformers`). On boot each tool category description is embedded and cached. Per message: user query is embedded, cosine similarity selects the top-K categories, tool schemas for those categories are loaded into the LLM call. A `request_tools` meta-tool lets the agent request additional categories mid-task. 20+ categories cover core, memory, browser, file_system, shell, system_control, media, integrations, research, coding, marketing, and more.
 
 ### Deep Research
 
@@ -314,13 +315,13 @@ Defaults: WhatsApp/Discord/Slack/Matrix → calm; Telegram → active; Overlay/E
 
 ### Vision Navigation
 
-Autonomous GUI control without a local ML stack. There is one setup for everyone (`standard`); the old Lite/Standard/Full tier picker and the UI-TARS / OmniParser installs are retired (a stored `full` reads as `standard`; `ATLAS_VISION_PROFILE=lite` only also skips OmniParser).
+Autonomous GUI control without a local ML stack. There is one setup for everyone (`standard`); the old Lite/Standard/Full tier picker and the UI-TARS / OmniParser installs are retired (a stored `full` reads as `standard`; `BHAI_VISION_PROFILE=lite` only also skips OmniParser).
 
 The Tiered Perception Cascade (`perception-router.ts`) walks `click-memory recall → AX exact → AX fuzzy → cloud grounding` and stops at the first tier whose confidence clears the gate. The **cloud-grounding tier** is one Haiku call (Sonnet on a verified-miss re-ground; low thinking, grounding-only prompt, 30s timeout) on a screenshot downscaled to ≤1568px. An AX cold-window retry re-dumps the tree once after both AX tiers miss.
 
 `os_smart_click` is the primary GUI tool: it captures a fresh window-scoped screenshot (`screencapture -R`), activates the target app, then runs the cascade. Vision-tier clicks are verified with a before/after capture and `classifyOutcome`; a `no_op`/`wrong_target` records a click-miss, returns `click_unverified`, and triggers one self-correcting re-ground. Successful clicks feed `click-memory.ts` (`data/click-memory.db`) and `drift-calibration.ts`. Screen-driving tools run sequentially, and screenshots become image parts with only the newest few kept in history.
 
-Kill-switches: `ATLAS_NO_CLICK_MEMORY`, `ATLAS_NO_DRIFT_CALIBRATION`, `ATLAS_NO_CLOUD_GROUNDING`, `ATLAS_NO_SMARTCLICK_VERIFY` / `ATLAS_NO_SMARTCLICK_SELFCORRECT`, `ATLAS_NO_AX_RETRY`, `ATLAS_NO_WINDOW_SCOPED_CAPTURE`, `ATLAS_NO_AGENT_CURSOR`, `ATLAS_NATIVE_AX` (opt-in Rust walker).
+Kill-switches: `BHAI_NO_CLICK_MEMORY`, `BHAI_NO_DRIFT_CALIBRATION`, `BHAI_NO_CLOUD_GROUNDING`, `BHAI_NO_SMARTCLICK_VERIFY` / `BHAI_NO_SMARTCLICK_SELFCORRECT`, `BHAI_NO_AX_RETRY`, `BHAI_NO_WINDOW_SCOPED_CAPTURE`, `BHAI_NO_AGENT_CURSOR`, `BHAI_NATIVE_AX` (opt-in Rust walker).
 
 ### Video Studio
 
@@ -349,7 +350,7 @@ npm install
 
 # Copy and edit environment template
 cp .env.example .env
-# Fill in TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, ATLAS_OTPLESS_USER_ID
+# Fill in TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, BHAI_OTPLESS_USER_ID
 
 # Build native Rust + Swift helpers + TypeScript
 npm run build:all
@@ -375,13 +376,13 @@ npm run build:win          # Build Windows NSIS installer
 
 ### Configuration
 
-LLM provider keys live only in Convex env, and the Convex URLs are bundled with the app — end users do not configure them. Only the channel credentials below need to be filled in (the desktop wizard can set most of them up for you).
+LLM provider keys live only in Convex env, and the Convex URLs are bundled with the app — end users do not configure them. Only the channel credentials below need to be filled in (the desktop wizard can set most of them up for you). Bhai was called ATLAS: the old `ATLAS_*` variable names still work, and `~/.atlas` is copied to `~/.bhai` on first start.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot API token from `@BotFather` |
 | `ALLOWED_USER_IDS` | Yes | Comma-separated Telegram user IDs |
-| `ATLAS_OTPLESS_USER_ID` | Yes | OTPless identity for Convex account |
+| `BHAI_OTPLESS_USER_ID` | Yes | OTPless identity for Convex account |
 | `PRIMARY_CHANNEL` | No | `telegram` (default), `whatsapp`, `discord`, `slack`, `overlay`, `email`, `matrix` |
 | `EMAIL_USER` / `EMAIL_PASSWORD` / `EMAIL_WHITELIST` | No | IMAP/SMTP credentials + allowed senders |
 | `WHATSAPP_ALLOWED_JIDS` | No | Comma-separated WhatsApp JIDs |
@@ -391,24 +392,24 @@ LLM provider keys live only in Convex env, and the Convex URLs are bundled with 
 | `WIDGET_TOKEN` | No | Authenticates the embeddable web widget |
 | `GITHUB_TOKEN` | No | GitHub API integration |
 | `HF_TOKEN` | No | HuggingFace token (gated embedding models) |
-| `ATLAS_EMBEDDING_MODEL` | No | `minilm` (default) or `nomic` |
+| `BHAI_EMBEDDING_MODEL` | No | `minilm` (default) or `nomic` |
 | `LIVE_VOICE_NAME` / `LIVE_VOICE_BACKEND` | No | Voice preferences (Gemini/OpenAI/hybrid) |
-| `ATLAS_VISION_PROFILE` | No | `standard` (default) or `lite` |
-| `ATLAS_NO_CLICK_MEMORY` | No | Disable persistent click-memory recall/record |
-| `ATLAS_NO_DRIFT_CALIBRATION` | No | Disable per-monitor drift correction |
-| `ATLAS_NO_CLOUD_GROUNDING` | No | Disable the cloud-grounding cascade tier |
-| `ATLAS_NO_SMARTCLICK_VERIFY` | No | Trust vision-tier clicks without before/after verification |
-| `ATLAS_NATIVE_AX` | No | Opt-in Rust accessibility-tree walker (off by default) |
-| `ATLAS_NATIVE_VAD` / `ATLAS_VAD_MODE` | No | Opt-in libfvad barge-in (hybrid voice only); aggressiveness 0–3 |
-| `ATLAS_NO_COST_ROUTING` | No | Disable the cost-aware Opus-cap routing net |
-| `ATLAS_NO_AGENT_CURSOR` | No | No ghost cursor / control glow during computer use |
-| `ATLAS_WORKSPACE` | No | Where user-facing artifacts land (default `~/Desktop/Bhai Files`) |
-| `ATLAS_NO_MEMORY_GATE` / `ATLAS_MEMORY_GATE_SHADOW` | No | Disable / shadow-only the memory write value-gate |
-| `ATLAS_NO_THREAT_SCAN` / `ATLAS_NO_OSV_CHECK` | No | Disable threat-pattern scanning / OSV malware MCP pre-install check |
-| `ATLAS_NO_FORGE` / `ATLAS_NO_FORGE_VERIFIER` | No | Disable Skill Forge entirely / its closed-loop verifier |
-| `ATLAS_ENV` | No | `prod` to flip Convex client to production deployment |
+| `BHAI_VISION_PROFILE` | No | `standard` (default) or `lite` |
+| `BHAI_NO_CLICK_MEMORY` | No | Disable persistent click-memory recall/record |
+| `BHAI_NO_DRIFT_CALIBRATION` | No | Disable per-monitor drift correction |
+| `BHAI_NO_CLOUD_GROUNDING` | No | Disable the cloud-grounding cascade tier |
+| `BHAI_NO_SMARTCLICK_VERIFY` | No | Trust vision-tier clicks without before/after verification |
+| `BHAI_NATIVE_AX` | No | Opt-in Rust accessibility-tree walker (off by default) |
+| `BHAI_NATIVE_VAD` / `BHAI_VAD_MODE` | No | Opt-in libfvad barge-in (hybrid voice only); aggressiveness 0–3 |
+| `BHAI_NO_COST_ROUTING` | No | Disable the cost-aware Opus-cap routing net |
+| `BHAI_NO_AGENT_CURSOR` | No | No ghost cursor / control glow during computer use |
+| `BHAI_WORKSPACE` | No | Where user-facing artifacts land (default `~/Desktop/Bhai Files`) |
+| `BHAI_NO_MEMORY_GATE` / `BHAI_MEMORY_GATE_SHADOW` | No | Disable / shadow-only the memory write value-gate |
+| `BHAI_NO_THREAT_SCAN` / `BHAI_NO_OSV_CHECK` | No | Disable threat-pattern scanning / OSV malware MCP pre-install check |
+| `BHAI_NO_FORGE` / `BHAI_NO_FORGE_VERIFIER` | No | Disable Skill Forge entirely / its closed-loop verifier |
+| `BHAI_ENV` | No | `prod` to flip Convex client to production deployment |
 | `MEMORY_DEBUG` | No | Verbose memory subsystem logging |
-| `ATLAS_PROACTIVE_DISABLE` | No | Emergency global mute for proactive sends |
+| `BHAI_PROACTIVE_DISABLE` | No | Emergency global mute for proactive sends |
 | Marketing platform keys | No | `IG_*`, `LI_*`, `X_*`, `FB_*`, `TIKTOK_*`, `REDDIT_*`, `PH_*` — per-brand suffixed |
 
 ---
@@ -464,20 +465,20 @@ data/
 | Runtime | Node.js >= 20, TypeScript 5.7 (ES2022, strict, NodeNext) |
 | Native acceleration | Rust (napi-rs), SIMD via `wide` + `simsimd`, `rayon` parallelism, `aes-gcm` |
 | Database | SQLite (`better-sqlite3`) — local only, per-user |
-| Backend | Convex 1.34 (serverless functions, real-time sync, HTTP actions) |
+| Backend | Convex 1.48 (serverless functions, real-time sync, HTTP actions) |
 | LLM | Claude API via Convex (Haiku / Sonnet / Opus); Grok for the unhinged persona |
 | Embeddings | MiniLM 384-dim default, Nomic 768→256-dim optional (`@xenova/transformers`) |
-| Browser automation | Playwright 1.51 + Chrome Extension dual backend |
+| Browser automation | Playwright 1.58 (`playwright-core`) + Chrome Extension dual backend |
 | Vision-nav | Accessibility tree + click memory + cloud grounding (Haiku, then Sonnet); no local models |
 | Desktop | Electron 42 with `electron-builder`, `bytenode` protected modules |
-| Telegram | `grammy` 1.35 |
+| Telegram | `grammy` 1.40 |
 | Discord | `discord.js` 14 |
 | Slack | `@slack/bolt` 4 (Socket Mode) |
 | Matrix | Matrix JS client |
 | WhatsApp | `@whiskeysockets/baileys` 7 |
 | Email | `imapflow` + `nodemailer` |
 | Code parsing | `tree-sitter` 0.22 (TypeScript default; Python/Rust/Go gated) + regex fallback |
-| MCP | `@modelcontextprotocol/sdk` 1.9 |
+| MCP | `@modelcontextprotocol/sdk` 1.32 |
 | Voice | Whisper, Kokoro TTS, ElevenLabs, Gemini Live, OpenAI Realtime, libfvad (opt-in) |
 | Media | `ffmpeg-static`, `ffprobe-static`, `fluent-ffmpeg`, `sharp`, `pdf-lib`, `pptxgenjs`, `docx` |
 | Validation | `zod` 4 |
@@ -488,4 +489,4 @@ data/
 
 *Proprietary software. Copyright &copy; 2024-2026 TRUSCOR Private Limited. All rights reserved.*
 
-*Website: [tryatlasagi.com](https://tryatlasagi.com)*
+*Open-source credits: [CREDITS.md](./CREDITS.md)*

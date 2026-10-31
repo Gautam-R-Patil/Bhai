@@ -2,7 +2,8 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
+import { promises as fs, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename as nodeBasename } from "node:path";
 import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
@@ -11,6 +12,7 @@ import {
     type AgentResponse,
     type ChannelContext,
     clearConversation,
+    type GeneratedImage,
     getConversationCount,
     getConversationHistory,
     type MediaAttachment,
@@ -37,17 +39,26 @@ import {
     isStopCommand,
     markdownToPlainText,
     markdownToTelegramHtml,
+    sanitizeIncomingChannelText,
     stuckCallbackMessage,
     stuckKeyboard,
     withStuckReplyLine,
 } from "./channel-text.js";
 import { getThinkingLevel, handleCommand, initCommands } from "./commands/index.js";
 import { getConvexSiteUrl } from "./config/keys.js";
-import { getDataDir, getDownloadsDir } from "./config/paths.js";
+import { getDataDir, getDownloadsDir, getImagesDir } from "./config/paths.js";
 import type { Config } from "./config.js";
 import { encryptedFetch } from "./crypto-transport.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
+import { registerImageDelivery } from "./media/image-jobs.js";
+import {
+    conversationKey,
+    lastInboundImages,
+    markPhotoQuestion,
+    rememberInboundImages,
+    takePhotoQuestion,
+} from "./media/image-memory.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { memoryUndoAction, pruneDigestTap, undoMemoryTap } from "./memory/forget.js";
 import { getSessionToken } from "./session.js";
@@ -65,19 +76,6 @@ import {
 import { setTelegramContext } from "./tools/send-file.js";
 
 // ── Markdown → Telegram HTML ──────────────────
-
-// Sanitize attacker-controlled inbound text before wrapping in delimiters.
-function sanitizeIncomingChannelText(text: string): string {
-    if (!text) return text;
-    return text
-        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
-        .replace(/\[ATLAS-INTERNAL\b/gi, "[user-quoted-text")
-        .replace(/<system_log>/gi, "&lt;system_log&gt;")
-        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
-        .replace(/<tool_log/gi, "&lt;tool_log")
-        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
-        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
-}
 
 // ── Strip internal debug blocks before sending ──
 // Cleans out any <system_log>...</system_log> blocks that may leak from
@@ -209,11 +207,149 @@ async function sendReceipt(
     );
 }
 
+/** "sending a photo…" while generate_image runs (its milestone, or a step line quoting it), else "typing". */
+export function chatActionFor(progress: string): "typing" | "upload_photo" {
+    return /Editing your photo|Painting the image/.test(progress) ? "upload_photo" : "typing";
+}
+
+/** A file's id in an image button's callback data: its name's hash, found again in the Images folder. */
+const imageId = (file: string) => createHash("sha1").update(nodeBasename(file)).digest("hex").slice(0, 12);
+
+/** The one-tap follow-ups under a generated image; the callback data maps to IMAGE_ACTIONS. */
+export function imageKeyboard(images: GeneratedImage[]): InlineKeyboard {
+    // The buttons name their image, so a tap after a restart or after newer images acts on this one.
+    const id = imageId(images[images.length - 1].path);
+    const kb = new InlineKeyboard().text("🔁 Another version", `img:again:${id}`).text("✨ HD", `img:hq:${id}`);
+    // Undo only when there is a before file to go back to (a combine of photos has none). It stays
+    // plain: generate_image's undo walks the saved history, so naming a file would fight it.
+    const canUndo = images.some((img) => img.kind !== "generated" && img.sourcePath);
+    return canUndo ? kb.text("↩️ Undo", "img:undo") : kb;
+}
+
+/** An image button's tap becomes the owner's next message, like the stuck-report buttons. */
+const IMAGE_ACTIONS: Record<string, string> = {
+    again: "Make one more version of that image",
+    hq: "Make that image again, one copy, in high quality",
+    undo: "Undo that last image edit",
+};
+
+/**
+ * img:again|hq[:<id>] or img:undo → the owner's next message, naming the file the id finds in the
+ * Images folder. No id (an old button) or no such file: the plain message.
+ */
+export function imageCallbackMessage(data: string): string | undefined {
+    const m = /^img:(?:(again|hq)(?::([0-9a-f]{12}))?|(undo))$/.exec(data);
+    if (!m) return undefined;
+    let file: string | undefined;
+    if (m[2])
+        try {
+            const dir = getImagesDir();
+            const name = readdirSync(dir).find((n) => imageId(n) === m[2]);
+            if (name) file = join(dir, name);
+        } catch {
+            /* no Images folder: the plain message */
+        }
+    const action = m[1] ?? m[3];
+    return file ? `${IMAGE_ACTIONS[action]}: ${file}` : IMAGE_ACTIONS[action];
+}
+
+/** The owner's photo with no words gets "What should I do with it?": button label → the message a tap sends. */
+const PHOTO_CHOICES: Record<string, [string, string]> = {
+    describe: ["Describe it", "Describe the photo I just sent"],
+    nobg: ["Remove the background", "Remove the background from the photo I just sent"],
+    light: ["Improve the lighting", "Improve the lighting of the photo I just sent"],
+    cartoon: ["Make it a cartoon", "Make the photo I just sent a cartoon"],
+};
+
+export function photoKeyboard(): InlineKeyboard {
+    const kb = new InlineKeyboard();
+    Object.entries(PHOTO_CHOICES).forEach(([key, [label]], i) => {
+        kb.text(label, `photo:${key}`);
+        if (i === 1) kb.row(); // two rows of two
+    });
+    return kb;
+}
+
+/** photo:describe|nobg|light|cartoon → the owner's next message. */
+export const photoCallbackMessage = (data: string): string | undefined =>
+    Object.hasOwn(PHOTO_CHOICES, data.slice(6)) ? PHOTO_CHOICES[data.slice(6)][1] : undefined;
+
+/** sendPhoto re-encodes to a ≤1280px JPEG: past that, the full file goes too. */
+const PHOTO_MAX_EDGE = 1280;
+
+/**
+ * The turn's generated or edited images right after the reply, uncaptioned (the reply says what
+ * they are): photos (one, or an album for 2-4), and as documents a PNG (instead of the photo, which
+ * would flatten its transparency) or an image over 1280px (after the photo). The owner's private
+ * chat gets the follow-up buttons. A photo Telegram refuses goes out as a document. Never throws.
+ */
+export async function sendImages(
+    api: Bot["api"],
+    chatId: number,
+    images: GeneratedImage[] | undefined,
+    withButtons: boolean,
+    opts: { reply_parameters?: { message_id: number } } = {},
+): Promise<void> {
+    if (!images?.length) return;
+    const reply_markup = withButtons ? imageKeyboard(images) : undefined;
+    try {
+        const sharp = (await import("sharp")).default;
+        const files = await Promise.all(
+            images.map(async (img) => {
+                const buf = await fs.readFile(img.path);
+                const meta = await sharp(buf)
+                    .metadata()
+                    .catch(() => ({ width: 0, height: 0 }));
+                const png = img.mimeType === "image/png";
+                const large = Math.max(meta.width ?? 0, meta.height ?? 0) > PHOTO_MAX_EDGE;
+                return { buf, name: nodeBasename(img.path), png, large };
+            }),
+        );
+        type File = (typeof files)[number];
+        const input = (f: File) => new InputFile(f.buf, f.name);
+        // One file carries the buttons when it is the only image; returns whether it did.
+        const send = async (type: "photo" | "document", list: File[], markup?: InlineKeyboard) => {
+            if (!list.length) return false;
+            const doc = (f: File) =>
+                withTelegramRetry(() => api.sendDocument(chatId, input(f), { reply_markup: markup, ...opts }));
+            if (list.length === 1) {
+                if (type === "document") await doc(list[0]);
+                else
+                    await withTelegramRetry(() =>
+                        api.sendPhoto(chatId, input(list[0]), { reply_markup: markup, ...opts }),
+                    ).catch(() => doc(list[0]));
+                return !!markup;
+            }
+            const album = (t: "photo" | "document") => list.map((f) => ({ type: t, media: input(f) }));
+            await withTelegramRetry(() => api.sendMediaGroup(chatId, album(type), opts)).catch((err) => {
+                if (type === "document") throw err;
+                return withTelegramRetry(() => api.sendMediaGroup(chatId, album("document"), opts));
+            });
+            return false;
+        };
+        const single = files.length === 1 ? reply_markup : undefined;
+        const onPhoto = await send(
+            "photo",
+            files.filter((f) => !f.png),
+            single,
+        );
+        const onDoc = await send(
+            "document",
+            files.filter((f) => f.png || f.large),
+            onPhoto ? undefined : single,
+        );
+        if (reply_markup && !onPhoto && !onDoc)
+            await withTelegramRetry(() => api.sendMessage(chatId, "Want another go?", { reply_markup, ...opts }));
+    } catch (err) {
+        console.warn("[TELEGRAM] Failed to send images:", (err as Error).message);
+    }
+}
+
 /** Send a media or voice turn's reply as bubbles; a stuck report gets the handoff buttons or the reply line. */
 async function replyInBubbles(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctx: any,
-    result: Pick<AgentResponse, "text" | "stuck" | "receipt" | "memoryUndo">,
+    result: Pick<AgentResponse, "text" | "stuck" | "receipt" | "memoryUndo" | "images">,
     senderIsOwner: boolean,
 ): Promise<void> {
     const buttons = wantsStuckButtons(result, senderIsOwner, ctx.chat?.type);
@@ -232,6 +368,7 @@ async function replyInBubbles(
     const keyboard = replyKeyboard(result, senderIsOwner, ctx.chat?.type);
     await attachReplyKeyboard(ctx.api, ctx.chat.id, lastId, keyboard, result.stuck);
     await sendReceipt(ctx.api, ctx.chat.id, result.receipt);
+    await sendImages(ctx.api, ctx.chat.id, result.images, senderIsOwner && ctx.chat?.type === "private");
 }
 
 // ── Inline Keyboards ─────────────────────────
@@ -355,7 +492,7 @@ export function getTelegramConfig(): Config | null {
 // F3: distinguish channel-allowed from platform-owner. OWNER_TELEGRAM_IDS
 // is a strict subset of ALLOWED_USER_IDS; defaults to ALLOWED_USER_IDS (with
 // a warning) for back-compat.
-function parseTelegramOwners(config: Config): Set<number> {
+export function parseTelegramOwners(config: Config): Set<number> {
     const raw = process.env.OWNER_TELEGRAM_IDS;
     if (!raw) {
         console.warn(
@@ -371,6 +508,16 @@ function parseTelegramOwners(config: Config): Set<number> {
     );
 }
 
+/** A turn running alongside another gets a copy of the owner's history: the owner's private turns
+ *  only. Anyone else's gets none, so runAgent gives them their own guest history. */
+export function concurrentHistoryFork(concurrent: boolean, senderIsOwner: boolean) {
+    return concurrent && senderIsOwner ? [...getConversationHistory()] : undefined;
+}
+
+export function isOwnerPrivateChat(owners: Set<number>, fromId: number | undefined, chatType: string | undefined): boolean {
+    return chatType === "private" && !!fromId && owners.has(fromId);
+}
+
 export function isPlatformOwner(channel: "telegram", userId: number, config: Config): boolean {
     if (channel !== "telegram") return false;
     return parseTelegramOwners(config).has(userId);
@@ -380,8 +527,36 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     const bot = new Bot(config.telegramBotToken);
     _moduleBot = bot;
     _moduleConfig = config;
+    registerImageDelivery("telegram", async (to, images, text, ownerDm) => {
+        // A scheduled task's: the owners, as its own result goes (not while DND or offline holds it).
+        if (to === "owner") {
+            if (!(await sendProactiveMessage(bot, config, text))) return false;
+            for (const id of parseTelegramOwners(config)) await sendImages(bot.api, id, images, ownerDm);
+            return true;
+        }
+        await withTelegramRetry(() => bot.api.sendMessage(Number(to), text));
+        await sendImages(bot.api, Number(to), images, ownerDm);
+        return true;
+    });
     const startTime = Date.now();
     const telegramOwners = parseTelegramOwners(config);
+
+    // A research asked here gets one status message, edited as it moves, with Status/Cancel.
+    const researchKeyboard = (id: string) =>
+        new InlineKeyboard().text("Status", `research:status:${id}`).text("Cancel", `research:cancel:${id}`);
+    void import("./research/index.js").then(({ registerResearchStatusCard }) =>
+        registerResearchStatusCard("telegram", async (origin, id, text) => {
+            const chatId = Number(origin.userId);
+            if (!telegramOwners.has(chatId)) return null; // the owner's private chat only
+            const sent = await bot.api.sendMessage(chatId, text, { reply_markup: researchKeyboard(id) });
+            let last = text;
+            return async (next, done) => {
+                if (next === last && !done) return; // Telegram refuses an edit that changes nothing
+                last = next;
+                await bot.api.editMessageText(chatId, sent.message_id, next, done ? undefined : { reply_markup: researchKeyboard(id) });
+            };
+        }),
+    );
 
     // Initialize slash commands
     initCommands({
@@ -437,6 +612,8 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         triggerMessageId: number;
         description: string;
         startedAt: number;
+        /** Who started it: in a group, "stop" from one member must not cancel another's work. */
+        senderId?: number;
     }
     const activeTasks = new Map<number, ActiveTask[]>();
     const MAX_CONCURRENT_TASKS = 3;
@@ -470,7 +647,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     }
 
     // Export for heartbeat to check before generating proactive messages
-    (globalThis as Record<string, unknown>).__atlasProactiveLog = proactiveMessageLog;
+    (globalThis as Record<string, unknown>).__bhaiProactiveLog = proactiveMessageLog;
 
     // ── Message batching (debounce rapid messages) ──
     const messageBuffer = new Map<
@@ -579,7 +756,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 messageBuffer.delete(bufKey);
             }
 
-            const tasks = activeTasks.get(chatId) || [];
+            // The owner may stop anything; anyone else only what they started.
+            const isOwnerSender = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
+            const allTasks = activeTasks.get(chatId) || [];
+            const tasks = isOwnerSender ? allTasks : allTasks.filter((t) => t.senderId === ctx.from?.id);
 
             // If replying "stop" to a specific bot message, cancel only that task
             if (replyToText && ctx.message.reply_to_message) {
@@ -590,7 +770,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     targetTask.controller.abort();
                     activeTasks.set(
                         chatId,
-                        tasks.filter((t) => t.taskId !== targetTaskId),
+                        allTasks.filter((t) => t.taskId !== targetTaskId),
                     );
                     console.log(`  🛑 Stopping specific task ${targetTask.taskId}: "${targetTask.description}"`);
                     await ctx.reply(`🛑 Stopping: ${targetTask.description}`, {
@@ -603,7 +783,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             // Otherwise cancel all tasks
             if (tasks.length > 0) {
                 for (const task of tasks) task.controller.abort();
-                activeTasks.delete(chatId);
+                const rest = allTasks.filter((t) => !tasks.includes(t));
+                if (rest.length) activeTasks.set(chatId, rest);
+                else activeTasks.delete(chatId);
                 console.log(`  🛑 Aborting all ${tasks.length} active task(s) for chat ${chatId}`);
                 await ctx.reply(`🛑 Stopping ${tasks.length} active task(s)...`);
             } else {
@@ -650,6 +832,13 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
         // Check for slash commands — instant, no debounce
         if (userMessage.startsWith("/")) {
+            // /new, /compact, /status… act on (or show) the owner's own session: owner, in private.
+            if (!(ctx.chat?.type === "private" && ctx.from?.id && telegramOwners.has(ctx.from.id))) {
+                await ctx.reply("Commands are only for Bhai's owner, in a private chat.", {
+                    reply_parameters: { message_id: triggerMessageId },
+                });
+                return;
+            }
             const cmdResult = await handleCommand(userMessage);
             if (cmdResult.handled) {
                 if (cmdResult.response) {
@@ -759,8 +948,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         }
 
         // ── Record user activity + proactive response tracking ──
-        // Fire-and-forget: deliver dream results if available
-        (async () => {
+        // Fire-and-forget: deliver dream results if available. They come from the owner's own
+        // conversation and memory, and delivery empties the queue: the owner's private chat only.
+        if (isOwnerPrivateChat(telegramOwners, ctx.from?.id, ctx.chat?.type)) (async () => {
             try {
                 const { recordUserActivity, getDreamResultsForDelivery, formatDreamResults } = await import(
                     "./proactive/dreaming.js"
@@ -808,6 +998,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             triggerMessageId,
             description: taskDescription,
             startedAt: Date.now(),
+            senderId: ctx.from?.id,
         };
         existingTasks.push(task);
         activeTasks.set(chatId, existingTasks);
@@ -821,9 +1012,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         // Fire-and-forget async processing
         (async () => {
             await ctx.replyWithChatAction("typing");
+            let chatAction = chatActionFor("");
             const typingInterval = setInterval(async () => {
                 try {
-                    await ctx.replyWithChatAction("typing");
+                    await ctx.replyWithChatAction(chatAction);
                 } catch {
                     /* ignore */
                 }
@@ -833,7 +1025,11 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             const taskStartTime = Date.now();
 
             try {
-                setTelegramContext(bot, chatId);
+                // send_file goes to the chat set here (one per process): only the owner's private
+                // turns may set it, or another chat's turn would redirect the owner's files.
+                if (ctx.chat?.type === "private" && ctx.from?.id && telegramOwners.has(ctx.from.id)) {
+                    setTelegramContext(bot, chatId);
+                }
 
                 // ── Detect short acknowledgements ─────────────────────────────
                 const msgLower = combinedMessage.toLowerCase().trim();
@@ -953,6 +1149,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 };
 
                 const progressCallback = async (msg: string) => {
+                    chatAction = chatActionFor(msg);
                     // ── Human-in-the-loop interrupt handling ──
                     // Detect approval requests and send as inline keyboard messages
                     const interruptMatch = msg.match(/\[id:([a-f0-9]+)\]/);
@@ -1133,18 +1330,32 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     }
                 }, STATUS_DELAY_MS);
 
-                const historyFork = shouldFork ? [...getConversationHistory()] : undefined;
+                // Owner powers (tools, memory, history) only in the owner's private chat: in a
+                // group the reply — and whatever a tool or memory put in it — is everyone's.
+                const senderIsOwner =
+                    !!ctx.from?.id && telegramOwners.has(ctx.from.id) && ctx.chat?.type === "private";
+                const historyFork = concurrentHistoryFork(shouldFork, senderIsOwner);
 
-                // Wire progress so sub-agent/research updates flow through our live-status
-                setSwarmProgress(progressCallback);
-                setDeepResearchProgress(progressCallback);
-                setLongTaskProgress(progressCallback);
-                const senderIsOwner = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
+                // Wire progress so sub-agent/research updates flow through our live-status. The
+                // hooks are process-wide and only owner tools use them, so only an owner turn
+                // registers (and clears) them: otherwise the owner's task progress lands here.
+                if (senderIsOwner) {
+                    setSwarmProgress(progressCallback);
+                    setDeepResearchProgress(progressCallback);
+                    setLongTaskProgress(progressCallback);
+                }
+                // The answer to "What should I do with it?" (a button or typed) is about that photo:
+                // the model sees it (already remembered, so `capture` keeps it from being added twice).
+                const photo = senderIsOwner
+                    ? takePhotoQuestion(conversationKey("telegram", String(ctx.from.id))).map(
+                          (i): MediaAttachment => ({ type: "image", ...i, capture: true }),
+                      )
+                    : [];
                 const response = await runAgent(
                     llm,
                     agentMessage,
                     progressCallback,
-                    undefined,
+                    photo.length ? photo : undefined,
                     controller.signal,
                     historyFork,
                     modelHint,
@@ -1155,11 +1366,14 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         userName: ctx.from?.first_name,
                         isOwner: senderIsOwner,
                         isPrivate: ctx.chat?.type === "private",
+                        replyTo: String(ctx.chat?.id ?? ""),
                     },
                 );
-                clearSwarmProgress();
-                clearDeepResearchProgress();
-                clearLongTaskProgress();
+                if (senderIsOwner) {
+                    clearSwarmProgress();
+                    clearDeepResearchProgress();
+                    clearLongTaskProgress();
+                }
 
                 clearTimeout(thinkingFallback);
                 // Aborted, or the agent decided no reply is needed: stay silent.
@@ -1264,6 +1478,13 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 const keyboard = replyKeyboard(response, senderIsOwner, ctx.chat?.type);
                 await attachReplyKeyboard(ctx.api, chatId, lastSentId, keyboard, response.stuck, lastEditAt);
                 await sendReceipt(ctx.api, chatId, response.receipt, replyOpts);
+                await sendImages(
+                    ctx.api,
+                    chatId,
+                    response.images,
+                    senderIsOwner && ctx.chat?.type === "private",
+                    replyOpts,
+                );
             } catch (err) {
                 if (!controller.signal.aborted) {
                     console.error("❌ Agent error:", err);
@@ -1353,7 +1574,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
             const caption = sanitizeIncomingChannelText(ctx.message.caption || `User sent a document: ${safeName}`);
             const safeMime = mime.replace(/[^\w.+/-]/g, "") || "unknown type";
-            const agentMessage = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Document "${safeName}" (${safeMime}) saved at ${savedPath}. Use file tools to read it if needed.]`;
+            const agentMessage = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: Document "${safeName}" (${safeMime}) saved at ${savedPath}. Use file tools to read it if needed.]`;
             processBuffered(ctx.chat.id, ctx.message.message_id, agentMessage, ctx);
         } catch (err) {
             console.error("❌ Document download failed:", (err as Error).message);
@@ -1375,6 +1596,16 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     bot.on("callback_query:data", async (ctx) => {
         const data = ctx.callbackQuery.data;
         const chatId = ctx.chat?.id;
+
+        // Buttons act on the owner's inbox, memory, tasks and approvals (an interrupt's
+        // "Approve" resumes the owner's agent): only the owner, in their private chat. A
+        // stuck report's Retry/Skip in someone's own private chat is theirs to press.
+        const inPrivate = ctx.chat?.type === "private";
+        const pressedByOwner = !!ctx.from?.id && telegramOwners.has(ctx.from.id);
+        if (!inPrivate || (!pressedByOwner && !data.startsWith("stuck:"))) {
+            await ctx.answerCallbackQuery({ text: "Only Bhai's owner can do that." }).catch(() => {});
+            return;
+        }
 
         // ── Inbox chat-fallback callbacks: inbox:<action>:<id>[:<minutes>] (Phase 4.3) ──
         if (data.startsWith("inbox:")) {
@@ -1402,6 +1633,27 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             // Buttons under the "What next?" fallback reply to the report: carry that instead.
             const reportText = stuckMsg?.reply_to_message?.text ?? stuckMsg?.text;
             if (message && chatId && stuckMsg) bufferMessage(ctx, chatId, stuckMsg.message_id, message, reportText);
+            return;
+        }
+
+        // ── Image follow-ups under a generated photo: img:again|hq|undo → the owner's next message ──
+        if (data.startsWith("img:")) {
+            await ctx.answerCallbackQuery().catch(() => {});
+            await ctx.editMessageReplyMarkup().catch(() => {});
+            const message = imageCallbackMessage(data);
+            const imgMsg = ctx.callbackQuery.message;
+            if (message && chatId && imgMsg)
+                bufferMessage(ctx, chatId, imgMsg.message_id, message, imgMsg.caption ?? imgMsg.reply_to_message?.text);
+            return;
+        }
+
+        // ── The question under a photo sent with no words: photo:<choice> → the owner's next message ──
+        if (data.startsWith("photo:")) {
+            await ctx.answerCallbackQuery().catch(() => {});
+            await ctx.editMessageReplyMarkup().catch(() => {});
+            const message = photoCallbackMessage(data);
+            const question = ctx.callbackQuery.message;
+            if (message && chatId && question) bufferMessage(ctx, chatId, question.message_id, message);
             return;
         }
 
@@ -1577,6 +1829,22 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             return;
         }
 
+        // ── Research status message: research:status:<id> / research:cancel:<id> ──
+        if (data.startsWith("research:status:") || data.startsWith("research:cancel:")) {
+            const id = data.slice(data.indexOf(":", 9) + 1);
+            const { cancelResearchById, researchStatusLine } = await import("./research/index.js");
+            if (data.startsWith("research:status:")) {
+                await ctx.answerCallbackQuery({ text: (await researchStatusLine(id)).slice(0, 190), show_alert: true });
+            } else {
+                const stopped = await cancelResearchById(id);
+                // Not running may mean failed or interrupted, not finished: say which.
+                await ctx.answerCallbackQuery({
+                    text: stopped ? "Stopping the research…" : `Not running. ${(await researchStatusLine(id)).slice(0, 170)}`,
+                });
+            }
+            return;
+        }
+
         // ── Unknown callback — acknowledge to stop Telegram loading indicator ──
         await ctx.answerCallbackQuery({ text: "Unknown action" });
     });
@@ -1586,32 +1854,188 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
 // ── Media Message Handler ─────────────────────
 
+type MediaMessage = {
+    caption?: string;
+    media_group_id?: string;
+    photo?: Array<{ file_id: string }>;
+    video?: { file_id: string; mime_type?: string };
+    document?: { file_id: string; mime_type?: string };
+};
+type MediaItem = { message: MediaMessage; mediaType: "image" | "video" };
+type MediaCtx = {
+    message: MediaMessage;
+    from: { id?: number; first_name?: string };
+    chat: { id: number };
+    reply: Function;
+    replyWithChatAction: Function;
+};
+type TextBuffer = Map<string, { messages: string[]; timer: ReturnType<typeof setTimeout>; ctx: never }>;
+
+const mediaGroups = new Map<
+    string,
+    { items: unknown[]; run: (items: never[]) => void; timer?: ReturnType<typeof setTimeout> }
+>();
+
+/**
+ * An album arrives as one update per photo: buffer them by media_group_id and call the first
+ * part's `run` once with all of them, `delayMs` after the last part.
+ */
+export function bufferMediaGroup<T>(key: string, item: T, run: (items: T[]) => void, delayMs = 1500): void {
+    const group = mediaGroups.get(key) ?? { items: [], run: run as (items: never[]) => void };
+    group.items.push(item);
+    clearTimeout(group.timer);
+    group.timer = setTimeout(() => {
+        mediaGroups.delete(key);
+        group.run(group.items as never[]);
+    }, delayMs);
+    mediaGroups.set(key, group);
+}
+
 async function handleMediaMessage(
-    ctx: {
-        message: {
-            caption?: string;
-            photo?: Array<{ file_id: string }>;
-            video?: { file_id: string; mime_type?: string };
-            document?: { file_id: string; mime_type?: string };
-        };
-        from: { id?: number; first_name?: string };
-        chat: { id: number };
-        reply: Function;
-        replyWithChatAction: Function;
-    },
+    ctx: MediaCtx,
     bot: Bot,
     config: Config,
     llm: LLMClient,
     mediaType: "image" | "video",
-    messageBuffer?: Map<string, { messages: string[]; timer: ReturnType<typeof setTimeout>; ctx: never }>,
+    messageBuffer?: TextBuffer,
+) {
+    const item: MediaItem = { message: ctx.message, mediaType };
+    const groupId = ctx.message.media_group_id;
+    if (!groupId) return runMediaTurn(ctx, bot, config, llm, [item], messageBuffer, true);
+    // Return at once (grammY polls one update at a time, so the other parts must get in): one turn
+    // for the whole album runs from the first part's handler.
+    bufferMediaGroup(`${ctx.chat.id}:${groupId}`, item, (items: MediaItem[]) => {
+        runMediaTurn(ctx, bot, config, llm, items, messageBuffer, false).catch((err) =>
+            console.error("❌ Media album error:", err),
+        );
+    });
+}
+
+/** Downloads one media part and saves it to a temp file; replies and returns null when it can't. */
+async function fetchMedia(
+    ctx: MediaCtx,
+    bot: Bot,
+    config: Config,
+    { message, mediaType }: MediaItem,
+): Promise<{ base64: string; mimeType: string; path: string; mediaType: "image" | "video" } | null> {
+    // Get file ID
+    let fileId: string;
+    let mimeType: string;
+    if (mediaType === "image" && message.photo) {
+        // Photos come as array of sizes — take the largest
+        fileId = message.photo[message.photo.length - 1].file_id;
+        mimeType = "image/jpeg";
+    } else if (mediaType === "video" && message.video) {
+        fileId = message.video.file_id;
+        mimeType = message.video.mime_type || "video/mp4";
+    } else if (message.document) {
+        fileId = message.document.file_id;
+        mimeType = message.document.mime_type || (mediaType === "image" ? "image/jpeg" : "video/mp4");
+    } else {
+        await ctx.reply("Couldn't process this media.");
+        return null;
+    }
+
+    // Download file from Telegram (with retry + timeout for flaky networks).
+    // Reject anything bigger than MAX_MEDIA_BYTES at the Telegram metadata
+    // step — without this, an in-memory `arrayBuffer()` of a 1GB document
+    // OOMs the bot process, and Telegram does deliver up to ~2GB to bots
+    // in some configurations.
+    const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
+    const file = await bot.api.getFile(fileId);
+    if (typeof file.file_size === "number" && file.file_size > MAX_MEDIA_BYTES) {
+        await ctx.reply(
+            `That file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_MEDIA_BYTES / 1024 / 1024} MB.`,
+        );
+        return null;
+    }
+    const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
+
+    let buffer: Buffer | null = null;
+    const MAX_RETRIES = 3;
+    const FETCH_TIMEOUT_MS = 30_000; // 30s per attempt
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const response = await fetch(fileUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            // Defence in depth: cap the body even if Telegram reported a small size.
+            const contentLengthHeader = response.headers.get("content-length");
+            if (contentLengthHeader && Number(contentLengthHeader) > MAX_MEDIA_BYTES) {
+                throw new Error(`Media body too large: ${contentLengthHeader} bytes`);
+            }
+            buffer = Buffer.from(await response.arrayBuffer());
+            if (buffer.length > MAX_MEDIA_BYTES) throw new Error(`Media body too large: ${buffer.length} bytes`);
+            break; // success
+        } catch (fetchErr) {
+            console.warn(`  ⚠️ Media download attempt ${attempt}/${MAX_RETRIES} failed:`, (fetchErr as Error).message);
+            if (attempt === MAX_RETRIES) throw fetchErr;
+            await new Promise((r) => setTimeout(r, 2000 * attempt)); // backoff: 2s, 4s
+        }
+    }
+    const downloadedBuffer = buffer!; // guaranteed non-null: loop either sets buffer or throws
+    const base64 = downloadedBuffer.toString("base64");
+
+    console.log(`  📥 Downloaded ${mediaType}: ${Math.round(downloadedBuffer.length / 1024)}KB`);
+
+    // Save to temporary file so DaVinci/Filmora can use it if requested.
+    // Use crypto.randomUUID() so the filename can't be predicted by an
+    // attacker who can also write to the same tmpdir (closes a race
+    // where a malicious side-process plants a file at a known name).
+    // Safe extension allowlist — never trust attacker-supplied MIME for
+    // the on-disk extension; we cap to mp3/wav/ogg/m4a/jpg/png/mp4.
+    const mediaDir = join(tmpdir(), "bhai_media");
+    await fs.mkdir(mediaDir, { recursive: true, mode: 0o700 });
+    const safeExt = (() => {
+        const claimed = (mimeType.split("/")[1] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const allowed = new Set([
+            "mp3",
+            "wav",
+            "ogg",
+            "m4a",
+            "aac",
+            "jpg",
+            "jpeg",
+            "png",
+            "gif",
+            "webp",
+            "mp4",
+            "mov",
+            "webm",
+        ]);
+        if (allowed.has(claimed)) return claimed;
+        return mediaType === "image" ? "jpg" : "mp4";
+    })();
+    const { randomUUID } = await import("node:crypto");
+    const tmpFilePath = join(mediaDir, `telegram_${randomUUID()}.${safeExt}`);
+    await fs.writeFile(tmpFilePath, downloadedBuffer, { mode: 0o600 });
+    console.log(`  💾 Saved media to bhai_media/...`);
+
+    return { base64, mimeType, path: tmpFilePath, mediaType };
+}
+
+/** One media turn for a photo/video, or for an album's parts together. */
+export async function runMediaTurn(
+    ctx: MediaCtx,
+    bot: Bot,
+    config: Config,
+    llm: LLMClient,
+    items: MediaItem[],
+    messageBuffer: TextBuffer | undefined,
+    waitForText: boolean,
 ) {
     const userName = ctx.from.first_name || "User";
-    let caption = ctx.message.caption || (mediaType === "image" ? "What's in this image?" : "What's in this video?");
+    const { mediaType } = items[0];
+    const given = items.map((i) => i.message.caption).find(Boolean);
+    let caption = given || (items.length > 1 ? "What's in these?" : `What's in this ${mediaType}?`);
+    const senderIsOwner =
+        !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config) && (ctx.chat as { type?: string })?.type === "private";
+    // The owner's photos with no words at all: ask what to do with them, no model call.
+    let askFirst = senderIsOwner && !given && items.every((i) => i.message.photo);
 
-    console.log(`\n📎 ${userName} sent a ${mediaType}${caption ? `: ${caption}` : ""}`);
+    console.log(`\n📎 ${userName} sent ${items.length > 1 ? `${items.length} files` : `a ${mediaType}`}: ${caption}`);
 
-    // Wait briefly so follow-up text messages (like 👍 or a comment) can arrive
-    await new Promise((r) => setTimeout(r, 1500));
+    // Wait briefly so follow-up text messages (like 👍 or a comment) can arrive (an album already did)
+    if (waitForText) await sleep(1500);
 
     // Absorb any buffered text messages sent right after the image
     if (messageBuffer) {
@@ -1620,6 +2044,7 @@ async function handleMediaMessage(
         if (buf && buf.messages.length > 0) {
             const extra = buf.messages.join("\n");
             caption += "\n" + extra;
+            askFirst = false;
             console.log(
                 `  📦 Absorbed ${buf.messages.length} follow-up text(s) into media context: "${extra.substring(0, 60)}"`,
             );
@@ -1629,118 +2054,56 @@ async function handleMediaMessage(
     }
 
     await ctx.replyWithChatAction("typing");
+    let chatAction = chatActionFor("");
     const typingInterval = setInterval(async () => {
         try {
-            await ctx.replyWithChatAction("typing");
+            await ctx.replyWithChatAction(chatAction);
         } catch {
             /* ignore */
         }
     }, 4000);
 
     try {
-        // Get file ID
-        let fileId: string;
-        let mimeType: string;
-        if (mediaType === "image" && ctx.message.photo) {
-            // Photos come as array of sizes — take the largest
-            fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-            mimeType = "image/jpeg";
-        } else if (mediaType === "video" && ctx.message.video) {
-            fileId = ctx.message.video.file_id;
-            mimeType = ctx.message.video.mime_type || "video/mp4";
-        } else if (ctx.message.document) {
-            fileId = ctx.message.document.file_id;
-            mimeType = ctx.message.document.mime_type || (mediaType === "image" ? "image/jpeg" : "video/mp4");
-        } else {
-            await ctx.reply("Couldn't process this media.");
-            return;
+        // An album keeps the parts that came through; it fails only when none did.
+        const fetched = await Promise.allSettled(items.map((item) => fetchMedia(ctx, bot, config, item)));
+        const saved = fetched.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+        if (!saved.length) {
+            const failed = fetched.find((r) => r.status === "rejected");
+            if (failed) throw failed.reason;
+            return; // already told the user
         }
-
-        // Download file from Telegram (with retry + timeout for flaky networks).
-        // Reject anything bigger than MAX_MEDIA_BYTES at the Telegram metadata
-        // step — without this, an in-memory `arrayBuffer()` of a 1GB document
-        // OOMs the bot process, and Telegram does deliver up to ~2GB to bots
-        // in some configurations.
-        const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
-        const file = await bot.api.getFile(fileId);
-        if (typeof file.file_size === "number" && file.file_size > MAX_MEDIA_BYTES) {
-            await ctx.reply(
-                `That file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_MEDIA_BYTES / 1024 / 1024} MB.`,
-            );
-            return;
-        }
-        const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
-
-        let buffer: Buffer | null = null;
-        const MAX_RETRIES = 3;
-        const FETCH_TIMEOUT_MS = 30_000; // 30s per attempt
-        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                const response = await fetch(fileUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                // Defence in depth: cap the body even if Telegram reported a small size.
-                const contentLengthHeader = response.headers.get("content-length");
-                if (contentLengthHeader && Number(contentLengthHeader) > MAX_MEDIA_BYTES) {
-                    throw new Error(`Media body too large: ${contentLengthHeader} bytes`);
-                }
-                buffer = Buffer.from(await response.arrayBuffer());
-                if (buffer.length > MAX_MEDIA_BYTES) throw new Error(`Media body too large: ${buffer.length} bytes`);
-                break; // success
-            } catch (fetchErr) {
-                console.warn(
-                    `  ⚠️ Media download attempt ${attempt}/${MAX_RETRIES} failed:`,
-                    (fetchErr as Error).message,
-                );
-                if (attempt === MAX_RETRIES) throw fetchErr;
-                await new Promise((r) => setTimeout(r, 2000 * attempt)); // backoff: 2s, 4s
+        if (askFirst) {
+            // Kept under agent.ts's key for this chat, so a tap's source "attached" is this photo.
+            const key = conversationKey("telegram", String(ctx.from.id));
+            const photos = saved.map(({ base64, mimeType }) => ({ base64, mimeType }));
+            rememberInboundImages(key, photos);
+            // Asked only when these photos were kept (an oversized one isn't): else the usual turn sees them.
+            if (photos.every((p) => lastInboundImages(key).includes(p))) {
+                markPhotoQuestion(key);
+                await ctx.reply("What should I do with it?", { reply_markup: photoKeyboard() });
+                return;
             }
         }
-        const downloadedBuffer = buffer!; // guaranteed non-null: loop either sets buffer or throws
-        const base64 = downloadedBuffer.toString("base64");
-
-        console.log(`  📥 Downloaded ${mediaType}: ${Math.round(downloadedBuffer.length / 1024)}KB`);
-
-        // Save to temporary file so DaVinci/Filmora can use it if requested.
-        // Use crypto.randomUUID() so the filename can't be predicted by an
-        // attacker who can also write to the same tmpdir (closes a race
-        // where a malicious side-process plants a file at a known name).
-        // Safe extension allowlist — never trust attacker-supplied MIME for
-        // the on-disk extension; we cap to mp3/wav/ogg/m4a/jpg/png/mp4.
-        const mediaDir = join(tmpdir(), "atlas_media");
-        await fs.mkdir(mediaDir, { recursive: true, mode: 0o700 });
-        const safeExt = (() => {
-            const claimed = (mimeType.split("/")[1] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-            const allowed = new Set([
-                "mp3",
-                "wav",
-                "ogg",
-                "m4a",
-                "aac",
-                "jpg",
-                "jpeg",
-                "png",
-                "gif",
-                "webp",
-                "mp4",
-                "mov",
-                "webm",
-            ]);
-            if (allowed.has(claimed)) return claimed;
-            return mediaType === "image" ? "jpg" : "mp4";
-        })();
-        const { randomUUID } = await import("node:crypto");
-        const tmpFilePath = join(mediaDir, `telegram_${randomUUID()}.${safeExt}`);
-        await fs.writeFile(tmpFilePath, downloadedBuffer, { mode: 0o600 });
-        console.log(`  💾 Saved media to atlas_media/...`);
 
         // Wrap attacker-controlled caption in delimiters and strip framing tokens.
-        // The tmp file path is ATLAS-internal hint, separately marked.
-        caption = `<channel_message_content>\n${sanitizeIncomingChannelText(caption)}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This ${mediaType} is saved at ${tmpFilePath}. Use this absolute path for DaVinci Resolve or Filmora edits.]`;
+        // The tmp file paths are Bhai-internal hints, separately marked.
+        const notes = saved.map((m) =>
+            m.mediaType === "image"
+                ? `[BHAI-INTERNAL — not from user: this image is saved at ${m.path}. To change what's in it use generate_image with source "attached"; use the path only for desktop apps like DaVinci Resolve.]`
+                : `[BHAI-INTERNAL — not from user: This video is saved at ${m.path}. Use this absolute path for DaVinci Resolve or Filmora edits.]`,
+        );
+        caption = `<channel_message_content>\n${sanitizeIncomingChannelText(caption)}\n</channel_message_content>\n\n${notes.join("\n")}`;
 
-        // Build media attachment
-        const media: MediaAttachment[] = [{ type: mediaType, base64, mimeType }];
+        // Build media attachments
+        const media: MediaAttachment[] = saved.map((m) => ({
+            type: m.mediaType,
+            base64: m.base64,
+            mimeType: m.mimeType,
+        }));
 
-        setTelegramContext(bot, ctx.chat.id);
+        if ((ctx.chat as { type?: string })?.type === "private" && ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config)) {
+            setTelegramContext(bot, ctx.chat.id); // owner's private chat only (see the text path)
+        }
 
         // ── Send one natural acknowledgement before work starts ──
         const { ack: mediaAck } = await classifyAndAck(llm, caption);
@@ -1749,11 +2112,11 @@ async function handleMediaMessage(
         // Progress is silent on Telegram — only logged to console — except the
         // turn's contract line, which replaces the quick ack.
         const progressCallback = async (msg: string) => {
+            chatAction = chatActionFor(msg);
             console.log(`  📊 [progress] ${msg}`);
             if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, mediaAckId, msg.slice(6));
         };
 
-        const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config);
         const result = await runAgent(
             llm,
             caption,
@@ -1765,10 +2128,11 @@ async function handleMediaMessage(
             undefined,
             {
                 channel: "telegram",
-                userId: String(ctx.chat.id),
+                userId: String(ctx.from?.id ?? ctx.chat.id), // the sender: a group's id would merge its members
                 userName: ctx.from?.first_name,
                 isOwner: senderIsOwner,
                 isPrivate: (ctx.chat as { type?: string })?.type === "private",
+                replyTo: String(ctx.chat.id),
             },
         );
 
@@ -1892,14 +2256,17 @@ ${caption ? `User caption: "${caption}"\n` : ""}
 You can't listen to audio, so don't guess what's in it (no song names, no sounds). Tell the user briefly and ask them to type what they need.`;
         }
 
-        setTelegramContext(bot, ctx.chat.id);
+        if (ctx.chat?.type === "private" && ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config)) {
+            setTelegramContext(bot, ctx.chat.id); // owner's private chat only (see the text path)
+        }
 
         const progressCallback = async (msg: string) => {
             console.log(`  📊 [progress] ${msg}`);
             if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, undefined, msg.slice(6));
         };
 
-        const senderIsOwner = !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config);
+        const senderIsOwner =
+            !!ctx.from?.id && isPlatformOwner("telegram", ctx.from.id as number, config) && ctx.chat?.type === "private";
         const result = await runAgent(
             llm,
             enrichedPrompt,
@@ -1915,6 +2282,7 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
                 userName: ctx.from?.first_name,
                 isOwner: senderIsOwner,
                 isPrivate: ctx.chat?.type === "private",
+                replyTo: String(ctx.chat?.id ?? ""),
             },
         );
 
@@ -2193,8 +2561,14 @@ export async function sendProactiveMessage(
         return false;
     }
 
+    // Proactive messages are the owner's (briefings, reminders, alerts carry their calendar,
+    // tasks and mail, research reports): owners only, never every allowed user.
+    const recipients = parseTelegramOwners(config);
+
     // File attachment path — send document/photo/video based on extension
-    if (filePath) {
+    const refusedFile = filePath ? (await import("./security/sensitive-paths.js")).outboundFileRefusal(filePath) : null;
+    if (refusedFile) console.warn(`[TG] ${refusedFile}`);
+    if (filePath && !refusedFile) {
         try {
             const fs = await import("node:fs");
             const path = await import("node:path");
@@ -2205,27 +2579,33 @@ export async function sendProactiveMessage(
                 const ext = path.extname(filePath).toLowerCase();
                 const isImage = [".jpg", ".jpeg", ".png", ".webp"].includes(ext);
                 const isVideo = [".mp4", ".mov", ".webm"].includes(ext);
-                const caption = message.length <= 1024 ? message : undefined;
-                for (const userId of config.allowedUserIds) {
-                    try {
+                // A short message rides as the caption, rendered like the text path; a longer one
+                // follows as its own message below.
+                const md = chunkMarkdownForTelegram(sanitizeReply(message));
+                const cap = message.length <= 1024 && md.length === 1 ? md[0] : undefined;
+                let fileSent = false;
+                for (const userId of recipients) {
+                    const send = (opts: { caption?: string; parse_mode?: "HTML" }): Promise<unknown> => {
                         const inputFile = new InputFile(buf, fileName);
-                        if (isImage) {
-                            await bot.api.sendPhoto(userId, inputFile, { caption });
-                        } else if (isVideo) {
-                            await bot.api.sendVideo(userId, inputFile, { caption });
-                        } else {
-                            await bot.api.sendDocument(userId, inputFile, { caption });
+                        if (isImage) return bot.api.sendPhoto(userId, inputFile, opts);
+                        if (isVideo) return bot.api.sendVideo(userId, inputFile, opts);
+                        return bot.api.sendDocument(userId, inputFile, opts);
+                    };
+                    try {
+                        try {
+                            await withTelegramRetry(() => send(cap ? { caption: cap.html, parse_mode: "HTML" } : {}));
+                        } catch (err) {
+                            if (!cap) throw err;
+                            await withTelegramRetry(() => send({ caption: markdownToPlainText(cap.md) }));
                         }
+                        fileSent = true;
                     } catch (err) {
                         console.error(`❌ Failed to send proactive file to ${userId}:`, (err as Error).message);
                     }
                 }
-                // If caption was too long for Telegram (>1024), send the message separately
-                if (caption === undefined && message) {
-                    // fall through to also send the message as a regular text below
-                } else {
-                    return true;
-                }
+                // Done only when the file went out and carried the message; otherwise the text path
+                // below still delivers the message (and reports failure if nothing got through).
+                if (fileSent && (cap || !message.trim())) return true;
             }
         } catch (fileErr) {
             console.error("❌ Proactive file send failed, falling back to text:", (fileErr as Error).message);
@@ -2256,7 +2636,7 @@ export async function sendProactiveMessage(
     }
 
     // Track proactive message for read receipt awareness
-    const log = (globalThis as Record<string, unknown>).__atlasProactiveLog as
+    const log = (globalThis as Record<string, unknown>).__bhaiProactiveLog as
         | Array<{ sentAt: number; topic: string; responded: boolean }>
         | undefined;
     if (log) {
@@ -2276,10 +2656,6 @@ export async function sendProactiveMessage(
         keyboard?.text(b.text, b.data);
         if (i % 4 === 3) keyboard?.row();
     }
-    // Proactive messages are the owner's (briefings, reminders, alerts carry their calendar,
-    // tasks and mail): owners only, never every allowed user.
-    const recipients = parseTelegramOwners(config);
-
     let delivered = false;
     for (const userId of recipients) {
         for (const [ci, chunk] of chunks.entries()) {
@@ -2334,7 +2710,7 @@ export async function sendProactiveMessage(
 // ── Read Receipt Helpers ──────────────────────
 
 export function getUnrespondedProactiveTopics(): string[] {
-    const log = (globalThis as Record<string, unknown>).__atlasProactiveLog as
+    const log = (globalThis as Record<string, unknown>).__bhaiProactiveLog as
         | Array<{ sentAt: number; topic: string; responded: boolean }>
         | undefined;
     if (!log) return [];

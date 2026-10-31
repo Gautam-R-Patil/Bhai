@@ -5,17 +5,6 @@
 // ── Browser Module Entry Point ───────────────────
 // Re-exports all browser tools and utilities
 
-export type { CachedAction, CachedActionStep } from "./action-cache.js";
-// Export action cache
-export {
-    cacheActions,
-    getActionCacheStats,
-    getCachedActions,
-    initActionCache,
-    markActionFailed,
-    replayActions,
-    shouldReplayActions,
-} from "./action-cache.js";
 // Export advanced tools
 export {
     browserMultiAction,
@@ -56,7 +45,7 @@ export {
 } from "./chrome-bridge.js";
 // Export core utilities
 export {
-    ATLAS_HUD_JS,
+    BHAI_HUD_JS,
     AUTO_SCROLL_JS,
     buildElementsText,
     CLICK_INDICATOR_JS,
@@ -81,10 +70,8 @@ export {
 // Export extraction tools
 export {
     browserAnalyze,
-    browserCacheActions,
     browserExtract,
     browserRecallStrategy,
-    browserReplayActions,
     browserRunJs,
     browserSaveStrategy,
     browserSelect,
@@ -202,10 +189,8 @@ export async function closeBrowser(): Promise<void> {
 import { browserMultiAction, browserParallelActions, browserParallelTabs } from "./advanced.js";
 import {
     browserAnalyze,
-    browserCacheActions,
     browserExtract,
     browserRecallStrategy,
-    browserReplayActions,
     browserRunJs,
     browserSaveStrategy,
     browserSelect,
@@ -264,8 +249,6 @@ export const browserTools = [
     browserUploadFile,
     browserSaveStrategy,
     browserRecallStrategy,
-    browserReplayActions,
-    browserCacheActions,
     // Advanced
     browserParallelTabs,
     browserParallelActions,

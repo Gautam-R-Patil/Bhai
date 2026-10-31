@@ -7,10 +7,10 @@ import { type DoctorCheck, formatDoctor, runDoctor } from "./doctor.js";
 
 describe("runDoctor", () => {
     beforeEach(() => {
-        process.env.ATLAS_NO_DOCTOR_NETWORK = "true"; // keep it offline + fast
+        process.env.BHAI_NO_DOCTOR_NETWORK = "true"; // keep it offline + fast
     });
     afterEach(() => {
-        delete process.env.ATLAS_NO_DOCTOR_NETWORK;
+        delete process.env.BHAI_NO_DOCTOR_NETWORK;
     });
 
     it("returns a check per probe and never throws (fail-open)", async () => {
@@ -22,7 +22,7 @@ describe("runDoctor", () => {
         }
     });
 
-    it("skips network probes when ATLAS_NO_DOCTOR_NETWORK=true", async () => {
+    it("skips network probes when BHAI_NO_DOCTOR_NETWORK=true", async () => {
         const checks = await runDoctor();
         const convex = checks.find((c) => c.check === "Convex reachability");
         expect(convex?.detail).toContain("skipped");

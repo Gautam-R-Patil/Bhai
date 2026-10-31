@@ -103,6 +103,7 @@ const linksByUrl = new Map<string, string[]>();
 // decompression ratio) and bounds the HTML-strip input. Generous enough to
 // still yield the MAX_CONTENT_PER_PAGE of final text.
 const MAX_FETCH_BYTES = MAX_CONTENT_PER_PAGE * 40; // ~2MB
+const MAX_PDF_BYTES = 15 * 1024 * 1024;
 
 // Decode respecting the page's declared charset (response.text() always assumes
 // UTF-8, mojibaking Shift_JIS/GB2312/EUC-KR/ISO-8859-1 pages). Falls back to a
@@ -230,10 +231,11 @@ export function tagsToText(html: string): string {
     return out;
 }
 
-async function fetchPageContentOnce(url: string): Promise<string> {
+/** null: a failure a retry can't fix (blocked URL, 4xx other than 408/429, a PDF that won't read). */
+async function fetchPageContentOnce(url: string): Promise<string | null> {
     // SSRF guard. Attacker-supplied URLs (search results, outbound links) must
     // not reach private/loopback/metadata targets. Fail-open: research continues.
-    if (isAlwaysBlockedUrl(url) || !(await isSafeUrl(url)).safe) return "";
+    if (isAlwaysBlockedUrl(url) || !(await isSafeUrl(url)).safe) return null;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
@@ -244,7 +246,7 @@ async function fetchPageContentOnce(url: string): Promise<string> {
             {
                 headers: {
                     "User-Agent": randomUA(),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf;q=0.8,*/*;q=0.7",
                     "Accept-Language": "en-US,en;q=0.5",
                 },
                 signal: controller.signal,
@@ -255,14 +257,33 @@ async function fetchPageContentOnce(url: string): Promise<string> {
 
         // Don't clear the timeout yet — it should also cover response.text()
         // Early returns cancel the unread body, or its socket stays open (500-source runs).
-        if (!response.ok) { clearTimeout(timeout); response.body?.cancel().catch(() => {}); return ""; }
-
-        const contentType = (response.headers.get("content-type") || "").toLowerCase();
-        const plain = contentType.includes("text/plain");
-        if (!plain && !contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
+        if (!response.ok) {
             clearTimeout(timeout);
             response.body?.cancel().catch(() => {});
-            return `[Non-text content: ${contentType}]`;
+            const s = response.status;
+            return s >= 400 && s < 500 && s !== 408 && s !== 429 ? null : "";
+        }
+
+        const contentType = (response.headers.get("content-type") || "").toLowerCase();
+        // Papers and reports are often PDFs: read them (in the document reader's sandboxed
+        // process) instead of dropping them. A PDF cut off at the cap doesn't parse; it's skipped.
+        if (contentType.includes("application/pdf")) {
+            const buf = await readBodyCapped(response, MAX_PDF_BYTES + 1);
+            clearTimeout(timeout);
+            // Too big, scanned or unparseable: the same bytes come back next time, so don't
+            // download and parse it again (null = no retry).
+            if (buf.length > MAX_PDF_BYTES) return null;
+            const { extractText } = await import("../documents/ingest.js");
+            const text = await extractText(Buffer.from(buf)).catch(() => "");
+            return text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().substring(0, MAX_CONTENT_PER_PAGE) || null;
+        }
+        const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
+        // JSON APIs, RSS/Atom feeds, sitemaps, CSV and Markdown are text too; read them as-is.
+        const plain = !isHtml && /^text\/|^application\/([\w.-]+\+)?(json|xml|javascript|csv)\b/.test(contentType);
+        if (!plain && !isHtml) {
+            clearTimeout(timeout);
+            response.body?.cancel().catch(() => {});
+            return `[Non-text content: ${contentType || "unknown type"}]`;
         }
 
         // Byte-capped streaming read + charset-aware decode. Bounds memory
@@ -284,6 +305,7 @@ async function fetchPageContentOnce(url: string): Promise<string> {
             })
             .replace(/&amp;/g, "&") // last, so "&amp;lt;" stays the literal "&lt;"
             .replace(/[ \t]+/g, " ")
+            .replace(/ ?\n ?/g, "\n") // " \n \n \n" runs (layout markup) were left as blank-looking lines
             .replace(/\n{3,}/g, "\n\n")
             .trim();
 
@@ -298,6 +320,7 @@ async function fetchPageContentOnce(url: string): Promise<string> {
 export async function fetchPageContent(url: string): Promise<string> {
     for (let attempt = 0; attempt < 3; attempt++) {
         const content = await fetchPageContentOnce(url);
+        if (content === null) return "";
         if (content) return content;
         if (attempt < 2) await sleep(200 * Math.pow(2, attempt)); // 200ms, 400ms
     }
@@ -333,7 +356,7 @@ export function extractOutboundLinks(html: string, baseUrl: string): string[] {
             if (linkDomain === baseDomain.toLowerCase().replace(/^www\./, "")) continue;
             if (url.includes("javascript:") || url.includes("mailto:")) continue;
             // Skip obvious non-content URLs
-            if (url.match(/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|ttf|pdf)$/i)) continue;
+            if (url.match(/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|ttf)$/i)) continue;
 
             links.push(url);
         } catch { /* invalid URL */ }

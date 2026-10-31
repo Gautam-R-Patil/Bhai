@@ -38,6 +38,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { initKokoro, synthesize as kokoroSynthesize, hasKokoroFailed, isKokoroReady } from "./kokoro-tts.js";
+import { stripTtsMarkup } from "../tts.js";
 
 // ── Cross-platform subprocess lookup ─────────────────────
 // Check once at module load which binaries are present. Linux ships a mix of
@@ -88,12 +89,12 @@ function buildWavHeader(
     return h;
 }
 
-const SAY_VOICE = process.env.ATLAS_SAY_VOICE || "Samantha";
+const SAY_VOICE = process.env.BHAI_SAY_VOICE || "Samantha";
 // Default pace ~200 wpm (macOS `say` rate; espeak and SpeechSynthesizer
 // interpret the number differently but this is a reasonable middle).
 // Parse-and-validate so a bad env var doesn't break the spawn.
 const SAY_RATE = (() => {
-    const raw = Number(process.env.ATLAS_SAY_RATE);
+    const raw = Number(process.env.BHAI_SAY_RATE);
     return Number.isFinite(raw) && raw >= 80 && raw <= 400 ? String(Math.round(raw)) : "200";
 })();
 
@@ -190,35 +191,6 @@ const MIN_SENTENCE_CHARS = 12;
 // still lives in the OS audio buffer + room acoustics for ~100-300 ms — long
 // enough to leak back through the mic and re-ignite the feedback loop.
 const POST_SPEAK_QUIET_MS = 250;
-
-/**
- * Strip markup that the LLM sometimes leaks into text-mode responses even in
- * voice mode — HTML comments, widget markers, overlay directives, code fences,
- * markdown links, bullet-list prefixes. Kokoro reads these literally ("widget
- * type colon clock"), which is terrible UX. The voice system prompt already
- * forbids them but LLMs violate it; strip as belt-and-braces.
- */
-export function stripTtsMarkup(text: string): string {
-    return text
-        // HTML comments (widget markers, collapse/quick_actions, etc)
-        .replace(/<!--[\s\S]*?-->/g, "")
-        // Code fences — keep the inner text, drop the backticks + language tag
-        .replace(/```[a-zA-Z0-9]*\n?/g, "")
-        .replace(/```/g, "")
-        // Inline code backticks — TTS reads them as "backtick"
-        .replace(/`([^`]*)`/g, "$1")
-        // Markdown links: [text](url) → text
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-        // Bold/italic asterisks around words — keep the word
-        .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")
-        // Leading bullet markers on a line (*, -, •, numbered)
-        .replace(/^\s*[-*•]\s+/gm, "")
-        .replace(/^\s*\d+\.\s+/gm, "")
-        // Trailing whitespace cleanup
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-}
 
 // Common English abbreviations that end in `.` and are followed by a capital
 // word — "I spoke to Dr. Smith about…" must NOT split at "Dr.". Checked against
@@ -606,7 +578,7 @@ export class TranscriptSpeaker {
             this.speakViaSystemTts("");  // no text means: just advance queue
             return;
         }
-        const wavPath = join(tmpdir(), `atlas-tts-${randomUUID()}.wav`);
+        const wavPath = join(tmpdir(), `bhai-tts-${randomUUID()}.wav`);
         try {
             writeFileSync(wavPath, Buffer.concat([buildWavHeader(pcm.length), pcm]));
         } catch (err) {
@@ -636,10 +608,10 @@ export class TranscriptSpeaker {
         this.running = child;
         // Remember the temp file so attachChildHandlers can delete it once
         // playback exits. Any-cast because ChildProcess has no user slot.
-        (child as unknown as { __atlasTempFile?: string; __atlasSpawnTs?: number; __atlasExpectedMs?: number })
-            .__atlasTempFile = wavPath;
-        (child as unknown as { __atlasSpawnTs?: number }).__atlasSpawnTs = tSpawn;
-        (child as unknown as { __atlasExpectedMs?: number }).__atlasExpectedMs = Math.round(expectedSec * 1000);
+        (child as unknown as { __bhaiTempFile?: string; __bhaiSpawnTs?: number; __bhaiExpectedMs?: number })
+            .__bhaiTempFile = wavPath;
+        (child as unknown as { __bhaiSpawnTs?: number }).__bhaiSpawnTs = tSpawn;
+        (child as unknown as { __bhaiExpectedMs?: number }).__bhaiExpectedMs = Math.round(expectedSec * 1000);
         this.attachChildHandlers(child);
         // Pipeline: kick off synth of the NEXT queued sentence RIGHT NOW so
         // by the time afplay closes, its PCM is already (or nearly) ready.
@@ -705,13 +677,13 @@ export class TranscriptSpeaker {
         const onExit = (reason: "close" | "error", code?: number | null, signal?: NodeJS.Signals | null) => {
             if (fired) return;
             fired = true;
-            const meta = child as unknown as { __atlasTempFile?: string; __atlasSpawnTs?: number; __atlasExpectedMs?: number };
-            const actualMs = meta.__atlasSpawnTs ? Date.now() - meta.__atlasSpawnTs : -1;
-            const expectedMs = meta.__atlasExpectedMs ?? -1;
+            const meta = child as unknown as { __bhaiTempFile?: string; __bhaiSpawnTs?: number; __bhaiExpectedMs?: number };
+            const actualMs = meta.__bhaiSpawnTs ? Date.now() - meta.__bhaiSpawnTs : -1;
+            const expectedMs = meta.__bhaiExpectedMs ?? -1;
             const stillActive = this.running === child;
             const short = expectedMs > 0 && actualMs > 0 && actualMs < expectedMs * 0.9;
             console.log(`[SPEAKER] child ${reason} pid=${child.pid} code=${code} signal=${signal} actualMs=${actualMs} expectedMs=${expectedMs} short=${short} stillActive=${stillActive} qLen=${this.queue.length}`);
-            const path = meta.__atlasTempFile;
+            const path = meta.__bhaiTempFile;
             if (path) {
                 try { unlinkSync(path); } catch { /* already gone */ }
             }

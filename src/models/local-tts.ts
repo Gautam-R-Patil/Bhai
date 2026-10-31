@@ -18,7 +18,7 @@ export interface TTSResult {
 export async function synthesizeSpeech(
     text: string,
     emotion: "neutral" | "happy" | "sad" | "excited" | "calm" = "neutral",
-    outputPath = path.join(tmpdir(), "atlas-tts-output.aiff"),
+    outputPath = path.join(tmpdir(), "bhai-tts-output.aiff"),
 ): Promise<TTSResult> {
     const start = Date.now();
 

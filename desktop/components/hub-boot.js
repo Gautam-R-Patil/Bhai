@@ -7,15 +7,15 @@
     async function boot() {
         const root = document.getElementById("hub-root");
         if (!root) return;
-        const atlas = window.atlas || {};
+        const bhai = window.bhai || {};
         const RHB = window.ReadyHubBody;
         if (!RHB || typeof RHB.mountHub !== "function") {
             root.textContent = "Ready Hub shell failed to load (ReadyHubBody missing).";
             return;
         }
         let state = {};
-        if (typeof atlas.setupDetect === "function") {
-            try { state = await atlas.setupDetect(); }
+        if (typeof bhai.setupDetect === "function") {
+            try { state = await bhai.setupDetect(); }
             catch (err) { state = { __detectError: err.message || String(err) }; }
         }
         try {

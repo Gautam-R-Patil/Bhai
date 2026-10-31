@@ -213,7 +213,7 @@ export const siteSkillMintTool: ToolDefinition = {
         }
         if (action !== "start" && action !== "repair") return JSON.stringify({ error: `Unknown action: ${action}` });
 
-        if (process.env.ATLAS_NO_SITE_MINT === "true")
+        if (process.env.BHAI_NO_SITE_MINT === "true")
             return JSON.stringify({ error: "Learning sites is turned off." });
         if (!llm) return JSON.stringify({ error: "The model client isn't ready yet." });
         if (running)

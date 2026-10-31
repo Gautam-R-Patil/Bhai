@@ -320,7 +320,7 @@ describe("cmdSpec", () => {
         initCommands(ctx);
         const r = await handleCommand("/spec design auth flow");
         expect(r.response).toContain("Task: design auth flow");
-        expect(r.response).toMatch(/\.atlas.*specs.*\.md/);
+        expect(r.response).toMatch(/\.bhai.*specs.*\.md/);
     });
 
     it("/spec generates a slug from the task (lowercase, truncated to 6 words or 50 chars)", async () => {

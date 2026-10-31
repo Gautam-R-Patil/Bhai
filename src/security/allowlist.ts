@@ -93,7 +93,7 @@ export function realResolve(inputPath: string): string {
 
 /**
  * True when `child` is `parent` or lies under it. The `+ sep` guard keeps
- * "/path/ATLAS-sibling" from matching "/path/ATLAS". Case-insensitive:
+ * "/path/BHAI-sibling" from matching "/path/BHAI". Case-insensitive:
  * these are deny checks (fail-closed) and macOS/Windows volumes ignore
  * case. `p` is injectable so tests on any OS can exercise path.win32.
  */
@@ -305,7 +305,7 @@ export function addAllowedPath(_dirPath: string): void {
 //
 // Decision: keep the function rather than delete. Used in tests today;
 // reserved for future opt-IN sub-agent egress policy controlled by
-// ATLAS_NO_DOMAIN_ALLOWLIST=true (off by default).
+// BHAI_NO_DOMAIN_ALLOWLIST=true (off by default).
 
 const ALLOWED_DOMAINS = new Set([
     "api.openai.com",

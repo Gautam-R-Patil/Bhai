@@ -19,7 +19,7 @@ Admin dashboard for managing the Bhai Store - developers, app submissions, and u
    - `JWT_SECRET` - Generate a random 64-character string
    - `INITIAL_ADMIN_EMAIL` - Email for the first admin account
    - `INITIAL_ADMIN_PASSWORD` - Password for the first admin account
-   - `ATLAS_ADMIN_KEY` (server-side only) - must match `ADMIN_API_KEY` in Convex; `NEXT_PUBLIC_ATLAS_ADMIN_API_BASE` optional
+   - `BHAI_ADMIN_KEY` (server-side only) - must match `ADMIN_API_KEY` in Convex; `NEXT_PUBLIC_BHAI_ADMIN_API_BASE` optional (the old `ATLAS_` names still work)
    - `ATLAS_MCP_CONVEX_SITE_URL` + `ATLAS_MCP_ADMIN_KEY` (server-side only) - for the Enterprise page
 
 3. **Create initial admin:**

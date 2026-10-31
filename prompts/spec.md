@@ -19,7 +19,7 @@ Spec mode is a stricter precursor to plan mode. The agent can read the codebase 
 
 ## Transitions
 
-- `enter_spec_mode(task)` — start. Filesystem writes restricted to `.atlas/specs/{slug}.md`.
+- `enter_spec_mode(task)` — start. Filesystem writes restricted to the `spec_path` it returns.
 - `finalize_spec({ spec_body?, summary? })` — transition to plan mode once the spec is complete.
 - `/noplan` — abandon spec mode (returns to act mode without finalizing).
 

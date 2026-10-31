@@ -31,7 +31,7 @@ export interface ClickSite {
 
 /** Kill-switch — when true, recall returns null and record* are no-ops. */
 function isDisabled(): boolean {
-    return process.env.ATLAS_NO_CLICK_MEMORY === "true";
+    return process.env.BHAI_NO_CLICK_MEMORY === "true";
 }
 
 export interface ClickRecall {

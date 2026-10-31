@@ -99,7 +99,7 @@ function parsePackageSpec(ecosystem: Ecosystem, args: string[]): { name: string;
 }
 
 export async function checkPackageForMalware(command: string, args: string[]): Promise<OsvMalwareResult> {
-    if (process.env.ATLAS_NO_OSV_CHECK === "true") return { blocked: false, advisoryIds: [] };
+    if (process.env.BHAI_NO_OSV_CHECK === "true") return { blocked: false, advisoryIds: [] };
 
     const ecosystem = inferEcosystem(command);
     if (!ecosystem) return { blocked: false, advisoryIds: [] };

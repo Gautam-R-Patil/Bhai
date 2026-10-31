@@ -92,7 +92,13 @@ export function getIdentityProfile(userId = DEFAULT_USER_ID): UserProfile {
     }
 
     try {
-        return JSON.parse(results[0].values[0][0] as string) as UserProfile;
+        const profile = JSON.parse(results[0].values[0][0] as string) as UserProfile;
+        // Reflection once saved these as plain strings, and every reader that joins them threw.
+        for (const k of ["projects", "important_goals"] as const) {
+            const v: unknown = profile[k];
+            if (v !== undefined && !Array.isArray(v)) profile[k] = typeof v === "string" && v ? [v] : undefined;
+        }
+        return profile;
     } catch {
         return { user_id: userId };
     }
@@ -106,14 +112,11 @@ export function updateIdentityProfile(fields: Partial<UserProfile>, userId = DEF
     const current = getIdentityProfile(userId);
     const updated: UserProfile = { ...current };
 
-    if (fields.email !== undefined) updated.email = fields.email;
-    if (fields.name !== undefined) updated.name = fields.name;
-    if (fields.location !== undefined) updated.location = fields.location;
-    if (fields.current_location !== undefined) updated.current_location = fields.current_location;
-    if (fields.role !== undefined) updated.role = fields.role;
-    if (fields.company !== undefined) updated.company = fields.company;
-    if (fields.projects !== undefined) updated.projects = fields.projects;
-    if (fields.important_goals !== undefined) updated.important_goals = fields.important_goals;
+    // A key passed as undefined clears that field (core_memory_delete); a key left out keeps it.
+    // JSON.stringify below drops undefined values, here and in the merged preferences/extra.
+    for (const k of [...VERIFIABLE_FIELDS, "current_location", "projects", "important_goals"] as const) {
+        if (Object.hasOwn(fields, k)) Object.assign(updated, { [k]: fields[k] });
+    }
 
     if (fields.preferences) {
         updated.preferences = { ...current.preferences, ...fields.preferences };
@@ -154,7 +157,7 @@ export function getFieldValue(field: string | VerifiedField | undefined): string
 
 // Guarded ownership/creator claims about TRUSCOR / Bhai.
 // We reject ONLY ownership/creator role + TRUSCOR company combinations.
-// Working at, interested in, being a fan of TRUSCOR/Atlas is fine — the bot
+// Working at, interested in, being a fan of TRUSCOR/Bhai is fine — the bot
 // should learn that context normally.
 // Canonical-form tokens for guarded orgs.
 // "a.t.l.a.s" canonicalizes to "a t l a s" so include that spaced form here.
@@ -264,8 +267,8 @@ export function fieldEmbedsOwnershipClaim(value: string): boolean {
     return hasOrg && hasOwnership;
 }
 
-export function fieldNamesAtlasDirectly(value: string): boolean {
-    // project="Bhai" / goal="build bhai" / project="atlas-core" /
+export function fieldNamesBhaiDirectly(value: string): boolean {
+    // project="Bhai" / goal="build bhai" / project="bhai-core" /
     // goal="ship bhai v2" — claims to projects/goals NAMED after the bot
     // or its creator org. The bot is Bhai; it cannot be a user's
     // "project" or "goal" to build.
@@ -277,7 +280,7 @@ export function fieldNamesAtlasDirectly(value: string): boolean {
     if (/\b(build|ship|create|launch|run|own|maintain|develop|design)\s+/.test(c)) {
         if (c.includes("bhai") || c.includes("truscor") || c.includes("a t l a s")) return true;
     }
-    // Compound names like "atlas-core" / "bhai v2" / "truscor platform"
+    // Compound names like "bhai-core" / "bhai v2" / "truscor platform"
     // canonicalize to "bhai core" / "bhai v2" / "truscor platform".
     if (/^(bhai|truscor|a t l a s)(\s|$)/.test(c)) return true;
     if (/(\s|^)(bhai|truscor|a t l a s)$/.test(c)) return true;
@@ -292,6 +295,20 @@ export function fieldNamesAtlasDirectly(value: string): boolean {
 export function statedField(field: string, value: string): string | VerifiedField {
     const plain = field === "name" || field === "email" || field === "location";
     return plain && !fieldEmbedsOwnershipClaim(value) ? { value, verified: true } : value;
+}
+
+/**
+ * Saves a fact reflection heard the owner state about themselves. The field name comes from the
+ * model, so only known fields are taken: projects and goals join their lists, and anything else
+ * is refused (false) rather than written over the profile's shape.
+ */
+export function applyStatedField(field: string, value: string, userId = DEFAULT_USER_ID): boolean {
+    if (field === "projects") addProject(value, userId);
+    else if (field === "important_goals") addGoal(value, userId);
+    else if ((VERIFIABLE_FIELDS as readonly string[]).includes(field))
+        updateIdentityProfile({ [field]: statedField(field, value) }, userId);
+    else return false;
+    return true;
 }
 
 // ── Prompt Snippet ────────────────────────────

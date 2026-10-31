@@ -22,16 +22,16 @@ describe("auto-synthesis queue", () => {
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-aq-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
         await initForge({ embedFn: async () => vector(0) });
     });
 
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("queueSynthesisCandidate persists to forge-pending.json", async () => {
@@ -44,7 +44,7 @@ describe("auto-synthesis queue", () => {
             source: "synchronous",
         });
 
-        const pendingPath = join(process.env.ATLAS_HOME!, "data", "forge-pending.json");
+        const pendingPath = join(process.env.BHAI_HOME!, "data", "forge-pending.json");
         expect(existsSync(pendingPath)).toBe(true);
         const pending = JSON.parse(readFileSync(pendingPath, "utf-8"));
         // F6: entries are now HMAC-wrapped {candidate, queuedAt, hmac}.
@@ -65,7 +65,7 @@ describe("auto-synthesis queue", () => {
             name: "x", description: "test description",
             parametersSchema: {}, persistent: false, source: "synchronous",
         });
-        const pending = JSON.parse(readFileSync(join(process.env.ATLAS_HOME!, "data", "forge-pending.json"), "utf-8"));
+        const pending = JSON.parse(readFileSync(join(process.env.BHAI_HOME!, "data", "forge-pending.json"), "utf-8"));
         expect(pending.candidates).toHaveLength(1);
     });
 
@@ -100,7 +100,7 @@ describe("auto-synthesis queue", () => {
         await queueSynthesisCandidate({
             name: "should_not_persist", description: "ignored", parametersSchema: {}, persistent: false, source: "synchronous",
         });
-        const pendingPath = join(process.env.ATLAS_HOME!, "data", "forge-pending.json");
+        const pendingPath = join(process.env.BHAI_HOME!, "data", "forge-pending.json");
         expect(existsSync(pendingPath)).toBe(false);
     });
 });

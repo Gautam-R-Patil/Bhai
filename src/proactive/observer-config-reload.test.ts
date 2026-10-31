@@ -39,13 +39,13 @@ describe("proactive posture hot-reload", () => {
     it("'shut up' still holds after a restart; 'resume' clears it", async () => {
         const configPath = join(mkdtempSync(join(tmpdir(), "proactive-")), "proactive-config.json");
         await tryProactiveCommand("shut up", { configPath } as never);
-        delete process.env.ATLAS_PROACTIVE_DISABLE; // the process restarts
+        delete process.env.BHAI_PROACTIVE_DISABLE; // the process restarts
         new Observer({ llm: null as never, configPath });
-        expect(process.env.ATLAS_PROACTIVE_DISABLE).toBe("true");
+        expect(process.env.BHAI_PROACTIVE_DISABLE).toBe("true");
         await tryProactiveCommand("resume", { configPath } as never);
-        expect(process.env.ATLAS_PROACTIVE_DISABLE).toBeUndefined();
+        expect(process.env.BHAI_PROACTIVE_DISABLE).toBeUndefined();
         new Observer({ llm: null as never, configPath });
-        expect(process.env.ATLAS_PROACTIVE_DISABLE).toBeUndefined();
+        expect(process.env.BHAI_PROACTIVE_DISABLE).toBeUndefined();
     });
 });
 

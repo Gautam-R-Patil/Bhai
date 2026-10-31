@@ -70,8 +70,8 @@
             // Mark every remaining permission as skipped so the Ready Hub shows amber.
             const keys = ["accessibility", "screen", "microphone", "location"];
             for (const k of keys) {
-                if (window.atlas && window.atlas.setupMarkPermissionSkipped) {
-                    try { await window.atlas.setupMarkPermissionSkipped(k, true); } catch { /* best-effort */ }
+                if (window.bhai && window.bhai.setupMarkPermissionSkipped) {
+                    try { await window.bhai.setupMarkPermissionSkipped(k, true); } catch { /* best-effort */ }
                 }
             }
             if (grid && typeof grid.unmount === "function") { try { grid.unmount(); } catch {} }

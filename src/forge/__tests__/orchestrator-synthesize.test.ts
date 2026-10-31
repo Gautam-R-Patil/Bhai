@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setRegistryRef } from "../../tools/create-tool.js";
+import type { ToolDefinition } from "../../tools/get-current-time.js";
 import { initForge, shutdownForge, synthesizeTool } from "../orchestrator.js";
 
 function vector(seed: number): Float32Array {
@@ -22,18 +24,18 @@ describe("orchestrator.synthesizeTool real impl", () => {
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-syn-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
-        process.env.ATLAS_FORGE_STUB_LLM = "true";
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
+        process.env.BHAI_FORGE_STUB_LLM = "true";
         await initForge({ embedFn: async () => vector(0) });
     });
 
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        delete process.env.ATLAS_FORGE_STUB_LLM;
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        delete process.env.BHAI_FORGE_STUB_LLM;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("synthesizes a session tool end-to-end", async () => {
@@ -59,6 +61,8 @@ describe("orchestrator.synthesizeTool real impl", () => {
             persistent: false,
             source: "synchronous",
         });
+        // create_tool registers a synthesized tool; only then is it reusable.
+        setRegistryRef(new Map([["increment", {} as ToolDefinition]]));
         const r = await synthesizeTool({
             name: "increment_v2",
             description: "Add 1 to input.x",
@@ -69,9 +73,9 @@ describe("orchestrator.synthesizeTool real impl", () => {
         expect(r.kind).toBe("lookup_hit");
     });
 
-    it("ATLAS_NO_FORGE_VERIFIER=true falls back via stub path", async () => {
-        delete process.env.ATLAS_FORGE_STUB_LLM;
-        process.env.ATLAS_NO_FORGE_VERIFIER = "true";
+    it("BHAI_NO_FORGE_VERIFIER=true falls back via stub path", async () => {
+        delete process.env.BHAI_FORGE_STUB_LLM;
+        process.env.BHAI_NO_FORGE_VERIFIER = "true";
         try {
             const r = await synthesizeTool({
                 name: "fallback_x",
@@ -82,8 +86,8 @@ describe("orchestrator.synthesizeTool real impl", () => {
             });
             expect(r.kind).toBe("synthesized");
         } finally {
-            delete process.env.ATLAS_NO_FORGE_VERIFIER;
-            process.env.ATLAS_FORGE_STUB_LLM = "true";
+            delete process.env.BHAI_NO_FORGE_VERIFIER;
+            process.env.BHAI_FORGE_STUB_LLM = "true";
         }
     });
 
@@ -96,7 +100,7 @@ describe("orchestrator.synthesizeTool real impl", () => {
             source: "synchronous",
         });
 
-        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        process.env.BHAI_NO_FORGE_LOOKUP = "true";
         try {
             const r = await synthesizeTool({
                 name: "dup_slug",
@@ -110,7 +114,7 @@ describe("orchestrator.synthesizeTool real impl", () => {
                 expect(r.report.finalDiagnosis).toContain("library insert failed");
             }
         } finally {
-            delete process.env.ATLAS_NO_FORGE_LOOKUP;
+            delete process.env.BHAI_NO_FORGE_LOOKUP;
         }
     });
 });

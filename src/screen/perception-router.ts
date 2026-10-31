@@ -284,8 +284,8 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
             // misses, then hits moments later. Re-dump ONCE before paying the
             // slow/possibly-billed vision tiers (also when the hint came from the
             // caller — os_smart_click's hint is a pre-click dump, not "settled"). Gated.
-            if (process.env.ATLAS_NO_AX_RETRY !== "true") {
-                const delayMs = Number(process.env.ATLAS_AX_RETRY_DELAY_MS) || 250;
+            if (process.env.BHAI_NO_AX_RETRY !== "true") {
+                const delayMs = Number(process.env.BHAI_AX_RETRY_DELAY_MS) || 250;
                 await new Promise((r) => setTimeout(r, delayMs));
                 clearAxFailureCache();
                 try {
@@ -335,11 +335,11 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // icon_detect weights aren't present — otherwise we spawn python on every
     // call just to get `omniparser_weights_missing` back (wasteful). Also skip
     // when Florence-2 captions aren't cached: matching is caption-only, so a
-    // caption-less run can never hit. Kill-switch ATLAS_NO_OMNIPARSER force-skips.
+    // caption-less run can never hit. Kill-switch BHAI_NO_OMNIPARSER force-skips.
     if (
         !skip.has("omniparser") &&
         profile === "standard" &&
-        process.env.ATLAS_NO_OMNIPARSER !== "true" &&
+        process.env.BHAI_NO_OMNIPARSER !== "true" &&
         omniParserWeightsPresent() &&
         omniParserCaptionsPresent()
     ) {
@@ -380,7 +380,7 @@ export async function findClickTarget(instruction: string, opts: CascadeOptions 
     // missed click bounced to the expensive agentic model to re-ground.
     if (skip.has("cloud_grounding")) {
         miss.tierErrors.cloud_grounding = "skipped";
-    } else if (process.env.ATLAS_NO_CLOUD_GROUNDING === "true") {
+    } else if (process.env.BHAI_NO_CLOUD_GROUNDING === "true") {
         miss.tierErrors.cloud_grounding = "cloud_grounding_disabled";
     } else if (!opts.llm) {
         miss.tierErrors.cloud_grounding = "no_llm_client";

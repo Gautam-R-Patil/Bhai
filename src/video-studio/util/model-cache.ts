@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { mkdir, statfs, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { getBhaiHome } from "../../config/paths.js";
 
 import { runPython } from "./python-sidecar.js";
 import { getVSPythonScript } from "./resolve-paths.js";
@@ -30,7 +31,7 @@ export class ModelDownloadBlockedError extends Error {
 }
 
 export function modelCacheDir(): string {
-    return path.join(os.homedir(), ".atlas", "models");
+    return path.join(getBhaiHome(), "models");
 }
 
 export async function ensureModel(name: ModelName, opts: EnsureModelOpts = {}): Promise<string> {
@@ -49,11 +50,11 @@ export async function ensureModel(name: ModelName, opts: EnsureModelOpts = {}): 
         return dest;
     }
 
-    if (entry.tier >= 3 && process.env.ATLAS_VIDEO_NO_HEAVY === "1") {
+    if (entry.tier >= 3 && process.env.BHAI_VIDEO_NO_HEAVY === "1") {
         throw new ModelDownloadBlockedError(
             "kill_switch",
             `[model-cache] Model "${name}" is a Tier-${entry.tier} (heavy) download and ` +
-                `ATLAS_VIDEO_NO_HEAVY=1 is set. Unset the variable to allow downloads.`,
+                `BHAI_VIDEO_NO_HEAVY=1 is set. Unset the variable to allow downloads.`,
         );
     }
 

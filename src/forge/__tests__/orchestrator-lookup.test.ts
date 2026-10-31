@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initForge, lookupTool, shutdownForge } from "../orchestrator.js";
 import { insertTool } from "../library.js";
+import { setRegistryRef } from "../../tools/create-tool.js";
+import type { ToolDefinition } from "../../tools/get-current-time.js";
 
 function vector(seed: number): Float32Array {
     const v = new Float32Array(384);
@@ -20,19 +22,22 @@ function vector(seed: number): Float32Array {
 describe("orchestrator.lookupTool", () => {
     let tmpDir: string;
     let originalEnv: string | undefined;
+    let registry: Map<string, ToolDefinition>;
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-orch-lk-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        registry = new Map();
+        setRegistryRef(registry);
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
         await initForge({ embedFn: async () => vector(0) });
     });
 
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("returns null when library is empty", async () => {
@@ -48,23 +53,27 @@ describe("orchestrator.lookupTool", () => {
             handlerHash: "x", embedding: vector(0),
             source: "synchronous", createdAt: Date.now(),
         });
+        // Not callable in this process (awaiting approval, or a session tool
+        // from before a restart) → not reused.
+        expect(await lookupTool("Extract PDF text", {})).toBeNull();
+        registry.set("extract_pdf", {} as ToolDefinition);
         const tool = await lookupTool("Extract PDF text", { type: "object", properties: { path: { type: "string" } } });
         expect(tool).not.toBeNull();
         expect(tool!.slug).toBe("extract_pdf");
     });
 
-    it("returns null when ATLAS_NO_FORGE_LOOKUP=true even if a match exists", async () => {
+    it("returns null when BHAI_NO_FORGE_LOOKUP=true even if a match exists", async () => {
         insertTool({
             slug: "extract_pdf", description: "Extract PDF text",
             schemaJson: "{}", handlerHash: "x", embedding: vector(0),
             source: "synchronous", createdAt: Date.now(),
         });
-        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        process.env.BHAI_NO_FORGE_LOOKUP = "true";
         try {
             const tool = await lookupTool("Extract PDF text", { type: "object", properties: {}, required: [] });
             expect(tool).toBeNull();
         } finally {
-            delete process.env.ATLAS_NO_FORGE_LOOKUP;
+            delete process.env.BHAI_NO_FORGE_LOOKUP;
         }
     });
 

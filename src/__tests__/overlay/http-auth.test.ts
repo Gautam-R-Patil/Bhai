@@ -20,7 +20,7 @@ vi.mock("../../agent.js", () => ({
     setConversationHistory: () => {},
 }));
 vi.mock("../../notifications/push.js", () => ({
-    initPushNotifications: vi.fn(),
+    initPushNotifications: vi.fn(async () => {}),
     getVapidPublicKey: () => "stub-vapid",
     registerSubscription: vi.fn(),
 }));
@@ -35,13 +35,13 @@ let localToken: string;
 let closeOverlay: () => void;
 
 beforeAll(async () => {
-    scratch = mkdtempSync(join(tmpdir(), "atlas-overlay-http-"));
+    scratch = mkdtempSync(join(tmpdir(), "bhai-overlay-http-"));
     workspaceDir = join(scratch, "workspace");
     mkdirSync(workspaceDir, { recursive: true });
-    process.env.ATLAS_WORKSPACE = workspaceDir;
+    process.env.BHAI_WORKSPACE = workspaceDir;
     process.env.WIDGET_TOKEN = VALID_TOKEN;
     process.env.HOME = scratch;
-    process.env.ATLAS_OVERLAY_PORT = String(PORT);
+    process.env.BHAI_OVERLAY_PORT = String(PORT);
 
     writeFileSync(join(workspaceDir, "foo.txt"), "hello");
     writeFileSync(join(workspaceDir, ".env"), "SECRET=1");
@@ -57,7 +57,7 @@ afterAll(async () => {
     try { closeOverlay?.(); } catch { /* */ }
     await new Promise(r => setTimeout(r, 100));
     rmSync(scratch, { recursive: true, force: true });
-    delete process.env.ATLAS_WORKSPACE;
+    delete process.env.BHAI_WORKSPACE;
     delete process.env.WIDGET_TOKEN;
 });
 
@@ -219,7 +219,7 @@ describe("F3: WS owner-distinguishing", () => {
             seenSignal = args[4] as AbortSignal;
             // A long turn that only ends when aborted.
             return new Promise((resolve) =>
-                seenSignal?.addEventListener("abort", () => resolve({ text: "✅ Task stopped.", toolCalls: 0 })),
+                seenSignal?.addEventListener("abort", () => resolve({ text: "✅ Task stopped.", toolCalls: 0, stopped: true })),
             );
         }) as never);
         const ws = await connectWS(`localToken=${localToken}`);
@@ -277,3 +277,12 @@ describe("DNS-rebinding guard", () => {
     });
 });
 
+
+describe("/api/mentions auth", () => {
+    it("the @ picker's tool list and workspace path need the local token", async () => {
+        expect((await fetch(`${BASE}/api/mentions`)).status).toBe(401);
+        const r = await fetch(`${BASE}/api/mentions`, { headers: { Authorization: `Bearer ${localToken}` } });
+        expect(r.status).toBe(200);
+        expect(await r.json()).toHaveProperty("rootDir");
+    });
+});

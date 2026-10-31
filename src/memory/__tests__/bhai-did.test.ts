@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { sendFailed } from "../../tools/send-ledger.js";
 import { bhaiDidMemory, didLine } from "../bhai-did.js";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-bhai-did-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-bhai-did-"));
 
 const owner = { isOwner: true, autonomous: false, stuck: false, secret: false, failed: false };
 

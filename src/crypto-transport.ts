@@ -5,6 +5,7 @@
 
 import crypto from "node:crypto";
 import { deriveE2EKey, KDF_VERSION_LATEST, type KdfVersion } from "./crypto-kdf.js";
+import type { Frame } from "./llm-stream.js";
 
 // ── State ─────────────────────────────────────
 let _ecdh: crypto.ECDH | null = null;
@@ -178,6 +179,27 @@ export function decrypt(envelope: EncryptedEnvelope, bindAad?: Buffer): string {
     }
 }
 
+/**
+ * Decrypt one streamed NDJSON frame. The AAD binds the request id, the frame's
+ * position and the end flag, so a reordered, replayed, cross-request or
+ * truncated-then-forged frame fails the GCM tag.
+ */
+export function decryptFrame(line: string, reqRid: string, expectSeq: number): { frame: Frame; final: boolean } {
+    const env = JSON.parse(line) as EncryptedEnvelope;
+    for (const final of [false, true]) {
+        const aad = Buffer.from(`POST|/api/llm/chat|${env.ts}|${env.rid}|${reqRid}|${expectSeq}|${final ? 1 : 0}`);
+        let text: string;
+        try {
+            text = decrypt(env, aad);
+        } catch {
+            continue;
+        }
+        const { pad: _pad, ...frame } = JSON.parse(text) as Frame & { pad?: string };
+        return { frame, final };
+    }
+    throw new Error(`stream frame ${expectSeq} rejected (bad tag, order or request)`);
+}
+
 // ── Encrypted Fetch ───────────────────────────
 
 /**
@@ -198,8 +220,8 @@ const PRE_E2E_PLAINTEXT_PATHS = new Set([
 // attempt — not the whole chain. A hung/dead model (e.g. a 404 slug that never
 // answers) is abandoned at this deadline and the chain advances to the next
 // model, instead of stalling the previous 45s and stacking into ~55s+ totals.
-// Override with ATLAS_LLM_ATTEMPT_TIMEOUT_MS for slow links.
-const ATTEMPT_TIMEOUT_MS = Number(process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS) || 25_000;
+// Override with BHAI_LLM_ATTEMPT_TIMEOUT_MS for slow links.
+const ATTEMPT_TIMEOUT_MS = Number(process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS) || 25_000;
 
 function urlPathOf(rawUrl: string): string {
     try {
@@ -208,6 +230,37 @@ function urlPathOf(rawUrl: string): string {
         // Bare path passed (rare) — best-effort.
         return rawUrl.replace(/^[a-z]+:\/\/[^/]+/i, "") || "/";
     }
+}
+
+/**
+ * Seal a request body into an envelope whose AAD binds method, path and a
+ * fresh ts/rid (pre-allocated so the same values go into the AAD).
+ */
+function sealBody(method: string, urlPath: string, body: string): { body: string; rid: string } {
+    if (!_sharedKey) throw new Error("E2E encryption not established");
+    const ts = Date.now();
+    const rid = crypto.randomBytes(16).toString("hex");
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", _sharedKey, iv);
+    cipher.setAAD(buildAAD(method, urlPath, ts, rid));
+    const ct = Buffer.concat([cipher.update(body, "utf8"), cipher.final()]);
+    const envelope: EncryptedEnvelope = {
+        iv: iv.toString("base64"),
+        ct: ct.toString("base64"),
+        tag: cipher.getAuthTag().toString("base64"),
+        ts,
+        rid,
+    };
+    return { body: JSON.stringify(envelope), rid };
+}
+
+/**
+ * Decrypt a whole-body response envelope (the server echoes its own ts/rid;
+ * we re-bind them to method+urlPath, which is what we control on this side).
+ */
+export function openEnvelope(text: string, method: string, urlPath: string): string {
+    const env = JSON.parse(text) as EncryptedEnvelope;
+    return decrypt(env, buildAAD(method, urlPath, env.ts, env.rid));
 }
 
 /**
@@ -238,7 +291,6 @@ export async function encryptedFetch(
     }
 
     const headers = new Headers(options.headers);
-    let aad: Buffer | undefined;
 
     // Signal E2E capability on every request once a shared key exists, even
     // bodyless GETs. Endpoints that ship sensitive secrets (e.g.
@@ -249,25 +301,7 @@ export async function encryptedFetch(
 
     // Encrypt request body if present
     if (options.body && typeof options.body === "string") {
-        // Pre-allocate ts/rid so we bind the same values into AAD.
-        const ts = Date.now();
-        const rid = crypto.randomBytes(16).toString("hex");
-        aad = buildAAD(method, urlPath, ts, rid);
-        // Inline encrypt with the pre-allocated ts/rid + AAD.
-        const iv = crypto.randomBytes(12);
-        const cipher = crypto.createCipheriv("aes-256-gcm", _sharedKey, iv);
-        cipher.setAAD(aad);
-        let encrypted = cipher.update(options.body as string, "utf8");
-        encrypted = Buffer.concat([encrypted, cipher.final()]);
-        const tag = cipher.getAuthTag();
-        const envelope: EncryptedEnvelope = {
-            iv: iv.toString("base64"),
-            ct: encrypted.toString("base64"),
-            tag: tag.toString("base64"),
-            ts,
-            rid,
-        };
-        options.body = JSON.stringify(envelope);
+        options.body = sealBody(method, urlPath, options.body).body;
         headers.set("Content-Type", "application/json");
     }
 
@@ -289,9 +323,7 @@ export async function encryptedFetch(
             // Decrypt response body — bind same AAD shape (the server
             // echoes ts/rid, but we re-bind to method+urlPath which is
             // what we control on this side).
-            const encryptedBody = await response.json() as EncryptedEnvelope;
-            const responseAad = buildAAD(method, urlPath, encryptedBody.ts, encryptedBody.rid);
-            const decryptedText = decrypt(encryptedBody, responseAad);
+            const decryptedText = openEnvelope(await response.text(), method, urlPath);
 
             // Return a new Response with decrypted body but same status/headers
             return new Response(decryptedText, {
@@ -311,4 +343,32 @@ export async function encryptedFetch(
 
     // Response wasn't encrypted (e.g., error responses)
     return response;
+}
+
+/**
+ * Encrypted POST that asks the server to stream frames: same auth and
+ * encryption as encryptedFetch, with `stream: true` added to the JSON body.
+ * Returns the response unread plus the request's rid, which every frame's AAD
+ * is bound to (read it with readFrames from ./llm-stream.js). No default
+ * deadline here: a total timeout would cut a healthy long answer, so the
+ * caller bounds the wait (signal) and readFrames bounds first frame + gaps.
+ */
+export async function encryptedFetchStream(
+    url: string,
+    options: RequestInit,
+): Promise<{ response: Response; rid: string }> {
+    const method = (options.method || "POST").toUpperCase();
+    const urlPath = urlPathOf(url);
+    if (!_sharedKey) {
+        throw new Error(
+            `E2E required for ${method} ${urlPath}; shared key missing. Re-auth before issuing this request.`,
+        );
+    }
+    if (typeof options.body !== "string") throw new Error("encryptedFetchStream needs a JSON string body");
+    const sealed = sealBody(method, urlPath, JSON.stringify({ ...JSON.parse(options.body), stream: true }));
+    const headers = new Headers(options.headers);
+    headers.set("X-Encryption", "ecdh-aes-256-gcm");
+    headers.set("Content-Type", "application/json");
+    const response = await fetch(url, { ...options, method, headers, body: sealed.body });
+    return { response, rid: sealed.rid };
 }

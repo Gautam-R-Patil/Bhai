@@ -134,10 +134,10 @@
         }
 
         // Snapshot done-markers so we can pre-color the phase list on first render.
-        const atlas = window.atlas || {};
+        const bhai = window.bhai || {};
         let stateResp = { success: false, state: {} };
-        if (typeof atlas.setupGetSetupState === "function") {
-            try { stateResp = await atlas.setupGetSetupState(); } catch { stateResp = { success: false, state: {} }; }
+        if (typeof bhai.setupGetSetupState === "function") {
+            try { stateResp = await bhai.setupGetSetupState(); } catch { stateResp = { success: false, state: {} }; }
         }
         const completed = (stateResp && stateResp.success && stateResp.state) ? stateResp.state : {};
         let failedId = null;
@@ -172,9 +172,9 @@
         renderList(null); // immediate paint with the fallback list
 
         // Fetch the detected phase list; re-render once it lands.
-        if (typeof atlas.setupGetPhaseIds === "function") {
+        if (typeof bhai.setupGetPhaseIds === "function") {
             try {
-                const r = await atlas.setupGetPhaseIds();
+                const r = await bhai.setupGetPhaseIds();
                 if (r && r.success && Array.isArray(r.ids) && r.ids.length) {
                     phaseIds = r.ids;
                     renderList(null);
@@ -292,8 +292,8 @@
         // the active phase by ID \u2014 independent of label-string drift between
         // phases.js and install.js. The old "Running: <label>" form is kept as
         // a fallback in case an older runner is in play.
-        if (typeof atlas.onInstallProgress === "function") {
-            atlas.onInstallProgress(function (payload) {
+        if (typeof bhai.onInstallProgress === "function") {
+            bhai.onInstallProgress(function (payload) {
                 if (!payload) return;
                 const percent = payload.percent;
                 const message = payload.message;
@@ -329,8 +329,8 @@
             });
         }
 
-        if (typeof atlas.onInstallLog === "function") {
-            atlas.onInstallLog(function (msg) {
+        if (typeof bhai.onInstallLog === "function") {
+            bhai.onInstallLog(function (msg) {
                 appendLog(msg, "info");
             });
         }
@@ -351,9 +351,9 @@
                 resumeBtn.classList.remove("hidden");
                 startBtn.classList.add("hidden");
                 // Refresh completed-markers so successfully-done phases show green.
-                if (typeof atlas.setupGetSetupState === "function") {
+                if (typeof bhai.setupGetSetupState === "function") {
                     try {
-                        const refreshed = await atlas.setupGetSetupState();
+                        const refreshed = await bhai.setupGetSetupState();
                         if (refreshed && refreshed.success && refreshed.state) {
                             Object.assign(completed, refreshed.state);
                         }
@@ -368,9 +368,9 @@
         startBtn.addEventListener("click", async function () {
             startBtn.disabled = true;
             errEl.textContent = "";
-            if (typeof atlas.startInstall !== "function") { errEl.textContent = "Install IPC unavailable."; startBtn.disabled = false; return; }
+            if (typeof bhai.startInstall !== "function") { errEl.textContent = "Install IPC unavailable."; startBtn.disabled = false; return; }
             const workspace = (ctx && ctx.state && ctx.state.workspace && ctx.state.workspace.path) || "";
-            try { await handle(await atlas.startInstall({ workspace: workspace })); }
+            try { await handle(await bhai.startInstall({ workspace: workspace })); }
             catch (err) { errEl.textContent = "Install error: " + (err.message || err); }
             finally { startBtn.disabled = false; }
         });
@@ -378,8 +378,8 @@
         resumeBtn.addEventListener("click", async function () {
             resumeBtn.disabled = true;
             errEl.textContent = "";
-            if (typeof atlas.setupResumeInstall !== "function") { errEl.textContent = "Resume IPC unavailable."; resumeBtn.disabled = false; return; }
-            try { await handle(await atlas.setupResumeInstall()); }
+            if (typeof bhai.setupResumeInstall !== "function") { errEl.textContent = "Resume IPC unavailable."; resumeBtn.disabled = false; return; }
+            try { await handle(await bhai.setupResumeInstall()); }
             catch (err) { errEl.textContent = "Resume error: " + (err.message || err); }
             finally { resumeBtn.disabled = false; }
         });
@@ -388,8 +388,8 @@
             if (!failedId) return;
             retryBtn.disabled = true;
             errEl.textContent = "";
-            if (typeof atlas.setupRetryInstallPhase !== "function") { errEl.textContent = "Retry IPC unavailable."; retryBtn.disabled = false; return; }
-            try { await handle(await atlas.setupRetryInstallPhase(failedId)); }
+            if (typeof bhai.setupRetryInstallPhase !== "function") { errEl.textContent = "Retry IPC unavailable."; retryBtn.disabled = false; return; }
+            try { await handle(await bhai.setupRetryInstallPhase(failedId)); }
             catch (err) { errEl.textContent = "Retry error: " + (err.message || err); }
             finally { retryBtn.disabled = false; }
         });

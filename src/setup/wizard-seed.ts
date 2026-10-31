@@ -54,7 +54,7 @@ const SEEDED_MARKER = ".user-profile.seeded.json";
 /**
  * Locate the `.user-profile.json` file written by the Electron wizard.
  * The wizard's `setup:save-profile` handler writes to `app.getPath("userData")`,
- * and when the bot is launched via the desktop shell, `ATLAS_USER_DATA_DIR`
+ * and when the bot is launched via the desktop shell, `BHAI_USER_DATA_DIR`
  * is set to that same path. Fall back to the data dir if not set.
  */
 export function resolveProfilePaths(dirs: { userDataDir?: string; dataDir?: string }): { source: string; marker: string } {

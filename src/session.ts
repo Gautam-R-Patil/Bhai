@@ -23,10 +23,10 @@ const SESSION_FETCH_TIMEOUT_MS = 15_000;
 
 /**
  * Get the current session token. If no session exists or it's expired, creates a new one.
- * Returns null if authentication fails (no ATLAS_OTPLESS_USER_ID).
+ * Returns null if authentication fails (no BHAI_OTPLESS_USER_ID).
  */
 export async function getSessionToken(): Promise<string | null> {
-    const userId = process.env.ATLAS_OTPLESS_USER_ID;
+    const userId = process.env.BHAI_OTPLESS_USER_ID;
     if (!userId) return null;
 
     // Return cached token if still valid
@@ -60,13 +60,23 @@ export function getSessionTokenSync(): string | null {
     return null;
 }
 
+// Set when the server refused this device a session until the owner signs in on it
+// again (sign_in_required / device_removed): retrying won't help.
+let _needsSignIn = false;
+export const sessionNeedsSignIn = (): boolean => _needsSignIn;
+
+// The server's Retry-After on a 429 (10 session requests a minute per IP): boot retried
+// after 3s and 6s, inside the same minute, then exited, and the app's relaunch asked again.
+let _retryAfterMs = 0;
+export const sessionRetryAfterMs = (): number => _retryAfterMs;
+
 /**
  * Initialize session on startup. Call once during boot.
  */
 export async function initSession(): Promise<boolean> {
-    const userId = process.env.ATLAS_OTPLESS_USER_ID;
+    const userId = process.env.BHAI_OTPLESS_USER_ID;
     if (!userId) {
-        console.error("[Session] No ATLAS_OTPLESS_USER_ID — cannot create session");
+        console.error("[Session] No BHAI_OTPLESS_USER_ID — cannot create session");
         return false;
     }
 
@@ -113,7 +123,7 @@ export async function revokeCurrentSession(): Promise<void> {
  * Call this when an API call returns 401.
  */
 export async function handleAuthError(): Promise<string | null> {
-    const userId = process.env.ATLAS_OTPLESS_USER_ID;
+    const userId = process.env.BHAI_OTPLESS_USER_ID;
     if (!userId) return null;
 
     console.log("[Session] Token expired or invalid, re-authenticating...");
@@ -143,6 +153,8 @@ async function createSession(otplessUserId: string): Promise<void> {
         body: JSON.stringify({
             otplessUserId,
             deviceFingerprint: getDeviceFingerprint(),
+            // Issued to this device at sign-in; the desktop app passes it in.
+            deviceSecret: process.env.BHAI_DEVICE_SECRET,
             clientPublicKey,
             // Tell the server which KDF version the client is prepared
             // to use. Server echoes back the version it actually used
@@ -156,6 +168,9 @@ async function createSession(otplessUserId: string): Promise<void> {
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({ error: "Unknown error" }));
+        _needsSignIn = ["sign_in_required", "device_removed"].includes((error as any).error);
+        const wait = Number(response.headers.get("retry-after"));
+        _retryAfterMs = response.status === 429 ? Math.min(Number.isFinite(wait) && wait > 0 ? wait : 60, 120) * 1000 : 0;
         throw new Error(`Session creation failed (${response.status}): ${(error as any).error}`);
     }
 

@@ -7,14 +7,14 @@
 // deployment is the default during active development; prod is ready to
 // take over whenever we flip.
 //
-// Switching: set ATLAS_ENV=prod (or override CONVEX_URL directly).
+// Switching: set BHAI_ENV=prod (or override CONVEX_URL directly).
 const CONVEX_URLS = {
     dev: "https://avid-finch-726.convex.cloud",
     prod: "https://avid-finch-726.convex.cloud",
 } as const;
 
 function defaultConvexUrl(): string {
-    const env = (process.env.ATLAS_ENV || "").toLowerCase();
+    const env = (process.env.BHAI_ENV || "").toLowerCase();
     if (env === "prod" || env === "production") return CONVEX_URLS.prod;
     return CONVEX_URLS.dev;
 }

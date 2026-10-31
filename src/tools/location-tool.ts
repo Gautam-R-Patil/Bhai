@@ -28,7 +28,7 @@ export const locationTool: ToolDefinition = {
     async handler(input) {
         try {
             if (input.refresh) {
-                await refreshLocation();
+                await refreshLocation({ force: true });
             }
 
             const loc = getLocation();

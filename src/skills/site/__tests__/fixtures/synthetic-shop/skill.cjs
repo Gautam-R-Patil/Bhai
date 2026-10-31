@@ -16,14 +16,18 @@ exports.step = async (phase, { snapshot: s, input = {}, answer }) => {
         if (path === "/results") {
             const options = s.elements
                 .filter((e) => e.dataId)
-                .map((e) => ({ id: e.dataId, label: (e.context || e.text).replace(/\s*Add$/, ""), price: price(e.context) }));
+                .map((e) => ({
+                    id: e.dataId,
+                    label: (e.context || e.text).replace(/\s*Add$/, ""),
+                    price: price(e.context),
+                }));
             return options.length ? { options } : { fail: { reason: "no_results" } };
         }
         if (path === "/") {
             return {
                 actions: [
                     { op: "type", target: { sel: "#q" }, value: String(input.query || "") },
-                    { op: "click", target: { sel: "#search" } },
+                    { op: "click", target: { sel: "#search", text: "Search" } },
                 ],
             };
         }
@@ -33,8 +37,19 @@ exports.step = async (phase, { snapshot: s, input = {}, answer }) => {
     if (phase === "select") {
         if (path === "/cart") {
             if (!el("captcha")?.checked) return { actions: [{ op: "click", target: { sel: "#captcha" } }] };
-            const line = (/(.+₹\s*[\d,]+)/.exec(s.text) || [])[1] || "your order";
-            return { confirm: { summary: line.trim(), amount: price(s.text) || 0, submit: { op: "click", target: { sel: "#checkout", text: "Place order" } } } };
+            // From the line's own elements, never a regex over the page: a banner
+            // or an item name with a ₹ in it is not the total.
+            const tid = (t) => s.elements.find((e) => e.testid === t);
+            const amount = price(tid("total")?.text);
+            if (!amount) return { fail: { reason: "no_total" } };
+            const line = tid("cart-line")?.text || "your order";
+            return {
+                confirm: {
+                    summary: line,
+                    amount,
+                    submit: { op: "click", target: { sel: "#checkout", text: "Place order" } },
+                },
+            };
         }
         if (path === "/results") return { actions: [{ op: "click", target: { sel: `[data-id="${input.id}"]` } }] };
         return { fail: { reason: `unexpected page ${path} while selecting` } };

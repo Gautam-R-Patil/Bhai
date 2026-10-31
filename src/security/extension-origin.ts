@@ -7,7 +7,7 @@
 // ID shuts that out. Bhai's extension is loaded unpacked from the folder shipped
 // with the app, and Chrome derives an unpacked extension's ID from that folder's
 // absolute path — so the ID is computed here, no reinstall or manifest key needed.
-// ATLAS_EXTENSION_IDS (comma-separated) adds IDs: a store copy, a dev checkout.
+// BHAI_EXTENSION_IDS (comma-separated) adds IDs: a store copy, a dev checkout.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -45,13 +45,13 @@ let allowed: Set<string> | null | undefined;
 export function bhaiExtensionIds(): Set<string> | null {
     if (allowed !== undefined) return allowed;
     const ids = new Set(
-        (process.env.ATLAS_EXTENSION_IDS ?? "")
+        (process.env.BHAI_EXTENSION_IDS ?? "")
             .split(",")
             .map((s) => s.trim().toLowerCase())
             .filter((s) => /^[a-p]{32}$/.test(s)),
     );
     // ponytail: Windows hashes the UTF-16 path (case rules unverified), so there only
-    // ATLAS_EXTENSION_IDS pins; compute the Windows form once it's checked on a real install.
+    // BHAI_EXTENSION_IDS pins; compute the Windows form once it's checked on a real install.
     if (process.platform !== "win32") for (const d of shippedExtensionDirs()) ids.add(unpackedExtensionId(d));
     allowed = ids.size ? ids : null;
     if (!allowed) console.warn("🔌 Chrome bridge: Bhai's extension ID is unknown — any extension origin is accepted.");
@@ -68,10 +68,16 @@ export function isForeignExtensionOrigin(origin: string | undefined): boolean {
     const ids = bhaiExtensionIds();
     if (!ids) return false;
     const foreign = !m || !ids.has(m[1]);
-    if (foreign)
-        console.warn(`🔌 Refused extension ${origin} — not Bhai's. If it is yours, add its ID to ATLAS_EXTENSION_IDS.`);
+    // An extension that retries every 2s logged this 525 times in an hour: once per
+    // origin per 10 minutes says the same.
+    const now = Date.now();
+    if (foreign && now - (lastRefusalLog.get(origin) ?? 0) > 10 * 60_000) {
+        lastRefusalLog.set(origin, now);
+        console.warn(`🔌 Refused extension ${origin} — not Bhai's. If it is yours, add its ID to BHAI_EXTENSION_IDS.`);
+    }
     return foreign;
 }
+const lastRefusalLog = new Map<string, number>();
 
 /** Tests only: forget the computed IDs. */
 export function _resetExtensionIdsForTests(): void {

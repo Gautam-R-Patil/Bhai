@@ -37,13 +37,13 @@ vi.mock("node:child_process", async (orig) => ({
 const { SkillHost } = await import("../host.js");
 
 afterEach(() => {
-    delete process.env.ATLAS_SITE_SKILL_DEADLINE_MS;
-    delete process.env.ATLAS_SITE_SKILL_BOOT_MS;
+    delete process.env.BHAI_SITE_SKILL_DEADLINE_MS;
+    delete process.env.BHAI_SITE_SKILL_BOOT_MS;
 });
 
 describe("SkillHost boot vs step deadline", () => {
     it("a slow process start doesn't count against the step deadline", async () => {
-        process.env.ATLAS_SITE_SKILL_DEADLINE_MS = "50";
+        process.env.BHAI_SITE_SKILL_DEADLINE_MS = "50";
         Object.assign(plan, { bootMs: 150, ready: true, stepMs: 5 });
         const h = new SkillHost("/x/skill.cjs");
         expect(await h.call("search", {})).toEqual({ actions: [] }); // cold
@@ -52,14 +52,14 @@ describe("SkillHost boot vs step deadline", () => {
     });
 
     it("a step slower than the deadline still times out once the child is up", async () => {
-        process.env.ATLAS_SITE_SKILL_DEADLINE_MS = "50";
+        process.env.BHAI_SITE_SKILL_DEADLINE_MS = "50";
         Object.assign(plan, { bootMs: 10, ready: true, stepMs: 200 });
         const h = new SkillHost("/x/skill.cjs");
         expect(await h.call("search", {})).toEqual({ fail: { reason: "skill_timeout" } });
     });
 
     it("a child that never comes up fails as skill_boot_timeout, not as the skill's fault", async () => {
-        process.env.ATLAS_SITE_SKILL_BOOT_MS = "60";
+        process.env.BHAI_SITE_SKILL_BOOT_MS = "60";
         Object.assign(plan, { bootMs: 0, ready: false, stepMs: 10_000 });
         const h = new SkillHost("/x/skill.cjs");
         expect(await h.call("search", {})).toEqual({ fail: { reason: "skill_boot_timeout" } });

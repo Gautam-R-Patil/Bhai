@@ -59,7 +59,7 @@ export async function fetchNews(deps: NewsFetchDeps): Promise<NewsFetchResult> {
 
     if (!deps.llm) return { headlines: [] };
 
-    const interestQuery = process.env.ATLAS_PROACTIVE_NEWS_QUERY
+    const interestQuery = process.env.BHAI_PROACTIVE_NEWS_QUERY
         ?? (interest.keywords.length > 0
             ? `${interest.keywords.join(" OR ")} news`
             : "tech news");

@@ -58,8 +58,9 @@ SEARCH_AGAINST: [query to find contradicting evidence]`,
     try {
         const response = await llm.chat({
             messages,
-            systemPrompt: "You are a scientific research planner. Generate falsifiable hypotheses with designed search strategies.",
+            systemPrompt: `Today is ${new Date().toDateString()}. You are a scientific research planner. Generate falsifiable hypotheses with designed search strategies.`, // lean: no clock otherwise
             modelOverride: "openai/gpt-5-mini",
+            lean: true,
         });
 
         const content = response.choices?.[0]?.message?.content || "";

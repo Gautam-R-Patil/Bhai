@@ -15,7 +15,7 @@ const dump = (kids: AxNode[], error?: string): AxDump => ({
 const NO_VISION = { skipTiers: ["omniparser", "cloud_grounding"] as const, forceProfile: "lite" as const };
 
 async function miss(instruction: string, axDumpHint: AxDump): Promise<CascadeMiss | undefined> {
-    process.env.ATLAS_NO_AX_RETRY = "true";
+    process.env.BHAI_NO_AX_RETRY = "true";
     let m: CascadeMiss | undefined;
     const r = await findClickTarget(instruction, { ...NO_VISION, skipTiers: [...NO_VISION.skipTiers], axDumpHint, onMiss: (x) => (m = x) });
     expect(r).toBeNull();

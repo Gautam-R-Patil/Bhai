@@ -79,26 +79,27 @@ export async function convexAction<T>(
 }
 
 // Admin API base URL — the site URL (not the Convex cloud URL) is where
-// httpAction routes live. Configure with NEXT_PUBLIC_ATLAS_ADMIN_API_BASE;
-// falls back to deriving from CONVEX_URL when absent.
-function adminBaseUrl(): string {
-  const explicit = process.env.NEXT_PUBLIC_ATLAS_ADMIN_API_BASE;
+// httpAction routes live. Configure with NEXT_PUBLIC_BHAI_ADMIN_API_BASE
+// (the old NEXT_PUBLIC_ATLAS_ name still works; both are spelled out so Next
+// inlines them); falls back to deriving from CONVEX_URL when absent.
+export function adminBaseUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_BHAI_ADMIN_API_BASE || process.env.NEXT_PUBLIC_ATLAS_ADMIN_API_BASE;
   if (explicit) return explicit.replace(/\/+$/, "");
   // Convex conventionally exposes httpActions on the *.convex.site domain
   // that matches the *.convex.cloud API domain. Fallback handles local dev.
   return CONVEX_URL.replace(".convex.cloud", ".convex.site");
 }
 
-function adminKey(): string {
-  // ATLAS_ADMIN_KEY is intentionally NOT NEXT_PUBLIC_*. Next.js inlines any
+export function adminKey(): string {
+  // BHAI_ADMIN_KEY is intentionally NOT NEXT_PUBLIC_*. Next.js inlines any
   // NEXT_PUBLIC_* variable into every client bundle at build time — even
   // when the only on-paper consumer is a Server Component, the literal
   // value lands in browser JS. Reading without the prefix forces the value
   // to stay server-side; anything that imports this module from a client
   // boundary will get `undefined` and the throw below makes the regression
   // loud instead of silently shipping the master key to every browser tab.
-  const key = process.env.ATLAS_ADMIN_KEY;
-  if (!key) throw new Error("Bhai admin key missing (set ATLAS_ADMIN_KEY in server-side env, NOT NEXT_PUBLIC_*).");
+  const key = process.env.BHAI_ADMIN_KEY || process.env.ATLAS_ADMIN_KEY; // ATLAS_: old name
+  if (!key) throw new Error("Bhai admin key missing (set BHAI_ADMIN_KEY in server-side env, NOT NEXT_PUBLIC_*).");
   return key;
 }
 
@@ -171,7 +172,7 @@ export async function adminStoreMutation<T>(
 }
 
 // ── Browser-side store proxy ────────────────────────────────────────────────
-// Client components can't read ATLAS_ADMIN_KEY, so they hit the same-origin
+// Client components can't read BHAI_ADMIN_KEY, so they hit the same-origin
 // /api/store route which adds the admin bearer server-side and forwards to
 // the admin-key-gated Convex store proxy.
 export async function storeProxy<T>(

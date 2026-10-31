@@ -50,10 +50,11 @@ async function probeAppleScript(): Promise<{ ok: boolean; reason?: string }> {
     } catch (err) {
         const e = err as { message?: string; stderr?: Buffer | string };
         const stderr = (e.stderr || "").toString();
-        const reason = stderr.includes("1002") || stderr.toLowerCase().includes("not authorized")
-            ? "tcc_denied"
-            : stderr.includes("-1743")
-              ? "tcc_denied_apple_events"
+        // -1743's text also says "not authorized", so check it first.
+        const reason = stderr.includes("-1743")
+            ? "tcc_denied_apple_events"
+            : stderr.includes("1002") || stderr.toLowerCase().includes("not authorized")
+              ? "tcc_denied"
               : e.message?.includes("timeout")
                 ? "timeout"
                 : (stderr.slice(0, 120) || e.message?.slice(0, 120) || "unknown_error");
@@ -67,7 +68,7 @@ async function probeAppleScript(): Promise<{ ok: boolean; reason?: string }> {
  * desktop-only screenshot (no windows) or fails outright depending on OS version.
  */
 async function probeScreenRecording(): Promise<{ ok: boolean; reason?: string }> {
-    const probePath = join(tmpdir(), `atlas_perm_probe_${Date.now()}.png`);
+    const probePath = join(tmpdir(), `bhai_perm_probe_${Date.now()}.png`);
     try {
         // Capture the full screen (we need a real capture to detect window stripping)
         // -x = no sound, -t png
@@ -115,6 +116,12 @@ export async function probeAndLogMacPermissions(): Promise<MacPermissionState> {
         return state;
     }
 
+    // The desktop app turns this into a "click to fix" notification: macOS can report a
+    // stale grant as granted, so the app can't see this on its own. Only an assistive-access
+    // denial means Accessibility; an Apple Events (Automation) denial or a slow System Events
+    // launch would send the user to the wrong pane.
+    const axDenied = state.appleScript.reason === "tcc_denied";
+    if (axDenied || !srOk) console.log(`##BHAI_PERMS##${JSON.stringify({ accessibility: !axDenied, screen: srOk })}`);
     console.warn("⚠️  [permissions] One or more macOS permissions missing — vision-nav will degrade:");
     if (!axOk) {
         console.warn(`   ✗ Accessibility / Apple Events: ${state.appleScript.reason}`);

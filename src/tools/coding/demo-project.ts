@@ -13,7 +13,8 @@
 //   • package.json + static-style  → `npm run dev` → web URL (fallback)
 //   • package.json, no web script  → CLI — run `npm start` or `node .`
 //   • Cargo.toml                   → `cargo run`
-//   • pyproject.toml / requirements → `python main.py` or `uvicorn`
+//   • pyproject.toml / requirements → Django `manage.py runserver`,
+//                                    `python main.py`, Flask or `uvicorn`
 //   • go.mod                       → `go run .`
 //   • static HTML index            → serve via `npx http-server`
 //
@@ -23,6 +24,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { isPathAllowed } from "../../security/allowlist.js";
 import { auditLog } from "../../security/audit-log.js";
 import { logToolAction } from "../../utils/debug-log.js";
@@ -56,7 +58,8 @@ function readPkg(dir: string): Record<string, unknown> | null {
     }
 }
 
-function detect(dir: string): Detection {
+/** Exported for tests. */
+export function detect(dir: string): Detection {
     const pkg = readPkg(dir);
     if (pkg) {
         const scripts = (pkg.scripts as Record<string, string> | undefined) ?? {};
@@ -103,10 +106,30 @@ function detect(dir: string): Detection {
     if (existsSync(path.join(dir, "go.mod"))) {
         return { kind: "cli", command: "go", args: ["run", "."], note: "go run ." };
     }
-    if (existsSync(path.join(dir, "pyproject.toml"))) {
+    const pyManifests = ["pyproject.toml", "requirements.txt"].filter((f) => existsSync(path.join(dir, f)));
+    if (pyManifests.length > 0) {
         // Best-effort: look for a typical entrypoint
+        if (existsSync(path.join(dir, "manage.py"))) {
+            return {
+                kind: "web",
+                command: "python3",
+                args: ["manage.py", "runserver", "--noreload", "8000"],
+                urlCandidate: "http://localhost:8000",
+                note: "django runserver (port 8000)",
+            };
+        }
         if (existsSync(path.join(dir, "main.py"))) {
             return { kind: "cli", command: "python3", args: ["main.py"], note: "python3 main.py" };
+        }
+        const pyDeps = pyManifests.map((f) => readFileSync(path.join(dir, f), "utf-8")).join("\n");
+        if (existsSync(path.join(dir, "app.py")) && /\bflask\b/i.test(pyDeps)) {
+            return {
+                kind: "web",
+                command: "python3",
+                args: ["-m", "flask", "--app", "app", "run", "--port", "8000"],
+                urlCandidate: "http://localhost:8000",
+                note: "flask run (port 8000)",
+            };
         }
         if (existsSync(path.join(dir, "app.py"))) {
             return {
@@ -130,21 +153,44 @@ function detect(dir: string): Detection {
     return { kind: "unknown", command: "", args: [], note: "no recognizable runtime" };
 }
 
-async function waitForUrl(url: string, timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        try {
-            const ctrl = new AbortController();
-            const t = setTimeout(() => ctrl.abort(), 1500);
-            const res = await fetch(url, { signal: ctrl.signal }).catch(() => null);
-            clearTimeout(t);
-            if (res) return true;
-        } catch {
-            /* retry */
+/** The URL a dev server printed ("Local: http://localhost:5174/"); Vite bumps the port when 5173 is taken. */
+export function announcedUrl(output: string): string | undefined {
+    const m = /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):(\d+)/.exec(stripVTControlCharacters(output));
+    return m ? `http://localhost:${m[1]}` : undefined;
+}
+
+/**
+ * Wait until the server answers, following the URL it announces in its
+ * output. The default port is probed only after a 3s grace: when it is
+ * taken (the reason Vite bumps), whatever holds it would answer first.
+ */
+async function waitForUrl(
+    fallbackUrl: string,
+    processId: string | undefined,
+    timeoutMs: number,
+): Promise<string | null> {
+    const { shellCheckProcess } = await import("../shell-monitor.js");
+    const start = Date.now();
+    while (Date.now() < start + timeoutMs) {
+        let url: string | undefined;
+        if (processId) {
+            try {
+                const out = JSON.parse(
+                    String(await shellCheckProcess.handler({ process_id: processId, tail_lines: 50 })),
+                );
+                url = announcedUrl(String(out.output_tail ?? ""));
+            } catch {
+                /* keep the default */
+            }
+        }
+        if (!url && (!processId || Date.now() - start > 3000)) url = fallbackUrl;
+        if (url) {
+            const res = await fetch(url, { signal: AbortSignal.timeout(1500) }).catch(() => null);
+            if (res) return url;
         }
         await new Promise((r) => setTimeout(r, 500));
     }
-    return false;
+    return null;
 }
 
 export const demoProjectTool: ToolDefinition = {
@@ -199,6 +245,7 @@ export const demoProjectTool: ToolDefinition = {
         // process-tracking + kill semantics so the agent can later stop
         // the runtime with shell_kill_process.
         let pid: number | string | null = null;
+        let processId: string | undefined;
         let launchError: string | undefined;
         try {
             const { shellExecBackground } = await import("../shell-monitor.js");
@@ -216,6 +263,7 @@ export const demoProjectTool: ToolDefinition = {
             };
             if (!parsed.success) launchError = parsed.error ?? "shell_exec_background did not return success";
             pid = parsed.pid ?? parsed.process_id ?? null;
+            processId = parsed.process_id;
         } catch (err) {
             launchError = (err as Error).message;
         }
@@ -229,10 +277,12 @@ export const demoProjectTool: ToolDefinition = {
 
         // If the runtime is web, wait until the URL responds. Non-blocking
         // for CLI runtimes — we just return the pid immediately.
-        let urlReady = false;
+        let readyUrl: string | null = null;
         if (det.urlCandidate && (det.kind === "web" || det.kind === "static")) {
-            urlReady = await waitForUrl(det.urlCandidate, waitMs);
+            readyUrl = await waitForUrl(det.urlCandidate, processId, waitMs);
         }
+        const urlReady = readyUrl !== null;
+        const url = readyUrl ?? det.urlCandidate;
 
         return JSON.stringify({
             success: true,
@@ -240,18 +290,19 @@ export const demoProjectTool: ToolDefinition = {
             command: `${det.command} ${det.args.join(" ")}`.trim(),
             cwd: dir,
             pid,
-            url: det.urlCandidate,
+            process_id: processId,
+            url,
             url_ready: urlReady,
             note: det.note,
             stop_hint:
                 pid != null
-                    ? `When you're done with the walkthrough, call shell_kill_process({ process_id: "${pid}" }) to stop it.`
+                    ? `When you're done with the walkthrough, call shell_kill_process({ process_id: "${processId ?? pid}" }) to stop it.`
                     : "Use shell_check_process / shell_kill_process to manage the background runtime.",
             next_step_hint:
                 det.kind === "web" && urlReady
-                    ? `Runtime is live at ${det.urlCandidate}. Call browser_verify or os_screenshot to capture it for the walkthrough.`
+                    ? `Runtime is live at ${url}. Call browser_verify or os_screenshot to capture it for the walkthrough.`
                     : det.kind === "web"
-                      ? `Runtime started but ${det.urlCandidate} didn't respond within ${waitMs}ms. Check shell_check_process for startup errors before screenshotting.`
+                      ? `Runtime started but ${url} didn't respond within ${waitMs}ms. Check shell_check_process for startup errors before screenshotting.`
                       : `Runtime started as a CLI process. Run a smoke command and capture its terminal output for the walkthrough.`,
         });
     },

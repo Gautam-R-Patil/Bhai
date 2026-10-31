@@ -3,6 +3,7 @@
 // Usage: get_location_bin
 // Outputs: latitude|longitude|altitude|accuracy
 // Or: error|<reason>
+// get_location_bin --status prints status|<CLAuthorizationStatus raw value, or "disabled"> at once.
 // Requires Location Services enabled in System Settings > Privacy & Security > Location Services
 // On first run, macOS will show a permission dialog (requires Info.plist embedding).
 
@@ -71,6 +72,11 @@ class LocationFetcher: NSObject, CLLocationManagerDelegate {
         }
         done = true
     }
+}
+
+if CommandLine.arguments.contains("--status") {
+    print(CLLocationManager.locationServicesEnabled() ? "status|\(CLLocationManager().authorizationStatus.rawValue)" : "status|disabled")
+    exit(0)
 }
 
 let fetcher = LocationFetcher()

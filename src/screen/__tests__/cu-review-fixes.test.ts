@@ -27,7 +27,7 @@ const opts = (axDumpHint: AxDump) => ({
 
 describe("cascade order", () => {
     beforeEach(() => {
-        process.env.ATLAS_NO_AX_RETRY = "true";
+        process.env.BHAI_NO_AX_RETRY = "true";
         dumpDock.mockReset();
         dumpDock.mockResolvedValue(dock);
         cloudGroundClick.mockReset();

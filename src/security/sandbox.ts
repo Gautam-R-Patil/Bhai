@@ -5,24 +5,33 @@
 // ── Container Sandbox ─────────────────────────
 // Run shell commands in isolated Docker containers
 
-import Dockerode from "dockerode";
+import type Dockerode from "dockerode";
 
 // ── State ─────────────────────────────────────
 
+// dockerode loads and its client is built on first sandbox use, not at boot.
+let sandboxEnabled = false;
 let docker: Dockerode | null = null;
 const DEFAULT_IMAGE = "node:20-alpine";
 
 // ── Initialize ────────────────────────────────
 
 export function initSandbox(): boolean {
+    sandboxEnabled = true;
+    console.log("🐳 Docker sandbox initialized");
+    return true;
+}
+
+async function getDocker(): Promise<Dockerode | null> {
+    if (docker || !sandboxEnabled) return docker;
     try {
-        docker = new Dockerode();
-        console.log("🐳 Docker sandbox initialized");
-        return true;
+        const { default: Docker } = await import("dockerode");
+        docker = new Docker();
     } catch (err) {
+        sandboxEnabled = false;
         console.log("ℹ️  Docker not available. Sandbox disabled.", (err as Error).message);
-        return false;
     }
+    return docker;
 }
 
 // ── Run in Container ──────────────────────────
@@ -44,6 +53,7 @@ export async function runInSandbox(
         user?: string;
     } = {}
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    const docker = await getDocker();
     if (!docker) {
         throw new Error("Docker sandbox not initialized");
     }
@@ -66,7 +76,7 @@ export async function runInSandbox(
             console.log(`  🐳 Pulling image: ${image}...`);
             const stream = await docker.pull(image);
             await new Promise<void>((resolve, reject) => {
-                docker!.modem.followProgress(stream, (err: Error | null) => {
+                docker.modem.followProgress(stream, (err: Error | null) => {
                     if (err) reject(err);
                     else resolve();
                 });
@@ -152,6 +162,7 @@ export async function runInSandbox(
 // ── Check Docker Availability ─────────────────
 
 export async function isDockerAvailable(): Promise<boolean> {
+    const docker = await getDocker();
     if (!docker) return false;
     try {
         await docker.ping();

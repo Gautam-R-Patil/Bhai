@@ -22,16 +22,16 @@ describe("Phase 3 — Closed-loop verifier smoke", () => {
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-p3-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
         await initForge({ embedFn: async () => vector(0) });
     });
 
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("verifier succeeds on a correct envelope (no LLM)", async () => {
@@ -84,7 +84,7 @@ describe("Phase 3 — Closed-loop verifier smoke", () => {
     });
 
     it("orchestrator.synthesizeTool stub-LLM path works end-to-end", async () => {
-        process.env.ATLAS_FORGE_STUB_LLM = "true";
+        process.env.BHAI_FORGE_STUB_LLM = "true";
         const result = await synthesizeTool({
             name: "smoke_increment",
             description: "Increment input.x",
@@ -93,6 +93,6 @@ describe("Phase 3 — Closed-loop verifier smoke", () => {
             source: "synchronous",
         });
         expect(result.kind).toBe("synthesized");
-        delete process.env.ATLAS_FORGE_STUB_LLM;
+        delete process.env.BHAI_FORGE_STUB_LLM;
     });
 });

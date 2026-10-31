@@ -5,14 +5,10 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import sharp from "sharp";
-import { getConvexSiteUrl } from "../../config/keys.js";
 import { getWorkspaceSubdir } from "../../config/paths.js";
-import { encryptedFetch } from "../../crypto-transport.js";
-import { getSessionToken } from "../../session.js";
+import { requestImages } from "../generate-image.js";
 import type { Asset } from "./types.js";
 
-const IMAGE_MODEL = "openai/gpt-5-image";
 const ASSETS_SUBDIR = "Presentations/.assets";
 
 // Per-deck dedup cache (prompt hash -> absolute path).
@@ -31,81 +27,24 @@ function hashKey(input: string): string {
     return createHash("sha1").update(input).digest("hex").slice(0, 16);
 }
 
-// ── Tier 2: AI Image Generation (Convex proxy, same pipeline as generate_image tool) ──
+// ── Tier 2: AI Image Generation (Convex /api/image, the generate_image tool's client) ──
 
-async function generateAIImage(prompt: string): Promise<string | null> {
+// Less time than this left: an image (~20-35s even with no queue) wouldn't make it, so none is ordered.
+const MIN_IMAGE_WAIT_MS = 30_000;
+
+async function generateAIImage(prompt: string, deadline: number): Promise<string | null> {
+    const left = deadline - Date.now();
+    if (left < MIN_IMAGE_WAIT_MS) return null;
     try {
-        const sessionToken = await getSessionToken();
-        if (!sessionToken) return null;
-
-        const proxyUrl = `${getConvexSiteUrl()}/api/llm/chat`;
-        const response = await encryptedFetch(proxyUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${sessionToken}`,
-            },
-            body: JSON.stringify({
-                model: IMAGE_MODEL,
-                modalities: ["text", "image"],
-                messages: [
-                    {
-                        role: "user",
-                        content: `Generate an image: ${prompt}`,
-                    },
-                ],
-            }),
-        });
-
-        if (!response.ok) return null;
-
-        const data = (await response.json()) as Record<string, unknown>;
-        const base64 = extractImageBase64(data);
-        if (!base64) return null;
-
-        const outPath = path.join(assetsDir(), `ai_${hashKey(prompt)}_${Date.now()}.png`);
-        fs.writeFileSync(outPath, Buffer.from(base64, "base64"));
+        // Past the deadline (a long queue) this throws and the slide falls back to stock or no image.
+        const [img] = await requestImages({ prompt, size: "1536x1024", quality: "medium" }, left);
+        const ext = img.mimeType.includes("png") ? "png" : "jpg";
+        const outPath = path.join(assetsDir(), `ai_${hashKey(prompt)}_${Date.now()}.${ext}`);
+        fs.writeFileSync(outPath, img.buffer);
         return outPath;
     } catch {
         return null;
     }
-}
-
-function extractImageBase64(data: Record<string, unknown>): string | null {
-    const choices = data.choices as Array<Record<string, unknown>> | undefined;
-    if (!choices?.length) return null;
-
-    const msg = choices[0].message as Record<string, unknown> | undefined;
-    if (!msg) return null;
-
-    // Path A: GPT-5 Image format — msg.images
-    const images = msg.images as Array<Record<string, unknown>> | undefined;
-    if (Array.isArray(images) && images.length > 0) {
-        const img = images[0];
-        if (typeof img.b64_json === "string") return img.b64_json;
-        const url = img.url as string | undefined;
-        if (url) {
-            const m = url.match(/^data:[^;]+;base64,(.+)$/s);
-            if (m) return m[1];
-        }
-        if (typeof img.data === "string") return img.data;
-    }
-
-    // Path B: content array
-    const content = msg.content;
-    if (Array.isArray(content)) {
-        for (const part of content as Array<Record<string, unknown>>) {
-            if (part.type === "image_url") {
-                const url = (part.image_url as Record<string, unknown>)?.url as string;
-                const m = url?.match(/^data:[^;]+;base64,(.+)$/s);
-                if (m) return m[1];
-            }
-            if (part.inline_data) {
-                return (part.inline_data as Record<string, unknown>).data as string;
-            }
-        }
-    }
-    return null;
 }
 
 // ── Tier 3: Pexels Stock (optional, requires PEXELS_API_KEY env var) ──
@@ -154,6 +93,7 @@ async function processImage(
 ): Promise<string> {
     const { targetWidth = 1920, targetHeight, quality = 82 } = opts;
     try {
+        const sharp = (await import("sharp")).default;
         const meta = await sharp(inputPath).metadata();
         const needsResize = (meta.width ?? 0) > targetWidth;
         if (!needsResize && !targetHeight) return inputPath;
@@ -180,6 +120,8 @@ export interface ResolveOpts {
     slideTitle: string;
     aspectRatio?: "16:9" | "4:3" | "1:1" | "free";
     preferStock?: boolean; // skip AI gen (faster, cheaper)
+    /** When AI images stop being waited for (before the deck tool's timeout). */
+    deadline: number;
 }
 
 /**
@@ -205,7 +147,7 @@ export async function resolveAsset(opts: ResolveOpts): Promise<Asset | null> {
     let attribution: string | undefined;
 
     if (!opts.preferStock) {
-        sourcePath = await generateAIImage(opts.prompt);
+        sourcePath = await generateAIImage(opts.prompt, opts.deadline);
     }
 
     // Tier 3: Pexels fallback

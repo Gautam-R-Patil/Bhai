@@ -138,7 +138,7 @@ export async function pruneContext(messages: ChatCompletionMessageParam[], llm: 
     // Window-aware trigger (opt-in): prune when estimated tokens exceed ~70% of
     // the last model's context window OR the legacy count cap. The token
     // estimate is pure char arithmetic — zero LLM cost. Fail-open to count-only.
-    if (process.env.ATLAS_WINDOW_AWARE_PRUNE === "true") {
+    if (process.env.BHAI_WINDOW_AWARE_PRUNE === "true") {
         try {
             const { getContextWindow, getConversationContext } = await import("../model-router.js");
             const lastModel = getConversationContext().lastModelUsed ?? "anthropic/claude-sonnet-4.6";
@@ -328,8 +328,8 @@ export function compressToolHistory(messages: ChatCompletionMessageParam[]): Cha
     // Free (zero-LLM) pre-pass: dedup identical tool results, truncate tool-call
     // args to valid JSON, smart-cut oversized tool results, and (opt-in) strip
     // historical image base64. Master gate for emergency rollback.
-    const prepass = process.env.ATLAS_NO_HISTORY_PREPASS !== "true";
-    const stripMedia = process.env.ATLAS_HISTORY_STRIP_MEDIA === "true";
+    const prepass = process.env.BHAI_NO_HISTORY_PREPASS !== "true";
+    const stripMedia = process.env.BHAI_HISTORY_STRIP_MEDIA === "true";
 
     // Only compress up to the 2nd most recent user message's block.
     // Keep the absolute latest user turn untouched.

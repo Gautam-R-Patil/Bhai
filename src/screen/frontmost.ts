@@ -64,3 +64,60 @@ export async function waitForFrontmost(app: string, timeoutMs = 5000, intervalMs
         await new Promise((r) => setTimeout(r, intervalMs));
     }
 }
+
+/** The frontmost app's bundle id, cheaply (lsappinfo, ~10ms); "" when unknown. */
+export async function frontBundleId(): Promise<string> {
+    if (process.platform !== "darwin") return "";
+    try {
+        const { stdout: asn } = await execFileAsync("lsappinfo", ["front"], { timeout: 1000 });
+        const { stdout } = await execFileAsync("lsappinfo", ["info", "-only", "bundleid", asn.trim()], { timeout: 1000 });
+        return /bundleID="([^"]+)"/.exec(stdout)?.[1] ?? "";
+    } catch {
+        return "";
+    }
+}
+
+// What was in front after Bhai's last screen step. Between two steps of a task, another
+// app can take the front (a notification, a launching app, the overlay): keystrokes then
+// land in it. Seen live in the model eval: "45*12" typed into Chrome.
+let lastFront: { id: string; at: number } | null = null;
+/** Keystrokes go to whoever is in front: never take it from these. */
+const SYSTEM_PROMPTS = /SecurityAgent|coreauthd|loginwindow|UserNotificationCenter|LocalAuthentication/i;
+
+/** Record what's in front now: call after each screen-driving tool. */
+export async function noteFrontAfterStep(): Promise<void> {
+    const id = await frontBundleId();
+    lastFront = id ? { id, at: Date.now() } : null;
+}
+
+/**
+ * When another app took the front since Bhai's last screen step (within 30s), bring Bhai's
+ * app back before typing. Returns that app's bundle id when it did. A security prompt
+ * (password, Touch ID) is never pushed aside.
+ */
+export async function restoreFrontIfStolen(): Promise<string | undefined> {
+    if (!lastFront || Date.now() - lastFront.at > 30_000) return undefined;
+    const now = await frontBundleId();
+    if (!now || now === lastFront.id || SYSTEM_PROMPTS.test(now)) return undefined;
+    const want = lastFront.id;
+    await execFileAsync("open", ["-b", want], { timeout: 3000 }).catch(() => {});
+    for (let i = 0; i < 15; i++) {
+        if ((await frontBundleId()) === want) return want;
+        await new Promise((r) => setTimeout(r, 100));
+    }
+    return undefined;
+}
+
+/** The pid of a running app by name ("Calculator"), cheaply; 0 when it isn't running. */
+export async function pidOfApp(appName: string): Promise<number> {
+    if (process.platform !== "darwin") return 0;
+    try {
+        const { stdout: asn } = await execFileAsync("lsappinfo", ["find", `name=${appName}`], { timeout: 1500 });
+        const first = asn.trim().split(/\s+/)[0];
+        if (!first) return 0;
+        const { stdout } = await execFileAsync("lsappinfo", ["info", "-only", "pid", first], { timeout: 1500 });
+        return Number(/pid\s*=\s*(\d+)/.exec(stdout)?.[1] ?? 0);
+    } catch {
+        return 0;
+    }
+}

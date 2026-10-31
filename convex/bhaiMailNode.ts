@@ -16,6 +16,7 @@ import {
     parseHeaderBlock,
     pickBhaiRecipient,
     senderAuthenticated,
+    sentOnlyTo,
     stripQuoted,
 } from "./bhaiMailHelpers";
 
@@ -114,6 +115,7 @@ export const poll = internalAction({
                 const found: Array<{
                     uid: number;
                     to: string;
+                    direct: boolean;
                     from: string;
                     fromName: string;
                     automated: boolean;
@@ -129,16 +131,15 @@ export const poll = internalAction({
                 )) {
                     if (msg.uid <= cursor.lastUid) continue; // "N:*" returns the last message when nothing is newer
                     const env = msg.envelope;
-                    const to = pickBhaiRecipient(
-                        [...(env?.to ?? []), ...(env?.cc ?? [])].map((a) => a.address ?? ""),
-                        domain,
-                    );
+                    const recipients = [...(env?.to ?? []), ...(env?.cc ?? [])].map((a) => a.address ?? "");
+                    const to = pickBhaiRecipient(recipients, domain);
                     const from = (env?.from?.[0]?.address ?? "").toLowerCase();
                     const rawHeaders = msg.headers ? msg.headers.toString("utf-8") : "";
                     const headers = parseHeaderBlock(rawHeaders);
                     found.push({
                         uid: msg.uid,
                         to: to ?? "",
+                        direct: !!to && sentOnlyTo(recipients, to),
                         from,
                         fromName: env?.from?.[0]?.name ?? "",
                         // Mail Bhai itself sent (one Bhai writing to another) is never
@@ -166,6 +167,7 @@ export const poll = internalAction({
                           : "";
                     const result = await ctx.runMutation(internal.bhaiMail.routeInbound, {
                         address: m.to,
+                        direct: m.direct,
                         from: m.from,
                         fromName: m.fromName,
                         automated: m.automated,

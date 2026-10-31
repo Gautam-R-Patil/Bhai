@@ -11,7 +11,7 @@ const { readyJs, waitBridgeReady } = await import("./chrome-backend.js");
 let browser: any = null;
 beforeAll(async () => {
     try {
-        browser = await (await import("playwright")).chromium.launch({ headless: true });
+        browser = await (await import("playwright-core")).chromium.launch({ headless: true });
     } catch {
         browser = null;
     }

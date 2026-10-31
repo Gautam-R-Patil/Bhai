@@ -1,4 +1,4 @@
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-core';
 import * as path from 'path';
 import * as fs from 'fs';
 

@@ -28,7 +28,7 @@
 
     function play(id) {
         if (!_enabled) return;
-        if (typeof process !== "undefined" && process.env && process.env.ATLAS_NO_ONBOARDING_AUDIO === "true") return;
+        if (typeof process !== "undefined" && process.env && process.env.BHAI_NO_ONBOARDING_AUDIO === "true") return;
         preload();
         if (!_audioElements) return;
         const a = _audioElements[id];

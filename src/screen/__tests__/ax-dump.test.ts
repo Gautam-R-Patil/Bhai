@@ -253,6 +253,27 @@ describe("findElementByLabel — Calculator-style instructions", () => {
     it("never clicks the display because its value contains the symbol", () => {
         expect(findElementByLabel(calc, "×", 0.5)?.label).not.toBe("Display");
     });
+
+    // From the model-ladder eval: "the clear button" scored 0.65 against "All Clear" and fell
+    // through to a cloud vision call.
+    it("a key named by one word of a two-word label clears the fuzzy threshold", () => {
+        const withClear = flattenInteractive(
+            dump(node("AXWindow", "Calculator", 0, 0, 300, 400, [node("AXButton", "All Clear", 10, 10, 60, 60)])),
+        );
+        expect(findElementByLabel(withClear, "the clear button", 0.8)?.label).toBe("All Clear");
+    });
+
+    it("still prefers the label that names exactly what was asked", () => {
+        const both = flattenInteractive(
+            dump(
+                node("AXWindow", "Calculator", 0, 0, 300, 400, [
+                    node("AXButton", "All Clear", 10, 10, 60, 60),
+                    node("AXButton", "Clear", 80, 10, 60, 60),
+                ]),
+            ),
+        );
+        expect(findElementByLabel(both, "the clear button", 0.8)?.label).toBe("Clear");
+    });
 });
 
 describe("findElementByLabel — app-name stripping can't pick the wrong element", () => {

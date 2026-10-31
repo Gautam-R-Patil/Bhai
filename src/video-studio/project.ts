@@ -23,7 +23,7 @@ interface ProjectMeta {
 }
 
 function getProjectsRoot(): string {
-    const dataDir = process.env.ATLAS_DATA_DIR ?? path.resolve("data");
+    const dataDir = process.env.BHAI_DATA_DIR ?? path.resolve("data");
     return path.join(dataDir, "video-projects");
 }
 

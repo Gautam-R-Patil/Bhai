@@ -25,7 +25,7 @@
  * The runAgent loop tracks both flags per run and forces one extra iteration
  * with a system reminder if the LLM tries to exit with mutations but no verify.
  *
- * Kill-switch: ATLAS_NO_VERIFY_GATE=true disables the gate entirely.
+ * Kill-switch: BHAI_NO_VERIFY_GATE=true disables the gate entirely.
  */
 
 import { getActiveChannel } from "../tools/channel-send.js";
@@ -47,8 +47,6 @@ const MUTATOR_TOOLS = new Set<string>([
     "win_os_click",
     "win_os_type",
     "win_os_ocr_click",
-    // Hierarchical computer-use agent
-    "computer_use",
     // Browser interaction — also a "did the action stick?" risk surface
     "browser_click_at",
     "browser_type",
@@ -98,6 +96,8 @@ export function isMutator(fnName: string, fnArgs: Record<string, unknown>): bool
     if (MUTATOR_TOOLS.has(fnName)) return true;
     // os_computer_action also looks (screenshot/zoom) and waits; only these act.
     if (fnName === "os_computer_action") return ACTING_COMPUTER_ACTIONS.has(String(fnArgs?.action ?? ""));
+    // An iMessage send only queues it in Messages; "sent" needs a look ("Not Delivered" shows later).
+    if (fnName === "messages_tool") return String(fnArgs?.action ?? "") === "send";
     if (fnName === "apple_script" || fnName === "powershell_script") {
         const script = String(fnArgs?.script ?? fnArgs?.code ?? "");
         return KEYSTROKE_OR_CLICK_RE.test(script);
@@ -106,7 +106,7 @@ export function isMutator(fnName: string, fnArgs: Record<string, unknown>): bool
 }
 
 /** Non-os_* tools that also drive the screen (os_* / win_os_* are matched by prefix). */
-const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut", "computer_use"]);
+const SCREEN_TOOLS = new Set(["app_manager", "apple_script", "window_manage", "run_shortcut"]);
 
 /** Tools that hand the work to another agent, whose own calls this gate never sees. */
 const DELEGATES = new Set(["swarm_task", "start_long_task", "resume_long_task"]);
@@ -287,7 +287,7 @@ export function pickReceipt(
  *  - the user hasn't disabled the gate.
  */
 export function shouldForceVerify(state: VerifyGateState): boolean {
-    if (process.env.ATLAS_NO_VERIFY_GATE === "true") return false;
+    if (process.env.BHAI_NO_VERIFY_GATE === "true") return false;
     if (state.nudgedThisRun) return false;
     return state.osStateMutated && !state.verifyCalled;
 }
@@ -295,10 +295,15 @@ export function shouldForceVerify(state: VerifyGateState): boolean {
 /** The reminder text the loop appends as a user message to force one more iteration. */
 export function buildVerifyReminder(state: VerifyGateState): string {
     const mutator = state.lastMutator || "an OS action";
+    // Name a check the turn actually has: a browser turn isn't offered os_visual_verify.
+    const check = mutator.startsWith("browser_")
+        ? "browser_form_state (what the fields hold) or browser_get_text (what the page now says)"
+        : `${mutator.startsWith("win_") ? "win_os_visual_verify" : "os_visual_verify"} with a specific expect_text (or expect_gone)`;
     return (
         `STOP — you ran ${mutator} but never verified the result. Don't claim "done"/"sent"/"opened" on faith. ` +
-        `Call os_visual_verify with a specific expect_text (or expect_gone) BEFORE giving your final answer. ` +
-        `If you can't visually confirm the action succeeded, say so — don't confabulate success from a screenshot. ` +
-        `(This gate fires once per run; if the verify legitimately can't be performed, explain why in your next message.)`
+        `Check it with ${check} BEFORE giving your final answer. ` +
+        `If you can't confirm the action succeeded, say so — don't confabulate success from a screenshot. ` +
+        `(This gate fires once per run; if the check legitimately can't be performed, say what you did confirm, without naming tools.) ` +
+        `Your next message goes to the owner as your answer to what they asked: don't reply to this reminder or mention it.`
     );
 }

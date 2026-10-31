@@ -6,13 +6,12 @@
 // Navigate, scan, back, switch tabs, close
 
 import type { ToolDefinition } from "../get-current-time.js";
-import { getCachedActions, markActionFailed, replayActions, shouldReplayActions } from "./action-cache.js";
 import { withAgentUIHidden } from "./agent-cursor.js";
 import { checkAuthWall } from "./auth-wall.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
 import { quickCaptchaCheck } from "./captcha.js";
 import {
-    ATLAS_HUD_JS,
+    BHAI_HUD_JS,
     buildElementsText,
     getAccessibilityTree,
     getActivePage,
@@ -80,6 +79,15 @@ export const browserNavigate: ToolDefinition = {
             }
             const unsafe = unsafeBrowserUrl(urlRaw);
             if (unsafe) return JSON.stringify({ error: unsafe, url: urlRaw.slice(0, 120) });
+            // Where the time goes (a Wikipedia page took 14s): logged once the result is built.
+            const t0 = Date.now();
+            const lap: string[] = [];
+            let tLast = t0;
+            const mark = (step: string) => {
+                const now = Date.now();
+                lap.push(`${step} ${now - tLast}ms`);
+                tLast = now;
+            };
 
             // Resolve the backend FIRST via getActivePage() (see core.ts getActivePage):
             // calling getBrowser() up front would launch Playwright even when the
@@ -101,7 +109,7 @@ export const browserNavigate: ToolDefinition = {
             const navDomain = urlRaw.replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
             await page
                 .evaluate(
-                    `(${ATLAS_HUD_JS})(${JSON.stringify({ label: `🌐 Navigating to ${navDomain}`, done: false })})`,
+                    `(${BHAI_HUD_JS})(${JSON.stringify({ label: `🌐 Navigating to ${navDomain}`, done: false })})`,
                 )
                 .catch(() => {});
             // Navigation timeouts are non-fatal (page is likely usable even if not fully
@@ -123,9 +131,11 @@ export const browserNavigate: ToolDefinition = {
             invalidateCache();
 
             // Smart wait for the page to stabilize
+            mark("load");
             if (!navError) await waitForPageReady(page);
+            mark("ready");
             // Clear HUD once page is ready
-            await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
+            await page.evaluate(`(${BHAI_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
 
             if (!navError && page.url().startsWith("chrome-error://"))
                 navError = "browser error page (site unreachable)";
@@ -149,6 +159,7 @@ export const browserNavigate: ToolDefinition = {
             // Login/OTP wall: may import the user's Chrome session and reload — before the scan.
             // Not on a CAPTCHA page: the pipeline gets that one first, after this tool returns.
             const authFields = (await quickCaptchaCheck(page)) ? {} : await checkAuthWall(page);
+            mark("checks");
 
             const title = await page.title();
             const url = page.url();
@@ -160,6 +171,7 @@ export const browserNavigate: ToolDefinition = {
                 getInteractiveElements(page),
             ]);
             setLastElementMap(elementMap);
+            mark("scan");
 
             // Design-tool detection (Figma, Canva, Miro, etc.)
             // These are canvas-based apps where accessibility tree is nearly empty.
@@ -201,22 +213,42 @@ export const browserNavigate: ToolDefinition = {
                     "⚠️ Few interactive elements detected — the page may still be loading or the scan ran early. Re-run browser_scan (optionally visual:true) before deciding it's element-less.";
             }
 
-            // Check action cache — if we have a high-success cached sequence for this URL,
-            // inform the agent so it can use browser_replay_actions instead of re-analyzing
-            try {
-                const cached = getCachedActions(url);
-                if (cached && shouldReplayActions(cached)) {
-                    result.cached_actions_available = true;
-                    result.cached_action_count = cached.actions.length;
-                    result.cached_success_rate = Math.round(
-                        (cached.successCount / Math.max(1, cached.successCount + cached.failCount)) * 100,
-                    );
-                    result.tip =
-                        "Cached actions available for this page! Use browser_replay_actions to replay them (skips LLM analysis). Falls back automatically if they fail.";
-                }
-            } catch {
-                /* action cache lookup non-fatal */
+            // The start of what the page says, so "when was it completed / what's the capital"
+            // needs no selector: gpt-4.1-nano read Wikipedia with invalid or heading-only
+            // selectors and never found the fact. Rendered text only (no hidden text).
+            if (!isDesignTool) {
+                const text = await page
+                    .evaluate(
+                        /* javascript-obfuscator:disable */ ({ max }: { max: number }) => {
+                            // No named helpers in here: the bundler's __name() doesn't exist in the page.
+                            const out: string[] = [];
+                            let n = 0;
+                            for (const p of Array.from(document.querySelectorAll("main p, article p, #content p, p"))) {
+                                const t = (p as HTMLElement).innerText?.replace(/\s+/g, " ").trim() ?? "";
+                                if (t.length < 60 || out.includes(t)) continue;
+                                out.push(t);
+                                n += t.length;
+                                if (n > 1000) break;
+                            }
+                            // The page's first fact table (an infobox: Capital, Population, Born…).
+                            const facts: string[] = [];
+                            for (const tr of Array.from(document.querySelectorAll("table tr")).slice(0, 60)) {
+                                const th = tr.querySelector("th");
+                                const td = tr.querySelector("td");
+                                if (!th || !td) continue;
+                                const row = `${(th as HTMLElement).innerText} ${(td as HTMLElement).innerText}`.replace(/\s+/g, " ").trim();
+                                if (row.length < 120) facts.push(row);
+                                if (facts.join("; ").length > 500) break;
+                            }
+                            return `${out.join(" ").slice(0, max)}${facts.length ? `\nFacts: ${facts.join("; ")}` : ""}`;
+                        },
+                        /* javascript-obfuscator:enable */ { max: 1200 },
+                    )
+                    .catch(() => "");
+                if (text.trim()) result.page_text = text;
+                mark("text");
             }
+            console.log(`  🌐 navigate ${navDomain}: ${lap.join(" · ")} (total ${Date.now() - t0}ms)`);
 
             result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
             addTreeWithinBudget(result, accessibilityTree, 4000);
@@ -230,6 +262,10 @@ export const browserNavigate: ToolDefinition = {
 // ═══════════════════════════════════════════════
 // TOOL: DOM Scanner (TEXT ONLY)
 // ═══════════════════════════════════════════════
+
+// browser_scan: the last scan (page + arguments) and how many times in a row it was asked again.
+let lastScanKey = "";
+let repeatScans = 0;
 
 export const browserScan: ToolDefinition = {
     schema: {
@@ -273,6 +309,14 @@ export const browserScan: ToolDefinition = {
     async handler(input) {
         try {
             const page = await getActivePage();
+            // gpt-4.1-nano opened a URL with open_in_app (the user's own browser) and then scanned
+            // Bhai's empty one eight times.
+            if (/^(about:blank|chrome:\/\/newtab\/?)?$/.test(page.url())) {
+                return JSON.stringify({
+                    success: false,
+                    error: "Bhai's browser has no page open. Open one with browser_navigate (url), then scan or extract it.",
+                });
+            }
 
             // Pre-hover: reveal hidden controls before scanning (e.g. YouTube player controls)
             if (input.hover_at) {
@@ -351,6 +395,18 @@ export const browserScan: ToolDefinition = {
 
             result.interactive_elements_text = buildElementsText(); // last: status/tip fields come first
             addTreeWithinBudget(result, accessibilityTree, 6000);
+            // The same page, unchanged, scanned again and again (gpt-4.1-nano: eight full-page scans of
+            // one Wikipedia list) gets a pointer instead of the same large result. Compared on the
+            // result, so a scan after a click that changed the page always goes through.
+            const scanKey = `${page.url()}|${String(result.interactive_elements_text)}`;
+            repeatScans = scanKey === lastScanKey ? repeatScans + 1 : 0;
+            lastScanKey = scanKey;
+            if (repeatScans >= 2)
+                return JSON.stringify({
+                    success: true,
+                    unchanged: true,
+                    note: "The page is the same as in your last two scans. To find something on it, use browser_extract with a selector like \"tr:contains('Germany')\" or \"p:contains('population')\".",
+                });
             return JSON.stringify(result);
         } catch (err) {
             return JSON.stringify({ error: `DOM Scan failed: ${(err as Error).message}` });
@@ -474,7 +530,7 @@ export const browserSwitchTab: ToolDefinition = {
         function: {
             name: "browser_switch_tab",
             description:
-                "Switch to a different browser tab by index (0-based), open a new tab (with optional URL), or close the active tab. Use this to manage multiple tabs.",
+                "Switch to a different browser tab by index (0-based), open a new tab (with optional URL), or close a tab — close_active: true closes the tab you are on. This is how to close a browser tab: never a keyboard shortcut (Cmd+W hits whatever app is in front).",
             parameters: {
                 type: "object",
                 properties: {
@@ -633,7 +689,8 @@ export const browserClose: ToolDefinition = {
         type: "function",
         function: {
             name: "browser_close",
-            description: "Close the browser completely (all tabs). The browser will restart on next use.",
+            description:
+                "Close Bhai's browser (all its tabs; it restarts on next use). In the owner's own Chrome it closes only the tab Bhai is on, never their Chrome.",
             parameters: {
                 type: "object",
                 properties: {},
@@ -643,6 +700,11 @@ export const browserClose: ToolDefinition = {
     },
     async handler() {
         try {
+            // The owner's Chrome isn't Bhai's to close: there, "close the browser" closes
+            // Bhai's tab. (getBrowser() here launched a separate Playwright browser just to
+            // close it, or failed outright.)
+            await getActiveBackend();
+            if (getCurrentMode() === "chrome") return await switchTabInChrome({ close_active: true });
             const context = await getBrowser();
             await context.close();
             resetBrowserContext(); // null out the module-level ref so getBrowser() creates a fresh context

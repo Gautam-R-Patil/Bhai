@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { getDataDir } from "../config/paths.js";
 import { atomicJsonWrite, safeJsonParse } from "../utils/atomic-io.js";
 import {
     nextRunAt,
@@ -37,7 +38,9 @@ interface StoreFile {
     jobs: CronJob[];
 }
 
-const DEFAULT_PATH = path.resolve("data/cron/jobs.json");
+// The data dir, not the working directory: in the app that is inside the bundle,
+// which an update replaces.
+const DEFAULT_PATH = path.join(getDataDir(), "cron", "jobs.json");
 let jobsPath: string = DEFAULT_PATH;
 let jobs: CronJob[] = [];
 let loaded = false;

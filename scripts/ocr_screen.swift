@@ -19,7 +19,7 @@ if args.count > 1 && !args[1].hasPrefix("-") {
     if args.count > 2 { recognitionMode = args[2] }
 } else {
     // Take a fresh screenshot
-    imagePath = NSTemporaryDirectory() + "atlas_ocr_\(Int(Date().timeIntervalSince1970)).png"
+    imagePath = NSTemporaryDirectory() + "bhai_ocr_\(Int(Date().timeIntervalSince1970)).png"
     let task = Process()
     task.launchPath = "/usr/sbin/screencapture"
     task.arguments = ["-x", imagePath]

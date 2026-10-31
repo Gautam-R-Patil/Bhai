@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import type { AgentResponse, GeneratedImage } from "../agent.js";
 import { getDueJobs, markRun, type CronJob } from "./store.js";
 
 export interface CronJobContext {
@@ -16,14 +17,15 @@ export interface CronJobContext {
 export type RunPromptFn = (
     prompt: string,
     ctx: CronJobContext,
-) => Promise<string>;
+) => Promise<Pick<AgentResponse, "text" | "images">>;
 
 /** Channel-agnostic delivery — Bhai wires this to the per-platform sender.
  * Return `false` on a definite failure (e.g. unknown channel / missing
  * adapter) so the tick engine can mark the run as `error` rather than
  * silently leaving `success` in the store. Throwing is also acceptable
- * and treated the same; returning `void`/`true` means delivered-or-routed. */
-export type DeliverFn = (job: CronJob, response: string) => Promise<boolean | void>;
+ * and treated the same; returning `void`/`true` means delivered-or-routed.
+ * `images`: what generate_image made in the run, sent after the text. */
+export type DeliverFn = (job: CronJob, response: string, images?: GeneratedImage[]) => Promise<boolean | void>;
 
 export interface CronTickOptions {
     runPrompt: RunPromptFn;
@@ -48,11 +50,11 @@ export async function runCronTick(opts: CronTickOptions): Promise<number> {
             isOwner: job.isOwner,
         };
         try {
-            const response = await opts.runPrompt(job.prompt, ctx);
+            const { text: response, images } = await opts.runPrompt(job.prompt, ctx);
             let delivered: boolean | void = undefined;
             let deliverErrMsg: string | null = null;
             try {
-                delivered = await opts.deliver(job, response);
+                delivered = await opts.deliver(job, response, images);
             } catch (deliverErr) {
                 deliverErrMsg = (deliverErr as Error).message;
                 console.warn(

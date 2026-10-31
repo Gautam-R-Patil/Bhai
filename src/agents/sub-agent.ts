@@ -9,13 +9,14 @@
 
 import path from "node:path";
 import { takeStuckMarker } from "../channel-text.js";
-import { isUntrustedToolResult, wrapUntrustedToolResult } from "../context-scrubber.js";
+import { fenceToolResult } from "../context-scrubber.js";
 import type { ChatCompletionMessageParam, ChatCompletionTool, LLMClient } from "../llm.js";
 import { selectForSubAgent } from "../model-router.js";
 import { executeTool, getToolSchemasByNames } from "../tools/index.js";
 import { extractPrimaryPath, logToolAction, summarizeToolCall } from "../utils/debug-log.js";
 import { isToolError } from "./error-types.js";
 import { smartTruncate } from "./smart-truncate.js";
+import { keepRestReadable } from "./tool-output-offload.js";
 import { stepBlockCount } from "./swarm-context.js";
 import { isMutator } from "./verify-before-done.js";
 
@@ -78,16 +79,6 @@ const STUCK_WARNING_THRESHOLD = 3; // Inject warning after N consecutive identic
 const STUCK_CRITICAL_THRESHOLD = 5; // Force-exit after N consecutive identical calls
 
 /**
- * Fence attacker-influenceable tool output the same way the main agent does
- * (agent.ts executeToolCall), so web/tool text reads as data, not instructions.
- * Honors ATLAS_NO_UNTRUSTED_WRAP=true.
- */
-function fenceToolResult(fnName: string, result: string): string {
-    if (process.env.ATLAS_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(fnName)) return result;
-    return wrapUntrustedToolResult(fnName, result);
-}
-
-/**
  * Fast signature for tool-call loop detection. Folds in a cheap fingerprint of
  * the RESULT so that legitimate polling (same call, changing result) is NOT
  * flagged as stuck, while a genuinely stuck call (same call, same result) is.
@@ -129,6 +120,7 @@ export type AgentRole = "researcher" | "coder" | "browser" | "system" | "general
 const ROLE_TOOLS: Record<AgentRole, string[]> = {
     researcher: [
         "web_search",
+        "web_read",
         "deep_research",
         "memory_store",
         "memory_search",
@@ -384,6 +376,7 @@ export interface SubAgentResult {
 // Tools whose successful run changed the world outside the conversation.
 // UI clicks/typing come from verify-before-done's isMutator.
 const SIDE_EFFECT_TOOLS = new Set([
+    "file_manage",
     "email_send",
     "send_message_on_channel",
     "send_file",
@@ -691,7 +684,10 @@ export async function runSubAgent(
                 fullHistory.push({
                     role: "tool",
                     tool_call_id: tc.id,
-                    content: fenceToolResult(fnName, smartTruncate(fnName, result)), // Smart truncation (#3)
+                    content: fenceToolResult(
+                        fnName,
+                        keepRestReadable(fnName, tc.id, `sub-${task.id}`, result, smartTruncate(fnName, result)),
+                    ), // Smart truncation (#3)
                 } as ChatCompletionMessageParam);
                 // The swarm gate held this call back (its own record, not the result text).
                 if (stepBlockCount() > heldBefore) {

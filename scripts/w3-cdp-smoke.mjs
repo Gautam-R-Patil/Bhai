@@ -2,18 +2,18 @@
 // remote debugging, attaches via Playwright CDP, navigates the wizard
 // window straight to ready-hub.html, and asserts that Magic Moment:
 //   1. paints the synchronous W1 static fallback observation, then
-//   2. swaps in a rich observation via atlas.detectMagicMoment().
+//   2. swaps in a rich observation via bhai.detectMagicMoment().
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
 
 const __dirname  = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT  = path.resolve(__dirname, "..");
 const DESKTOP    = path.join(REPO_ROOT, "desktop");
-const USER_DATA  = "/tmp/atlas-cdp-w3";
+const USER_DATA  = "/tmp/bhai-cdp-w3";
 const CDP_PORT   = 9223;
 const READY_HUB  = "file://" + path.join(DESKTOP, "ready-hub.html");
 
@@ -38,8 +38,8 @@ async function main() {
             stdio: ["ignore", "pipe", "pipe"],
             env: {
                 ...process.env,
-                ATLAS_NO_MAGIC_MOMENT: "false",
-                ATLAS_NO_MAGIC_MOMENT_RICH: "false",
+                BHAI_NO_MAGIC_MOMENT: "false",
+                BHAI_NO_MAGIC_MOMENT_RICH: "false",
                 ELECTRON_ENABLE_LOGGING: "1",
             },
         },
@@ -83,7 +83,7 @@ async function main() {
         await wizardPage.goto(READY_HUB, { waitUntil: "domcontentloaded", timeout: 8000 });
         // Manually invoke the hub mount because index.html bootstraps via wizard router
         // which we bypassed. Pass a synthetic state with persona+hourOfDay so the ranker
-        // has fillers to add even when atlas IPC is unavailable.
+        // has fillers to add even when bhai IPC is unavailable.
         await wizardPage.evaluate(async () => {
             const state = {
                 profile: { name: "CDP Smoke", persona: "developer" },
@@ -130,7 +130,7 @@ async function main() {
             throw new Error("unexpected phase-1 followup: " + fallback.followup);
         }
 
-        // Phase 2: await rich detection swap. atlas.detectMagicMoment fires
+        // Phase 2: await rich detection swap. bhai.detectMagicMoment fires
         // an osascript call (macOS) — give it 2.5s + a safety margin.
         await sleep(3500);
         const rich = await wizardPage.evaluate(() => {
@@ -140,11 +140,11 @@ async function main() {
             return {
                 observation: obs ? obs.textContent : null,
                 followup: follow ? follow.textContent : null,
-                atlasExposed: typeof (window.atlas && window.atlas.detectMagicMoment),
+                bhaiExposed: typeof (window.bhai && window.bhai.detectMagicMoment),
             };
         });
         log("phase 2 (rich swap) →", JSON.stringify(rich));
-        log("atlas.detectMagicMoment exposed:", rich.atlasExposed);
+        log("bhai.detectMagicMoment exposed:", rich.bhaiExposed);
         // The rich path should produce the W3 dev-cluster followup if Cursor/VS Code
         // is among the running apps. If the swap didn't happen, surface why.
         if (rich.followup === fallback.followup) {
@@ -155,10 +155,10 @@ async function main() {
 
         // Also call detectMagicMoment directly to verify the IPC handler.
         const snapshot = await wizardPage.evaluate(async () => {
-            if (!window.atlas || typeof window.atlas.detectMagicMoment !== "function") {
-                return { error: "atlas.detectMagicMoment not exposed" };
+            if (!window.bhai || typeof window.bhai.detectMagicMoment !== "function") {
+                return { error: "bhai.detectMagicMoment not exposed" };
             }
-            try { return await window.atlas.detectMagicMoment(); }
+            try { return await window.bhai.detectMagicMoment(); }
             catch (e) { return { error: String(e && e.message || e) }; }
         });
         log("snapshot direct IPC →", JSON.stringify({

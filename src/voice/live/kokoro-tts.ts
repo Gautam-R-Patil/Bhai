@@ -17,20 +17,20 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
+import { getBhaiHome } from "../../config/paths.js";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 
 // Enabled by default now that Kokoro runs in an isolated subprocess. Opt-out
-// via ATLAS_KOKORO_ENABLE=false for debugging the ONNX runtime conflict.
-const ENABLED = process.env.ATLAS_KOKORO_ENABLE !== "false";
+// via BHAI_KOKORO_ENABLE=false for debugging the ONNX runtime conflict.
+const ENABLED = process.env.BHAI_KOKORO_ENABLE !== "false";
 // Default voice: af_bella — rated 8/10 on the Kokoro voice chart, warmer and
 // more expressive than the previous default (af_heart). Override per-user via
-// ATLAS_KOKORO_VOICE. Other warm options to try: af_nicole (ASMR intimacy),
+// BHAI_KOKORO_VOICE. Other warm options to try: af_nicole (ASMR intimacy),
 // af_sky (neutral/flat), am_michael (warm male).
-const VOICE = process.env.ATLAS_KOKORO_VOICE || "af_bella";
-const MODEL_ID = process.env.ATLAS_KOKORO_MODEL || "onnx-community/Kokoro-82M-v1.0-ONNX";
-const DTYPE = process.env.ATLAS_KOKORO_DTYPE || "q8";
+const VOICE = process.env.BHAI_KOKORO_VOICE || "af_bella";
+const MODEL_ID = process.env.BHAI_KOKORO_MODEL || "onnx-community/Kokoro-82M-v1.0-ONNX";
+const DTYPE = process.env.BHAI_KOKORO_DTYPE || "q8";
 
 // Resolve a file that ships alongside the bot. In packaged electron-builder
 // output, the bot bundle is at Contents/Resources/bot/bot-bundle.mjs, models
@@ -47,9 +47,9 @@ function resolveBotAsset(relative: string[]): string | null {
     return null;
 }
 
-const CACHE_DIR = process.env.ATLAS_KOKORO_CACHE_DIR
+const CACHE_DIR = process.env.BHAI_KOKORO_CACHE_DIR
     || resolveBotAsset(["models", "kokoro"])
-    || join(homedir(), ".atlas", "models", "kokoro");
+    || join(getBhaiHome(), "models", "kokoro");
 
 let worker: ChildProcess | null = null;
 let ready = false;
@@ -153,10 +153,10 @@ export async function initKokoro(): Promise<boolean> {
                     // Electron binary. Force it to behave as plain Node so
                     // our worker script runs normally.
                     ELECTRON_RUN_AS_NODE: "1",
-                    ATLAS_KOKORO_MODEL: MODEL_ID,
-                    ATLAS_KOKORO_DTYPE: DTYPE,
-                    ATLAS_KOKORO_VOICE: VOICE,
-                    ATLAS_KOKORO_CACHE_DIR: CACHE_DIR,
+                    BHAI_KOKORO_MODEL: MODEL_ID,
+                    BHAI_KOKORO_DTYPE: DTYPE,
+                    BHAI_KOKORO_VOICE: VOICE,
+                    BHAI_KOKORO_CACHE_DIR: CACHE_DIR,
                 },
             });
             // Relay stderr to parent, but filter out the espeak-ng dictionary

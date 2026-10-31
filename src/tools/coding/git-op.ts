@@ -248,7 +248,7 @@ interactive rebase, add -A/-u/.`,
                 return JSON.stringify({ success: r.code === 0, stderr: r.stderr });
             }
             if (operation === "stash_push") {
-                const r = runGit(root, ["stash", "push", "-u", "-m", "atlas-stash"]);
+                const r = runGit(root, ["stash", "push", "-u", "-m", "bhai-stash"]);
                 auditLog("git_op.stash_push", { code: r.code });
                 return JSON.stringify({ success: r.code === 0, stderr: r.stderr });
             }

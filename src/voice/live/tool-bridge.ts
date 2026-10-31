@@ -8,6 +8,7 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 import { getToolSchemasByNames, executeTool } from "../../tools/index.js";
 import type { GeminiFunctionDeclaration, LiveToolCall, LiveToolResult } from "./types.js";
 import { getVoiceToolNames } from "./types.js";
+import { protect } from "../../security/pii-vault.js";
 
 // Per-tool hard timeout. Beyond this we return an error to the model so one
 // hung tool doesn't stall the Promise.all and freeze the voice session.
@@ -103,7 +104,10 @@ export async function executeVoiceToolCalls(calls: LiveToolCall[]): Promise<Live
                     `tool ${call.name}`,
                 );
                 console.log(`  [LIVE] Tool ${call.name} completed in ${Date.now() - start}ms`);
-                return { id: call.id, name: call.name, result };
+                // Native voice sends this straight to the provider (hybrid goes through
+                // llm.chat's protectMessages): mask cards, OTPs, vault values and credentials.
+                const masked = typeof result === "string" ? protect(result, { credentials: true }) : result; // tools return JSON strings
+                return { id: call.id, name: call.name, result: masked };
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
                 console.error(`  [LIVE] Tool ${call.name} failed in ${Date.now() - start}ms: ${message}`);

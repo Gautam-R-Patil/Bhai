@@ -31,7 +31,7 @@ let browser: any = null;
 let shop: Awaited<ReturnType<typeof startShop>>;
 beforeAll(async () => {
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;

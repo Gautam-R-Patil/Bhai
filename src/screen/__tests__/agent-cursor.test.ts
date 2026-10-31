@@ -35,23 +35,56 @@ const ackLast = () => {
 beforeEach(() => {
     log.length = 0;
     cursor._resetAgentCursorForTest((l) => log.push(l.trimEnd()));
-    process.env.ATLAS_AGENT_CURSOR_IPC = "1";
-    delete process.env.ATLAS_NO_AGENT_CURSOR;
+    process.env.BHAI_AGENT_CURSOR_IPC = "1";
+    delete process.env.BHAI_NO_AGENT_CURSOR;
 });
 afterEach(() => {
     vi.useRealTimers();
-    delete process.env.ATLAS_AGENT_CURSOR_IPC;
+    delete process.env.BHAI_AGENT_CURSOR_IPC;
 });
 
 describe("agent cursor events", () => {
     it("is a no-op without the desktop app or with the kill switch", async () => {
-        delete process.env.ATLAS_AGENT_CURSOR_IPC;
+        delete process.env.BHAI_AGENT_CURSOR_IPC;
         await cursor.cursorClick(10, 10);
-        process.env.ATLAS_AGENT_CURSOR_IPC = "1";
-        process.env.ATLAS_NO_AGENT_CURSOR = "true";
+        process.env.BHAI_AGENT_CURSOR_IPC = "1";
+        process.env.BHAI_NO_AGENT_CURSOR = "true";
         await cursor.cursorMove(10, 10);
         expect(await cursor.withCursorHidden(async () => "shot")).toBe("shot");
         expect(log).toEqual([]);
+    });
+
+    it("warms the app's windows when a model call is offered screen-driving tools", () => {
+        const tool = (name: string) => ({ type: "function" as const, function: { name, parameters: {} } });
+        cursor.warmCursorForTools([tool("web_search"), tool("read_file")]);
+        cursor.warmCursorForTools(undefined);
+        expect(lines()).toEqual([]);
+        cursor.warmCursorForTools([tool("web_search"), tool("os_smart_click")]);
+        expect(lines()).toEqual([{ t: "warm" }]);
+        delete process.env.BHAI_AGENT_CURSOR_IPC;
+        cursor.warmCursorForTools([tool("os_click")]);
+        expect(lines()).toHaveLength(1);
+    });
+
+    it("still warms mid-session: the app may have freed the windows of a long, quiet turn", async () => {
+        const tool = (name: string) => ({ type: "function" as const, function: { name, parameters: {} } });
+        const p = cursor.cursorClick(1, 1);
+        ackLast();
+        await p;
+        log.length = 0;
+        cursor.warmCursorForTools([tool("os_click")]);
+        expect(lines()).toEqual([{ t: "warm" }]);
+    });
+
+    it("holds the windows warm for a live voice session until released", () => {
+        vi.useFakeTimers();
+        const release = cursor.holdCursorWarm();
+        expect(lines()).toEqual([{ t: "warm" }]);
+        vi.advanceTimersByTime(10 * 60_000);
+        expect(lines()).toHaveLength(3);
+        release();
+        vi.advanceTimersByTime(30 * 60_000);
+        expect(lines()).toHaveLength(3);
     });
 
     it("starts a session, then glides; resolves on ack", async () => {

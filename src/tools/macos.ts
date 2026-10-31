@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { getScriptsDir } from "../config/paths.js";
 import { hideOverlayForAgent, showOverlayForAgent } from "../overlay/overlay-chat.js";
 import { cursorClick, cursorMove, withCursorHidden, withCursorTyping } from "../screen/agent-cursor.js";
-import { getFrontmostApp } from "../screen/frontmost.js";
+import { frontmostMatches, getFrontmostApp, pidOfApp, restoreFrontIfStolen, waitForFrontmost } from "../screen/frontmost.js";
 import { gridScreenshot } from "../screen/grid-overlay.js";
 import {
     captureRegionToFile,
@@ -151,7 +151,7 @@ export const appleScript: ToolDefinition = {
         const timeout = (input.timeout as number) || DEFAULT_TIMEOUT;
 
         // Create a temporary file to avoid bash escaping/quoting hell
-        const tmpFile = join(tmpdir(), `atlas_osascript_${Date.now()}.scpt`);
+        const tmpFile = join(tmpdir(), `bhai_osascript_${Date.now()}.scpt`);
 
         try {
             await fs.writeFile(tmpFile, script, "utf-8");
@@ -211,7 +211,7 @@ export const osScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "os_screenshot tool is only available on macOS." });
         }
 
-        const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
+        const tmpJpg = join(tmpdir(), `bhai_screen_${Date.now()}.jpg`);
 
         try {
             // The frontmost app is looked up alongside the capture, not after it.
@@ -340,10 +340,14 @@ export const osClick: ToolDefinition = {
 
         const action = (input.action as string) || "click";
         const useRaw = input.raw as boolean;
-        const pctX = input.percent_x as number | undefined;
-        const pctY = input.percent_y as number | undefined;
-        const rawX = input.x as number | undefined;
-        const rawY = input.y as number | undefined;
+        // x/y both strictly between 0 and 1 are fractions put in the pixel fields (seen from
+        // gpt-4.1-nano: x=0.614 clicked pixel 1,1, the Apple menu corner). No pixel is there.
+        const inUnit = (v: unknown) => typeof v === "number" && v > 0 && v < 1;
+        const fractions = input.percent_x === undefined && inUnit(input.x) && inUnit(input.y);
+        const pctX = (fractions ? input.x : input.percent_x) as number | undefined;
+        const pctY = (fractions ? input.y : input.percent_y) as number | undefined;
+        const rawX = (fractions ? undefined : input.x) as number | undefined;
+        const rawY = (fractions ? undefined : input.y) as number | undefined;
 
         // Validate: must have either pixel coords or percentage coords
         const hasPercent = typeof pctX === "number" && typeof pctY === "number";
@@ -455,7 +459,7 @@ $.CGEventPost($.kCGHIDEventTap, up);
                 break;
         }
 
-        const tmpFile = join(tmpdir(), `atlas_click_${Date.now()}.js`);
+        const tmpFile = join(tmpdir(), `bhai_click_${Date.now()}.js`);
         try {
             if (action === "move") await cursorMove(x, y);
             else
@@ -511,6 +515,11 @@ export const osType: ToolDefinition = {
                             "Hotkey combo like 'command+c', 'command+shift+s', 'option+tab'. Use + to separate modifiers and key.",
                     },
                     delay_ms: { type: "number", description: "Delay in ms after action (default: 200)" },
+                    app: {
+                        type: "string",
+                        description:
+                            "Type text into this app (e.g. 'TextEdit') at its cursor without bringing it to the front, so the user keeps their window. Falls back to bringing it forward when its field won't take text that way.",
+                    },
                 },
                 required: [],
             },
@@ -526,6 +535,124 @@ export const osType: ToolDefinition = {
         const delaySec = delayMs / 1000;
         let script: string;
 
+        // Background typing (trycua/cua): text for a named app that isn't in front goes into
+        // its focused field, read back to confirm; the user's front window keeps the keyboard.
+        let raisedFor: string | undefined;
+        const bgApp = typeof input.app === "string" ? input.app.trim() : "";
+        if (bgApp && typeof input.text === "string" && input.text && !input.key && !input.combo) {
+            const front = await getFrontmostApp();
+            if (!front || !frontmostMatches(bgApp, front)) {
+                const pid = await pidOfApp(bgApp);
+                const { axInsertText } = await import("../screen/ax-dump.js");
+                const r =
+                    pid && process.env.BHAI_NO_BACKGROUND_TYPE !== "true"
+                        ? await axInsertText(pid, input.text)
+                        : { ok: false, error: pid ? "off" : "not_running" };
+                if (r.ok) {
+                    return JSON.stringify({
+                        success: true,
+                        typed_chars: input.text.length,
+                        method: "background",
+                        into: bgApp,
+                        note: `Typed at ${bgApp}'s cursor without bringing it forward.`,
+                    });
+                }
+                // Web content, a terminal, no field: bring it forward and type as usual.
+                await execFileAsync("open", ["-a", bgApp], { timeout: 5000 }).catch(() => {});
+                if (await waitForFrontmost(bgApp, 5000)) raisedFor = `${bgApp} (background typing: ${r.error})`;
+                else
+                    return JSON.stringify({
+                        success: false,
+                        error: `${bgApp} didn't come to the front, so nothing was typed (${r.error}).`,
+                    });
+            }
+        } else if (bgApp && (input.key || input.combo)) {
+            // A key for a named app goes to that app: gpt-4.1-nano sent key "return" with app
+            // "Calculator" while TextEdit was in front, and TextEdit got it.
+            const front = await getFrontmostApp();
+            if (!front || !frontmostMatches(bgApp, front)) {
+                await execFileAsync("open", ["-a", bgApp], { timeout: 5000 }).catch(() => {});
+                if (await waitForFrontmost(bgApp, 5000)) raisedFor = bgApp;
+                else return JSON.stringify({ success: false, error: `${bgApp} didn't come to the front, so nothing was pressed.` });
+            }
+        }
+        // Another app took the front since Bhai's last step: put Bhai's app back first
+        // (not when this call just brought its own app forward).
+        const refocused = raisedFor ? undefined : await restoreFrontIfStolen();
+
+        // text "return" alone means the key (gpt-4.1-nano typed the word into Calculator).
+        const keyWord = typeof input.text === "string" ? input.text.trim().toLowerCase() : "";
+        if (!input.key && !input.combo && /^(return|enter|escape|esc|tab)$/.test(keyWord)) {
+            input = { ...input, key: keyWord === "esc" ? "escape" : keyWord, text: undefined };
+        }
+        // key: "command+c" is a shortcut, not a key name.
+        if (typeof input.key === "string" && input.key.includes("+") && !input.combo) {
+            input = { ...input, combo: input.key, key: undefined };
+        }
+        // ...and "cmd+space" / "command+n" as text means the shortcut.
+        if (!input.key && !input.combo && /^((cmd|command|ctrl|control|alt|option|shift)\+)+[a-z0-9]+$/.test(keyWord)) {
+            input = { ...input, combo: keyWord, text: undefined };
+        }
+
+        // TextEdit opens on its Open panel: gpt-4.1-nano typed the document's text into the
+        // panel's search box and reported it written, past a note saying a dialog was in front.
+        if (input.text && (await frontIsOpenPanel())) {
+            return JSON.stringify({
+                success: false,
+                error: "Not typed: the front window is the app's Open file panel, so the text would go into its search box, not a document.",
+                next: "For a new document press os_type combo='command+n' (or click 'New Document'), then type. To open a file, use open_in_app.",
+            });
+        }
+
+        // A sum entered with Return in another app while Calculator is open: gpt-4.1-nano typed
+        // "17*23" + return into TextEdit, then wrote down whatever TextEdit showed.
+        if (
+            !bgApp &&
+            typeof input.text === "string" &&
+            /^\s*[\d.]+\s*[-+*/×÷x]\s*[\d.][\d\s.+\-*/×÷x()]*$/.test(input.text) &&
+            /^(return|enter)$/i.test(String(input.key ?? "")) &&
+            (await pidOfApp("Calculator"))
+        ) {
+            const front = await getFrontmostApp();
+            if (front && !/^calculator$/i.test(front.name))
+                return JSON.stringify({
+                    success: false,
+                    error: `Not typed: ${front.name} is in front, not Calculator. To work it out, call os_type again with app "Calculator". To type it into ${front.name} anyway, pass app "${front.name}".`,
+                });
+        }
+
+        // Calculator, only for text that looks like arithmetic (no extra lookup otherwise).
+        if (
+            typeof input.text === "string" &&
+            /\d/.test(input.text) &&
+            /^[\w\s.,+\-*/×÷()%=]+$/.test(input.text) &&
+            /^calculator$/i.test((await getFrontmostApp())?.name ?? "")
+        ) {
+            // It reads letters as keys: gpt-4.1-nano typed "123 times 45" and n became natural log.
+            const expr = input.text
+                .toLowerCase()
+                .replace(/\bmultiplied by\b|\btimes\b|\bx\b|×/g, "*")
+                .replace(/\bdivided by\b|÷/g, "/")
+                .replace(/\bplus\b/g, "+")
+                .replace(/\bminus\b/g, "-")
+                .replace(/\bequals\b/g, "=");
+            if (/[a-z]/.test(expr)) {
+                return JSON.stringify({
+                    success: false,
+                    error: `Not typed: Calculator reads letters as function keys. Type the expression with digits and + - * / ( ) %, e.g. "123*45", then key "return".`,
+                });
+            }
+            input = { ...input, text: expr };
+            // It keeps its last entry, even across a relaunch: "42*3" typed after "75 + 2" made
+            // 75 + 242 × 3 = 801. A whole new expression starts from a cleared display.
+            if (/\d\s*[-+*/]\s*\d/.test(expr)) {
+                await execFileAsync("osascript", [
+                    "-e",
+                    'tell application "System Events" to repeat 2 times\nkey code 53\ndelay 0.05\nend repeat',
+                ]).catch(() => {});
+            }
+        }
+
         // text plus key/combo in one call ("45*12" then return): type, then press.
         // Taking only the key dropped the text while reporting success.
         let typedFirst = 0;
@@ -539,28 +666,12 @@ export const osType: ToolDefinition = {
         }
 
         if (input.combo) {
-            // Parse combo like "command+shift+s"
-            const parts = (input.combo as string)
-                .toLowerCase()
-                .split("+")
-                .map((s) => s.trim());
-            const key = parts.pop() || "";
-            const modifiers: string[] = [];
-            for (const mod of parts) {
-                if (mod === "command" || mod === "cmd") modifiers.push("command down");
-                else if (mod === "shift") modifiers.push("shift down");
-                else if (mod === "option" || mod === "alt") modifiers.push("option down");
-                else if (mod === "control" || mod === "ctrl") modifiers.push("control down");
-            }
-            const modStr = modifiers.length > 0 ? ` using {${modifiers.join(", ")}}` : "";
-
-            const code = keyCode(key);
-            if (code !== undefined) {
-                script = `tell application "System Events"\n  key code ${code}${modStr}\nend tell\ndelay ${delaySec}`;
-            } else if (key.length === 1) {
-                script = `tell application "System Events"\n  keystroke "${key.replace(/[\\"]/g, "\\$&")}"${modStr}\nend tell\ndelay ${delaySec}`;
-            } else {
-                return JSON.stringify({ success: false, error: unknownKey(key) });
+            // The shared parser refuses a modifier it doesn't know ("fn", "opt") instead of
+            // dropping it and typing the bare letter.
+            try {
+                script = `${macKeyScript(input.combo as string)}\ndelay ${delaySec}`;
+            } catch (err) {
+                return JSON.stringify({ success: false, error: (err as Error).message });
             }
         } else if (input.key) {
             const key = (input.key as string).toLowerCase().trim();
@@ -578,6 +689,8 @@ export const osType: ToolDefinition = {
                     typed_chars: text.length, // not echoed: it may be a secret
                     method,
                     into: into?.name,
+                    ...(raisedFor ? { brought_forward: raisedFor } : {}),
+                    ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                     next: "Typed only. To submit or evaluate it (search box, form, calculator =), press os_type key='return'.",
                 });
             } catch (err) {
@@ -587,15 +700,23 @@ export const osType: ToolDefinition = {
             return JSON.stringify({ error: "Provide 'text', 'key', or 'combo'" });
         }
 
-        const tmpFile = join(tmpdir(), `atlas_type_${Date.now()}.scpt`);
+        const tmpFile = join(tmpdir(), `bhai_type_${Date.now()}.scpt`);
         try {
             await fs.writeFile(tmpFile, script, "utf-8");
             const { stdout, stderr } = await execFileAsync("osascript", [tmpFile], { timeout: 10000 });
             await fs.unlink(tmpFile).catch(() => {});
+            // After Return/Enter, what the window now shows (a calculator's result, a form's
+            // error): gpt-4.1-nano pressed "=" and then wrote a made-up product instead of
+            // reading the display.
+            const submitted = /^(return|enter)$/i.test(String(input.key ?? ""));
+            const shows = submitted ? await frontWindowText() : [];
             return JSON.stringify({
                 success: true,
                 ...(typedFirst ? { typed_chars: typedFirst } : {}),
                 pressed: input.key || input.combo,
+                ...(raisedFor ? { brought_forward: raisedFor } : {}),
+                ...(shows.length ? { window_shows: shows } : {}),
+                ...(refocused ? { refocused: `${refocused} had lost the front; brought it back first` } : {}),
                 stdout: (stdout || "").substring(0, 500),
                 stderr: (stderr || "").substring(0, 500),
             });
@@ -848,7 +969,7 @@ var up = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, point, $.kCGMous
 $.CGEventPost($.kCGHIDEventTap, up);
 "clicked"`;
 
-    const tmpFile = join(tmpdir(), `atlas_click_${Date.now()}.js`);
+    const tmpFile = join(tmpdir(), `bhai_click_${Date.now()}.js`);
     try {
         await cursorClick(x, y);
         await fs.writeFile(tmpFile, eventScript, "utf-8");
@@ -1157,7 +1278,7 @@ export const osOcrClick: ToolDefinition = {
             console.log(`  🔍 [OCR-CLICK] Attempt ${attempt + 1}/${maxAttempts} — looking for "${label}"`);
 
             // Step 1: Capture screenshot + run OCR
-            const tmpPng = join(tmpdir(), `atlas_ocr_cap_${Date.now()}.png`);
+            const tmpPng = join(tmpdir(), `bhai_ocr_cap_${Date.now()}.png`);
             let capBuffer: Buffer | undefined;
             let capDims: ScreenDimensions | undefined;
             try {
@@ -1354,7 +1475,7 @@ export const osOcrClick: ToolDefinition = {
             // Step 6: Visual verification
             let verificationOutcome = "not_checked";
             if (verifyAppears || verifyGone) {
-                const tmpVerify = join(tmpdir(), `atlas_verify_${Date.now()}.png`);
+                const tmpVerify = join(tmpdir(), `bhai_verify_${Date.now()}.png`);
                 try {
                     const verifyDims = await captureFocusedDisplay(tmpVerify);
                     const verifyBuf = await fs.readFile(tmpVerify);
@@ -1514,7 +1635,7 @@ export const osVisualVerify: ToolDefinition = {
         }
 
         // Capture screen + run fast OCR
-        const tmpPng = join(tmpdir(), `atlas_verify_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_verify_${Date.now()}.png`);
         let verifyBuffer: Buffer | undefined;
         let verifyDims: ScreenDimensions | undefined;
         try {
@@ -1537,6 +1658,7 @@ export const osVisualVerify: ToolDefinition = {
         };
 
         let overallSuccess = true;
+        const checked: string[] = []; // what was actually checked, for the verdict
 
         if (expectText) {
             const found = findVerifyMatch(
@@ -1545,15 +1667,27 @@ export const osVisualVerify: ToolDefinition = {
                 verifyDims?.focusedWindow,
                 (verifyDims?.originY ?? 0) + 25,
             );
-            const pass = !!found;
+            // OCR misses some text (Calculator's large thin digits read as nothing, and a
+            // model then re-pressed "=" to check). The front app's accessibility text is
+            // exact: a hit there counts. Only found/not-found comes back, never a field's text.
+            const inAx = !found && (await frontAppHasText(expectText));
+            const pass = !!found || inAx;
             results.expect_text = {
                 query: expectText,
                 found: pass,
-                matched: found?.element.text ?? null,
-                score: found ? Number(found.score.toFixed(3)) : null,
+                matched: found?.element.text ?? (inAx ? expectText : null),
+                score: found ? Number(found.score.toFixed(3)) : inAx ? 1 : null,
                 position: found ? { x: found.element.cx_screen, y: found.element.cy_screen } : null,
+                ...(inAx ? { source: "accessibility" } : {}),
             };
             if (!pass) overallSuccess = false;
+            checked.push(
+                found
+                    ? `"${expectText}" is on screen`
+                    : inAx
+                      ? `"${expectText}" is in the front window's text (not read on screen)`
+                      : `"${expectText}" was not found`,
+            );
         }
 
         if (expectGone) {
@@ -1566,16 +1700,73 @@ export const osVisualVerify: ToolDefinition = {
                 pass,
             };
             if (!pass) overallSuccess = false;
+            checked.push(pass ? `"${expectGone}" is no longer on screen` : `"${expectGone}" is still on screen`);
         }
 
+        // Say what was checked, never the caller's description as fact: finding one word
+        // doesn't prove "switched to the Research section" (and text there before the action proves nothing).
         results.success = overallSuccess;
         results.verdict = overallSuccess
-            ? `✅ Verified: ${description}`
-            : `❌ Verification FAILED: ${description}. The expected text was not found. Try: 1) Take a fresh screenshot to verify the current state, 2) The action may need more time — try wait(ms=1000) before verifying.`;
+            ? `✅ Text check passed: ${checked.join("; ")}. It checks only that text, not "${description}" itself.`
+            : `❌ Verification FAILED: ${checked.join("; ")}. Try: 1) Take a fresh screenshot to verify the current state, 2) The action may need more time — try wait(ms=1000) before verifying.`;
 
         return JSON.stringify(results);
     },
 };
+
+/** Up to 4 short read-only texts the front app's window shows (static text values only). */
+/** The front window is an Open file panel with no sheet (e.g. Go to Folder) over it. */
+async function frontIsOpenPanel(): Promise<boolean> {
+    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+    const dump = await dumpAccessibilityTree({ depth: 2, timeoutMs: 1500, budgetMs: 500 }).catch(() => null);
+    const win = dump && !dump.error ? dump.root.children.find((n) => n.role === "AXWindow") : undefined;
+    return !!win && /^open$/i.test(win.label?.trim() ?? "") && !win.children.some((c) => c.role === "AXSheet");
+}
+
+async function frontWindowText(): Promise<string[]> {
+    await new Promise((r) => setTimeout(r, 150)); // the result draws a moment after the key
+    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+    const dump = await dumpAccessibilityTree({ depth: 12, timeoutMs: 2000, budgetMs: 800 }).catch(() => null);
+    const win = dump && !dump.error ? dump.root.children.find((n) => n.role === "AXWindow") : undefined;
+    const out: string[] = [];
+    const stack = win ? [win] : [];
+    for (let n = stack.shift(); n && out.length < 4; n = stack.shift()) {
+        const v = n.role === "AXStaticText" ? (n.value || n.label || "").trim() : "";
+        if (v && v.length <= 60 && !out.includes(v)) out.push(v);
+        stack.push(...n.children);
+    }
+    return out;
+}
+
+const AX_CONTROL_ROLES = new Set<string | null>([
+    "AXButton", "AXLink", "AXTab", "AXRadioButton", "AXMenuItem", "AXMenuButton",
+    "AXCheckBox", "AXPopUpButton", "AXComboBox", "AXTextField", "AXTextArea",
+]);
+
+/**
+ * Whether the front window shows `text` as static text or a heading (case and spacing ignored).
+ * Not other windows (Bhai's overlay holds the owner's request) and not control labels or typed
+ * drafts: a button's own name or the text just typed is there before and after the action.
+ */
+export async function frontAppHasText(text: string): Promise<boolean> {
+    const flat = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+    const want = flat(text);
+    if (!want) return false;
+    const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+    const dump = await dumpAccessibilityTree({ depth: 20, timeoutMs: 3000 }).catch(() => null);
+    if (!dump || dump.error) return false;
+    const win = dump.root.children.find((n) => n.role === "AXWindow");
+    const stack = win ? [win] : [];
+    for (let n = stack.pop(); n; n = stack.pop()) {
+        // Web/Electron controls keep their name in a child AXStaticText, and a text area's
+        // draft is AXStaticText too: neither proves the action happened, so skip their subtrees.
+        if (AX_CONTROL_ROLES.has(n.role)) continue;
+        const t = n.role === "AXStaticText" || n.role === "AXHeading" ? n.value || n.label : "";
+        if (t && t !== "[secure]" && flat(t).includes(want)) return true;
+        stack.push(...n.children);
+    }
+    return false;
+}
 
 // ── OS Context Tool (App Awareness) ───────────
 
@@ -1615,7 +1806,7 @@ end tell
 
 return frontApp & "|" & frontAppId & "|" & winTitle`;
 
-        const tmpFile = join(tmpdir(), `atlas_ctx_${Date.now()}.scpt`);
+        const tmpFile = join(tmpdir(), `bhai_ctx_${Date.now()}.scpt`);
         try {
             await fs.writeFile(tmpFile, script, "utf-8");
             const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout: 3000 });
@@ -1681,45 +1872,18 @@ export const setBrightness: ToolDefinition = {
         const clamped = Math.max(0, Math.min(100, rawLevel));
         const fraction = clamped / 100;
 
-        // Fallback chain: brightness CLI tool → CoreDisplay JXA → key simulation
-        try {
-            // First try the 'brightness' CLI tool (brew install brightness)
-            const { stdout } = await execFileAsync("brightness", [String(fraction)], { timeout: 5000 });
-            return JSON.stringify({
-                success: true,
-                brightness: clamped,
-                fraction,
-                method: "brightness-cli",
-            });
-        } catch {
-            // Fallback: Use osascript with JXA + private CoreDisplay API
-            const jxaScript = `
-ObjC.import('Cocoa');
-const lib = ObjC.unwrap($.NSBundle.bundleWithPath("/System/Library/Frameworks/CoreDisplay.framework").load());
-$.CFRelease = ObjC.castRefToObject($.objc_getClass("NSObject"));
-// CoreDisplay_Display_SetUserBrightness is available on macOS 10.12+
-const CGDirectDisplayID = 0; // main display
-ObjC.bindFunction('CoreDisplay_Display_SetUserBrightness', ['void', ['unsigned int', 'double']]);
-$.CoreDisplay_Display_SetUserBrightness(CGDirectDisplayID, ${fraction});
-'done'`;
-
-            try {
-                const tmpFile = join(tmpdir(), `atlas_brightness_${Date.now()}.js`);
-                await fs.writeFile(tmpFile, jxaScript, "utf-8");
-                await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
-                await fs.unlink(tmpFile).catch(() => {});
-                return JSON.stringify({
-                    success: true,
-                    brightness: clamped,
-                    fraction,
-                    method: "CoreDisplay",
-                });
-            } catch {
-                // Last resort: simulate key presses (less precise but always works)
-                // Key code 144 = brightness down, 145 = brightness up (F1/F2 without fn)
-                // Press brightness down 16 times to reach 0, then up the right number
-                const stepsUp = Math.round((clamped / 100) * 16);
-                const keyScript = `tell application "System Events"
+        // The 'brightness' CLI (brew install brightness) when it can drive this display. It exits 0
+        // even when it can't (Apple Silicon's built-in panel: "failed to set brightness"), so read
+        // what it says. (A CoreDisplay JXA step here threw on every call and was dropped.)
+        const cli = await execFileAsync("brightness", [String(fraction)], { timeout: 5000 }).catch(() => null);
+        if (cli && !/fail|error/i.test(`${cli.stdout}${cli.stderr}`)) {
+            return JSON.stringify({ success: true, brightness: clamped, fraction, method: "brightness-cli" });
+        }
+        // Simulate key presses (less precise, needs Accessibility)
+        // Key code 144 = brightness down, 145 = brightness up (F1/F2 without fn)
+        // Press brightness down 16 times to reach 0, then up the right number
+        const stepsUp = Math.round((clamped / 100) * 16);
+        const keyScript = `tell application "System Events"
     -- First go to 0 (key code 144 = brightness down / F1)
     repeat 16 times
         key code 144
@@ -1729,24 +1893,22 @@ $.CoreDisplay_Display_SetUserBrightness(CGDirectDisplayID, ${fraction});
         key code 145
     end repeat
 end tell`;
-                const tmpFile = join(tmpdir(), `atlas_brightness_${Date.now()}.scpt`);
-                try {
-                    await fs.writeFile(tmpFile, keyScript, "utf-8");
-                    await execFileAsync("osascript", [tmpFile], { timeout: 15000 });
-                    await fs.unlink(tmpFile).catch(() => {});
-                    return JSON.stringify({
-                        success: true,
-                        brightness: clamped,
-                        fraction,
-                        method: "key-simulation",
-                        note: "Used key simulation — brightness may not be exact. Install 'brightness' CLI (brew install brightness) for precise control.",
-                    });
-                } catch (err) {
-                    await fs.unlink(tmpFile).catch(() => {});
-                    const error = err as { message?: string };
-                    return JSON.stringify({ success: false, error: error.message || "Failed to set brightness" });
-                }
-            }
+        const tmpFile = join(tmpdir(), `bhai_brightness_${Date.now()}.scpt`);
+        try {
+            await fs.writeFile(tmpFile, keyScript, "utf-8");
+            await execFileAsync("osascript", [tmpFile], { timeout: 15000 });
+            await fs.unlink(tmpFile).catch(() => {});
+            return JSON.stringify({
+                success: true,
+                brightness: clamped,
+                fraction,
+                method: "key-simulation",
+                note: "Set with the brightness keys (16 steps), so the level is approximate.",
+            });
+        } catch (err) {
+            await fs.unlink(tmpFile).catch(() => {});
+            const error = err as { message?: string };
+            return JSON.stringify({ success: false, error: error.message || "Failed to set brightness" });
         }
     },
 };
@@ -1785,7 +1947,7 @@ export const sendScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "Telegram context not available. Cannot send screenshot." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_sendscreen_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_sendscreen_${Date.now()}.png`);
 
         try {
             // Step 1: Capture screenshot
@@ -1952,8 +2114,8 @@ export const osScan: ToolDefinition = {
         }
 
         try {
-            const tmpPng = join(tmpdir(), `atlas-scan-${Date.now()}.png`);
-            const tmpJpg = join(tmpdir(), `atlas-scan-${Date.now()}.jpg`);
+            const tmpPng = join(tmpdir(), `bhai-scan-${Date.now()}.png`);
+            const tmpJpg = join(tmpdir(), `bhai-scan-${Date.now()}.jpg`);
 
             // 1. Get screen dimensions for the focused monitor (multi-monitor aware).
             const dims = await getScreenDimensions({ focusedWindow: true, force: true });
@@ -2034,7 +2196,7 @@ export const osScan: ToolDefinition = {
             }
 
             // 6. Generate SoM overlay
-            const elementsJson = join(tmpdir(), `atlas-scan-elements-${Date.now()}.json`);
+            const elementsJson = join(tmpdir(), `bhai-scan-elements-${Date.now()}.json`);
             // Convert screen coords to image coords for the overlay (image = this monitor)
             const imageElements = mergedElements.map((el) => ({
                 label: el.label,
@@ -2321,7 +2483,7 @@ $.CGEventPost($.kCGHIDEventTap, up);`
 }
 "done"`;
 
-            const tmpFile = join(tmpdir(), `atlas_click_elem_${Date.now()}.js`);
+            const tmpFile = join(tmpdir(), `bhai_click_elem_${Date.now()}.js`);
             await cursorClick(el.x, el.y, clickType === "right" ? "right" : "left", clickType === "double" ? 2 : 1);
             await fs.writeFile(tmpFile, jxa, "utf-8");
             await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
@@ -2500,7 +2662,7 @@ export const osMultiAction: ToolDefinition = {
                     }
                     case "screenshot": {
                         // Quick screenshot capture, store buffer
-                        const tmp = join(tmpdir(), `atlas-multi-${Date.now()}.png`);
+                        const tmp = join(tmpdir(), `bhai-multi-${Date.now()}.png`);
                         await captureFocusedDisplay(tmp);
                         const buf = await fs.readFile(tmp);
                         _lastScreenshotBuffer = buf;
@@ -2510,7 +2672,7 @@ export const osMultiAction: ToolDefinition = {
                     }
                     case "verify": {
                         // Quick OCR verification
-                        const tmp = join(tmpdir(), `atlas-verify-${Date.now()}.png`);
+                        const tmp = join(tmpdir(), `bhai-verify-${Date.now()}.png`);
                         const vDims = await captureFocusedDisplay(tmp);
                         const ocrResult = await runOcr(tmp, "fast", undefined, vDims);
                         await fs.unlink(tmp).catch(() => {});
@@ -2540,6 +2702,31 @@ export const osMultiAction: ToolDefinition = {
 
 // ── Region Zoom Tool ────────────────────────
 
+/**
+ * The region of `img` (clamped to it) at 2x, as JPEG; null unless all four are numbers and
+ * the size is positive. It ran Python/Pillow, which most Macs lack, with the four values
+ * pasted into the script, so a non-number became Python code.
+ */
+export async function zoomImageRegion(
+    img: Buffer,
+    ...vals: unknown[]
+): Promise<{ buffer: Buffer; region: { x: number; y: number; width: number; height: number }; size: string } | null> {
+    const [x0, y0, w0, h0] = vals.map((v) => (typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : Number.NaN));
+    if (![x0, y0, w0, h0].every(Number.isFinite) || w0 <= 0 || h0 <= 0) return null;
+    const sharp = (await import("sharp")).default;
+    const { width = 0, height = 0 } = await sharp(img).metadata();
+    const x = Math.max(0, Math.min(Math.round(x0), width - 1));
+    const y = Math.max(0, Math.min(Math.round(y0), height - 1));
+    const w = Math.max(1, Math.min(Math.round(w0), width - x));
+    const h = Math.max(1, Math.min(Math.round(h0), height - y));
+    const buffer = await sharp(img)
+        .extract({ left: x, top: y, width: w, height: h })
+        .resize(w * 2, h * 2, { kernel: "lanczos3" })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+    return { buffer, region: { x, y, width: w, height: h }, size: `${w * 2}x${h * 2}` };
+}
+
 export const osZoomRegion: ToolDefinition = {
     schema: {
         type: "function",
@@ -2565,8 +2752,6 @@ export const osZoomRegion: ToolDefinition = {
             return JSON.stringify({ error: "os_zoom_region is only available on macOS." });
         }
 
-        const args = input as { x: number; y: number; width: number; height: number };
-
         if (!_lastScreenshotBuffer) {
             return JSON.stringify({
                 success: false,
@@ -2575,43 +2760,14 @@ export const osZoomRegion: ToolDefinition = {
         }
 
         try {
-            const tmpIn = join(tmpdir(), `atlas-zoom-in-${Date.now()}.png`);
-            const tmpOut = join(tmpdir(), `atlas-zoom-out-${Date.now()}.jpg`);
-
-            // Write the last screenshot to disk
-            await fs.writeFile(tmpIn, _lastScreenshotBuffer);
-
-            // Crop and zoom using Python/Pillow
-            const cropScript = `
-from PIL import Image
-import sys
-img = Image.open("${tmpIn}")
-x, y, w, h = ${args.x}, ${args.y}, ${args.width}, ${args.height}
-# Clamp to image bounds
-x = max(0, min(x, img.width - 1))
-y = max(0, min(y, img.height - 1))
-w = min(w, img.width - x)
-h = min(h, img.height - y)
-cropped = img.crop((x, y, x + w, y + h))
-# Scale up 2x for detail
-zoomed = cropped.resize((w * 2, h * 2), Image.LANCZOS)
-zoomed.save("${tmpOut}", "JPEG", quality=90)
-print(f"{zoomed.width}x{zoomed.height}")
-`;
-            const { stdout } = await execFileAsync("python3", ["-c", cropScript], { timeout: 5000 });
-
-            const buffer = await fs.readFile(tmpOut);
-            const base64 = buffer.toString("base64");
-
-            await fs.unlink(tmpIn).catch(() => {});
-            await fs.unlink(tmpOut).catch(() => {});
-
+            const zoom = await zoomImageRegion(_lastScreenshotBuffer, input.x, input.y, input.width, input.height);
+            if (!zoom) return JSON.stringify({ success: false, error: "x, y, width and height must be numbers, width and height above 0." });
             return JSON.stringify({
                 success: true,
-                zoomed_base64: base64,
+                zoomed_base64: zoom.buffer.toString("base64"),
                 mime_type: "image/jpeg",
-                region: { x: args.x, y: args.y, width: args.width, height: args.height },
-                zoomed_size: stdout.trim(),
+                region: zoom.region,
+                zoomed_size: zoom.size,
                 tip: "This is a 2x zoomed view of the selected region. Use os_click with the ORIGINAL screenshot coordinates (not zoomed coordinates) to interact.",
             });
         } catch (err) {

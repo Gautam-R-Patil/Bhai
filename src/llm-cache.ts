@@ -20,7 +20,7 @@ const CACHE_TTL_MS = 10 * 60_000;  // 10 minutes TTL — long enough for coheren
 // repeated short utterances ("??", "is it done?", follow-ups) where the literal
 // embedding is identical or near-identical but the *conversational context* is
 // completely different. 0.97 is conservative — only near-exact duplicates hit.
-const SIMILARITY_THRESHOLD = Number(process.env.ATLAS_LLM_CACHE_THRESHOLD) || 0.97;
+const SIMILARITY_THRESHOLD = Number(process.env.BHAI_LLM_CACHE_THRESHOLD) || 0.97;
 const MIN_QUERY_LENGTH = 20;       // Skip short queries — "ok", "??", "hi", "is it done?" are context-dependent
 const MAX_QUERY_LENGTH = 500;      // Don't cache very long queries (too contextual)
 

@@ -8,6 +8,7 @@ import type { LLMClient } from "../../llm.js";
 import * as native from "../../../native/index.js";
 import { fetchWeather } from "./_shared/weather-fetch.js";
 import { buildIntent } from "./_shared/build-intent.js";
+import { doneToday, markDoneToday } from "./_shared/daily-done.js";
 import { debugProactive } from "../kill-switches.js";
 
 const GATE_SEC = 3600;
@@ -19,6 +20,7 @@ export function makeWeatherMorningSource(deps: {
     return {
         name: "weather_morning",
         async collectIntents(ctx: SourceCtx): Promise<ProactiveIntent[]> {
+            if (doneToday("weather_morning", ctx.now)) return [];
             const gate = native.sourceGateCheck("weather_morning", GATE_SEC);
             if (!gate.mayRun) return [];
 
@@ -30,6 +32,7 @@ export function makeWeatherMorningSource(deps: {
                 return [];
             }
             if (!weather) return [];
+            markDoneToday("weather_morning", ctx.now); // checked today; nothing notable stays nothing to say
 
             const { summary, tempC, rainProb, hasOutdoorEvent, locationStr } = weather;
             const actionable = native.weatherActionable({ summary, tempC, rainProb, hasOutdoorEvent });

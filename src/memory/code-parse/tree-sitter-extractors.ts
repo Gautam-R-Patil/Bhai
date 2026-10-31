@@ -64,7 +64,7 @@ async function getParser(lang: Language): Promise<ParserState | null> {
         parserCache.set(lang, state);
         return state;
     } catch (err) {
-        if (process.env.ATLAS_TS_DEBUG === "true") {
+        if (process.env.BHAI_TS_DEBUG === "true") {
             console.warn(`[tree-sitter] failed to load ${lang} grammar:`, (err as Error).message);
         }
         parserCache.set(lang, null);
@@ -73,14 +73,14 @@ async function getParser(lang: Language): Promise<ParserState | null> {
 }
 
 export function treeSitterSupports(lang: Language): boolean {
-    // TS + JS are always on. Python / Rust / Go are behind ATLAS_MULTI_TREE_SITTER
+    // TS + JS are always on. Python / Rust / Go are behind BHAI_MULTI_TREE_SITTER
     // because the native tree-sitter 0.22 binding has a multi-grammar state bug
     // (node subclass tables collide when more than one grammar is loaded in the
     // same process). The extractors below work correctly on their own — the
     // guard just prevents the crash on combined workloads. Remove the flag once
     // tree-sitter core is upgraded to a version that fixes this.
     if (lang === "typescript" || lang === "javascript") return true;
-    if (process.env.ATLAS_MULTI_TREE_SITTER !== "true") return false;
+    if (process.env.BHAI_MULTI_TREE_SITTER !== "true") return false;
     return lang === "python" || lang === "rust" || lang === "go";
 }
 

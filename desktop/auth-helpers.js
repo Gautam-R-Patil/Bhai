@@ -13,7 +13,16 @@ function parseOtplessVerifyResponse(raw) {
         email: raw.email || undefined,
         phone: raw.phone || undefined,
         name: raw.name || undefined,
+        // Proof for later sessions on this device (/api/auth/session needs it).
+        deviceSecret: typeof raw.deviceSecret === "string" ? raw.deviceSecret : undefined,
     };
+}
+
+// DNS-rebinding guard (as src/security/loopback.ts): a website can point its own name at
+// 127.0.0.1 and read a local server as same-origin. Real requests name the loopback host.
+function isLoopbackHost(host, port) {
+    const h = String(host || "").toLowerCase();
+    return h === `127.0.0.1:${port}` || h === `localhost:${port}` || h === `[::1]:${port}`;
 }
 
 function isLegacyUserId(userId) {
@@ -54,6 +63,7 @@ function safeStringEqual(a, b) {
 module.exports = {
     parseOtplessVerifyResponse,
     isLegacyUserId,
+    isLoopbackHost,
     isPathContained,
     generateOAuthState,
     safeStringEqual,

@@ -29,7 +29,7 @@ export function __setRotationThresholdForTesting(bytes: number | null): void {
 
 function getAuditPath(): string {
     if (auditPathOverride) return auditPathOverride;
-    return join(process.env.ATLAS_DATA_DIR || join(process.cwd(), "data"), "memory-gate.jsonl");
+    return join(process.env.BHAI_DATA_DIR || join(process.cwd(), "data"), "memory-gate.jsonl");
 }
 
 function getRotationThreshold(): number {

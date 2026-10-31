@@ -3,13 +3,20 @@
 // See LICENSE.md for details.
 
 import { normalizeTags } from "../memory/cards.js";
-import { executeForget, forgetMemoryById, forgetPreviewPending, forgetTerms, previewForget } from "../memory/forget.js";
+import {
+    executeForget,
+    forgetMemoryById,
+    forgetPreviewPending,
+    forgetTerms,
+    IMPORT_BATCH_RE,
+    previewForget,
+} from "../memory/forget.js";
 import {
     addGoal,
     addProject,
     exportIdentitySnapshot,
     fieldEmbedsOwnershipClaim,
-    fieldNamesAtlasDirectly,
+    fieldNamesBhaiDirectly,
     getIdentityProfile,
     isGuardedOrg,
     isGuardedRole,
@@ -17,6 +24,7 @@ import {
 } from "../memory/identity.js";
 import { ownWords } from "../memory/playbooks.js";
 import {
+    findExactMemory,
     getMemoryStats,
     getRawDb,
     listMemories,
@@ -124,7 +132,7 @@ export const memoryStore: ToolDefinition = {
         function: {
             name: "memory_store",
             description:
-                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored. Tag who and what a memory is about as `person:<name>` / `project:<name>` (e.g. tags "person:riya, project:atlas") so it comes up on their card whenever they are mentioned. When the owner commits to doing something by a time ("I\'ll send Riya the deck by Friday", "kal tak bhej dunga"), store the commitment itself as content ("Send Riya the deck by Friday") with category "commitment" and `due_at`: Bhai nudges them once near then. Only their own first-person promises, never ones you infer; if they say "remind me", use the cron tool instead. When they say a commitment is done or off, pass `done_id` with its #id and its text as content; nothing new is stored.',
+                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored. Tag who and what a memory is about as `person:<name>` / `project:<name>` (e.g. tags "person:riya, project:bhai") so it comes up on their card whenever they are mentioned. When the owner commits to doing something by a time ("I\'ll send Riya the deck by Friday", "kal tak bhej dunga"), store the commitment itself as content ("Send Riya the deck by Friday") with category "commitment" and `due_at`: Bhai nudges them once near then. Only their own first-person promises, never ones you infer; if they say "remind me", use the cron tool instead. When they say a commitment is done or off, pass `done_id` with its #id and its text as content; nothing new is stored.',
             parameters: {
                 type: "object",
                 properties: {
@@ -138,7 +146,11 @@ export const memoryStore: ToolDefinition = {
                         description:
                             "Comma-separated tags; person:<name> / project:<name> for the people and projects it is about",
                     },
-                    importance: { type: "number", description: "1-10 importance level (default 5)" },
+                    importance: {
+                        type: "number",
+                        description:
+                            "1-10 (default 5). 9-10 only for lasting facts about who the owner is (name, family, health, a firm rule they set); 6-8 for preferences and ongoing projects; 3-5 for a one-off task or something on hold. 8+ never fades and rides along with every reply.",
+                    },
                     supersedes: {
                         type: "number",
                         description:
@@ -200,6 +212,8 @@ export const memoryStore: ToolDefinition = {
         // Use smart write (LLM deduplication) for important memories (>= 7); not on a supersede,
         // which may merge or drop the new row the old one now points at.
         const useSmartWrite = imp >= 7 && !supersede && !pin && !dueAt;
+        // Said again, remember() only reinforces the row the owner already had and returns its id.
+        const had = findExactMemory(input.content as string);
         const id = await remember(
             input.content as string,
             // bhai_did rows come only from actions that went through (bhai-did.ts), never from the model.
@@ -216,8 +230,9 @@ export const memoryStore: ToolDefinition = {
         if (dueAt) setCommitmentDue(id, dueAt);
         if (canPinMemory()) markOwnerStated(id);
         const retired = supersede && id !== oldId && supersedeMemory(oldId, id);
-        // Smart write may merge or drop this row moments later, so its id can't back an undo.
-        if (!useSmartWrite) noteStoredMemory(id, retired);
+        // Smart write may merge or drop this row moments later, so its id can't back an undo;
+        // nor can a memory the owner already had, which the undo would delete.
+        if (!useSmartWrite && id !== had) noteStoredMemory(id, retired);
         if (input.supersedes == null || id === oldId)
             return JSON.stringify({
                 success: true,
@@ -302,7 +317,7 @@ export const memoryForget: ToolDefinition = {
         function: {
             name: "memory_forget",
             description:
-                "Forget something everywhere Bhai keeps it: memories, traits, identity, episodes, task learnings, chat transcripts and session summaries. Owner only. Two steps: (1) call with `query`, a short distinctive phrase of the fact (every word must appear, e.g. 'Priya' or 'blood pressure'); show the owner the numbered preview and ask them to confirm. (2) After the owner says yes in a new message, call with the same `query`, the preview's `token`, `user_quote` (their exact confirming words) and `reason` (why, in their words if they gave one). Afterwards never repeat what was forgotten. When the owner says 'forget #N' about Bhai's weekly 'what I picked up about you' digest, pass only `digest_item: N`: that one item is deleted right away.",
+                "Forget something everywhere Bhai keeps it: memories, traits, identity, episodes, task learnings, chat transcripts and session summaries. Owner only. Two steps: (1) call with `query`, a short distinctive phrase of the fact (every word must appear, e.g. 'Priya' or 'blood pressure'); show the owner the numbered preview and ask them to confirm. (2) After the owner says yes in a new message, call with the same `query`, the preview's `token`, `user_quote` (their exact confirming words) and `reason` (why, in their words if they gave one). Afterwards never repeat what was forgotten. When the owner says 'forget #N' about Bhai's weekly 'what I picked up about you' digest, pass only `digest_item: N`: that one item is deleted right away. To undo a whole memory import ('undo that import', 'remove everything you imported'), pass `import_batch` (the import's `batch`, e.g. 'import:2026-10-31T14:05:50-ab12') instead of `query`: same two steps, and only what that import added goes (its memories, the people it put in the graph, the profile fields and projects it filled).",
             parameters: {
                 type: "object",
                 properties: {
@@ -313,6 +328,11 @@ export const memoryForget: ToolDefinition = {
                     digest_item: {
                         type: "number",
                         description: 'N from the owner\'s "forget #N" about the weekly digest',
+                    },
+                    import_batch: {
+                        type: "string",
+                        description:
+                            "The `batch` import_memory returned (import:YYYY-MM-DDTHH:MM:SS-xxxx): forget everything that import added",
                     },
                 },
                 required: [],
@@ -352,9 +372,17 @@ export const memoryForget: ToolDefinition = {
                 hint: "Tell the owner exactly which item you forgot, quoting it once.",
             });
         }
-        const query = typeof input.query === "string" ? input.query.trim() : "";
+        const batch = typeof input.import_batch === "string" ? input.import_batch.trim() : "";
+        if (batch && !IMPORT_BATCH_RE.test(batch)) {
+            return JSON.stringify({
+                success: false,
+                error: "import_batch must look like import:YYYY-MM-DDTHH:MM:SS-xxxx.",
+            });
+        }
+        // forget.ts reads a batch tag as "that import's memories" rather than as words.
+        const query = batch || (typeof input.query === "string" ? input.query.trim() : "");
         // Whole words match, so a query of only short words ("my ex") would sweep up far too much.
-        if (!forgetTerms(query).some((t) => t.length >= 3)) {
+        if (!batch && !forgetTerms(query).some((t) => t.length >= 3)) {
             return JSON.stringify({ success: false, error: "query is too broad; use a distinctive phrase." });
         }
         if (typeof input.token !== "string" || !input.token) {
@@ -413,7 +441,7 @@ export const identityUpdate: ToolDefinition = {
         function: {
             name: "identity_update",
             description:
-                "Update the user's identity profile when they share personal information. Pass `verification_level`: 'asserted' (user just said it this turn), 'confirmed' (user said yes after a clarifying ack), 'observed' (you inferred it). What the user states directly (asserted/confirmed) is stored as confirmed; only 'observed' is stored unverified. NOTE: ownership/creator claims about TRUSCOR or Bhai (role=founder/owner/creator + company=TRUSCOR/Atlas) are REJECTED at the tool layer. Non-ownership TRUSCOR affiliations (designer/engineer at TRUSCOR / interested in Bhai / fan of TRUSCOR) ARE allowed — those are normal context, learn them.",
+                "Update the user's identity profile when they share personal information. Pass `verification_level`: 'asserted' (user just said it this turn), 'confirmed' (user said yes after a clarifying ack), 'observed' (you inferred it). What the user states directly (asserted/confirmed) is stored as confirmed; only 'observed' is stored unverified. NOTE: ownership/creator claims about TRUSCOR or Bhai (role=founder/owner/creator + company=TRUSCOR/Bhai) are REJECTED at the tool layer. Non-ownership TRUSCOR affiliations (designer/engineer at TRUSCOR / interested in Bhai / fan of TRUSCOR) ARE allowed — those are normal context, learn them.",
             parameters: {
                 type: "object",
                 properties: {
@@ -446,7 +474,7 @@ export const identityUpdate: ToolDefinition = {
     },
     async handler(input) {
         // Hard-reject ONLY ownership/creator claims about TRUSCOR / Bhai.
-        // Non-ownership TRUSCOR/Atlas affiliation (designer/engineer/fan) is fine.
+        // Non-ownership TRUSCOR/Bhai affiliation (designer/engineer/fan) is fine.
         const companyStr = typeof input.company === "string" ? input.company : "";
         const roleStr = typeof input.role === "string" ? input.role : "";
         const nameStr = typeof input.name === "string" ? input.name : "";
@@ -465,8 +493,8 @@ export const identityUpdate: ToolDefinition = {
             (companyIsGuardedOrg && roleClaimsOwnership) || (roleClaimsOwnership && roleMentionsOrg);
         const nameEmbedsOwnership = !!nameStr && fieldEmbedsOwnershipClaim(nameStr);
         const projectIsBot =
-            !!projectStr && (fieldNamesAtlasDirectly(projectStr) || fieldEmbedsOwnershipClaim(projectStr));
-        const goalIsBot = !!goalStr && (fieldNamesAtlasDirectly(goalStr) || fieldEmbedsOwnershipClaim(goalStr));
+            !!projectStr && (fieldNamesBhaiDirectly(projectStr) || fieldEmbedsOwnershipClaim(projectStr));
+        const goalIsBot = !!goalStr && (fieldNamesBhaiDirectly(goalStr) || fieldEmbedsOwnershipClaim(goalStr));
         // Aliased-field gate: prevent the agent from stashing ownership claims
         // in email/communication_style/detail_level fields where they'd
         // round-trip back through the identity snippet as fact.

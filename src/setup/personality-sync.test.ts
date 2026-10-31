@@ -7,10 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const pushed: string[] = [];
 let duringPush: (() => void) | undefined;
 let failPushes = 0;
+let pushGate: Promise<void> | undefined; // holds the next push until released
 vi.mock("../session.js", () => ({ getSessionToken: async () => "t", handleAuthError: async () => null }));
 vi.mock("../config/keys.js", () => ({ getConvexSiteUrl: () => "https://example.test" }));
 vi.mock("../crypto-transport.js", () => ({
     encryptedFetch: async (_url: string, init: { body: string }) => {
+        const gate = pushGate;
+        pushGate = undefined;
+        await gate;
         if (failPushes > 0) {
             failPushes--;
             return { ok: false, status: 400, json: async () => ({ success: false, error: "rate limit exceeded" }) };
@@ -52,11 +56,32 @@ describe("personality-sync", () => {
         expect(fs.existsSync(path.join(dir, ".user-personality.synced.json"))).toBe(true);
     });
 
+    it("caps the owner's notes at Settings' 800 characters, whatever the file holds", async () => {
+        fs.writeFileSync(file(), JSON.stringify({ preset: "casual_playful", notes: `${"n".repeat(5000)}END`, updatedAt: Date.now() }));
+        await syncPersonalityIfPresent({ userDataDir: dir });
+        expect(pushed[0]).toContain("n".repeat(800));
+        expect(pushed[0]).not.toContain("n".repeat(801));
+        expect(pushed[0]).not.toContain("END");
+    });
+
     it("keeps a newer save made during the push for the next sync", async () => {
         write("warm_supportive");
         duringPush = () => write("professional_concise");
         await syncPersonalityIfPresent({ userDataDir: dir });
         expect(fs.existsSync(file())).toBe(true);
+    });
+
+    it("a Settings save during the boot push lands last", async () => {
+        let release!: () => void;
+        pushGate = new Promise((r) => { release = r; });
+        write("warm_supportive");
+        const boot = syncPersonalityIfPresent({ userDataDir: dir });
+        write("direct_terse");
+        const settings = syncPersonalityIfPresent({ userDataDir: dir });
+        await new Promise((r) => setTimeout(r, 20));
+        release();
+        await Promise.all([boot, settings]);
+        expect(pushed.at(-1)).toMatch(/Dial: direct/);
     });
 
     it("restates the tone next to the message, and says unhinged is off after switching back", async () => {

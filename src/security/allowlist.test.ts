@@ -28,7 +28,7 @@ import {
 // path and symlink tests can chdir into it and link to files inside it.
 // realpathSync.native, like the product: it expands Windows 8.3 names
 // (RUNNER~1) that the JS realpath keeps.
-const REPO = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "atlas-protected-")));
+const REPO = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "bhai-protected-")));
 fs.mkdirSync(path.join(REPO, "src"));
 fs.writeFileSync(path.join(REPO, "src", "agent.ts"), "");
 beforeAll(() => {
@@ -55,7 +55,7 @@ describe("allowlist — codebase self-protection", () => {
         });
 
         it("returns false for a sibling with a shared PREFIX (no separator)", () => {
-            // The +sep guard prevents "/path/ATLAS-clone" from matching "/path/ATLAS".
+            // The +sep guard prevents "/path/BHAI-clone" from matching "/path/BHAI".
             expect(isProtectedPath(`${REPO}-sibling`)).toBe(false);
             expect(isProtectedPath(`${REPO}x`)).toBe(false);
         });
@@ -95,7 +95,7 @@ describe("allowlist — codebase self-protection", () => {
             // could have written "through" this symlink without the gate
             // firing. Post-fix, realResolve dereferences the link and
             // the protected-path check correctly rejects.
-            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-allowlist-"));
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-allowlist-"));
             const linkPath = path.join(tmpDir, "decoy");
             try {
                 fs.symlinkSync(`${REPO}/src/agent.ts`, linkPath);
@@ -114,7 +114,7 @@ describe("allowlist — codebase self-protection", () => {
 
         it("follows symlinks to protected directories too", () => {
             if (process.platform === "win32") return;
-            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-allowlist-"));
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-allowlist-"));
             const linkPath = path.join(tmpDir, "dir-decoy");
             try {
                 fs.symlinkSync(`${REPO}/src`, linkPath);
@@ -135,7 +135,7 @@ describe("allowlist — codebase self-protection", () => {
 
         it("does NOT flag symlinks that point OUTSIDE the protected tree", () => {
             if (process.platform === "win32") return;
-            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-allowlist-"));
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-allowlist-"));
             const linkPath = path.join(tmpDir, "outside");
             const targetFile = path.join(tmpDir, "target.txt");
             try {

@@ -18,9 +18,9 @@ const DEFAULT_TIMEOUT = 120000; // 2 minutes (3D renders can take time)
 
 // ── Cross-OS Blender resolution ───────────────
 // Resolve the Blender executable across macOS / Windows / Linux. Honors
-// ATLAS_BLENDER_PATH first, then common install locations, then PATH (`blender`).
+// BHAI_BLENDER_PATH first, then common install locations, then PATH (`blender`).
 async function resolveBlenderPath(): Promise<string | null> {
-    const envPath = process.env.ATLAS_BLENDER_PATH;
+    const envPath = process.env.BHAI_BLENDER_PATH;
     if (envPath && existsSync(envPath)) return envPath;
 
     const candidates: string[] = [];
@@ -70,7 +70,7 @@ export const blenderScript: ToolDefinition = {
         function: {
             name: "blender_script",
             description:
-                "Execute a Python (bpy) script in Blender to procedurally generate/edit 3D models, scenes, and renders. Cross-OS (macOS/Windows/Linux). Runs headless (--background) by default; set ATLAS_BLENDER_PATH to point at a specific Blender binary.",
+                "Execute a Python (bpy) script in Blender to procedurally generate/edit 3D models, scenes, and renders. Cross-OS (macOS/Windows/Linux). Runs headless (--background) by default; set BHAI_BLENDER_PATH to point at a specific Blender binary.",
             parameters: {
                 type: "object",
                 properties: {
@@ -103,12 +103,12 @@ export const blenderScript: ToolDefinition = {
                       ? "C:\\Program Files\\Blender Foundation\\Blender <ver>\\blender.exe"
                       : "your package manager (apt/snap/flatpak) or /usr/bin/blender";
             return JSON.stringify({
-                error: `Blender not found. Install it (expected near ${hint}) or set ATLAS_BLENDER_PATH to the blender executable.`,
+                error: `Blender not found. Install it (expected near ${hint}) or set BHAI_BLENDER_PATH to the blender executable.`,
             });
         }
 
         // Create a temporary python file
-        const tmpFile = join(tmpdir(), `atlas_blender_${Date.now()}.py`);
+        const tmpFile = join(tmpdir(), `bhai_blender_${Date.now()}.py`);
 
         try {
             await fs.writeFile(tmpFile, script, "utf-8");

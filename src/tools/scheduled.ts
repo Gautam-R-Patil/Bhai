@@ -2,29 +2,232 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import cron from "node-cron";
+import { getDataDir } from "../config/paths.js";
+import { isOwnerCaller } from "./cron-tool.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── Types ─────────────────────────────────────
 
-interface ScheduledTask {
+/** What survives a restart: tasks are saved to disk and re-armed at boot. */
+interface SavedTask {
     id: string;
+    /** A cron expression, or "In N minutes" for a one-off reminder. */
     expression: string;
     description: string;
     action: string;
-    status: "active" | "paused";
     created_at: string;
-    task: cron.ScheduledTask;
+    /** One-off reminders: when to fire (epoch ms). */
+    fireAt?: number;
+    /** Run `action` through the agent and send its answer, instead of just reminding. */
+    doTask?: boolean;
+    /** Scheduled by the owner, live: the run gets owner tools. */
+    isOwner?: boolean;
+}
+
+export interface TriggerOptions {
+    doTask: boolean;
+    isOwner: boolean;
+}
+
+interface ScheduledTask extends SavedTask {
+    status: "active" | "paused";
+    task: { stop: () => void };
 }
 
 // ── Task Store ────────────────────────────────
 
 const tasks = new Map<string, ScheduledTask>();
 let taskCounter = 0;
-let onTaskTrigger: ((taskId: string, action: string) => Promise<void>) | null = null;
+type TriggerHandler = (taskId: string, action: string, description: string, opts: TriggerOptions) => Promise<void>;
+let onTaskTrigger: TriggerHandler | null = null;
+// setTimeout fires at once past ~24.8 days, so long waits go in steps.
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
-export function setTaskTriggerHandler(handler: (taskId: string, action: string) => Promise<void>): void {
+// node-cron's own matcher, so the next run is exactly the minute node-cron would fire on.
+const TimeMatcher = createRequire(import.meta.url)("node-cron/src/time-matcher.js") as new (
+    pattern: string,
+) => { expressions: string[]; match(date: Date): boolean };
+
+/**
+ * The next minute after `from` a 5-field cron expression fires on (local time); null if none within
+ * 8 years. That covers Feb 29 (2096 → 2104) and Friday the 13th (14 months), not every expression:
+ * Dec 31 on a Friday skips 2038 → 2049, so a null is not "never" (armCronTimer looks again later).
+ */
+export function nextCronMinute(expression: string, from: number): number | null {
+    const matcher = new TimeMatcher(expression);
+    // node-cron's converted fields: [second, minute, hour, day, month, weekday], each a list of numbers.
+    const [, , , dom, month, dow] = matcher.expressions.map((f) => new Set(f.split(",")));
+    const base = new Date(from);
+    for (let i = 0; i <= 8 * 366; i++) {
+        const noon = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i, 12);
+        if (
+            !dom.has(String(noon.getDate())) ||
+            !month.has(String(noon.getMonth() + 1)) ||
+            !dow.has(String(noon.getDay()))
+        ) {
+            continue;
+        }
+        // A matching day: check its real minutes (DST days have 23 or 25 hours), as node-cron's clock would.
+        const dayEnd = new Date(noon.getFullYear(), noon.getMonth(), noon.getDate() + 1).getTime();
+        let t = new Date(noon.getFullYear(), noon.getMonth(), noon.getDate()).getTime();
+        if (t <= from) t = from - (from % 60_000) + 60_000;
+        for (; t < dayEnd; t += 60_000) if (matcher.match(new Date(t))) return t;
+    }
+    return null;
+}
+
+const wakeHooks = new Set<() => void>();
+
+/** The machine woke from sleep (the desktop's "##BHAI_RESUME##" line): re-check every cron job. */
+export function cronTimersOnWake(): void {
+    for (const woke of wakeHooks) woke();
+}
+
+/**
+ * A recurring 5-field job on one timer instead of node-cron's check every second. Waits go in
+ * steps of at most a minute (a sleeping Mac's timers run late), and a run fires only inside its
+ * own second, as node-cron's does, or late when it fell after a wake: a run the machine slept
+ * through is skipped. With no run in the 8-year scan it looks again every ~24.8 days, so a job
+ * whose runs are further apart (or that never fires) stays armed, as node-cron keeps it.
+ */
+function armCronTimer(expression: string, run: () => void): { stop: () => void } {
+    let next = nextCronMinute(expression, Date.now());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    let armedAt = Date.now();
+    let armedMono = performance.now(); // monotonic: stands still while the machine sleeps
+    let step = 0;
+    let lastRun = 0;
+    // Run what is due (looking again from `from`, never at a minute that already ran), then wait for the next.
+    const check = (from: number | null, runLate: boolean) => {
+        const now = Date.now();
+        if (from !== null) next = nextCronMinute(expression, Math.max(from, lastRun));
+        if (next !== null && next <= now) {
+            if (runLate || now - next < 1000) {
+                lastRun = next;
+                run();
+            }
+            next = nextCronMinute(expression, now);
+        }
+        armedAt = now;
+        armedMono = performance.now();
+        step = next === null ? MAX_TIMER_MS : Math.min(next - now, 60_000);
+        timer = setTimeout(wait, step);
+    };
+    const wait = () => {
+        if (stopped) return;
+        const now = Date.now();
+        // macOS timers pause in sleep, so a step pending at sleep fires up to `step` after wake:
+        // look for the run from the earliest moment the Mac can have woken.
+        const slept = now - armedAt - step > 2000;
+        // No run was in sight: scan again from now.
+        check(slept ? now - step - 1000 : next === null ? now : null, slept);
+    };
+    // The desktop says the machine just woke: check now instead of when the paused step ends.
+    // Runs since the wake are due (the signal can come a few seconds after it: the awake time
+    // since arming, at most the step, bounds that); earlier ones were slept through.
+    const woke = () => {
+        if (stopped) return;
+        clearTimeout(timer);
+        const awake = Math.min(performance.now() - armedMono, step);
+        check(Date.now() - Math.max(3000, awake + 1000), true);
+    };
+    wakeHooks.add(woke);
+    check(null, false);
+    return {
+        stop: () => {
+            stopped = true;
+            clearTimeout(timer);
+            wakeHooks.delete(woke);
+        },
+    };
+}
+
+export function setTaskTriggerHandler(handler: TriggerHandler): void {
     onTaskTrigger = handler;
+}
+
+const storePath = () => path.join(getDataDir(), "scheduled-tasks.json");
+
+function save(): void {
+    const saved: SavedTask[] = [...tasks.values()].map(({ status: _status, task: _timer, ...t }) => t);
+    try {
+        fs.mkdirSync(path.dirname(storePath()), { recursive: true });
+        const tmp = `${storePath()}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(saved, null, 2), { mode: 0o600 });
+        fs.renameSync(tmp, storePath());
+    } catch (err) {
+        console.warn("[SCHEDULED] Could not save tasks:", (err as Error).message);
+    }
+}
+
+async function trigger(t: SavedTask): Promise<void> {
+    try {
+        // Tasks saved before doTask existed: schedule_task ones were always meant to run.
+        const doTask = t.doTask ?? t.id.startsWith("task_");
+        await onTaskTrigger?.(t.id, t.action, t.description, { doTask, isOwner: t.isOwner === true });
+    } catch (err) {
+        console.error(`[SCHEDULED] ${t.id} failed:`, (err as Error).message);
+    }
+}
+
+/** Start (or restart) a saved task's timer and keep it in the store. */
+function arm(saved: SavedTask): ScheduledTask {
+    let task: ScheduledTask["task"];
+    if (saved.fireAt !== undefined) {
+        const fireAt = saved.fireAt;
+        let timer: ReturnType<typeof setTimeout>;
+        const wait = () => {
+            const left = fireAt - Date.now();
+            if (left > 0) {
+                timer = setTimeout(wait, Math.min(left, MAX_TIMER_MS));
+                return;
+            }
+            console.log(`⏰ Reminder triggered: ${saved.id} - ${saved.description}`);
+            tasks.delete(saved.id); // one-off: done once it fires
+            save();
+            void trigger(saved);
+        };
+        wait();
+        task = { stop: () => clearTimeout(timer) };
+    } else {
+        const run = () => {
+            console.log(`⏰ Scheduled task triggered: ${saved.id} - ${saved.description}`);
+            void trigger(saved);
+        };
+        // 6-field expressions (with seconds) stay on node-cron.
+        const fiveField = saved.expression.trim().split(/\s+/).length === 5;
+        task = fiveField ? armCronTimer(saved.expression, run) : cron.schedule(saved.expression, run);
+    }
+    const entry: ScheduledTask = { ...saved, status: "active", task };
+    tasks.set(saved.id, entry);
+    return entry;
+}
+
+/** Re-arm the tasks saved before a restart. A reminder due while Bhai was off fires now. */
+export function restoreScheduledTasks(): number {
+    let saved: SavedTask[] = [];
+    try {
+        if (fs.existsSync(storePath())) saved = JSON.parse(fs.readFileSync(storePath(), "utf8"));
+    } catch (err) {
+        console.warn("[SCHEDULED] Could not read saved tasks:", (err as Error).message);
+        return 0;
+    }
+    let n = 0;
+    for (const t of Array.isArray(saved) ? saved : []) {
+        if (!t?.id || tasks.has(t.id) || typeof t.action !== "string") continue;
+        if (t.fireAt === undefined && !cron.validate(t.expression)) continue;
+        taskCounter = Math.max(taskCounter, Number(t.id.split("_").pop()) || 0);
+        // Due while Bhai was off: give the channels a moment to connect first.
+        const soonest = Date.now() + 30_000;
+        arm(t.fireAt !== undefined && t.fireAt < soonest ? { ...t, fireAt: soonest } : t);
+        n++;
+    }
+    return n;
 }
 
 // ── Schedule Task Tool ────────────────────────
@@ -35,7 +238,7 @@ export const scheduleTask: ToolDefinition = {
         function: {
             name: "schedule_task",
             description:
-                "Schedule a recurring task. Use cron expressions (e.g. '0 9 * * *' for 9 AM daily) or common patterns.",
+                "Schedule a recurring task: at each time Bhai runs the action and sends the owner its answer (e.g. 'Summarize my unread email'). Use cron expressions (e.g. '0 9 * * *' for 9 AM daily) or common patterns.",
             parameters: {
                 type: "object",
                 properties: {
@@ -61,22 +264,16 @@ export const scheduleTask: ToolDefinition = {
         }
 
         const id = `task_${++taskCounter}`;
-        const task = cron.schedule(expression, async () => {
-            console.log(`⏰ Scheduled task triggered: ${id} - ${description}`);
-            if (onTaskTrigger) {
-                await onTaskTrigger(id, action);
-            }
-        });
-
-        tasks.set(id, {
+        arm({
             id,
             expression,
             description,
             action,
-            status: "active",
             created_at: new Date().toISOString(),
-            task,
+            doTask: true,
+            isOwner: isOwnerCaller(),
         });
+        save();
 
         return JSON.stringify({ success: true, id, expression, description, next_run: "Scheduled" });
     },
@@ -130,6 +327,7 @@ export const cancelTask: ToolDefinition = {
         }
         task.task.stop();
         tasks.delete(id);
+        save();
         return JSON.stringify({ success: true, cancelled: id });
     },
 };
@@ -150,11 +348,20 @@ export const setReminder: ToolDefinition = {
                         type: "number",
                         description: "Number of minutes from now to trigger the reminder (e.g., 5 for 5 minutes).",
                     },
-                    description: { type: "string", description: "Human-readable description of the reminder." },
+                    description: {
+                        type: "string",
+                        description:
+                            "What to remind the owner of, as they'll read it after '⏰ Reminder:' (e.g. 'Check the oven', not 'Oven reminder').",
+                    },
                     action: {
                         type: "string",
                         description:
                             "What to do when triggered (message to send to the agent, e.g., 'Remind the user to drink water').",
+                    },
+                    do_task: {
+                        type: "boolean",
+                        description:
+                            "true when Bhai must do something at that time (check, look up, summarize, then report), so the action runs and its answer is sent then. Don't also do it now: the owner asked for it later. Leave out for a plain reminder.",
                     },
                 },
                 required: ["minutes", "description", "action"],
@@ -162,42 +369,29 @@ export const setReminder: ToolDefinition = {
         },
     },
     async handler(input) {
-        const minutes = input.minutes as number;
+        const minutes = Number(input.minutes);
         const description = input.description as string;
         const action = input.action as string;
 
-        if (minutes <= 0) {
-            return JSON.stringify({ error: "Minutes must be greater than 0" });
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+            return JSON.stringify({ error: "Minutes must be a number greater than 0" });
         }
 
         const id = `reminder_${++taskCounter}`;
-        const timeoutMs = minutes * 60 * 1000;
-
-        // Emulate cron.ScheduledTask for compatibility with our task mapper
-        const fakeTask = {
-            stop: () => clearTimeout(timer),
-            start: () => {},
-        } as unknown as cron.ScheduledTask;
-
-        const timer = setTimeout(async () => {
-            console.log(`⏰ Reminder triggered: ${id} - ${description}`);
-            tasks.delete(id); // Auto-cleanup one-off tasks
-            if (onTaskTrigger) {
-                await onTaskTrigger(id, action);
-            }
-        }, timeoutMs);
-
-        tasks.set(id, {
+        const fireAt = Date.now() + minutes * 60 * 1000;
+        arm({
             id,
             expression: `In ${minutes} minutes`,
             description,
             action,
-            status: "active",
             created_at: new Date().toISOString(),
-            task: fakeTask,
+            fireAt,
+            doTask: input.do_task === true,
+            isOwner: isOwnerCaller(),
         });
+        save();
 
-        const triggerTime = new Date(Date.now() + timeoutMs).toLocaleTimeString();
+        const triggerTime = new Date(fireAt).toLocaleString();
         return JSON.stringify({ success: true, id, description, triggers_at: triggerTime });
     },
 };

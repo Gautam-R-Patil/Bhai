@@ -183,7 +183,9 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
     model,
     // Thinking is always on for these models and counts against max_tokens,
     // so leave room even when the client asked for a short answer.
-    max_tokens: Math.max(Number(body.max_tokens) || 16000, 8192),
+    // Billed per call, so the size per call is capped: an unbounded max_tokens let one
+    // free-tier credit buy a huge Opus generation.
+    max_tokens: Math.min(Math.max(Number(body.max_tokens) || 16000, 8192), 32_000),
     messages,
     // Auto-cache the growing conversation; the explicit breakpoint below keeps
     // tools + the byte-stable server prompt cached even when the client's
@@ -204,6 +206,13 @@ export function toClaudeRequest(body: any, chat: any[]): Beta.MessageCreateParam
     params.fallbacks = "default";
     params.betas = ["server-side-fallback-2026-07-01"];
   }
+  // Opus/Sonnet 5.5 run adaptive thinking by default but return it omitted;
+  // "updates" makes the short progress notes readable. Set on every main-loop
+  // call, streamed or not, so the prompt-cache prefix stays the same.
+  if (model !== HAIKU && body.lean !== true && !thinkingOff) {
+    params.thinking = { type: "adaptive", display: "updates" };
+    params.betas = [...(params.betas ?? []), "thinking-display-updates-2026-08-18"];
+  }
   return params;
 }
 
@@ -221,8 +230,11 @@ export function toOpenAIResponse(msg: Beta.BetaMessage) {
     .filter((b): b is Beta.BetaTextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
+  // Tool calls from a declined attempt must never run: those before the last
+  // fallback block, and any half-built call on a refusal.
+  const lastFallback = msg.content.findLastIndex((b) => b.type === "fallback");
   const tool_calls = msg.content
-    .filter((b): b is Beta.BetaToolUseBlock => b.type === "tool_use")
+    .filter((b, i): b is Beta.BetaToolUseBlock => b.type === "tool_use" && i > lastFallback && msg.stop_reason !== "refusal")
     .map((b) => ({
       id: b.id,
       type: "function" as const,

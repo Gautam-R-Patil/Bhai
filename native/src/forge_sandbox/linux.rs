@@ -30,7 +30,7 @@ pub struct LinuxSandbox {
 
 impl LinuxSandbox {
     pub fn new(node_path: PathBuf) -> Self {
-        let strict = std::env::var("ATLAS_FORGE_STRICT").as_deref() == Ok("true");
+        let strict = std::env::var("BHAI_FORGE_STRICT").as_deref() == Ok("true");
         Self { node_path, strict }
     }
 }
@@ -42,7 +42,7 @@ impl Sandbox for LinuxSandbox {
         let bpf = build_filter(caps).map_err(|e| io::Error::other(format!("seccomp: {e:?}")))?;
 
         let landlock_optional =
-            std::env::var("ATLAS_FORGE_LANDLOCK_OPTIONAL").as_deref() == Ok("true");
+            std::env::var("BHAI_FORGE_LANDLOCK_OPTIONAL").as_deref() == Ok("true");
         let mut landlock_ruleset = if landlock_available() {
             Some(
                 build_ruleset(caps, self.strict)
@@ -50,29 +50,29 @@ impl Sandbox for LinuxSandbox {
             )
         } else if !landlock_optional {
             // SECURE DEFAULT: refuse to spawn without Landlock unless the
-            // operator has explicitly opted out via ATLAS_FORGE_LANDLOCK_OPTIONAL=true.
+            // operator has explicitly opted out via BHAI_FORGE_LANDLOCK_OPTIONAL=true.
             // seccomp-only mode has no path-level filesystem isolation —
             // a synthesized handler can read /etc/passwd, ~/.ssh/, etc.
             return Err(io::Error::other(
                 "Landlock unavailable on this kernel (<5.13). Refusing to spawn without fs isolation. \
-                 Upgrade kernel or set ATLAS_FORGE_LANDLOCK_OPTIONAL=true to allow seccomp-only mode (UNSAFE).",
+                 Upgrade kernel or set BHAI_FORGE_LANDLOCK_OPTIONAL=true to allow seccomp-only mode (UNSAFE).",
             ));
         } else {
             tracing_warn(
                 slug,
-                "Landlock unavailable AND ATLAS_FORGE_LANDLOCK_OPTIONAL=true — seccomp-only enforcement, NO filesystem isolation",
+                "Landlock unavailable AND BHAI_FORGE_LANDLOCK_OPTIONAL=true — seccomp-only enforcement, NO filesystem isolation",
             );
             None
         };
 
         let net_passthrough = !caps.net.is_empty()
-            && std::env::var("ATLAS_FORGE_LINUX_NET_PASSTHROUGH").as_deref() == Ok("true");
+            && std::env::var("BHAI_FORGE_LINUX_NET_PASSTHROUGH").as_deref() == Ok("true");
         if !caps.net.is_empty() && !net_passthrough {
             tracing_warn(
                 slug,
                 "caps.net declared but per-host filtering unimplemented on Linux v1; \
                  falling back to no-network (CLONE_NEWNET unconditional). \
-                 Set ATLAS_FORGE_LINUX_NET_PASSTHROUGH=true to opt out (unsafe).",
+                 Set BHAI_FORGE_LINUX_NET_PASSTHROUGH=true to opt out (unsafe).",
             );
         }
 
@@ -89,6 +89,10 @@ impl Sandbox for LinuxSandbox {
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", handler_dir)
+            .env("BHAI_FORGE_SLUG", slug)
+            .env("BHAI_FORGE_HANDLER_PATH", handler_dir.join("handler.js"))
+            // Linux never rewrites .handler-shim.js, so one written before the
+            // ATLAS → Bhai rename still reads the old names.
             .env("ATLAS_FORGE_SLUG", slug)
             .env("ATLAS_FORGE_HANDLER_PATH", handler_dir.join("handler.js"))
             // Reap on Drop — prevents zombies on boot-fail paths.

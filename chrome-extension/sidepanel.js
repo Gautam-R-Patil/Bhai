@@ -20,6 +20,27 @@ let selectionIgnored = false;
 // Lets the background worker know when the panel closes (it removes any drawing).
 chrome.runtime.connect({ name: 'sidepanel' });
 
+(() => {
+  const h = new Date().getHours();
+  const line = h < 5 ? 'Up late? What do you need?'
+    : h < 12 ? "Morning. What's first?"
+    : h < 17 ? 'What should we do here?'
+    : h < 22 ? 'Evening. What can I take off your plate?'
+    : 'Still going? What do you need?';
+  $('greeting').textContent = line;
+  const tips = [
+    'Type @ to share another tab with Bhai.',
+    'Draw on the page to point at something.',
+    'Select text first, and Bhai focuses on it.',
+    'Paste a screenshot to ask about it.',
+    'Right-click text or an image to ask Bhai.',
+    `${/Mac/.test(navigator.platform) ? 'Option' : 'Alt'}+Shift+B opens Bhai from any tab.`,
+  ];
+  let n = 0;
+  try { n = Number(localStorage.getItem('bhaiTip') || 0); localStorage.setItem('bhaiTip', String(n + 1)); } catch {}
+  $('tip').textContent = tips[n % tips.length];
+})();
+
 function send(message) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(message, (resp) => {
@@ -49,13 +70,17 @@ function escapeHtml(s) {
 function inline(s) {
   return s
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/(?<![="'>\w])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+    .replace(/\*\*(?!\s)([^*\n]+)(?<!\s)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*\w])\*(?!\s)([^*\n]+)(?<!\s)\*(?!\*)/g, '$1<em>$2</em>')
+    // One pass for [label](url) and bare URLs, so a URL inside a finished link's href
+    // (a Wayback link, ?url=...) is never autolinked again.
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(?<![="'>\w])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/g,
+      (_, label, href, bare) => `<a href="${href || bare}" target="_blank" rel="noopener noreferrer">${label || bare}</a>`);
 }
 
 function renderMarkdown(text) {
+  // Chat-bar markers: a collapse becomes a bold title over its content; buttons and widgets are dropped.
+  text = String(text).replace(/<!--\s*COLLAPSE:([^>]*?)-->\n?/g, '**$1**\n').replace(/<!--\s*\/COLLAPSE\s*-->/g, '').replace(/<!--\s*(?:QUICK_ACTIONS|WIDGET)\b[\s\S]*?-->/g, '');
   const parts = escapeHtml(text).split(/```(?:[a-z0-9-]*)\n?([\s\S]*?)```/i);
   let html = '';
   parts.forEach((part, i) => {
@@ -63,7 +88,12 @@ function renderMarkdown(text) {
     for (const block of part.split(/\n{2,}/)) {
       const lines = block.split('\n').filter((l) => l.trim());
       if (!lines.length) continue;
-      if (lines.length === 1 && /^#{1,4}\s+/.test(lines[0])) {
+      if (lines.length >= 2 && lines.every((l) => /^\s*\|.*\|\s*$/.test(l)) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[1])) {
+        const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim()));
+        const head = cells(lines[0]).map((c) => `<th>${c}</th>`).join('');
+        const body = lines.slice(2).map((l) => `<tr>${cells(l).map((c) => `<td>${c}</td>`).join('')}</tr>`).join('');
+        html += `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+      } else if (lines.length === 1 && /^#{1,4}\s+/.test(lines[0])) {
         html += `<h3>${inline(lines[0].replace(/^#{1,4}\s+/, ''))}</h3>`;
       } else if (lines.every((l) => /^\s*[-*•]\s+/.test(l))) {
         html += `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*•]\s+/, ''))}</li>`).join('')}</ul>`;
@@ -81,29 +111,48 @@ function renderMarkdown(text) {
 
 // ── Thread ───────────────────────────────────
 
-function tag(name, text) {
+function tag(name, text, kind) {
   const t = document.createElement('span');
-  t.className = 'tag';
+  t.className = `tag ${kind}`;
   const label = document.createElement('span');
   label.textContent = text;
   t.append(icon(name, 12), label);
   return t;
 }
 
-function messageEl(m) {
+let lastChat = [];
+const timeOf = (ts) => {
+  const d = new Date(ts);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString([], sameDay ? { hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
+
+function messageEl(m, arriving = false) {
   const el = document.createElement('div');
   el.className = `msg ${m.role}`;
+  if (m.ts > 1e12) el.title = timeOf(m.ts);
   if (m.role === 'you') {
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.textContent = m.text;
-    el.append(bubble);
+    const edit = document.createElement('button');
+    edit.className = 'icon-btn edit';
+    edit.title = 'Edit and send again';
+    edit.setAttribute('aria-label', 'Edit and send again');
+    edit.append(icon('pen', 14));
+    edit.addEventListener('click', () => {
+      input.value = m.text;
+      autosize();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+    el.append(edit, bubble);
     const meta = m.meta || {};
     const tags = [];
-    if (meta.drew) tags.push(tag('pen', 'Your drawing'));
-    else if (meta.shared) tags.push(tag('tab', 'This tab'));
-    if (meta.selection) tags.push(tag('quote', `“${meta.selection}”`));
-    for (const t of meta.tabs || []) tags.push(tag('tab', t));
+    if (meta.drew) tags.push(tag('pen', 'Your drawing', 'draw'));
+    if (meta.pasted) tags.push(tag('image', 'Image', 'draw'));
+    if (meta.selection) tags.push(tag('quote', `“${meta.selection}”`, 'sel'));
+    for (const t of meta.tabs || []) tags.push(tag('tab', t, 'tab'));
     if (tags.length) {
       const row = document.createElement('div');
       row.className = 'attach';
@@ -113,6 +162,17 @@ function messageEl(m) {
   } else if (m.role === 'bhai') {
     const body = document.createElement('div');
     body.innerHTML = renderMarkdown(m.text);
+    for (const pre of body.querySelectorAll('pre')) {
+      const b = document.createElement('button');
+      b.className = 'code-copy';
+      b.textContent = 'Copy';
+      b.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(pre.querySelector('code')?.textContent || '').catch(() => {});
+        b.textContent = 'Copied';
+        setTimeout(() => { b.textContent = 'Copy'; }, 1200);
+      });
+      pre.append(b);
+    }
     const tools = document.createElement('div');
     tools.className = 'reply-tools';
     const copy = document.createElement('button');
@@ -126,6 +186,44 @@ function messageEl(m) {
       setTimeout(() => copy.replaceChildren(icon('copy', 15)), 1200);
     });
     tools.append(copy);
+
+    // Read aloud with the Mac's own voice (nothing leaves the computer).
+    if ('speechSynthesis' in window) {
+      const speak = document.createElement('button');
+      speak.className = 'icon-btn';
+      const setSpeak = (on) => {
+        speak.title = on ? 'Stop reading' : 'Read aloud';
+        speak.setAttribute('aria-label', speak.title);
+        speak.setAttribute('aria-pressed', String(on));
+        speak.replaceChildren(icon(on ? 'hush' : 'speak', 15));
+      };
+      setSpeak(false);
+      speak.addEventListener('click', () => {
+        if (speak.getAttribute('aria-pressed') === 'true') { speechSynthesis.cancel(); return; }
+        speechSynthesis.cancel();
+        document.querySelectorAll('.reply-tools [aria-pressed="true"]').forEach((b) => b.dispatchEvent(new Event('speech-end')));
+        const u = new SpeechSynthesisUtterance(body.innerText);
+        u.onend = u.onerror = () => setSpeak(false);
+        speak.addEventListener('speech-end', () => setSpeak(false), { once: true });
+        setSpeak(true);
+        speechSynthesis.speak(u);
+      });
+      tools.append(speak);
+    }
+
+    // Ask again (latest reply only): sends the question before it once more.
+    const again = document.createElement('button');
+    again.className = 'icon-btn again';
+    again.title = 'Ask again';
+    again.setAttribute('aria-label', 'Ask again');
+    again.append(icon('again', 15));
+    again.addEventListener('click', () => {
+      const i = lastChat.indexOf(m);
+      const q = [...lastChat.slice(0, i)].reverse().find((c) => c.role === 'you');
+      if (q && !busy) sendMessage({ type: 'send_message', text: q.text, mentions: [...extraTabs.keys()] });
+    });
+    tools.append(again);
+
     const actions = m.meta?.actions || [];
     const feedback = actions.filter((a) => a.action.startsWith('feedback:'));
     const forget = actions.filter((a) => a.action.startsWith('mem:forget:'));
@@ -159,6 +257,8 @@ function messageEl(m) {
       tools.append(b);
     }
     el.append(body);
+    const grid = imageGrid(m.images);
+    if (grid) el.append(grid);
     const safeLinks = (m.meta?.links || []).filter((u) => /^https?:\/\//.test(u));
     if (safeLinks.length) {
       const list = document.createElement('ul');
@@ -189,34 +289,196 @@ function messageEl(m) {
       el.append(row);
     }
     el.append(tools);
+    if (arriving) {
+      el.classList.add('reveal');
+      [...body.children].forEach((c, i) => c.style.setProperty('--d', String(Math.min(i, 8))));
+    }
   } else {
-    el.textContent = m.text;
+    // An error: say it, and offer to send the last message again.
+    const text = document.createElement('span');
+    text.textContent = `${m.text} `;
+    el.append(text);
+    const retry = document.createElement('button');
+    retry.className = 'link-btn';
+    retry.textContent = 'Try again';
+    retry.addEventListener('click', () => {
+      const lastYou = [...lastChat].reverse().find((c) => c.role === 'you');
+      if (lastYou) { retry.remove(); sendMessage({ type: 'send_message', text: lastYou.text, mentions: [...extraTabs.keys()] }); }
+    });
+    el.append(retry);
   }
   return el;
+}
+
+// ── Images Bhai made: thumbnails under the reply, a lightbox on click ──
+// In memory only (the worker never stores them); data:image/ URLs only.
+function imageGrid(images) {
+  const ok = (Array.isArray(images) ? images : []).filter((im) => im && typeof im.url === 'string' && im.url.startsWith('data:image/'));
+  if (!ok.length) return null;
+  const grid = document.createElement('div');
+  grid.className = ok.length > 1 ? 'img-grid multi' : 'img-grid';
+  ok.forEach((im, i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'img-thumb';
+    btn.setAttribute('aria-label', `Open image ${i + 1} of ${ok.length}`);
+    const img = document.createElement('img');
+    img.alt = im.prompt || 'Image from Bhai';
+    img.onload = () => img.classList.add('loaded');
+    img.src = im.url;
+    btn.append(img);
+    btn.addEventListener('click', () => openLightbox(ok, i));
+    grid.append(btn);
+  });
+  return grid;
+}
+
+async function copyImage(url) {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  c.getContext('2d').drawImage(img, 0, 0);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+
+let closeLightbox = () => {};
+function openLightbox(images, start) {
+  closeLightbox();
+  const back = document.activeElement;
+  const box = document.createElement('div');
+  box.className = 'img-lightbox';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-label', 'Image viewer');
+  const img = document.createElement('img');
+  img.className = 'lb-img';
+  const bar = document.createElement('div');
+  bar.className = 'lb-bar';
+  box.append(img, bar);
+  let i = start;
+  const button = (label, aria, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'lb-btn';
+    b.textContent = label;
+    b.setAttribute('aria-label', aria);
+    b.addEventListener('click', () => fn(b));
+    return b;
+  };
+  function show() {
+    const im = images[i];
+    img.src = im.url;
+    img.alt = im.prompt || 'Image from Bhai';
+    bar.replaceChildren();
+    if (images.length > 1) {
+      const n = document.createElement('span');
+      n.className = 'lb-count';
+      n.textContent = `${i + 1} / ${images.length}`;
+      bar.append(n);
+    }
+    const dl = document.createElement('a');
+    dl.className = 'lb-btn';
+    dl.href = im.url;
+    dl.download = String(im.name || 'bhai-image').replace(/\.\w+$/, '') + (im.url.startsWith('data:image/png') ? '.png' : '.jpg');
+    dl.textContent = 'Download';
+    dl.setAttribute('aria-label', 'Download image');
+    bar.append(dl);
+    bar.append(button('Copy', 'Copy image', async (b) => {
+      try { await copyImage(im.url); b.textContent = 'Copied'; } catch { b.textContent = "Couldn't copy"; }
+      setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+    }));
+    if (typeof im.before === 'string' && im.before.startsWith('data:image/')) {
+      bar.append(button('Compare', 'Show the original', (b) => {
+        const on = b.getAttribute('aria-pressed') !== 'true';
+        b.setAttribute('aria-pressed', String(on));
+        b.textContent = on ? 'Original' : 'Compare';
+        img.src = on ? im.before : im.url;
+      }));
+    }
+  }
+  const onKey = (e) => {
+    if (e.key === 'Escape') closeLightbox();
+    else if (e.key === 'ArrowRight' && images.length > 1) { i = (i + 1) % images.length; show(); }
+    else if (e.key === 'ArrowLeft' && images.length > 1) { i = (i - 1 + images.length) % images.length; show(); }
+    else return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+  closeLightbox = () => {
+    window.removeEventListener('keydown', onKey, true);
+    box.remove();
+    closeLightbox = () => {};
+    back?.focus?.();
+  };
+  box.addEventListener('click', (e) => { if (e.target === box) closeLightbox(); });
+  window.addEventListener('keydown', onKey, true);
+  show();
+  document.body.append(box);
+  bar.querySelector('.lb-btn')?.focus();
 }
 
 let rendered = 0;
 function renderChat(chat) {
   chat = chat || [];
+  lastChat = chat;
   if (chat.length < rendered) { thread.querySelectorAll('.msg').forEach((el) => el.remove()); rendered = 0; }
-  const working = $('workingRow');
-  for (const m of chat.slice(rendered)) thread.insertBefore(messageEl(m), working || null);
+  const working = $('workingRow') || $('liveTurn');
+  const arriving = rendered > 0 && chat.length - rendered === 1; // one new message, not the first load
+  const reveal = arriving && !typedIn; // an answer already typed in doesn't animate in again
+  typedIn = false;
+  const wasAtBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+  let newest = null;
+  for (const m of chat.slice(rendered)) {
+    newest = messageEl(m, reveal && m.role === 'bhai');
+    thread.insertBefore(newest, working || null);
+  }
   rendered = chat.length;
   const rows = thread.querySelectorAll('.bhai .followups');
   rows.forEach((r, i) => { r.hidden = i !== rows.length - 1 || chat[chat.length - 1]?.role !== 'bhai'; });
   $('welcome').hidden = chat.length > 0;
-  thread.scrollTop = thread.scrollHeight;
+  $('btnNew').hidden = chat.length === 0;
+  // Only the newest reply offers "Ask again".
+  const agains = thread.querySelectorAll('.bhai .again');
+  agains.forEach((b, i) => { b.hidden = i !== agains.length - 1; });
+  if (arriving && !wasAtBottom && newest?.classList.contains('bhai')) {
+    $('btnJump').hidden = false; // reading further up: don't yank them away
+  } else if (arriving && newest?.classList.contains('bhai') && newest.offsetHeight > thread.clientHeight * 0.6) {
+    thread.scrollTop = newest.offsetTop - 12;
+  } else {
+    thread.scrollTop = thread.scrollHeight;
+  }
 }
 
 let lastProgress = 0;
+// A turn quicker than this shows no working row or live line and leaves no "Worked for" line.
+const SHOW_LIVE_AFTER_MS = 15000;
+let busySince = 0;
+let busyTimer = 0;
+const cleanProgress = (t) => (t || '')
+  .replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '')
+  .replace(/^step\s+\d+\s*·\s*/i, '')
+  .replace(/\s*·\s*\d+\s*s$/i, '')
+  .trim();
 function setBusy(on, text) {
+  if (on && !busy) busySince = Date.now();
   busy = on;
   lastProgress = Date.now();
   sendBtn.classList.toggle('busy', on);
   sendBtn.title = on ? 'Stop' : 'Send';
   sendBtn.setAttribute('aria-label', sendBtn.title);
   let row = $('workingRow');
-  if (!on) { row?.remove(); updateSendState(); return; }
+  clearTimeout(busyTimer);
+  if (!on || liveRunning()) { row?.remove(); updateSendState(); return; } // a live turn has its own line
+  const wait = SHOW_LIVE_AFTER_MS - (Date.now() - busySince);
+  if (!row && wait > 0) { // a quick reply needs no "Thinking…" row
+    busyTimer = setTimeout(() => { if (busy) setBusy(true, text); }, wait);
+    updateSendState();
+    return;
+  }
   if (!row) {
     row = document.createElement('div');
     row.id = 'workingRow';
@@ -224,10 +486,164 @@ function setBusy(on, text) {
     row.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span></span>';
     thread.append(row);
   }
-  row.lastElementChild.textContent = text || 'Thinking…';
+  row.lastElementChild.textContent = cleanProgress(text) || 'Thinking…';
   thread.scrollTop = thread.scrollHeight;
   updateSendState();
 }
+
+// ── Live turn ────────────────────────────────
+// The bot's turn_* events, folded by the background worker (turn-view.js) and sent here as
+// turn_update {state, start, text?, done?}: one live line (Bhai's face, what he's doing now,
+// step and seconds), a Notes/Steps panel one click away, and the answer typing itself in.
+// The stored chat only gets the final reply; this view lives in the page for the session.
+
+const PANEL_KEY = 'bhai.turnPanelOpen';
+let panelOpen = false;
+chrome.storage.local.get(PANEL_KEY).then((r) => { panelOpen = r[PANEL_KEY] === true; }).catch(() => {});
+let live = null; // { state, root, el, start, fallback, shown, stepsKey, frame, tick, stopping, done }
+let typedIn = false; // the reply about to land was already typed in by its live turn
+const liveRunning = () => !!live && !live.done;
+const closeFence = (t) => ((t.match(/```/g) || []).length % 2 ? `${t}\n\`\`\`` : t); // an unclosed fence stays code
+
+function setPanelOpen(root, open) {
+  root.classList.toggle('open', open);
+  root.querySelector('.turn-live').setAttribute('aria-expanded', String(open));
+  root.querySelector('.turn-panel').setAttribute('aria-hidden', String(!open));
+}
+
+function liveStart(state, start, text) {
+  if (live && !live.done) { cancelAnimationFrame(live.frame); clearInterval(live.tick); live.root.remove(); }
+  $('workingRow')?.remove();
+  const root = document.createElement('div');
+  root.className = 'msg turn quiet';
+  root.id = 'liveTurn';
+  root.setAttribute('aria-busy', 'true');
+  root.innerHTML = '<button type="button" class="turn-live" aria-expanded="false" title="Show what Bhai is doing">'
+    + '<span class="face" aria-hidden="true"><i></i></span><span class="turn-now"></span>'
+    + '<span class="turn-meta"><span class="turn-count"></span><svg class="chev" width="14" height="14"><use href="#i-chev"/></svg></span></button>'
+    + '<div class="turn-bar" aria-hidden="true"><i></i></div>'
+    + '<div class="turn-panel"><div><div class="turn-inner">'
+    + '<div class="turn-empty">Nothing to show yet.</div>'
+    + '<div class="turn-notes-wrap" hidden><div class="turn-lbl">Notes</div><div class="turn-notes"></div></div>'
+    + '<div class="turn-steps-wrap" hidden><div class="turn-lbl">Steps</div><div class="turn-steps"></div></div>'
+    + '</div></div></div>'
+    + '<div class="bhai turn-answer"><div></div></div>';
+  thread.append(root);
+  const q = (sel) => root.querySelector(sel);
+  live = {
+    state, root, start: start || Date.now(), fallback: cleanProgress(text) || 'Thinking…', shown: '', stepsKey: '', frame: 0, stopping: false, done: false,
+    el: { now: q('.turn-now'), count: q('.turn-count'), empty: q('.turn-empty'), notes: q('.turn-notes'), steps: q('.turn-steps'), answer: q('.turn-answer > div') },
+    tick: setInterval(liveCount, 1000),
+  };
+  setPanelOpen(root, panelOpen);
+  setBusy(true);
+  renderLive();
+  thread.scrollTop = thread.scrollHeight;
+}
+
+// Anything behind the live line yet: a step, or a note with words in it.
+function turnHasDetail(s) {
+  return s.steps.length > 0 || !!s.notes.join('').trim();
+}
+
+// The line a finished turn leaves; a toggle only when there's something to open.
+function workedLine(s, worked, start) {
+  const w = worked || { secs: Math.round((Date.now() - start) / 1000), steps: s.steps.length };
+  const steps = w.steps ? ` · ${w.steps} step${w.steps === 1 ? '' : 's'}` : '';
+  return { text: `Worked for ${w.secs}s${steps}`, toggle: turnHasDetail(s) };
+}
+
+function liveCount() {
+  if (!liveRunning()) return;
+  // The turn ran long (or was already long when this panel opened): its line shows with all it has.
+  if (Date.now() - live.start >= SHOW_LIVE_AFTER_MS) live.root.classList.remove('quiet');
+  const step = live.state.status?.step || 0;
+  live.el.count.textContent = `${step > 0 ? `step ${step} · ` : ''}${Math.max(0, Math.floor((Date.now() - live.start) / 1000))}s`;
+}
+
+function renderLive() {
+  if (!live) return;
+  cancelAnimationFrame(live.frame);
+  live.frame = 0;
+  const s = live.state, el = live.el;
+  const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+  if (!live.done) {
+    el.now.textContent = live.stopping ? 'Stopping…' : cleanProgress(s.status?.text) || live.fallback;
+    liveCount();
+  }
+  const notes = s.notes.join('');
+  el.notes.parentElement.hidden = !notes.trim();
+  if (el.notes.textContent !== notes) { el.notes.textContent = notes; el.notes.scrollTop = el.notes.scrollHeight; }
+  const stepsKey = JSON.stringify(s.steps);
+  if (stepsKey !== live.stepsKey) { // only on change: a rebuild restarts the running step's pulse
+    live.stepsKey = stepsKey;
+    el.steps.parentElement.hidden = !s.steps.length;
+    el.steps.replaceChildren(...s.steps.map((x) => {
+      const row = document.createElement('div');
+      const state = ['done', 'failed', 'running'].includes(x.state) ? x.state : 'running';
+      row.className = `turn-step ${state}`;
+      const text = document.createElement('span');
+      text.textContent = x.text;
+      row.append(state === 'done' ? icon('check', 12) : state === 'failed' ? icon('x', 12) : document.createElement('i'), text);
+      return row;
+    }));
+  }
+  el.empty.hidden = turnHasDetail(s);
+  if (!live.done && s.answer !== live.shown) {
+    live.shown = s.answer;
+    // The caret goes inside the last block, so it sits after the last word.
+    el.answer.innerHTML = s.answer ? renderMarkdown(closeFence(s.answer)).replace(/((?:<\/[a-z0-9]+>)*)$/, '<span class="caret" aria-hidden="true"></span>$1') : '';
+  }
+  if (atBottom) thread.scrollTop = thread.scrollHeight;
+}
+
+function onTurnUpdate(m) {
+  if (!m.state) return;
+  if (!live || live.state.turn !== m.state.turn || (!live.done && !live.root.isConnected)) {
+    if (m.done) return; // ended before this page saw it: the reply shows as usual
+    liveStart(m.state, m.start, m.text);
+  }
+  if (live.done) return;
+  live.state = m.state;
+  if (m.done) return liveFinish(m.done);
+  if (!live.frame) live.frame = requestAnimationFrame(renderLive);
+}
+
+// The turn ended: the live line becomes "Worked for {N}s · {K} steps" (which still opens the
+// panel; just "Worked for {N}s", not a toggle, when there's nothing behind it). The reply lands under it.
+// A quick turn whose line never showed leaves just the reply.
+function liveFinish(worked) {
+  if (!liveRunning()) return;
+  renderLive();
+  clearInterval(live.tick);
+  live.done = true;
+  const { root, el, state } = live;
+  root.removeAttribute('id');
+  root.removeAttribute('aria-busy');
+  root.querySelector('.turn-answer').remove();
+  typedIn = !!state.answer;
+  if (root.classList.contains('quiet')) return root.remove();
+  const line = workedLine(state, worked, live.start);
+  root.classList.add('done');
+  setPanelOpen(root, false);
+  el.now.textContent = line.text;
+  el.count.textContent = '';
+  if (!line.toggle) {
+    const btn = root.querySelector('.turn-live');
+    btn.disabled = true;
+    btn.removeAttribute('aria-expanded');
+    btn.removeAttribute('title');
+  }
+}
+
+thread.addEventListener('click', (e) => {
+  const btn = e.target.closest('.turn-live');
+  if (!btn) return;
+  const open = !btn.parentElement.classList.contains('open');
+  setPanelOpen(btn.parentElement, open);
+  panelOpen = open;
+  chrome.storage.local.set({ [PANEL_KEY]: open }).catch(() => {});
+});
 
 // ── Status, tab, selection ───────────────────
 
@@ -238,6 +654,7 @@ function renderStatus(resp) {
   const dot = $('status');
   dot.dataset.state = canChat ? 'on' : searching ? '' : 'off';
   dot.title = canChat ? 'Connected to Bhai' : searching ? 'Connecting…' : browserOn ? 'Chat is reconnecting…' : "Bhai isn't running";
+  $('statusText').textContent = canChat ? 'Connected' : searching ? 'Connecting…' : browserOn ? 'Reconnecting…' : 'Offline';
   $('offline').hidden = browserOn || searching;
   for (const b of document.querySelectorAll('.suggest button, #btnDraw, #btnAt')) b.disabled = !canChat;
   document.querySelectorAll('.followups button').forEach((b) => { b.disabled = !canChat; });
@@ -260,18 +677,8 @@ async function refreshTab() {
   }
   activeTab = tab;
   extraTabs.delete(tab.id); // the current tab is shared as itself
-  const sharable = /^(https?|file):/.test(tab.url || '');
   renderSharing();
   renderSuggestions();
-  const title = $('welcomeTitle');
-  title.replaceChildren();
-  if (sharable && host(tab.url)) {
-    const b = document.createElement('b');
-    b.textContent = host(tab.url);
-    title.append("Hey, I'm looking at ", b, ' with you.');
-  } else {
-    title.append("Hey, I'm right here with you.");
-  }
 }
 
 function renderSelection() {
@@ -307,7 +714,16 @@ function sharedTabs() {
 function renderSharing() {
   const tabs = sharedTabs();
   const canShareActive = sharableTab(activeTab);
-  $('sharing').hidden = !tabs.length && !canShareActive;
+  // The current tab is shared by default; the row only appears when there's more to say.
+  $('sharing').hidden = !extraTabs.size && (shareTab || !canShareActive);
+  const toggle = $('tabToggle');
+  toggle.hidden = !canShareActive;
+  if (canShareActive) {
+    toggle.replaceChildren(favicon(activeTab));
+    toggle.setAttribute('aria-pressed', String(shareTab));
+    toggle.title = shareTab ? `Bhai sees ${host(activeTab.url) || 'this tab'}. Click to stop sharing it.` : `Not sharing ${host(activeTab.url) || 'this tab'}. Click to share it.`;
+    toggle.setAttribute('aria-label', toggle.title);
+  }
   $('shareLabel').textContent = !tabs.length
     ? 'Not sharing any tab'
     : tabs.length === 1 && tabs[0] === activeTab ? 'Sharing this tab' : `Sharing ${tabs.length} tab${tabs.length === 1 ? '' : 's'}`;
@@ -360,14 +776,18 @@ function suggestionsFor(tab) {
   const ask = (label, text, ic = 'ask') => ({ label, ic, run: () => sendMessage({ type: 'send_message', text }) });
   const summary = { label: 'Summarize this page', ic: 'doc', run: () => sendMessage({ type: 'send_page', question: 'Summarize this page for me.', display: 'Summarize this page' }) };
   const explain = { label: "Explain what's here", ic: 'ask', run: () => sendMessage({ type: 'send_selection', question: 'Explain this simply.' }) };
-  const draw = { label: 'Circle something and ask about it', ic: 'pen', run: startDrawing };
+  const draw = { label: 'Circle something to ask about', ic: 'pen', run: startDrawing };
+  const fill = (label, text) => ({ label, run: () => { input.value = text; autosize(); input.focus(); } });
+  if (!sharableTab(tab)) {
+    return [fill('Search the web for…', 'Search the web for '), fill('Open a site for me', 'Open '), ask('What can you do?', 'What can you do for me in Chrome? Keep it short.')];
+  }
   if (/youtube\.com$/.test(h) && path.startsWith('/watch')) {
     return [ask('Summarize this video', 'Summarize this video for me.', 'doc'), ask('What are the key points?', 'What are the key points of this video?'), draw];
   }
   if (h === 'github.com') {
     return [ask('Explain this repo', 'Explain what this repo is and how it is organised.', 'doc'), ask('What changed recently?', 'What changed recently here?'), draw];
   }
-  if (h === 'mail.google.com') {
+  if (h === 'mail.google.com' || /^(mail|webmail)\./.test(h) || /(^|\.)(outlook\.(live|office)\.com|mail\.yahoo\.com|proton\.me)$/.test(h)) {
     return [ask('Summarize this email', 'Summarize this email for me.', 'doc'), ask('Draft a reply', 'Draft a reply to this email. Show it to me before sending.'), draw];
   }
   if (h === 'docs.google.com') {
@@ -385,14 +805,13 @@ function suggestionsFor(tab) {
 function renderSuggestions() {
   const list = $('suggest');
   list.replaceChildren();
-  for (const sgt of suggestionsFor(activeTab)) {
-    const li = document.createElement('li');
+  for (const [i, sgt] of suggestionsFor(activeTab).entries()) {
     const b = document.createElement('button');
-    b.append(icon(sgt.ic, 17), document.createTextNode(sgt.label));
+    b.style.setProperty('--i', i);
+    b.textContent = sgt.label;
     b.disabled = !canChat;
     b.addEventListener('click', sgt.run);
-    li.append(b);
-    list.append(li);
+    list.append(b);
   }
 }
 
@@ -447,7 +866,7 @@ async function sendMessage(message) {
   }
   if (resp.drawing) $('drawChip').hidden = true;
   if (message.type === 'send_message') clearImage();
-  if (resp.drawing) $('workingRow').lastElementChild.textContent = 'Looking at your drawing…';
+  if (resp.drawing && $('workingRow')) $('workingRow').lastElementChild.textContent = 'Looking at your drawing…';
   return true;
 }
 
@@ -464,9 +883,15 @@ async function sendText() {
   }
 }
 
+// Stop the running turn; it stays busy until the stopped reply (with what was already typed) lands.
+// Nothing running there (or Bhai unreachable): unbusy now, nothing will come back.
 function stop() {
-  send({ type: 'send_message', text: 'stop' });
-  setBusy(false);
+  if (liveRunning()) { live.stopping = true; renderLive(); }
+  send({ type: 'stop' }).then((resp) => {
+    if (resp?.ok && resp.running) return;
+    liveFinish();
+    setBusy(false);
+  });
 }
 
 function autosize() {
@@ -592,6 +1017,11 @@ input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); return pickMention(menuIndex); }
   }
   if (e.key === 'Escape') { if (!mentionMenu.hidden) return closeMenu(); if (busy) return stop(); }
+  if (e.key === 'ArrowUp' && !input.value) {
+    const lastYou = [...lastChat].reverse().find((c) => c.role === 'you');
+    if (lastYou) { e.preventDefault(); input.value = lastYou.text; autosize(); input.setSelectionRange(input.value.length, input.value.length); }
+    return;
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!busy) sendText(); }
 });
 
@@ -609,6 +1039,13 @@ composer.addEventListener('drop', (e) => {
   if (file) { e.preventDefault(); attachImage(file); }
 });
 $('btnAttachOff').addEventListener('click', clearImage);
+$('btnJump').addEventListener('click', () => {
+  thread.scrollTo({ top: thread.scrollHeight, behavior: 'smooth' });
+  $('btnJump').hidden = true;
+});
+thread.addEventListener('scroll', () => {
+  if (thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40) $('btnJump').hidden = true;
+});
 setInterval(() => {
   const row = $('workingRow');
   if (busy && row && Date.now() - lastProgress > 45000) row.lastElementChild.textContent = 'Still working on it…';
@@ -628,6 +1065,10 @@ $('btnAt').addEventListener('click', () => {
   input.setSelectionRange(pos + pad.length + 1, pos + pad.length + 1);
   updateMenu();
 });
+$('tabToggle').addEventListener('click', () => {
+  shareTab = !shareTab;
+  renderSharing();
+});
 $('shareHead').addEventListener('click', () => {
   shareOpen = !shareOpen;
   renderSharing();
@@ -637,6 +1078,7 @@ $('btnSelOff').addEventListener('click', () => {
   renderSelection();
 });
 $('btnNew').addEventListener('click', async () => {
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
   await send({ type: 'clear_chat' });
   renderChat([]);
   setBusy(false);
@@ -656,12 +1098,15 @@ $('btnRetry').addEventListener('click', async () => {
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type === 'chat_update') {
-    renderChat(msg.chat);
     const last = msg.chat[msg.chat.length - 1];
+    if (last && last.role !== 'you') liveFinish(); // before rendering: the reply goes under it
+    renderChat(msg.chat);
     if (last && last.role !== 'you') setBusy(false);
-  } else if (msg.type === 'atlas_progress') {
-    setBusy(true, msg.text || 'Working…');
-  } else if (msg.type === 'atlas_action') {
+  } else if (msg.type === 'turn_update') {
+    onTurnUpdate(msg);
+  } else if (msg.type === 'bhai_progress' || msg.type === 'atlas_progress') { // atlas_: a pre-rename worker still running
+    if (!liveRunning()) setBusy(true, msg.text || 'Working…');
+  } else if (msg.type === 'bhai_action' || msg.type === 'atlas_action') {
     setBusy(true, msg.entry?.detail || 'Working…');
   } else if (msg.type === 'page_selection' && sender.tab?.id === activeTab?.id) {
     selection = msg.text || '';
@@ -676,7 +1121,11 @@ async function refresh() {
   renderStatus(await send({ type: 'get_status' }));
 }
 
-send({ type: 'get_chat' }).then((resp) => renderChat(resp?.chat || []));
+send({ type: 'get_chat' }).then((resp) => {
+  renderChat(resp?.chat || []);
+  if (resp?.turn) onTurnUpdate(resp.turn); // reopened mid-turn
+  else if (resp?.waiting) setBusy(true);
+});
 refreshTab();
 refresh();
 setInterval(refresh, 3000);

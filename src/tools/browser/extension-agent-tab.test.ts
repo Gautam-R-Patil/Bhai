@@ -53,4 +53,93 @@ describe("extension: Bhai's tab", () => {
         pinAgentTab(99); // Bhai's tab was closed
         expect((await agentTab())?.id).toBe(2);
     });
+
+    it("follows a page Bhai's click opened in front, not a background tab", async () => {
+        const tabs = [{ id: 1, active: true, focused: true }];
+        const clock = { now: 0 };
+        const chrome = {
+            tabs: {
+                get: async (id: number) => tabs.find((x) => x.id === id),
+                query: async () => tabs.filter((t) => t.active && t.focused),
+            },
+        };
+        const { agentTab, followOpenedTab } = new Function("chrome", "Date", `${block}; return { agentTab, followOpenedTab };`)(
+            chrome,
+            { now: () => clock.now },
+        );
+        expect((await agentTab())?.id).toBe(1);
+        tabs.push({ id: 3, active: false, focused: true });
+        followOpenedTab({ id: 3, active: false, openerTabId: 1 }); // ctrl-click: stays behind
+        expect((await agentTab())?.id).toBe(1);
+        tabs[0].active = false;
+        tabs.push({ id: 4, active: true, focused: true });
+        followOpenedTab({ id: 4, active: true, openerTabId: 1 }); // target=_blank
+        expect((await agentTab())?.id).toBe(4);
+    });
+});
+
+describe("extension: Bhai's own new tabs", () => {
+    function loadWithCreate(clock: { now: number }) {
+        const tabs: Array<{ id: number; url: string; active: boolean; focused?: boolean }> = [{ id: 1, url: "https://mail.example.com/", active: true, focused: true }];
+        let next = 10;
+        const chrome = {
+            tabs: {
+                get: async (id: number) => {
+                    const t = tabs.find((x) => x.id === id);
+                    if (!t) throw new Error("No tab");
+                    return t;
+                },
+                query: async () => tabs.filter((t) => t.active && t.focused),
+                create: async ({ url }: { url: string }) => {
+                    for (const x of tabs) x.active = false;
+                    const t = { id: next++, url, active: true, focused: true };
+                    tabs.push(t);
+                    return t;
+                },
+                update: async (id: number, { url }: { url: string }) => {
+                    const t = tabs.find((x) => x.id === id) as { url: string };
+                    t.url = url;
+                    return t;
+                },
+            },
+        };
+        const api = new Function("chrome", "Date", `${block}; return { openPageInNewTab };`)(chrome, { now: () => clock.now }) as {
+            openPageInNewTab: (url: string) => Promise<{ id: number }>;
+        };
+        return { tabs, ...api };
+    }
+
+    it("a new task reuses the tab Bhai opened last time instead of piling up tabs", async () => {
+        const clock = { now: 0 };
+        const { tabs, openPageInNewTab } = loadWithCreate(clock);
+        const first = await openPageInNewTab("https://news.ycombinator.com/");
+        clock.now += 30_000;
+        const second = await openPageInNewTab("https://example.org/"); // same task: a second tab
+        expect(second.id).not.toBe(first.id);
+        clock.now += 300_000; // a later task
+        const third = await openPageInNewTab("https://nodejs.org/");
+        expect(third.id).toBe(first.id); // the one in front (second) may still be being read
+        expect(tabs).toHaveLength(3); // the owner's tab + Bhai's two, not four
+    });
+
+    it("leaves a Bhai tab alone once its page changed, even on the same site (the owner's draft)", async () => {
+        const clock = { now: 0 };
+        const { tabs, openPageInNewTab } = loadWithCreate(clock);
+        const first = await openPageInNewTab("https://mail.example.com/inbox");
+        (tabs.find((t) => t.id === first.id) as { url: string }).url = "https://mail.example.com/compose";
+        await openPageInNewTab("https://example.org/"); // first is no longer in front
+        clock.now += 300_000;
+        const next = await openPageInNewTab("https://nodejs.org/");
+        expect(next.id).not.toBe(first.id);
+    });
+
+    it("leaves a tab the owner took elsewhere alone", async () => {
+        const clock = { now: 0 };
+        const { tabs, openPageInNewTab } = loadWithCreate(clock);
+        const first = await openPageInNewTab("https://news.ycombinator.com/");
+        (tabs.find((t) => t.id === first.id) as { url: string }).url = "https://youtube.com/watch?v=x"; // the owner used it
+        clock.now += 300_000;
+        const next = await openPageInNewTab("https://nodejs.org/");
+        expect(next.id).not.toBe(first.id);
+    });
 });

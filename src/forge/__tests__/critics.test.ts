@@ -40,7 +40,7 @@ describe("SAST critic (regex fallback)", () => {
     });
 
     it("detects source-tree read", async () => {
-        const r = await runSastCritic(`fs.readFileSync("/Users/x/Desktop/ATLAS/src/agent.ts");`, { rulesPath: null });
+        const r = await runSastCritic(`fs.readFileSync("/Users/x/Desktop/BHAI/src/agent.ts");`, { rulesPath: null });
         expect(r.pass).toBe(false);
     });
 

@@ -7,6 +7,7 @@ import {
     isEmail,
     pickBhaiRecipient,
     senderAuthenticated,
+    sentOnlyTo,
     stripQuoted,
 } from "./bhaiMailHelpers";
 
@@ -23,6 +24,12 @@ describe("Bhai's own email", () => {
         expect(pickBhaiRecipient(["hello@xagilab.com"], "xagilab.com")).toBe(null);
         expect(pickBhaiRecipient(["x.bhai@xagilabxcom.evil"], "xagilab.com")).toBe(null);
         expect(pickBhaiRecipient(["a.b.bhai@xagilab.com"], "xagilab.com")).toBe(null);
+    });
+
+    it("tells mail written to Bhai alone from mail with others on To/Cc", () => {
+        expect(sentOnlyTo([" Me.Bhai@xagilab.com"], "me.bhai@xagilab.com")).toBe(true);
+        expect(sentOnlyTo(["me.bhai@xagilab.com", "pal@y.com"], "me.bhai@xagilab.com")).toBe(false);
+        expect(sentOnlyTo([], "me.bhai@xagilab.com")).toBe(false);
     });
 
     it("keeps what the owner wrote, drops the quoted thread", () => {

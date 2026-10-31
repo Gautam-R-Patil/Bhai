@@ -46,7 +46,7 @@ interface StrategyStore {
 
 // ── Constants ─────────────────────────────────
 
-const STORE_PATH = path.join(process.env.ATLAS_DATA_DIR || path.resolve("data"), "browser-strategies.json");
+const STORE_PATH = path.join(process.env.BHAI_DATA_DIR || path.resolve("data"), "browser-strategies.json");
 const STALE_DAYS = 30; // warn after 30 days
 const EXPIRED_DAYS = 90; // auto-prune after 90 days (if low success)
 const TIP_STALE_DAYS = 60; // warn for tips
@@ -314,6 +314,7 @@ export function recordStrategy(taskPattern: string, domain: string, steps: Brows
     const id = `strat_${++strategyCounter}`;
     const totalMs = steps.reduce((sum, s) => sum + s.durationMs, 0);
     const successCount = steps.filter((s) => s.success).length;
+    const rate = steps.length ? successCount / steps.length : 0; // 0/0 was NaN: it never matched again
 
     const existing = store.strategies.find((s) => s.taskPattern === taskPattern && s.domain === domain);
 
@@ -321,10 +322,10 @@ export function recordStrategy(taskPattern: string, domain: string, steps: Brows
         existing.timesUsed++;
         existing.lastUsed = new Date().toISOString();
         existing.version = (existing.version || 1) + 1;
-        if (totalMs < existing.totalDurationMs || successCount / steps.length > existing.successRate) {
+        if (totalMs < existing.totalDurationMs || rate > existing.successRate) {
             existing.steps = steps;
             existing.totalDurationMs = totalMs;
-            existing.successRate = successCount / steps.length;
+            existing.successRate = rate;
             existing.notes = notes;
         }
         saveStore();
@@ -337,7 +338,7 @@ export function recordStrategy(taskPattern: string, domain: string, steps: Brows
         domain,
         steps,
         totalDurationMs: totalMs,
-        successRate: successCount / steps.length,
+        successRate: rate,
         timesUsed: 1,
         lastUsed: new Date().toISOString(),
         notes,
@@ -352,9 +353,18 @@ export function recordStrategy(taskPattern: string, domain: string, steps: Brows
 
 // ── Find Best Strategy ────────────────────────
 
+// Words that say nothing about which site or task: "from" matched every "extract data from …".
+const STRATEGY_STOP = new Set(
+    "about after also been from have here into just know like make more need only please some than that them then there they this what when where which while with would your".split(" "),
+);
+const strategyWords = (text: string): string[] =>
+    (text.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}.-]*/gu) ?? [])
+        // A site counts by its name too: the owner says "smartprix", the pattern has www.smartprix.com.
+        .flatMap((w) => (w.includes(".") ? [w, w.replace(/^www\./, "").split(".")[0]] : [w]))
+        .filter((w) => w.length > 3 && !STRATEGY_STOP.has(w));
+
 export function findStrategy(task: string, domain?: string): BrowsingStrategy | null {
-    const taskLower = task.toLowerCase();
-    const keywords = taskLower.split(/\s+/).filter((w) => w.length > 3);
+    const keywords = strategyWords(task);
     const now = Date.now();
 
     let bestMatch: BrowsingStrategy | null = null;
@@ -367,11 +377,11 @@ export function findStrategy(task: string, domain?: string): BrowsingStrategy | 
         if (daysSinceUse > EXPIRED_DAYS && strategy.successRate < 0.5) continue;
 
         let score = 0;
-        const patternLower = strategy.taskPattern.toLowerCase();
+        const patternWords = new Set(strategyWords(strategy.taskPattern));
 
-        // Keyword matching
+        // Keyword matching: whole words ("know" isn't in "unknown"), two of them at least
         for (const kw of keywords) {
-            if (patternLower.includes(kw)) score += 2;
+            if (patternWords.has(kw)) score += 2;
         }
 
         // Domain match bonus
@@ -379,7 +389,7 @@ export function findStrategy(task: string, domain?: string): BrowsingStrategy | 
         if (domainMatch) score += 5;
         // Relevance first: the bonuses below alone used to clear the bar, so a
         // saved strategy was offered for every message, even "hello".
-        if (score === 0) continue;
+        if (score < 4 && !domainMatch) continue;
 
         // Success rate bonus
         score += strategy.successRate * 3;

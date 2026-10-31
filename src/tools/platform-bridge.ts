@@ -38,7 +38,7 @@ const execFileAsync = promisify(execFile);
  * System.Drawing (Windows), scrot/gnome-screenshot (Linux).
  */
 export async function takeScreenshot(): Promise<Buffer> {
-    const tmpPath = join(tmpdir(), `atlas_bridge_screenshot_${Date.now()}.png`);
+    const tmpPath = join(tmpdir(), `bhai_bridge_screenshot_${Date.now()}.png`);
     try {
         await captureScreenshot(tmpPath);
         const buffer = await fs.readFile(tmpPath);
@@ -123,9 +123,9 @@ $hwnd = [WinAPI]::GetForegroundWindow()
 $sb = New-Object System.Text.StringBuilder(256)
 [WinAPI]::GetWindowText($hwnd, $sb, 256) | Out-Null
 $title = $sb.ToString()
-$pid = 0
-[WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid) | Out-Null
-$proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+$procId = 0
+[WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
+$proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
 $appName = if ($proc) { $proc.ProcessName } else { "unknown" }
 "$appName|||$title"
             `.trim(),

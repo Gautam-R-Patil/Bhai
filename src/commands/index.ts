@@ -236,7 +236,7 @@ function cmdSpec(task: string): string {
         .slice(0, 6)
         .join("-")
         .slice(0, 50) || `spec-${Date.now()}`;
-    const specPath = path.resolve(".atlas", "specs", `${slug}.md`);
+    const specPath = path.resolve(".bhai", "specs", `${slug}.md`);
     enterSpecMode(trimmed, specPath, "user");
     return [
         "📝 **Spec mode active.**",
@@ -300,9 +300,9 @@ async function cmdOptimizeHarness(args: string[]): Promise<CommandResult> {
 
 function cmdHarnessStatus(): CommandResult {
     try {
-        const ATLAS_DATA_DIR = process.env.ATLAS_DATA_DIR || "data";
-        const runsDir = join(ATLAS_DATA_DIR, "harness/runs");
-        const activeConfig = join(ATLAS_DATA_DIR, "harness/active/harness-config.json");
+        const BHAI_DATA_DIR = process.env.BHAI_DATA_DIR || "data";
+        const runsDir = join(BHAI_DATA_DIR, "harness/runs");
+        const activeConfig = join(BHAI_DATA_DIR, "harness/active/harness-config.json");
 
         const lines = ["🔬 **Harness Optimization Status**", ""];
 
@@ -318,7 +318,7 @@ function cmdHarnessStatus(): CommandResult {
             if (runs.length > 0) {
                 lines.push("", `📁 Recent runs (${runs.length} shown):`);
                 for (const run of runs) {
-                    const lb = join(ATLAS_DATA_DIR, "harness/runs", run, "indexes/leaderboard.json");
+                    const lb = join(BHAI_DATA_DIR, "harness/runs", run, "indexes/leaderboard.json");
                     if (existsSync(lb)) {
                         const d = JSON.parse(readFileSync(lb, "utf-8"));
                         lines.push(`  - \`${run}\`: best=${d.bestCandidateId} score=${d.bestObjective?.toFixed(0) ?? "n/a"} (${d.candidates?.length ?? 0} candidates)`);

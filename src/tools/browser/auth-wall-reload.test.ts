@@ -17,7 +17,7 @@ describe("checkAuthWall cookie import", () => {
         // biome-ignore lint/suspicious/noExplicitAny: optional playwright
         let browser: any = null;
         try {
-            browser = await (await import("playwright")).chromium.launch({ headless: true });
+            browser = await (await import("playwright-core")).chromium.launch({ headless: true });
         } catch {
             return ctx.skip();
         }

@@ -149,7 +149,7 @@ export interface LongTaskProgress {
 
 // ── Constants ─────────────────────────────────
 
-const DATA_DIR = join(process.env.ATLAS_DATA_DIR || join(process.cwd(), "data"), "long-tasks");
+const DATA_DIR = join(process.env.BHAI_DATA_DIR || join(process.cwd(), "data"), "long-tasks");
 const MAX_PHASES = 20;           // Hard cap — most tasks need 2-8 phases
 const DEFAULT_PHASE_ITERATIONS = 50;    // Sub-agents rarely need >30 iterations
 const DEFAULT_PHASE_TIMEOUT = 600_000;  // 10 minutes per phase
@@ -322,6 +322,12 @@ Task: ${description}${memoryContext}`;
 
 // ── Execute Long Task ─────────────────────────
 
+let onLongTaskStart: (() => void) | null = null;
+/** Told whenever a long task starts or resumes running (the chat bar's task drawer starts polling). */
+export function setLongTaskStartHook(fn: () => void): void {
+    onLongTaskStart = fn;
+}
+
 export async function startLongTask(
     llm: LLMClient,
     description: string,
@@ -350,6 +356,7 @@ export async function startLongTask(
     };
 
     activeTasks.set(id, task);
+    onLongTaskStart?.();
     taskAbortControllers.set(id, abortController);
     await saveCheckpoint(task);
 
@@ -688,6 +695,7 @@ export async function resumeLongTask(
 
     const abortController = new AbortController();
     activeTasks.set(taskId, task);
+    onLongTaskStart?.();
     taskAbortControllers.set(taskId, abortController);
 
     console.log(`[LONG-TASK] 🔄 Resuming task ${taskId} from phase ${nextPhase + 1}/${task.phases.length}`);

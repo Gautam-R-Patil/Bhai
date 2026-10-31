@@ -1,6 +1,6 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 //
-// protect() memo (ATLAS_NO_PROTECT_CACHE) and the single-pass known-value regex
+// protect() memo (BHAI_NO_PROTECT_CACHE) and the single-pass known-value regex
 // in pii-vault.ts. Each test loads a fresh vault.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -34,7 +34,7 @@ describe("protect() memo", () => {
         expect(protect(t)).toBe("password=[redacted]");
     });
 
-    it("is a pure memo: a turn gives the same output with ATLAS_NO_PROTECT_CACHE=true", async () => {
+    it("is a pure memo: a turn gives the same output with BHAI_NO_PROTECT_CACHE=true", async () => {
         const turn = [
             "Card on file 4111 1111 1111 1111, OTP: 739204",
             '{"typed":"739204"}',
@@ -50,7 +50,7 @@ describe("protect() memo", () => {
             const { protect } = await freshVault(env);
             return [...turn, ...turn].map((t, i) => protect(t, { credentials: i % 3 !== 0 }));
         };
-        expect(await run({})).toEqual(await run({ ATLAS_NO_PROTECT_CACHE: "true" }));
+        expect(await run({})).toEqual(await run({ BHAI_NO_PROTECT_CACHE: "true" }));
     });
 });
 

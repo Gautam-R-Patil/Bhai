@@ -2,25 +2,25 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import {
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
+import type {
+    AttachmentBuilder,
     Client,
-    GatewayIntentBits,
-    Events,
     SlashCommandBuilder,
-    REST,
-    Routes,
     EmbedBuilder,
-    ChannelType,
-    type ChatInputCommandInteraction,
-    type Message,
-    type TextChannel,
-    type ThreadChannel,
-    type Attachment,
+    ChatInputCommandInteraction,
+    Message,
+    TextChannel,
+    ThreadChannel,
+    Attachment,
 } from "discord.js";
 import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
+import { registerImageDelivery } from "./media/image-jobs.js";
 import {
     runAgent,
+    type GeneratedImage,
     type MediaAttachment,
     type ProgressCallback,
     type ChannelContext,
@@ -68,7 +68,7 @@ function buildResultEmbed(
     description: string,
     fields?: Array<{ name: string; value: string; inline?: boolean }>,
 ): EmbedBuilder {
-    const embed = new EmbedBuilder()
+    const embed = new djs.EmbedBuilder()
         .setTitle(title)
         .setColor(0x5865f2) // Discord blurple
         .setTimestamp();
@@ -219,6 +219,37 @@ async function sendFollowUps(
     }
 }
 
+// ── The turn's generated images, as attachments after the reply (Discord shows them inline) ──
+
+export async function sendImages(
+    images: GeneratedImage[] | undefined,
+    send: (msg: string | { files: AttachmentBuilder[] }) => Promise<unknown>,
+    ownerDm: boolean,
+): Promise<void> {
+    if (!images?.length) return;
+    const { AttachmentBuilder } = await import("discord.js");
+    const attach = async (img: GeneratedImage) =>
+        new AttachmentBuilder(await readFile(img.path), { name: basename(img.path) });
+    try {
+        await send({ files: await Promise.all(images.map(attach)) });
+        return;
+    } catch (err) {
+        console.warn("[DISCORD] Failed to send images:", (err as Error).message);
+    }
+    // One file per send, so one too big or unreadable doesn't lose the rest.
+    const failed: string[] = [];
+    for (const img of images) {
+        try {
+            await send({ files: [await attach(img)] });
+        } catch (err) {
+            console.warn("[DISCORD] Failed to send image:", (err as Error).message);
+            failed.push(img.path);
+        }
+    }
+    if (failed.length && ownerDm)
+        await send(`Couldn't send the image here; it's saved at ${failed.join(", ")}`).catch(() => {});
+}
+
 // ── Run agent and send the result ──
 
 async function runAndReply(
@@ -241,28 +272,36 @@ async function runAndReply(
         }
     };
 
-    setSwarmProgress(progressCallback);
-    setDeepResearchProgress(progressCallback);
-    setLongTaskProgress(progressCallback);
+    // The progress hooks are process-wide and only owner tools use them: only an owner turn
+    // registers (and clears) them, or the owner's task progress lands in this chat.
+    const ctx = { ...discordChannelContext(interaction.user, isBotDmInteraction(interaction)), replyTo: interaction.channelId };
+    const senderIsOwner = ctx.isOwner;
+    if (senderIsOwner) {
+        setSwarmProgress(progressCallback);
+        setDeepResearchProgress(progressCallback);
+        setLongTaskProgress(progressCallback);
+    }
 
     try {
-        // Owner powers only in a DM: in a server channel everyone reads the reply.
-        const senderIsOwner = !interaction.guildId && isPlatformOwner("discord", interaction.user.id);
-        const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
+        const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, ctx);
 
         if (result.text.trim() === "[NO_REPLY]") {
             // Never end on the promise: the reply holds the contract line, so the close goes below it.
             if (contractShown) await interaction.followUp("Done -- no additional output.");
             else await interaction.editReply("Done -- no additional output.");
+            await sendImages(result.images, (msg) => interaction.followUp(msg), senderIsOwner);
             return;
         }
 
         const replyText = discordStuckReplyText(result, senderIsOwner, !interaction.inGuild());
         await sendFollowUps(interaction, replyText, contractShown);
+        await sendImages(result.images, (msg) => interaction.followUp(msg), senderIsOwner);
     } finally {
-        clearSwarmProgress();
-        clearDeepResearchProgress();
-        clearLongTaskProgress();
+        if (senderIsOwner) {
+            clearSwarmProgress();
+            clearDeepResearchProgress();
+            clearLongTaskProgress();
+        }
     }
 }
 
@@ -339,17 +378,20 @@ async function runInThread(
         } catch { /* thread may have been archived */ }
     };
 
-    setSwarmProgress(progressCallback);
-    setDeepResearchProgress(progressCallback);
-    setLongTaskProgress(progressCallback);
+    const ctx = { ...discordChannelContext(interaction.user, isBotDmInteraction(interaction)), replyTo: thread.id };
+    const senderIsOwner = ctx.isOwner;
+    if (senderIsOwner) {
+        setSwarmProgress(progressCallback);
+        setDeepResearchProgress(progressCallback);
+        setLongTaskProgress(progressCallback);
+    }
 
     try {
-        // Owner powers only in a DM: in a server channel everyone reads the reply.
-        const senderIsOwner = !interaction.guildId && isPlatformOwner("discord", interaction.user.id);
-        const result = await runAgent(llm, message, progressCallback, undefined, undefined, undefined, modelHint, undefined, { channel: "discord", userId: interaction.user.id, userName: interaction.user.username, isOwner: senderIsOwner });
+        const result = await runAgent(llm, message, progressCallback, undefined, undefined, undefined, modelHint, undefined, ctx);
 
         if (result.text.trim() === "[NO_REPLY]") {
             await thread.send("Completed -- no additional output.");
+            await sendImages(result.images, (msg) => thread.send(msg), senderIsOwner);
             return;
         }
 
@@ -381,22 +423,25 @@ async function runInThread(
                 try { await thread.send(chunk); } catch { /* */ }
             }
         }
+        await sendImages(result.images, (msg) => thread.send(msg), senderIsOwner);
     } catch (err) {
         const errorType = categorizeError(err as Error);
         try {
             await thread.send(getErrorMessage(errorType));
         } catch { /* */ }
     } finally {
-        clearSwarmProgress();
-        clearDeepResearchProgress();
-        clearLongTaskProgress();
+        if (senderIsOwner) {
+            clearSwarmProgress();
+            clearDeepResearchProgress();
+            clearLongTaskProgress();
+        }
     }
 }
 
 // ── Slash Command Definitions ────────────────
 
 function buildSlashCommands(): SlashCommandBuilder[] {
-    const ask = new SlashCommandBuilder()
+    const ask = new djs.SlashCommandBuilder()
         .setName("ask")
         .setDescription("Ask Bhai anything")
         .addStringOption(option =>
@@ -405,7 +450,7 @@ function buildSlashCommands(): SlashCommandBuilder[] {
                 .setRequired(true),
         ) as SlashCommandBuilder;
 
-    const research = new SlashCommandBuilder()
+    const research = new djs.SlashCommandBuilder()
         .setName("research")
         .setDescription("Start a deep research task")
         .addStringOption(option =>
@@ -414,7 +459,7 @@ function buildSlashCommands(): SlashCommandBuilder[] {
                 .setRequired(true),
         ) as SlashCommandBuilder;
 
-    const task = new SlashCommandBuilder()
+    const task = new djs.SlashCommandBuilder()
         .setName("task")
         .setDescription("Start a long-running task")
         .addStringOption(option =>
@@ -423,11 +468,11 @@ function buildSlashCommands(): SlashCommandBuilder[] {
                 .setRequired(true),
         ) as SlashCommandBuilder;
 
-    const status = new SlashCommandBuilder()
+    const status = new djs.SlashCommandBuilder()
         .setName("status")
         .setDescription("Check Bhai status and running tasks") as SlashCommandBuilder;
 
-    const help = new SlashCommandBuilder()
+    const help = new djs.SlashCommandBuilder()
         .setName("help")
         .setDescription("List available Bhai commands") as SlashCommandBuilder;
 
@@ -438,12 +483,12 @@ function buildSlashCommands(): SlashCommandBuilder[] {
 
 async function registerCommands(clientId: string, token: string): Promise<void> {
     const commands = buildSlashCommands();
-    const rest = new REST({ version: "10" }).setToken(token);
+    const rest = new djs.REST({ version: "10" }).setToken(token);
 
     try {
         console.log("  [DISCORD] Registering slash commands...");
         await rest.put(
-            Routes.applicationCommands(clientId),
+            djs.Routes.applicationCommands(clientId),
             { body: commands.map(c => c.toJSON()) },
         );
         console.log("  [DISCORD] Slash commands registered");
@@ -474,9 +519,28 @@ export function isPlatformOwner(channel: "discord", userId: string): boolean {
     return parseDiscordOwners().has(userId);
 }
 
+/**
+ * A slash command run in Bhai's own DM. No guild alone isn't enough: a user-installed
+ * command can run in a group DM, where everyone in it reads the reply.
+ */
+function isBotDmInteraction(interaction: ChatInputCommandInteraction): boolean {
+    return !interaction.guildId && interaction.context !== djs.InteractionContextType.PrivateChannel;
+}
+
+/**
+ * Owner powers (tools, memory, history) and private memory (forget, pins, corrections)
+ * only for the owner in a DM with Bhai: a channel, thread or group reply is read by everyone in it.
+ */
+export function discordChannelContext(user: { id: string; username: string }, isDM: boolean): ChannelContext {
+    const owner = isDM && isPlatformOwner("discord", user.id);
+    return { channel: "discord", userId: user.id, userName: user.username, isOwner: owner, isPrivate: owner };
+}
+
 // ── Init Discord Bot ─────────────────────────
 
 let discordClient: Client | null = null;
+// discord.js loads only when a bot token is set (initDiscord), not at boot.
+let djs: typeof import("discord.js");
 
 export async function initDiscord(llm: LLMClient): Promise<void> {
     const token = process.env.DISCORD_BOT_TOKEN;
@@ -490,16 +554,17 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
         console.warn("  [DISCORD] DISCORD_CLIENT_ID not set -- slash commands will not be registered");
     }
 
+    djs = await import("discord.js");
     const allowedUsers = parseDiscordAllowedUsers();
     const startTime = Date.now();
 
-    const client = new Client({
+    const client = new djs.Client({
         intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.MessageContent,
-            GatewayIntentBits.GuildVoiceStates,
-            GatewayIntentBits.DirectMessages,
+            djs.GatewayIntentBits.Guilds,
+            djs.GatewayIntentBits.GuildMessages,
+            djs.GatewayIntentBits.MessageContent,
+            djs.GatewayIntentBits.GuildVoiceStates,
+            djs.GatewayIntentBits.DirectMessages,
         ],
     });
 
@@ -516,7 +581,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
     // ── Ready Event ──────────────────────────
 
-    client.once(Events.ClientReady, async (readyClient) => {
+    client.once(djs.Events.ClientReady, async (readyClient) => {
         console.log(`  [DISCORD] Bot online: ${readyClient.user.tag}`);
 
         // Register slash commands
@@ -527,7 +592,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
     // ── Slash Command Handler ────────────────
 
-    client.on(Events.InteractionCreate, async (interaction) => {
+    client.on(djs.Events.InteractionCreate, async (interaction) => {
         if (!interaction.isChatInputCommand()) return;
 
         const userId = interaction.user.id;
@@ -567,8 +632,14 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                     });
 
                     try {
-                        const agentMessage = `[DEEP RESEARCH REQUEST]\n\nTopic: ${topic}\n\nPlease conduct thorough deep research on this topic. Use the deep_research tool for comprehensive investigation.`;
-                        await runInThread(llm, agentMessage, interaction, `Research: ${topic.substring(0, 80)}`, "Deep Research Results", "complex");
+                        // Research runs on the owner's account and reports to the owner's DM, so it
+                        // starts there: in a server channel the owner's tools are off (anyone reads it).
+                        if (interaction.guildId) {
+                            await interaction.editReply("Deep research runs in a DM with me: send `/research` there and the answer comes back in that DM.");
+                        } else {
+                            const agentMessage = `[DEEP RESEARCH REQUEST]\n\nTopic: ${topic}\n\nPlease conduct thorough deep research on this topic. Use the deep_research tool for comprehensive investigation.`;
+                            await runAndReply(llm, agentMessage, interaction, undefined, "complex");
+                        }
                     } finally {
                         activeTasks.delete(taskId);
                     }
@@ -635,7 +706,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                         "Here are the available commands:",
                         [
                             { name: "/ask <message>", value: "Ask Bhai anything -- general questions, tool use, and more" },
-                            { name: "/research <topic>", value: "Start a deep research task (runs in a thread with progress updates)" },
+                            { name: "/research <topic>", value: "Start a deep research task (in a DM with me; the answer and report come back there)" },
                             { name: "/task <description>", value: "Start a long-running task (runs in a thread with progress updates)" },
                             { name: "/status", value: "Check Bhai uptime and running tasks" },
                             { name: "/help", value: "Show this help message" },
@@ -667,12 +738,12 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
     // ── Message Handler (@mentions + DMs) ────
 
-    client.on(Events.MessageCreate, async (message: Message) => {
+    client.on(djs.Events.MessageCreate, async (message: Message) => {
         // Ignore bot messages (including our own)
         if (message.author.bot) return;
 
         // Check if this is a DM or an @mention
-        const isDM = message.channel.type === ChannelType.DM;
+        const isDM = message.channel.type === djs.ChannelType.DM;
         // A real @mention of Bhai, not @everyone/@here or a role ping.
         const isMention = message.mentions.has(client.user!, { ignoreEveryone: true, ignoreRoles: true });
 
@@ -743,7 +814,8 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             // Owner powers (tools, memory, history) only in a DM: a channel reply is read by
             // everyone in it. The progress hooks are process-wide and only owner tools use
             // them, so only an owner turn registers them (and always clears them).
-            const senderIsOwner = isDM && isPlatformOwner("discord", message.author.id);
+            const ctx = { ...discordChannelContext(message.author, isDM), replyTo: message.channelId };
+            const senderIsOwner = ctx.isOwner;
             if (senderIsOwner) {
                 setSwarmProgress(progressCallback);
                 setDeepResearchProgress(progressCallback);
@@ -751,7 +823,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             }
             let result: Awaited<ReturnType<typeof runAgent>>;
             try {
-                result = await runAgent(llm, content, progressCallback, media, undefined, undefined, undefined, undefined, { channel: "discord", userId: message.author.id, userName: message.author.username, isOwner: senderIsOwner });
+                result = await runAgent(llm, content, progressCallback, media, undefined, undefined, undefined, undefined, ctx);
             } finally {
                 if (senderIsOwner) {
                     clearSwarmProgress();
@@ -763,6 +835,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             if (result.text.trim() === "[NO_REPLY]") {
                 // Never end on the promise: close the contract line.
                 if (contractShown) await message.reply("Done -- no additional output.").catch(() => {});
+                await sendImages(result.images, (msg) => message.reply(msg), senderIsOwner);
                 return;
             }
 
@@ -783,6 +856,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
                     }
                 }
             }
+            await sendImages(result.images, (msg) => message.reply(msg), senderIsOwner);
         } catch (err) {
             console.error("[DISCORD] Message handler error:", err);
             const errorType = categorizeError(err as Error);
@@ -799,6 +873,16 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
     try {
         await client.login(token);
         discordClient = client;
+        registerImageDelivery("discord", async (to, images, text, ownerDm) => {
+            // A scheduled task's: the owner's DM, as its own result goes.
+            if (to === "owner") return sendDiscordProactiveMessage(text, undefined, undefined, images);
+            const channel = await client.channels.fetch(to);
+            if (!channel || !("send" in channel)) return false;
+            const send = (msg: string | { files: AttachmentBuilder[] }) => (channel as TextChannel).send(msg);
+            await send(text);
+            await sendImages(images, send, ownerDm);
+            return true;
+        });
     } catch (err) {
         console.error("[DISCORD] Login failed:", (err as Error).message);
         throw err;
@@ -807,13 +891,22 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
 
 // ── Send a proactive message to Discord ──────
 
-/** Resolves true once sent, false when not configured or the send failed. */
-export async function sendDiscordProactiveMessage(message: string, filePath?: string): Promise<boolean> {
+/**
+ * Resolves true once sent, false when not configured or the send failed. `toUserId` picks
+ * which owner's DM (e.g. the one who started a research); a non-owner id is ignored.
+ */
+export async function sendDiscordProactiveMessage(
+    message: string,
+    filePath?: string,
+    toUserId?: string,
+    images?: GeneratedImage[],
+): Promise<boolean> {
     if (!discordClient) return false;
 
     // Proactive messages carry the owner's private data: to the owner's DM. The configured
     // notifications channel is used only when no owner id is set (it may be shared).
-    const ownerId = [...parseDiscordOwners()][0];
+    const owners = parseDiscordOwners();
+    const ownerId = toUserId && owners.has(toUserId) ? toUserId : [...owners][0];
     const channelId = process.env.DISCORD_NOTIFICATIONS_CHANNEL_ID;
     if (!ownerId && !channelId) return false;
 
@@ -823,11 +916,13 @@ export async function sendDiscordProactiveMessage(message: string, filePath?: st
             : await discordClient.channels.fetch(channelId!);
         if (!channel || !("send" in channel)) return false;
 
-        const sanitized = sanitizeReply(message);
+        let chunks = splitForDiscord(sanitizeReply(message));
 
         // File attachment path — Discord renders images/videos inline from
         // attached files and renders other types as downloadable files.
-        if (filePath) {
+        const refusedFile = filePath ? (await import("./security/sensitive-paths.js")).outboundFileRefusal(filePath) : null;
+        if (refusedFile) console.warn(`[DISCORD] ${refusedFile}`);
+        if (filePath && !refusedFile) {
             try {
                 const fs = await import("node:fs");
                 const path = await import("node:path");
@@ -836,12 +931,12 @@ export async function sendDiscordProactiveMessage(message: string, filePath?: st
                     const fileName = path.basename(filePath);
                     const { AttachmentBuilder } = await import("discord.js");
                     const attachment = new AttachmentBuilder(buf, { name: fileName });
-                    const firstChunk = splitForDiscord(sanitized)[0] ?? "";
                     await (channel as TextChannel).send({
-                        content: firstChunk,
+                        content: chunks[0] ?? "",
                         files: [attachment],
                     });
-                    return true;
+                    // The rest of a long message follows as plain chunks below.
+                    chunks = chunks.slice(1);
                 }
             } catch (fileErr) {
                 console.warn("[DISCORD] Attachment send failed, falling back to text:", (fileErr as Error).message);
@@ -849,10 +944,10 @@ export async function sendDiscordProactiveMessage(message: string, filePath?: st
             }
         }
 
-        const chunks = splitForDiscord(sanitized);
         for (const chunk of chunks) {
             await (channel as TextChannel).send(chunk);
         }
+        await sendImages(images, (msg) => (channel as TextChannel).send(msg), !!ownerId);
         return true;
     } catch (err) {
         console.warn("[DISCORD] Failed to send proactive message:", (err as Error).message);

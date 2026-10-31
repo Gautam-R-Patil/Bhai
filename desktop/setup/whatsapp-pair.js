@@ -35,7 +35,7 @@ async function recordOwner(dataDir, jid) {
 }
 
 // startPair accepts a `baileysFactory` so tests can inject a fake. In production
-// main.js passes `require("@whiskeysockets/baileys")`. Returns an awaitable that
+// main.js passes the bot's Baileys (`botRequire("@whiskeysockets/baileys")`). Returns an awaitable that
 // resolves when the socket has been created (NOT when the user has paired — the
 // caller subscribes to onQr/onConnected).
 async function startPair(opts) {

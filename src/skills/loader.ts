@@ -82,15 +82,36 @@ export function getLoadedSkills(): SkillMetadata[] {
 
 // ── Get skill slugs matching categories ───────
 
-export function getRelevantSkillSlugs(selectedCategories: string[]): string[] {
+// The skill that speaks for a category on its own. Others need two of their categories in
+// play: "browser" alone pulled six skills (UI/UX design, marketing, security, full-stack…)
+// and, through two of them, the whole coding prompt into a Wikipedia lookup (~25K tokens).
+const PRIMARY_SKILL: Record<string, string> = {
+    browser: "web_browsing",
+    web_search: "research_analyst",
+    os_control: "os_automation",
+    shell: "coding_best_practices",
+};
+
+// Skills for one kind of work whose categories are generic (any desktop task is
+// os_control + app_management): they also need the task to say so.
+const NICHE: Record<string, RegExp> = {
+    gaming: /\b(game|gaming|steam|minecraft|valorant|fortnite|play(ing)? (a|the) game)\b/i,
+    video_editing: /\b(video|clip|footage|edit(ing)? (a|the|my) (video|clip)|davinci|premiere|final cut|capcut|imovie)\b/i,
+    ui_ux_designer: /\b(design|ui|ux|figma|canva|mockup|wireframe|layout|landing page|prototype)\b/i,
+    marketing: /\b(market(ing)?|campaign|seo|social media|post(ing)? on|ads?|brand|audience|launch)\b/i,
+};
+
+export function getRelevantSkillSlugs(selectedCategories: string[], task = ""): string[] {
     if (cachedMetadata.length === 0 || selectedCategories.length === 0) return [];
 
     const selectedSet = new Set(selectedCategories);
+    const primaries = new Set(selectedCategories.map((c) => PRIMARY_SKILL[c]).filter(Boolean));
     const slugs: string[] = [];
 
     for (const skill of cachedMetadata) {
-        const hasOverlap = skill.categories.some(cat => selectedSet.has(cat));
-        if (hasOverlap) {
+        const overlap = skill.categories.filter((cat) => selectedSet.has(cat)).length;
+        if (NICHE[skill.slug] && !NICHE[skill.slug].test(task)) continue;
+        if (overlap >= 2 || (overlap >= 1 && primaries.has(skill.slug))) {
             slugs.push(skill.slug);
         }
     }

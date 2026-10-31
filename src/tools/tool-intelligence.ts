@@ -7,7 +7,8 @@
 // This is middleware — it sits between the agent and the raw tool handlers.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import path, { join } from "node:path";
 import { protect } from "../security/pii-vault.js";
 
 // ═══════════════════════════════════════════════
@@ -40,7 +41,6 @@ const CACHEABLE_TOOLS = new Set([
     "list_directory", // read-only directory listing
     "read", // read-only file contents
     "get_current_time", // current time (short TTL)
-    "list_tasks", // scheduled tasks list
     "list_webhooks", // webhooks list
     "identity_view", // identity info
     "trait_list", // traits listing
@@ -228,7 +228,7 @@ let auditLogSetup = false;
 
 function ensureAuditLog(): string {
     if (auditLogPath && auditLogSetup) return auditLogPath;
-    const dir = process.env.ATLAS_DATA_DIR || join(process.cwd(), "data");
+    const dir = process.env.BHAI_DATA_DIR || join(process.cwd(), "data");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     auditLogPath = join(dir, "audit.jsonl");
     auditLogSetup = true;
@@ -418,7 +418,29 @@ const DANGEROUS_SHELL_PATTERNS = [
     /DELETE\s+FROM\s+\w+\s*;?\s*$/i, // SQL delete without WHERE
     /\bgit\s+push\s+.*--force\b/i, // force push
     /\bgit\s+reset\s+--hard\b/i, // hard reset
+    // Something that runs by itself later (a login item, every new terminal, SSH access):
+    // what an injected page would plant to survive the chat.
+    /\blaunchctl\s+(load|bootstrap|enable|submit)\b/i,
+    /\bcrontab\b(?!\s+-l\b)/i, // editing the crontab, not listing it
+    /\bLaunch(Agents|Daemons)\b/,
+    /\bauthorized_keys\b/,
+    />>?\s*["']?[^\s"';|&]*\/\.(zshrc|zprofile|zshenv|zlogin|bashrc|bash_profile|profile)\b/, // > ~/.zshrc
 ];
+
+/** A file that makes code run by itself later: a login item, a shell startup file, SSH access. */
+export function autostartTarget(filePath: string): string | null {
+    const home = homedir();
+    const p = path.resolve(filePath.replace(/^~(?=\/|$)/, home));
+    const rc = [".zshrc", ".zprofile", ".zshenv", ".zlogin", ".bashrc", ".bash_profile", ".profile"];
+    if (rc.some((f) => p === path.join(home, f))) return "a shell startup file (runs in every new terminal)";
+    if (p === path.join(home, ".config", "fish", "config.fish")) return "a shell startup file (runs in every new terminal)";
+    if (/\/Library\/Launch(Agents|Daemons)(\/|$)/.test(p)) return "a login item (runs by itself at login)";
+    if (p === path.join(home, ".ssh", "authorized_keys") || p === path.join(home, ".ssh", "config"))
+        return "SSH access settings";
+    return null;
+}
+
+const FILE_WRITERS = new Set(["write", "edit", "append_file"]);
 
 // ── Destructive hotkeys ──
 // Keyboard tools can quit apps, close windows
@@ -513,6 +535,28 @@ export function requiresConfirmation(
                     warningMessage: `⚠️ Potentially destructive command detected: "${command.substring(0, 80)}". Confirm with the user before executing.`,
                 };
             }
+        }
+    }
+
+    if (FILE_WRITERS.has(toolName) && typeof args.file_path === "string") {
+        const what = autostartTarget(args.file_path);
+        if (what)
+            return {
+                needsConfirmation: true,
+                warningMessage: `⚠️ ${args.file_path} is ${what}. Confirm with the user before changing it.`,
+            };
+    }
+
+    // Sent from the open page with the owner's cookies: anything but a read can change
+    // their account on that site, and nothing on screen shows it happened.
+    if (toolName === "browser_batch_fetch") {
+        const method = String(args.method ?? "GET").toUpperCase();
+        if (method !== "GET" && method !== "HEAD") {
+            const urls = Array.isArray(args.urls) ? args.urls.slice(0, 3).join(", ") : "";
+            return {
+                needsConfirmation: true,
+                warningMessage: `⚠️ A ${method} to ${urls || "these URLs"} goes out signed in as the user and can change things there. Confirm with the user before sending it.`,
+            };
         }
     }
 

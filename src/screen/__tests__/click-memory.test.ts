@@ -27,7 +27,7 @@ describe("normalizeWindowTitle", () => {
     });
 });
 
-const TEST_DB = join(tmpdir(), `atlas_click_test_${Date.now()}.db`);
+const TEST_DB = join(tmpdir(), `bhai_click_test_${Date.now()}.db`);
 const TEST_OPTS = { dbPath: TEST_DB };
 
 const SITE = { app: "Test", windowTitle: "Main", elementLabel: "Save" };
@@ -140,22 +140,22 @@ describe("click memory", () => {
         expect(clickMemoryStats(TEST_OPTS).totalSites).toBe(0);
     });
 
-    it("ATLAS_NO_CLICK_MEMORY kill-switch makes everything a no-op", () => {
-        const orig = process.env.ATLAS_NO_CLICK_MEMORY;
+    it("BHAI_NO_CLICK_MEMORY kill-switch makes everything a no-op", () => {
+        const orig = process.env.BHAI_NO_CLICK_MEMORY;
         try {
-            process.env.ATLAS_NO_CLICK_MEMORY = "true";
+            process.env.BHAI_NO_CLICK_MEMORY = "true";
             recordClickSuccess(SITE, 100, 200, 1000, 1000, TEST_OPTS);
             expect(recallClickSite(SITE, TEST_OPTS)).toBeNull();
             // recordClickMiss is also a no-op under the kill switch.
             recordClickMiss(SITE, TEST_OPTS);
             // Pre-populated entries should be unreadable under the kill-switch.
-            process.env.ATLAS_NO_CLICK_MEMORY = "false";
+            process.env.BHAI_NO_CLICK_MEMORY = "false";
             recordClickSuccess(SITE, 100, 200, 1000, 1000, TEST_OPTS);
-            process.env.ATLAS_NO_CLICK_MEMORY = "true";
+            process.env.BHAI_NO_CLICK_MEMORY = "true";
             expect(recallClickSite(SITE, TEST_OPTS)).toBeNull();
         } finally {
-            if (orig === undefined) delete process.env.ATLAS_NO_CLICK_MEMORY;
-            else process.env.ATLAS_NO_CLICK_MEMORY = orig;
+            if (orig === undefined) delete process.env.BHAI_NO_CLICK_MEMORY;
+            else process.env.BHAI_NO_CLICK_MEMORY = orig;
         }
     });
 });

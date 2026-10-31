@@ -36,7 +36,7 @@ try {
 } catch { /* fall back to JS */ }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ATLAS_DATA_DIR = process.env.ATLAS_DATA_DIR || join(__dirname, "../../data");
+const BHAI_DATA_DIR = process.env.BHAI_DATA_DIR || join(__dirname, "../../data");
 
 // ── In-memory trace buffer ──────────────────────────────────────────────────
 

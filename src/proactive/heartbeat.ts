@@ -53,7 +53,7 @@ export function maybeEmitMorningBoundary(params: {
     targetMinute: number;
 }): boolean {
     const { minutesNow, todayStr, inWindow, targetMinute } = params;
-    if (process.env.ATLAS_PROACTIVE_V3_SOURCES === "false") return false;
+    if (process.env.BHAI_PROACTIVE_V3_SOURCES === "false") return false;
     if (briefingSentDate === todayStr) return false;
 
     const primary = inWindow && targetMinute !== -1 && minutesNow >= targetMinute;
@@ -82,8 +82,8 @@ export function _resetBriefingStateForTests(): void {
 export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
     config = cfg;
 
-    if (process.env.ATLAS_PROACTIVE_FORCE_MORNING === "true" && process.env.ATLAS_PROACTIVE_V3_SOURCES !== "false") {
-        console.log("💓 ATLAS_PROACTIVE_FORCE_MORNING — emitting morning_window boundary now");
+    if (process.env.BHAI_PROACTIVE_FORCE_MORNING === "true" && process.env.BHAI_PROACTIVE_V3_SOURCES !== "false") {
+        console.log("💓 BHAI_PROACTIVE_FORCE_MORNING — emitting morning_window boundary now");
         setTimeout(() => {
             globalBoundaryBus.emit({ kind: "morning_window", ts: Date.now() });
         }, 1000);
@@ -264,15 +264,10 @@ export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
                 console.warn("💓 Habit detector error:", (err as Error).message);
             }
 
-            // Environment Sensors — gather system/calendar/fs context each heartbeat
-            try {
-                const { getEnvironmentSnapshot } = await import("./environment-sensors.js");
-                const snapshot = await getEnvironmentSnapshot();
-                if (snapshot.upcomingCalendar.length > 0) {
-                    console.log(`💓 Environment: ${snapshot.upcomingCalendar.length} upcoming event(s)`);
-                }
-            } catch (err) {
-                console.warn("💓 Environment sensors error:", (err as Error).message);
+            // Upcoming events, from the monitors' Calendar read above (the full environment
+            // snapshot, getEnvironmentSnapshot(), is computed only when something asks for it).
+            if (monitorResults.upcomingEventCount > 0) {
+                console.log(`💓 Environment: ${monitorResults.upcomingEventCount} upcoming event(s)`);
             }
 
             // Recommendations — check for user behavior pattern suggestions

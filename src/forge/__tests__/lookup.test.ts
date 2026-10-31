@@ -116,14 +116,14 @@ describe("forge lookup pipeline", () => {
         expect(hit).toBeNull();
     });
 
-    it("returns null when ATLAS_NO_FORGE_LOOKUP=true", async () => {
+    it("returns null when BHAI_NO_FORGE_LOOKUP=true", async () => {
         insertTool({
             slug: "x", description: "x",
             schemaJson: "{}", handlerHash: "x", embedding: vector(0),
             source: "synchronous", createdAt: Date.now(),
         });
 
-        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        process.env.BHAI_NO_FORGE_LOOKUP = "true";
         try {
             const hit = await lookupTool({
                 description: "x",
@@ -132,7 +132,7 @@ describe("forge lookup pipeline", () => {
             });
             expect(hit).toBeNull();
         } finally {
-            delete process.env.ATLAS_NO_FORGE_LOOKUP;
+            delete process.env.BHAI_NO_FORGE_LOOKUP;
         }
     });
 

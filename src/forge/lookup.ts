@@ -27,7 +27,7 @@ export interface LookupOpts {
 }
 
 export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
-    if (process.env.ATLAS_NO_FORGE_LOOKUP === "true") {
+    if (process.env.BHAI_NO_FORGE_LOOKUP === "true") {
         emitForgeEvent({
             event: "lookup_attempted",
             ts: Date.now(),
@@ -134,7 +134,7 @@ export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
 // FTS5's default tokenizer joins terms with AND. A query with novel words that aren't
 // in any tool's description fails AND-wise, even when most tokens match. This helper
 // tries AND-FTS first (cheap path); if 0 hits, per-token OR-fans by calling searchByFTS
-// once per token and merging the slug sets. Same pattern as dedup.ts::ftsCandidates.
+// once per token and merging the slug sets.
 function ftsCandidates(description: string): { slug: string; bm25Score: number }[] {
     const direct = searchByFTS(description, FTS_TOP_N);
     if (direct.length > 0) return direct;

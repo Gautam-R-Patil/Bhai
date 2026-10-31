@@ -77,8 +77,8 @@ or two fit equally. Never pick by position or by a label from the session.
 ## Locators
 Use a stable id, a data-testid / data-* attribute, a name, a role with its accessible name, or the visible
 text the session showed. Never a generated or hashed class (.css-1x2y3z, .sc-abc123, Foo__bar_3kXq),
-never data-atlas-id. Give targets both sel and text when both are stable. Every target must match exactly
-one visible element: scope to the item's card (its context) instead of a broad text match.
+never data-bhai-id or data-atlas-id. Give targets both sel and text when both are stable. Every target
+must match exactly one visible element: scope to the item's card (its context) instead of a broad text match.
 Read values (price, names, totals) from the element that holds the whole value, not from a regex over the
 whole page text, unless the page has no element for it. The total in confirm.amount is the amount payable
 the review page shows, in rupees.

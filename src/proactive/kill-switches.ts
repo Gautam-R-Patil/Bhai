@@ -21,19 +21,19 @@ function parseCsv(v: string | undefined): Set<string> {
 }
 
 export function isProactiveDisabled(): boolean {
-    return isTrue(process.env.ATLAS_PROACTIVE_DISABLE);
+    return isTrue(process.env.BHAI_PROACTIVE_DISABLE);
 }
 
 export function isSourceDisabled(src: IntentSource): boolean {
-    return parseCsv(process.env.ATLAS_PROACTIVE_DISABLE_SOURCES).has(src);
+    return parseCsv(process.env.BHAI_PROACTIVE_DISABLE_SOURCES).has(src);
 }
 
 export function isChannelDisabled(ch: Channel): boolean {
-    return parseCsv(process.env.ATLAS_PROACTIVE_DISABLE_CHANNELS).has(ch);
+    return parseCsv(process.env.BHAI_PROACTIVE_DISABLE_CHANNELS).has(ch);
 }
 
 export function isShadowMode(): boolean {
-    return isTrue(process.env.ATLAS_PROACTIVE_SHADOW);
+    return isTrue(process.env.BHAI_PROACTIVE_SHADOW);
 }
 
 // ── Timed quiet ──
@@ -72,7 +72,7 @@ export function clearQuiet(): void {
 // ── Log rotation state ────────────────────────────────
 
 const LOG_DIR = (): string =>
-    process.env.ATLAS_DATA_DIR ? join(process.env.ATLAS_DATA_DIR, "logs") : join(process.cwd(), "data", "logs");
+    process.env.BHAI_DATA_DIR ? join(process.env.BHAI_DATA_DIR, "logs") : join(process.cwd(), "data", "logs");
 
 const LOG_RETENTION_DAYS = 7;
 const PRUNE_INTERVAL_MS = 60 * 60_000; // once per hour max
@@ -126,7 +126,7 @@ function writeJsonLine(event: string, ctx: Record<string, unknown>): void {
 }
 
 export function debugProactive(event: string, ctx: Record<string, unknown>): void {
-    if (process.env.ATLAS_PROACTIVE_DEBUG === "false") return;
+    if (process.env.BHAI_PROACTIVE_DEBUG === "false") return;
     const flat = Object.entries(ctx)
         .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
         .join(" ");

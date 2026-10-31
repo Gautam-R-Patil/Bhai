@@ -150,7 +150,7 @@ export const winOsScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "This Windows os_screenshot handler should not be called on non-Windows." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_screen_${Date.now()}.png`);
 
         try {
             // Get dims for the focused monitor (multi-monitor aware).
@@ -430,7 +430,12 @@ export const winOsType: ToolDefinition = {
                 if (mod === "ctrl" || mod === "control") modifiers.push("^");
                 else if (mod === "shift") modifiers.push("+");
                 else if (mod === "alt" || mod === "option") modifiers.push("%");
-                else if (mod === "win" || mod === "command" || mod === "cmd") modifiers.push("^{ESC}"); // approximate
+                else if (mod === "cmd" || mod === "command" || mod === "meta") modifiers.push("^"); // Windows has no Cmd
+                else
+                    return JSON.stringify({
+                        success: false,
+                        error: `Modifier '${mod}' can't be sent on Windows (SendKeys has no Windows key); use ctrl, alt or shift.`,
+                    });
             }
 
             // Map special keys to SendKeys format
@@ -630,7 +635,7 @@ async function runWinOcr(screenshotPath: string | null): Promise<OcrResult | nul
     let imgPath = screenshotPath;
     let tempCapture = false;
     if (!imgPath) {
-        imgPath = join(tmpdir(), `atlas_ocr_${Date.now()}.png`);
+        imgPath = join(tmpdir(), `bhai_ocr_${Date.now()}.png`);
         await captureScreenshot(imgPath);
         tempCapture = true;
     }
@@ -985,9 +990,9 @@ $hwnd = [WinAPI]::GetForegroundWindow()
 $sb = New-Object System.Text.StringBuilder(256)
 [WinAPI]::GetWindowText($hwnd, $sb, 256) | Out-Null
 $title = $sb.ToString()
-$pid = 0
-[WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid) | Out-Null
-$proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+$procId = 0
+[WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
+$proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
 $appName = if ($proc) { $proc.ProcessName } else { "unknown" }
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 "$appName|$title|$($screen.Width)|$($screen.Height)"
@@ -1107,7 +1112,7 @@ export const winSendScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "Telegram context not available." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_sendscreen_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_sendscreen_${Date.now()}.png`);
 
         try {
             await captureScreenshot(tmpPng);

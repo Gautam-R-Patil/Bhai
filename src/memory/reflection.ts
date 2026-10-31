@@ -27,7 +27,7 @@ import { generateUUID } from "../utils/uuid.js";
 import { consolidateMemories } from "./consolidation.js";
 import { decayEmotions, recordEmotion } from "./emotional.js";
 import { recordEpisode } from "./episodic.js";
-import { getFieldValue, getIdentityProfile, statedField, updateIdentityProfile } from "./identity.js";
+import { applyStatedField, getFieldValue, getIdentityProfile } from "./identity.js";
 import { getKnowledgeGraphDB } from "./knowledge-graph.js";
 import { updateRelationshipAfterSession } from "./relationship.js";
 import { findDuplicates, mergeDuplicates, reorganizeMemories, synapticPrune } from "./self-evolving.js";
@@ -56,10 +56,10 @@ const HMAC_SECRET = "atlas-sacdr-audit-v1"; // Derived key for signing
 const CONSOLIDATION_EVERY_N_REFLECTIONS = 5; // Run lightweight consolidation every 5th reflection
 
 // Default 0 = persist FULL conversation history into conversations.messages_json.
-// Emergency rollback to the legacy cap: set ATLAS_CORPUS_MAX_MESSAGES="20".
+// Emergency rollback to the legacy cap: set BHAI_CORPUS_MAX_MESSAGES="20".
 // Malformed / 0 / negative → treated as full.
 const CORPUS_MAX_MESSAGES = (() => {
-    const raw = process.env.ATLAS_CORPUS_MAX_MESSAGES;
+    const raw = process.env.BHAI_CORPUS_MAX_MESSAGES;
     if (!raw) return 0;
     const n = Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : 0;
@@ -103,7 +103,9 @@ export function mergeStoredMessages(storedJson: string, messages: unknown[]): un
 
 const REFLECTION_SUMMARY_INSTRUCTION = `You are a JSON-only summarizer. Input: a session transcript provided in the user message.
 Output: a concise factual summary (50–150 tokens) returning ONLY valid JSON:
-{"summary":"...", "highlights":["...", "..."]}
+{"summary":"...", "highlights":["...", "..."], "lasting": true}
+
+"lasting": true only when the session holds something worth recalling in a later conversation — a decision, plan, preference, project, commitment, personal fact or unfinished task. false when it was only one-off lookups or chit-chat (the time, weather, arithmetic, a quick fact, a test).
 
 Do NOT include any text outside the JSON object. Output valid JSON only, no markdown, no explanation.`;
 
@@ -184,7 +186,14 @@ Rules:
 - Patterns must be reusable across projects, not "I fixed foo.ts line 42"`;
 
 const REFLECTION_NARRATIVE_INSTRUCTION = `You compress a user profile and traits (provided in the user message) into a single-sentence identity narrative (max 50 words).
+Refer to the user by name or as "they". Use he/she only when the profile or traits state the user's pronouns: a name says nothing about them.
 Output ONLY the narrative text, no JSON, no quotes, nothing else.`;
+
+/** he/she guessed from a name: a narrative using them, with no pronouns stated anywhere, is redone. */
+const GENDERED_PRONOUN = /\b(he|she|him|her|his|hers|himself|herself)\b/i;
+export function narrativeGuessesPronouns(narrative: string, profileText: string): boolean {
+    return GENDERED_PRONOUN.test(narrative) && !/pronoun/i.test(profileText);
+}
 
 // ── Reflection Counter (for periodic consolidation) ──
 let _reflectionCounter = 0;
@@ -199,6 +208,8 @@ export const v4Fallback = generateUUID;
 interface ReflectionSummary {
     summary: string;
     highlights: string[];
+    /** Worth recalling later; false = one-off lookups (kept in the transcript archive only). */
+    lasting?: boolean;
 }
 
 interface TraitSignal {
@@ -266,9 +277,15 @@ export async function runReflection(
         // ── 2. Summarize the session ──────────────
         const summary = await extractSummary(llm, reflectionInput);
         if (summary) {
-            remember(summary.summary, "session_summary", "reflection,session", 6, "reflection");
-            signedAuditLog("session_summary_stored", { length: summary.summary.length });
-            console.log(`[MEMORY][REFLECTION] Summary stored (${summary.summary.length} chars)`);
+            // A session of one-off lookups (time, weather, sums) isn't a memory: it went in at
+            // importance 6 and crowded recall. Its transcript and summary still go to the archive.
+            if (summary.lasting !== false) {
+                remember(summary.summary, "session_summary", "reflection,session", 6, "reflection");
+                signedAuditLog("session_summary_stored", { length: summary.summary.length });
+                console.log(`[MEMORY][REFLECTION] Summary stored (${summary.summary.length} chars)`);
+            } else {
+                console.log("[MEMORY][REFLECTION] Summary not kept as a memory: nothing lasting in this session");
+            }
 
             // ── 2b. Persist to conversations table ──
             try {
@@ -307,7 +324,7 @@ export async function runReflection(
                     // ── Incremental write-side sync: decompose into per-message
                     // rows so session_search's FTS index picks up this session
                     // immediately (the boot backfill is the fallback). Non-fatal. ──
-                    if (convId && process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
+                    if (convId && process.env.BHAI_NO_SESSION_SEARCH !== "true") {
                         try {
                             indexConversationMessages(convId, sessionId, messagesToStore);
                         } catch {
@@ -388,8 +405,9 @@ export async function runReflection(
                     const currentValue = getFieldValue(
                         (currentProfile as unknown as Record<string, string | undefined>)[update.field],
                     );
+                    if (!applyStatedField(update.field, update.value)) continue;
 
-                    if (currentValue && currentValue !== update.value) {
+                    if (typeof currentValue === "string" && currentValue && currentValue !== update.value) {
                         signedAuditLog("identity_conflict_detected", {
                             field: update.field,
                             old_value: String(currentValue),
@@ -398,7 +416,6 @@ export async function runReflection(
                         });
                     }
 
-                    updateIdentityProfile({ [update.field]: statedField(update.field, update.value) });
                     signedAuditLog("identity_updated", { field: update.field, value: update.value, explicit: true });
                     console.log(`[MEMORY][REFLECTION] Identity: ${update.field} = ${update.value} (explicit)`);
                 } else {
@@ -408,8 +425,12 @@ export async function runReflection(
             }
 
             // ── 3c. Emotional signals ──
+            // Only what the owner brought up this session: asked "what do you know about me?",
+            // Bhai recited stored setbacks and this pass saved them again as new events.
+            const said = ownerWords(conversationHistory);
             for (const em of extraction.emotions || []) {
                 if (!em.emotion || !em.context) continue;
+                if (!saidByOwner(em.context, said)) continue;
                 recordEmotion(em.emotion, em.context, em.intensity || 0.5);
                 hadEmotionalSignals = true;
             }
@@ -417,6 +438,7 @@ export async function runReflection(
             // ── 3d. Episodic signals ──
             for (const ep of extraction.episodes || []) {
                 if (!ep.type || !ep.description) continue;
+                if (!saidByOwner(ep.description, said)) continue;
                 recordEpisode(ep.type, ep.description, ep.importance || 0.5);
                 hadEpisodicSignals = true;
             }
@@ -639,7 +661,7 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
 
         // ── 5h. Metacog confidence calibration (P5.2 — ZERO LLM) ──
         // Pure-stats fit over data/metacog-outcomes.jsonl → data/metacog-calibrators.json.
-        // Acting on the result is OFF until ATLAS_METACOG_SHADOW=false AND ECE/Brier
+        // Acting on the result is OFF until BHAI_METACOG_SHADOW=false AND ECE/Brier
         // beat the constant-base-rate baseline; until then this is instrumentation only.
         try {
             const r = runCalibrationFit();
@@ -668,7 +690,7 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
 // (cold-start) → isotonic (≥200 samples) calibrator, and persists ONLY the
 // cells that beat the constant-base-rate baseline. Atomic tmp+rename write.
 // Fully fail-open: any error returns null and the hot path simply finds no
-// (or a stale) bundle. Gated by ATLAS_NO_METACOG_LOG (no log → nothing to fit).
+// (or a stale) bundle. Gated by BHAI_NO_METACOG_LOG (no log → nothing to fit).
 const CALIBRATION_MAX_ROWS = 5000;
 const CALIBRATION_MIN_FIT_ROWS = 30;
 
@@ -678,7 +700,7 @@ export function runCalibrationFit(): {
     calEce: number;
     beatsBaseline: boolean;
 } | null {
-    if (process.env.ATLAS_NO_METACOG_LOG === "true") return null;
+    if (process.env.BHAI_NO_METACOG_LOG === "true") return null;
     const fs = nodeFs;
     const path = nodePath;
     const dataDir = getDataDir();
@@ -770,7 +792,8 @@ async function generateNarrativeCompression(llm: LLMClient): Promise<void> {
     // Check if narrative exists and is recent
     const allTraits = getAllTraits();
     const existing = allTraits.find((t) => t.trait_key === "identity_narrative");
-    if (existing) {
+    const profileText = JSON.stringify(getIdentityProfile()) + allTraits.map((t) => ` ${t.trait_key}=${t.value}`).join("");
+    if (existing && !narrativeGuessesPronouns(String(existing.value), profileText)) {
         const daysOld = (Date.now() - new Date(existing.last_seen_ts).getTime()) / (1000 * 60 * 60 * 24);
         if (daysOld < 30) {
             console.log("[MEMORY][REPLAY] Narrative compression skipped — recent enough");
@@ -1089,6 +1112,40 @@ function signedAuditLog(action: string, details: Record<string, unknown>): void 
 }
 
 // ── Transcript Builder ────────────────────────
+
+const SIGNAL_STOP = new Set(
+    "about after again also been could does doing from have just like more much really should some than that their them then there these they this very what when where which while with would your user assistant asked".split(" "),
+);
+const signalWords = (t: string) =>
+    (t.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).filter((w) => !SIGNAL_STOP.has(w));
+
+export interface SessionWords {
+    owner: Set<string>;
+    assistant: Set<string>;
+}
+
+/** Words the owner and Bhai wrote this session (channel notes stripped). */
+export function ownerWords(history: ChatCompletionMessageParam[]): SessionWords {
+    const owner = new Set<string>();
+    const assistant = new Set<string>();
+    for (const m of history.slice(-40)) {
+        if (typeof m.content !== "string" || (m.role !== "user" && m.role !== "assistant")) continue;
+        const text = m.content.replace(/\[(?:SOURCE|BROWSER CONTEXT|Browser context|From browser)[^\]]*\]/g, "");
+        for (const w of signalWords(text)) (m.role === "user" ? owner : assistant).add(w);
+    }
+    return { owner, assistant };
+}
+
+/**
+ * Not a recap of Bhai's own words: drop a signal only when it repeats what Bhai said (two
+ * or more words) and shares nothing with the owner. Comparing with the owner's words alone
+ * dropped feelings told in Hinglish ("thak gaya hoon" → "tired after a long day").
+ */
+export function saidByOwner(text: string, words: SessionWords): boolean {
+    const w = signalWords(text);
+    if (w.some((x) => words.owner.has(x))) return true;
+    return w.filter((x) => words.assistant.has(x)).length < 2;
+}
 
 function buildTranscript(history: ChatCompletionMessageParam[]): string {
     return history

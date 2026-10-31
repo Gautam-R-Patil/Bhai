@@ -11,6 +11,7 @@
 //   npx tsx scripts/smoke-composer.ts
 // Respects CONVEX_URL env var (default: dev).
 
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { loadConfig } from "../src/config.js";
 import { createLLMClient } from "../src/llm.js";
 import { initSession } from "../src/session.js";

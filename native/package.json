@@ -1,5 +1,5 @@
 {
-  "name": "@atlas/native",
+  "name": "@bhai/native",
   "version": "0.1.0",
   "description": "Native SIMD-accelerated operations for Bhai",
   "type": "commonjs",
@@ -7,7 +7,7 @@
   "types": "index.d.ts",
   "private": true,
   "napi": {
-    "name": "atlas-native",
+    "name": "bhai-native",
     "triples": {
       "defaults": true,
       "additional": [

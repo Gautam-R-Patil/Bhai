@@ -6,11 +6,12 @@
 // came from (plus a desktop notification), then polls until the check is gone
 // so the task carries on. Uses the detector from captcha.ts only — no solver.
 
+import { notifyDesktop } from "../../desktop-notify.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
 import { CAPTCHA_SOLVED_JS, type CaptchaInfo, type CaptchaType, captchaSolved, detectCaptcha } from "./captcha.js";
 import { getActiveExtensionTab, isExtensionConnected, sendBridgeCommand } from "./chrome-bridge.js";
-import { ATLAS_HUD_JS, getActivePage, touchBrowserActivity } from "./core.js";
+import { BHAI_HUD_JS, getActivePage, touchBrowserActivity } from "./core.js";
 
 export type HandoffOutcome = "cleared" | "timeout" | "cancelled";
 
@@ -127,9 +128,12 @@ async function tellOwner(ask: string): Promise<string | null> {
     } catch {
         channel = null;
     }
-    import("../platform-bridge.js")
-        .then(({ showNotification }) => showNotification("Bhai needs a quick tap", ask))
-        .catch(() => {});
+    // Through the desktop app when it runs Bhai (osascript's shows up as Script Editor).
+    if (!notifyDesktop("handoff", "Bhai needs a quick tap", ask)) {
+        import("../platform-bridge.js")
+            .then(({ showNotification }) => showNotification("Bhai needs a quick tap", ask))
+            .catch(() => {});
+    }
     return channel;
 }
 
@@ -175,10 +179,10 @@ export const browserWaitForHuman: ToolDefinition = {
                         "No human check is waiting on the owner here (none, invisible, or already done). Continue the task.",
                 });
             }
-            const envMs = process.env.ATLAS_CAPTCHA_HANDOFF_MS;
+            const envMs = process.env.BHAI_CAPTCHA_HANDOFF_MS;
             if (envMs && !(Number(envMs) > 0)) {
                 return JSON.stringify({
-                    error: "Handing human checks to the owner is turned off (ATLAS_CAPTCHA_HANDOFF_MS=0).",
+                    error: "Handing human checks to the owner is turned off (BHAI_CAPTCHA_HANDOFF_MS=0).",
                     status: "disabled",
                     requires_user: true,
                     captcha_type: info.type,
@@ -203,7 +207,7 @@ export const browserWaitForHuman: ToolDefinition = {
             const ask = askFor(info.type, site, mode);
             const banner = (label: string, done: boolean) =>
                 Promise.resolve(
-                    probe.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`),
+                    probe.evaluate(`(${BHAI_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`),
                 ).catch(() => {});
             await banner("⏸ Bhai is waiting for you to complete this check", false);
             const channel = await tellOwner(ask);

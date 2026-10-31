@@ -40,6 +40,14 @@ export class CoreLocationProvider implements LocationProvider {
 		return true;
 	}
 
+	/** The helper's location permission (CLAuthorizationStatus raw value, or "disabled"), read at once. */
+	async permissionStatus(): Promise<string | null> {
+		const helperPath = getHelperPath();
+		if (helperPath === null) return null;
+		const { stdout } = await execFileAsync(helperPath, ["--status"], { timeout: 2000 });
+		return /^status\|(\w+)$/.exec(stdout.trim())?.[1] ?? null;
+	}
+
 	async getLocation(): Promise<LocationData> {
 		const helperPath = getHelperPath();
 		if (helperPath === null) {

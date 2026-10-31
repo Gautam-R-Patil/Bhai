@@ -15,7 +15,7 @@ const asVault = <T>(fn: () => Promise<T>) => runVaultCall({ tool: "browser_type"
 let browser: any = null;
 beforeAll(async () => {
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;

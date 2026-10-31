@@ -9,8 +9,7 @@
 :root {
     /* ════════════════════════════════════════════════════════════════
        LEGACY PANEL TOKENS — warm-glass aesthetic for panel.html,
-       channels.html, pages/under-the-hood.html and any non-wizard
-       surface. DO NOT REMOVE these — the panel UI is built on them
+       channels.html and any non-wizard surface. DO NOT REMOVE these — the panel UI is built on them
        (every var(--accent-primary), var(--orb-*), var(--glass-*),
        var(--text-*) reference resolves here). Adding/changing tokens
        here is fine; deleting any is a regression.
@@ -1113,6 +1112,20 @@ textarea:focus-visible {
     margin-top: 8px;
 }
 
+.recent-chats { margin-top: 4px; }
+.recent-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--text-secondary); padding: 0 4px 6px; }
+.link-like { background: none; border: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.link-like:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
+.recent-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 4px; background: none; border: none; border-top: 1px solid var(--border); color: var(--text-primary); font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: padding .15s; }
+.recent-row:hover { padding-left: 8px; }
+.recent-row.static { cursor: default; }
+.recent-row.static:hover { padding-left: 4px; }
+.coming-up { margin-bottom: 14px; }
+.recent-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-when { font-size: 12px; color: var(--text-secondary); flex: none; }
+.stat-link { cursor: pointer; transition: transform .15s; }
+.stat-link:hover { transform: translateY(-1px); }
+.connection-status { cursor: pointer; }
 .info-cards {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -3037,7 +3050,7 @@ body:not(.theme-dark) .copy-manifest-btn { background: rgba(0,0,0,0.06); color: 
 body:not(.theme-dark) .copy-manifest-btn:hover { background: rgba(0,0,0,0.1); }
 /* Resets/typography for the cinematic wizard pages only (those that set
    <body data-step="...">). Avoids leaking into panel.html, channels.html,
-   pages/under-the-hood.html, and any legacy page that loads this stylesheet. */
+   and any legacy page that loads this stylesheet. */
 body[data-step] * { box-sizing: border-box; }
 body[data-step], body[data-step] html { margin: 0; padding: 0; min-height: 100vh; }
 body[data-step] {
@@ -5541,8 +5554,7 @@ body.hig .toast {
 }
 body.hig .toast.error { background: #c9372c; border: 0; }
 
-/* ── Memory tab (studio.css owns layout; align controls) ─────────── */
-body.hig .studio-search-card { padding: 12px !important; }
+/* ── Memory tab (studio.css owns its layout) ─────────── */
 body.hig .trait-item { background: var(--bg-group); border: 1px solid var(--separator); }
 body.hig :is(.rel-bar, .trait-conf-bar) { background: var(--fill-quaternary); }
 body.hig :is(.rel-fill, .trait-conf-fill) { background: var(--accent-primary); }
@@ -5556,7 +5568,6 @@ body.hig .episode-item { border-bottom-color: var(--separator); }
         transition-duration: 0.01ms !important;
     }
 }
-body.hig .studio-detail { background: var(--bg-elevated); border-color: var(--separator); }
 
 /* ════════════════════════════════════════════════════════════════════
    LIQUID GLASS — panel.html only (body.hig), layered on the HIG skin
@@ -5601,7 +5612,7 @@ body.hig {
     --r-tile: 14px;
     --r-group: 18px;
     --r-hero: 20px;
-    --orb-k: 1;                       /* orb intensity; lower while Bhai naps */
+    --orb-k: 0.32;                    /* orb intensity: a quiet wash, lower while Bhai naps */
 }
 body.hig.theme-dark {
     --lg-color: saturate(170%) brightness(0.94);
@@ -5625,16 +5636,16 @@ body.hig .lg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
     overflow: hidden;
     pointer-events: none;
     background:
-        radial-gradient(90% 70% at 0% 0%, rgba(255, 216, 190, 0.6), transparent 70%),
-        radial-gradient(80% 60% at 100% 100%, rgba(255, 205, 214, 0.45), transparent 70%),
+        radial-gradient(90% 70% at 0% 0%, rgba(255, 216, 190, 0.3), transparent 70%),
+        radial-gradient(80% 60% at 100% 100%, rgba(255, 205, 214, 0.2), transparent 70%),
         var(--bg-window);
 }
 body.theme-dark :is(.ambient, .bg-canvas) {
     background:
-        radial-gradient(90% 70% at 0% 0%, rgba(110, 48, 16, 0.38), transparent 70%),
+        radial-gradient(90% 70% at 0% 0%, rgba(110, 48, 16, 0.2), transparent 70%),
         var(--bg-window);
 }
-body.hig:has(#heroCard[data-phase="stopped"]) { --orb-k: 0.78; }
+body.hig:has(#heroCard[data-phase="stopped"]) { --orb-k: 0.24; }
 
 /* Film grain: static, under the glass (so glass reads smooth on top of it). */
 :is(body.hig .ambient, .bg-canvas)::after {
@@ -5664,13 +5675,13 @@ body.theme-dark :is(.ambient, .bg-canvas)::after { opacity: 0.06; mix-blend-mode
     animation: lgOrbDrift var(--t) ease-in-out var(--delay) infinite alternate;
     transition: opacity 1.4s ease;
 }
-body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--orb-k, 1) * 0.62); mix-blend-mode: screen; }
+body.theme-dark :is(.ambient, .bg-canvas) .orb { opacity: calc(var(--o) * var(--orb-k, 1) * 0.4); mix-blend-mode: screen; }
 
 :is(.ambient, .bg-canvas) .orb-1 { --c: #E87B2D; --x: -18vw; --y: -26vh; --d: 62vmax; --o: 0.5; --t: 52s; --delay: -14s; --dx: 16vw; --dy: 14vh; --dx2: 4vw; --dy2: 26vh; --s1: 1.12; --s2: 0.94; }
 :is(.ambient, .bg-canvas) .orb-2 { --c: #FFB37A; --x: 52vw; --y: -30vh; --d: 58vmax; --o: 0.56; --t: 64s; --delay: -30s; --dx: -14vw; --dy: 20vh; --dx2: 8vw; --dy2: 32vh; --s1: 0.92; --s2: 1.1; }
 :is(.ambient, .bg-canvas) .orb-3 { --c: #FF7A8A; --x: 34vw; --y: 40vh; --d: 46vmax; --o: 0.4; --t: 46s; --delay: -8s; --dx: 18vw; --dy: -16vh; --dx2: -12vw; --dy2: -6vh; --s1: 1.14; --s2: 0.9; }
 :is(.ambient, .bg-canvas) .orb-4 { --c: #FFD36E; --x: -12vw; --y: 52vh; --d: 50vmax; --o: 0.54; --t: 70s; --delay: -40s; --dx: 20vw; --dy: -10vh; --dx2: 30vw; --dy2: 6vh; --s1: 1.08; --s2: 0.96; }
-:is(.ambient, .bg-canvas) .orb-5 { --c: #9B87F5; --x: 68vw; --y: 48vh; --d: 34vmax; --o: 0.38; --core: 84%; --rim: 95%; --t: 58s; --delay: -22s; --dx: -20vw; --dy: -14vh; --dx2: -6vw; --dy2: -26vh; --s1: 1.16; --s2: 0.92; }
+:is(.ambient, .bg-canvas) .orb-5 { --c: #FFC2A0; --x: 68vw; --y: 48vh; --d: 34vmax; --o: 0.38; --core: 84%; --rim: 95%; --t: 58s; --delay: -22s; --dx: -20vw; --dy: -14vh; --dx2: -6vw; --dy2: -26vh; --s1: 1.16; --s2: 0.92; }
 :is(.ambient, .bg-canvas) .orb-6 { --c: #FF9F5A; --x: 36vw; --y: 2vh; --d: 24vmax; --o: 0.5; --core: 86%; --rim: 96%; --t: 38s; --delay: -5s; --dx: -18vw; --dy: 24vh; --dx2: 14vw; --dy2: 30vh; --s1: 1.2; --s2: 0.86; }
 
 @keyframes lgOrbDrift {
@@ -5714,15 +5725,6 @@ body.hig :is(.panel-sidebar, .surface-card, .info-cards, .settings-section, .upd
     pointer-events: none;
 }
 
-/* Content-heavy surfaces (the memory graph and its detail pane) take a thicker
-   material so nodes and text don't compete with the orbs. */
-body.hig :is(.studio-canvas-card, .studio-detail) { --lg-frost: blur(20px); --lg-tint: rgba(255, 251, 248, 0.56); }
-body.hig.theme-dark :is(.studio-canvas-card, .studio-detail) { --lg-tint: rgba(28, 22, 19, 0.64); }
-/* The Memory tab animates these itself (studio.css); keep those transitions
-   instead of the shared glass spring. */
-body.hig .studio-detail { transition: transform 220ms ease, opacity 220ms ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
-body.hig .studio-body .studio-canvas-card { transition: margin-right 220ms ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
-body.hig .studio-insight-card { transition: transform 0.15s ease, box-shadow 0.15s ease, --lg-x 220ms var(--ease-out), --lg-y 220ms var(--ease-out); }
 
 /* Radii */
 body.hig :is(.surface-card, .settings-section, .info-cards, .update-banner) { border-radius: var(--r-group) !important; }
@@ -6041,7 +6043,75 @@ body.hig .chats-layout {
     gap: 14px;
     padding: 0 28px 24px;
 }
-body.hig :is(.chats-list, .chats-thread) { min-height: 0; overflow-y: auto; border-radius: var(--r-group) !important; }
+body.hig .chats-list { min-height: 0; overflow-y: auto; border-radius: var(--r-group) !important; padding-left: 0 !important; }
+/* Chats is a focused page: the sidebar steps aside (← Dashboard brings it back). */
+body.hig:has(#tab-chats.active) .panel-sidebar { display: none; }
+html.platform-darwin body.hig #tab-chats .tab-header { padding-left: 92px; padding-top: 14px; }
+body.hig #tab-chats .chats-layout { grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); }
+body.hig .chats-compose-row { display: flex; gap: 8px; align-items: center; }
+body.hig .chats-add { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: none; color: var(--text-secondary); cursor: pointer; transition: color .15s, border-color .15s; }
+body.hig .chats-add:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+body.hig .chats-attachment { display: flex; align-items: center; gap: 8px; align-self: flex-start; max-width: 100%; padding: 4px 6px 4px 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; color: var(--text-secondary); }
+body.hig .chats-attachment[hidden] { display: none; }
+body.hig .chats-attachment img { width: 32px; height: 32px; object-fit: cover; border-radius: 6px; }
+body.hig .chats-attachment span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+body.hig .chats-attachment button { border: none; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; }
+body.hig .chats-pane.dropping { box-shadow: inset 0 0 0 2px var(--accent-text, var(--text-secondary)); }
+body.hig .chats-sent-file { max-width: 220px; max-height: 180px; border-radius: 12px; object-fit: cover; }
+body.hig div.chats-sent-file { padding: 8px 12px; border: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); }
+body.hig .chats-pane { min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-group) !important; }
+body.hig .chats-pane .chats-thread { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+body.hig .chats-composer { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+body.hig .chats-composer input { flex: 1; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); color: var(--text-primary); font: inherit; font-size: 13px; outline: none; }
+body.hig .chats-composer input:focus { border-color: var(--accent-text, var(--text-secondary)); }
+/* Live turn: one line while Bhai works (Notes and Steps one click away), then the answer typing in */
+body.hig .chats-turn { align-self: stretch; display: flex; flex-direction: column; }
+body.hig .turn-live { display: flex; align-items: center; gap: 10px; width: min(100%, 480px); padding: 4px 8px; margin-left: -8px; border: 0; border-radius: 10px; background: none; font: inherit; font-size: 13px; color: var(--text-secondary); text-align: left; cursor: pointer; user-select: none; transition: background .15s; }
+body.hig .turn-live:hover { background: var(--fill-quaternary); }
+body.hig .turn-live:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+body.hig .turn-live:disabled { cursor: default; background: none; }
+body.hig .turn-live:disabled .turn-chev { display: none; }
+body.hig .turn-face { flex: none; width: 26px; height: 26px; }
+body.hig .turn-now { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; background: linear-gradient(90deg, var(--text-secondary) 0 40%, var(--accent-text, var(--accent-primary)) 50%, var(--text-secondary) 60% 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: turnShimmer 2.2s linear infinite; }
+body.hig .turn-meta { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+body.hig .turn-chev { transform: rotate(-90deg); transition: transform .25s; }
+body.hig .chats-turn.open .turn-chev { transform: none; }
+body.hig .turn-bar { width: min(100%, 480px); height: 3px; margin-top: 4px; border-radius: 2px; background: var(--fill-quaternary); overflow: hidden; }
+body.hig .turn-bar i { display: block; width: 40%; height: 100%; border-radius: 2px; background: var(--accent-primary); animation: turnSlide 1.6s ease-in-out infinite; }
+body.hig .turn-panel { display: grid; grid-template-rows: 0fr; width: min(100%, 480px); transition: grid-template-rows .3s ease, margin .3s ease; }
+body.hig .turn-panel > div { overflow: hidden; }
+body.hig .chats-turn.open .turn-panel { grid-template-rows: 1fr; margin-top: 8px; }
+body.hig .turn-inner { padding: 4px 12px 8px; border-radius: 12px; background: var(--fill-quaternary); }
+body.hig .turn-empty { margin: 6px 0 2px; font-size: 12px; color: var(--text-muted); }
+body.hig .turn-lbl { margin: 6px 0 2px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+body.hig .turn-notes { max-height: 110px; overflow-y: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--text-secondary); }
+body.hig .turn-step { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+body.hig .turn-step i { flex: none; width: 12px; font-style: normal; font-size: 11px; text-align: center; }
+body.hig .turn-step span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.hig .turn-step.done i { color: var(--accent-success); }
+body.hig .turn-step.failed i { color: var(--accent-danger); }
+body.hig .turn-step.running { font-weight: 500; color: var(--text-primary); }
+body.hig .turn-step.running i { width: 8px; height: 8px; margin: 0 2px; border-radius: 50%; background: var(--accent-primary); animation: turnPulse 1.2s ease-in-out infinite; }
+body.hig .chats-turn .turn-answer { margin-top: 10px; }
+body.hig .turn-caret { display: inline-block; width: 2px; height: 1em; margin-left: 1px; vertical-align: -2px; background: var(--accent-primary); animation: turnBlink 1s steps(2) infinite; }
+body.hig .chats-turn.done .turn-bar { display: none; }
+body.hig .chats-turn.done .turn-live { font-size: 12.5px; }
+body.hig .chats-turn.done .turn-now { animation: none; background: none; color: var(--text-muted); }
+/* A quick turn (under SHOW_LIVE_AFTER_MS in panel.html) shows only its answer */
+.chats-turn.quiet > :not(.turn-answer) { display: none; }
+body.hig .chats-turn.quiet .turn-answer { margin-top: 0; }
+@keyframes turnPulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+@keyframes turnShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes turnSlide { from { margin-left: -40%; } to { margin-left: 100%; } }
+@keyframes turnBlink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+    body.hig .turn-now { animation: none; background: none; color: var(--text-secondary); }
+    body.hig .turn-bar i { width: 100%; opacity: .4; animation: none; }
+    body.hig .turn-step.running i, body.hig .turn-caret { animation: none; }
+    body.hig .turn-panel, body.hig .turn-chev, body.hig .turn-live { transition: none; }
+}
+body.hig .is-error .chats-bubble { color: var(--accent-danger, #b42318); }
+body.hig .chats-bubble code { font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; padding: 1px 4px; border-radius: 4px; background: var(--surface-2); }
 body.hig .chats-list { display: flex; flex-direction: column; gap: 2px; padding: 8px; }
 body.hig .chats-item {
     display: flex;
@@ -6080,6 +6150,7 @@ body.hig .chats-bubble {
 body.hig .from-user .chats-bubble { background: color-mix(in srgb, var(--accent-primary) 82%, #000); color: #fff; border-bottom-right-radius: 6px; }
 body.hig .from-bhai .chats-bubble { background: rgba(255, 255, 255, 0.72); color: var(--text-primary); border-bottom-left-radius: 6px; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06); }
 body.hig.theme-dark .from-bhai .chats-bubble { background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.08); }
+body.hig .chats-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 body.hig .chats-when { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 body.hig .chats-empty { margin: auto; padding: 24px; text-align: center; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
 @media (max-width: 820px) {
@@ -6239,3 +6310,84 @@ body.hig .vault-modal-bg { background: rgba(20, 10, 4, 0.42); }
 .vault-field .clean-input { width: 100%; box-sizing: border-box; }
 .vault-modal .input-hint:empty { display: none; }
 .vault-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── Dashboard: greeting, ask box, lists (no hero card, no stat tiles) ── */
+body.hig .dash { max-width: 720px; display: flex; flex-direction: column; gap: 0; }
+body.hig .dash-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0 18px; }
+body.hig .dash-greeting {
+    font-family: ui-serif, "New York", Georgia, serif;
+    font-size: 30px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15;
+    color: var(--text-primary); margin: 0;
+}
+body.hig .dash-sub { margin: 6px 0 0; font-size: 13px; color: var(--text-secondary); }
+body.hig .dash-stop { margin-left: 8px; font-size: 12px; }
+body.hig .hero-mascot.dash-avatar { width: 64px; height: 64px; flex: none; }
+body.hig .hero-mascot.dash-avatar::before { display: none; }
+body.hig .dash-ask {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 12px 0 16px; height: 48px; margin-bottom: 26px;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface-1);
+    transition: border-color .15s, box-shadow .15s;
+}
+body.hig .dash-ask:focus-within { border-color: var(--accent-text, var(--text-secondary)); box-shadow: 0 0 0 3px var(--accent-tint, rgba(0,0,0,.05)); }
+body.hig .dash-ask input { flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: none; color: var(--text-primary); font: inherit; font-size: 14px; }
+body.hig .dash-ask input::placeholder { color: var(--text-muted, var(--text-secondary)); }
+body.hig .dash-ask .chat-kbd:empty { display: none; }
+body.hig .dash-start { margin-bottom: 26px; }
+body.hig .dash .recent-chats { margin: 0 0 22px; }
+body.hig #needsList .recent-row { cursor: pointer; }
+body.hig #needsList .recent-when { color: var(--accent-text, var(--text-primary)); }
+@media (prefers-reduced-motion: reduce) { body.hig .dash-ask { transition: none; } }
+body.hig .dash-ask .chat-kbd { margin: 0; background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }
+
+/* Settings: plain rows, no emoji icons; footer carries the legal links. */
+body.hig small.workspace-path { display: block; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; padding: 0; border: none; font: inherit; font-size: 11px; }
+body.hig .settings-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; }
+body.hig .settings-foot .about-links { color: var(--text-secondary); }
+body.hig .pp-notes-toggle { align-self: flex-start; font-size: 12.5px; padding: 0; color: var(--accent-text, var(--text-secondary)); }
+body.hig .pp-notes-toggle:hover { text-decoration: underline; }
+body.hig .pref-more { margin-left: 8px; padding: 0; font-size: 12px; color: var(--accent-text, var(--text-secondary)); }
+body.hig .pref-more:hover { text-decoration: underline; }
+.pref-items:has(#prefNotifications:not(:checked)) .pref-more { display: none; }
+.pref-subs[hidden] { display: none; }
+body.hig .pp-notes-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+body.hig .pp-save-status { flex: 1; font-size: 12px; color: var(--text-secondary); }
+
+/* ── Research: past and running researches with their reports ─────── */
+body.hig .research-new { width: auto; margin: 0 28px 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+body.hig .research-new-row { display: flex; gap: 8px; align-items: center; }
+body.hig .research-new-row input { flex: 1; min-width: 0; }
+body.hig .research-depth { flex: none; width: auto; }
+body.hig .research-basis { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: var(--text-secondary); }
+body.hig .research-basis[hidden] { display: none; }
+body.hig .research-pane { overflow-y: auto; padding: 18px 22px; }
+body.hig .research-head { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+body.hig .research-head h3 { margin: 0; font-size: 16px; }
+body.hig .research-actions { display: flex; gap: 8px; margin-top: 8px; }
+body.hig .research-report { padding-top: 12px; font-size: 13px; line-height: 1.55; user-select: text; overflow-wrap: anywhere; }
+body.hig .research-report h2 { font-size: 17px; margin: 14px 0 6px; }
+body.hig .research-report h3 { font-size: 14.5px; margin: 14px 0 6px; }
+body.hig .research-report h4 { font-size: 13px; margin: 12px 0 4px; }
+body.hig .research-link { color: var(--accent-text, var(--accent-primary)); }
+
+/* ── Chats: images Bhai made (one full width, 2-4 in two columns) + the image viewer ── */
+body.hig .chats-img-grid { display: grid; gap: 6px; width: min(360px, 100%); }
+body.hig .chats-img-grid.multi { grid-template-columns: 1fr 1fr; }
+body.hig .chats-img-thumb { padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--glass-input); overflow: hidden; cursor: zoom-in; display: block; }
+body.hig .chats-img-thumb:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+body.hig .chats-img-thumb img { display: block; width: 100%; max-height: 320px; object-fit: contain; opacity: 0; transition: opacity .35s ease; }
+body.hig .chats-img-grid.multi .chats-img-thumb img { height: 150px; object-fit: cover; }
+body.hig .chats-img-thumb img.loaded { opacity: 1; }
+.img-lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, 0.86); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; }
+.img-lightbox .lb-img { max-width: 100%; max-height: calc(100vh - 110px); object-fit: contain; border-radius: 10px; }
+/* A checkerboard behind a PNG (the only thumbnails that keep alpha) so transparency shows. */
+.img-lightbox .lb-img[src^="data:image/png"] { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+/* no-drag: the title bar's drag region would otherwise eat clicks up here. */
+.img-lightbox .lb-close { position: absolute; top: 16px; right: 16px; font-size: 18px; line-height: 1; padding: 6px 11px; -webkit-app-region: no-drag; }
+.img-lightbox .lb-bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; }
+.img-lightbox .lb-btn { font: inherit; font-size: 13px; color: #fff; text-decoration: none; cursor: pointer; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 999px; padding: 6px 14px; }
+.img-lightbox .lb-btn:hover, .img-lightbox .lb-btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.24); }
+.img-lightbox .lb-btn:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+.img-lightbox .lb-count { font-size: 13px; color: rgba(255, 255, 255, 0.6); }
+@media (prefers-reduced-motion: reduce) { body.hig .chats-img-thumb img { transition: none; } }

@@ -4,9 +4,12 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { describe, expect, it } from "vitest";
 import {
     antiGivingUpFailures,
+    leaveToLookNote,
+    ackWithoutAction,
     asksLeaveToLook,
     finalReplyText,
     isDeferrable,
+    planAskQuestion,
     planToolsBlock,
     toolFailed,
 } from "./agent.js";
@@ -87,6 +90,39 @@ describe("antiGivingUpFailures", () => {
             antiGivingUpFailures(history, "open my bank site and download the statement", `${handoff}\n[[STUCK]]`, 2),
         ).toBe(0);
     });
+    it("leaves an honest 'not available' answer to a plain question alone", () => {
+        const search: ChatCompletionMessageParam = {
+            role: "tool",
+            tool_call_id: "t2",
+            content: JSON.stringify({ success: true, error: null, results: [{ title: "Pixel 10 Pro Fold" }] }),
+        };
+        const q = "is the pixel 10 pro fold out in india yet?";
+        const reply = "The Pixel 10 Pro Fold is not available in India yet.";
+        expect(antiGivingUpFailures([msg(q), search], q, reply, 1)).toBe(0);
+        // "error":null is not a failure even on an action task
+        expect(antiGivingUpFailures([msg("find the fold"), search], "find the fold", reply, 1)).toBe(0);
+        // nor is a pretty-printed one ('"error": null', as JSON.stringify(x, null, 2) writes it)
+        const pretty: ChatCompletionMessageParam = { ...search, content: JSON.stringify({ success: true, error: null }, null, 2) };
+        expect(antiGivingUpFailures([msg("find the fold"), pretty], "find the fold", reply, 1)).toBe(0);
+    });
+});
+
+describe("planAskQuestion", () => {
+    it("asks only on the ASK_USER marker, not on ordinary 'which' steps", () => {
+        expect(
+            planAskQuestion(
+                "1. app_manager action='list' to see which apps are running.\n2. app_manager activate WhatsApp\n3. os_type the message",
+            ),
+        ).toBeNull();
+        expect(planAskQuestion('1. ASK_USER "Which song did you mean: Pink Floyd or NF?"\n2. spotify play')).toBe(
+            "Which song did you mean: Pink Floyd or NF?",
+        );
+        // a quote or apostrophe inside the question doesn't cut it short
+        expect(planAskQuestion(`1. ASK_USER "Which 'Time'? Some options: Pink Floyd, MKJ, NF"\n2. spotify play`)).toBe(
+            "Which 'Time'? Some options: Pink Floyd, MKJ, NF",
+        );
+        expect(planAskQuestion("ASK_USER: What's the file called?")).toBe("What's the file called?");
+    });
 });
 
 describe("asksLeaveToLook", () => {
@@ -120,5 +156,30 @@ describe("asksLeaveToLook", () => {
             ),
         ).toBe(true);
         expect(asksLeaveToLook("Done. If you can see any typo, tell me.", true)).toBe(false);
+    });
+});
+
+// From the model-ladder eval: gpt-5-nano answered "on it — playing Levitating by Dua Lipa
+// on Spotify; done = it shows as now_playing" and made no tool call.
+describe("ackWithoutAction", () => {
+    const ack = "on it — playing Levitating by Dua Lipa on Spotify; done = it shows as now_playing";
+    it("an ack with no tool call yet is not an answer", () => {
+        expect(ackWithoutAction(ack, 0)).toBe(true);
+    });
+    it("is fine once work has started, for plain answers, and for stuck reports", () => {
+        expect(ackWithoutAction(ack, 2)).toBe(false);
+        expect(ackWithoutAction("Playing Levitating by Dua Lipa now.", 0)).toBe(false);
+        expect(ackWithoutAction(`${ack}\nSpotify needs you to sign in.\n[[STUCK]]`, 0)).toBe(false);
+    });
+});
+
+describe("leaveToLookNote", () => {
+    it("names the owner's message, and mentions the screen only when screen tools are on hand", () => {
+        const q = "Earlier tonight I asked you to read some keyboard layout articles on Wikipedia. Which ones?";
+        const note = leaveToLookNote(q, false);
+        expect(note).toContain(q);
+        expect(note).toMatch(/not an earlier request/);
+        expect(note).not.toMatch(/System Settings|screenshot/);
+        expect(leaveToLookNote("what's the Wi-Fi called?", true)).toMatch(/os_inspect or a screenshot/);
     });
 });

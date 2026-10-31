@@ -6,7 +6,7 @@
 // One small, adversarially-framed Haiku call that judges whether the agent is
 // actually making progress toward its goal — the antidote to a self-fooling
 // loop that the free heuristics can't see. DEFAULT OFF (opt-in via
-// ATLAS_PROGRESS_JUDGE=true). When enabled it fires AT MOST ONCE per stuck
+// BHAI_PROGRESS_JUDGE=true). When enabled it fires AT MOST ONCE per stuck
 // turn; healthy turns never call it, so the default-config cost is ZERO.
 //
 // COST: exactly ONE anthropic/claude-haiku-4.5 call per stuck turn when the flag
@@ -33,7 +33,7 @@ export interface ProgressVerdict {
 const ALLOWED_FIXES: ReadonlySet<ProgressVerdict["likely_fix"]> = new Set(["retry", "replan", "escalate", "ask_user"]);
 
 export function progressJudgeEnabled(): boolean {
-    return process.env.ATLAS_PROGRESS_JUDGE === "true";
+    return process.env.BHAI_PROGRESS_JUDGE === "true";
 }
 
 // Map the judge verdict onto the existing MetaAssessment.intervention enum that

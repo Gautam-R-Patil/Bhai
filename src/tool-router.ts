@@ -24,7 +24,10 @@
 //   6. Usage patterns are tracked to improve future selections
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import { getDataDir } from "./config/paths.js";
 import { getDimensionValue } from "./harness/registry.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
@@ -37,10 +40,10 @@ import {
     getLikelyCategories,
     getPreferredTools,
     initAnalytics,
-    recordToolUsage,
-    updateCategoryAffinity,
 } from "./tool-router-analytics.js";
+import { getDynamicToolSchemas } from "./tools/create-tool.js";
 import { getToolSchemas } from "./tools/index.js";
+import { atomicJsonWrite } from "./utils/atomic-io.js";
 import { extractJSON } from "./utils/json-extract.js";
 
 // ── Types ─────────────────────────────────────
@@ -97,12 +100,13 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     memory: {
         description:
-            "Remembering information, storing facts, searching past memories, forgetting something the user asks me to forget, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections. Searching the raw text of past conversation transcripts by keyword.",
+            "Remembering information, storing facts, searching past memories, forgetting something the user asks me to forget, importing memories or what another AI assistant (ChatGPT, Claude, Gemini...) knows about the user, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections. Searching the raw text of past conversation transcripts by keyword.",
         tools: [
             "memory_store",
             "memory_search",
             "memory_list",
             "memory_forget",
+            "import_memory",
             "session_search",
             "identity_view",
             "identity_update",
@@ -135,6 +139,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "read",
             "find_files",
             "open_in_app",
+            "file_manage",
             "edit",
             "write",
             "append_file",
@@ -145,6 +150,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "file_metadata",
             "compress_files",
             "trash_manager",
+            "image_edit",
+            "pdf_edit",
         ],
     },
     coding: {
@@ -183,7 +190,8 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "shell_kill_process",
             "list_directory",
             "delete_file",
-            "get_current_time",
+            // Not get_current_time: core always brings it, and listing it here made the
+            // classifier file "what time is it in London" under coding (32 tools, Sonnet).
             // Phase 4L: codebase comprehension + git
             "codebase_index",
             "codebase_query",
@@ -233,8 +241,6 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "browser_recall_strategy",
             "browser_parallel_tabs",
             "browser_parallel_actions",
-            "browser_replay_actions",
-            "browser_cache_actions",
             "browser_set_mode",
             "browser_chrome_status",
             "browser_click",
@@ -254,7 +260,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     web_search: {
         description:
             "Searching the internet, looking up information online, Google search, finding answers, researching topics, fact-checking, finding news, looking up definitions or documentation, checking weather and forecasts.",
-        tools: ["web_search", "weather"],
+        tools: ["web_search", "web_read", "weather"],
     },
     os_control: {
         description:
@@ -297,8 +303,6 @@ const CATEGORIES: Record<string, CategoryDef> = {
             "win_os_visual_verify",
             "win_set_brightness",
             "win_send_screenshot",
-            // computer_use (computer-use-agent.ts) is NOT offered: it plans blind,
-            // types unparsed plan lines into the focused app and always reports success.
         ],
     },
     system_controls: {
@@ -320,16 +324,13 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     media: {
         description:
-            "Full Spotify control (play/pause/skip/queue/volume/shuffle/repeat, search, playlists, library, devices) via the `spogo` CLI — which talks to Spotify's internal web-player endpoints using browser cookies, so it works for every user on Free or Premium without the closed public Web API. Local-app URI-launch fallback when spogo isn't installed. Apple Music control. Generating images and artwork, AI art, screen recording, searching for GIFs and memes, audio visualization and spectrograms, controlling Sonos speakers and smart home audio.",
-        tools: [
-            "spotify",
-            "music_control",
-            "generate_image",
-            "screen_record",
-            "gif_search",
-            "audio_visualize",
-            "sonos_control",
-        ],
+            "Full Spotify control (play/pause/skip/queue/volume/shuffle/repeat, search, playlists, library, devices) via the `spogo` CLI — which talks to Spotify's internal web-player endpoints using browser cookies, so it works for every user on Free or Premium without the closed public Web API. Local-app URI-launch fallback when spogo isn't installed. Apple Music control. Screen recording, searching for GIFs and memes, audio visualization and spectrograms, controlling Sonos speakers and smart home audio.",
+        tools: ["spotify", "music_control", "screen_record", "gif_search", "audio_visualize", "sonos_control"],
+    },
+    image: {
+        description:
+            "Creating, drawing or generating images from a description: pictures, art, logos, stickers, wallpapers, posters, thumbnails. AI photo editing of the user's photo: removing an object or person, changing or removing the background, restyling, recoloring, combining photos, making variations or undoing an edit. Plain format conversion and resizing go through image_edit.",
+        tools: ["generate_image", "image_edit", "send_file"],
     },
     video_editing: {
         description:
@@ -369,7 +370,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
         tools: [
             "schedule_task",
             "set_reminder",
-            "list_tasks",
+            "list_scheduled_tasks",
             "cancel_task",
             "calendar_tool",
             "reminders_tool",
@@ -382,7 +383,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     app_management: {
         description:
             "Managing applications, opening apps, closing apps, force-quitting apps, listing running apps, window management, moving windows, resizing windows, drag and drop operations, macOS Shortcuts, opening an app straight to a place with a deep link (Maps directions, a FaceTime call, a Zoom meeting, a file in VS Code).",
-        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut", "open_in_app"],
+        tools: ["app_manager", "window_manage", "os_drag", "run_shortcut", "open_in_app", "calculator"],
     },
     research: {
         description:
@@ -411,7 +412,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     codebase: {
         description:
-            "Understanding code repositories, mapping codebase structure, finding functions and classes in a project, getting an overview of a repository's architecture, listing symbols (functions, classes, interfaces, types) across files, tracing call-graphs, finding where a symbol is used, generating AGENTS.md + .atlas/agents/*.md onboarding docs, reading recent git activity (commits, hot files, diffs, blame) for context. Repository analysis, navigation, and onboarding.",
+            "Understanding code repositories, mapping codebase structure, finding functions and classes in a project, getting an overview of a repository's architecture, listing symbols (functions, classes, interfaces, types) across files, tracing call-graphs, finding where a symbol is used, generating AGENTS.md + .bhai/agents/*.md onboarding docs, reading recent git activity (commits, hot files, diffs, blame) for context. Repository analysis, navigation, and onboarding.",
         tools: ["repo_map", "codebase_index", "codebase_query", "code_change_summary", "agents_md_scaffold"],
     },
     tool_creation: {
@@ -493,6 +494,16 @@ let currentIteration = 0;
 // ── LLM Client for Intent Classification ─────
 let routerLLM: LLMClient | null = null;
 
+/** The categories as the classifier sees them (name, description, tools): for benchmarks. */
+export function categoryCatalog(): { name: string; description: string; tools: string[]; alwaysInclude: boolean }[] {
+    return Object.entries(CATEGORIES).map(([name, c]) => ({
+        name,
+        description: c.description,
+        tools: [...c.tools],
+        alwaysInclude: !!c.alwaysInclude,
+    }));
+}
+
 export function setToolRouterLLM(llm: LLMClient): void {
     routerLLM = llm;
     console.log("🎯 Tool Router: LLM classifier enabled");
@@ -519,8 +530,8 @@ const INTENT_CACHE_TTL_MS = 120_000; // 2 minutes
 // nano stalls (or its own chat() fallback chain is grinding), 12s of blocked
 // routing is worse than dropping to the keyword/embedding fallback. 5s catches
 // the rare slow nano while failing fast on a genuine stall. Override with
-// ATLAS_TOOL_ROUTER_TIMEOUT_MS.
-const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS) || 5000;
+// BHAI_TOOL_ROUTER_TIMEOUT_MS.
+const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.BHAI_TOOL_ROUTER_TIMEOUT_MS) || 5000;
 
 // The whole routing step shares one deadline: classifier, then the fallback's
 // message embedding gets whatever is left (none → structural scores only).
@@ -558,20 +569,140 @@ export function isConversationalBanter(message: string): boolean {
     return BANTER_RE.test(m) && !ASK_RE.test(m) && !ACTION_RE.test(m) && !PATH_RE.test(m);
 }
 
+// ── Microsoft-Decision-1: the classifier as typed decisions ──
+// One request answers yes/no per category, the task tier and multi-step, with probabilities
+// (scripts/bench-decision.ts on the 49 eval tasks: every needed category 48/49 vs 32/49 for the
+// gpt-4.1-nano classifier; ~0.5s vs ~1s; ~$0.0001 a turn; chat prompts 6/6 chat). Called via
+// Convex /api/decide (the Azure key stays server-side); any failure falls back to the LLM.
+// On by default; BHAI_NO_DECISION_ROUTER=true turns it off (see classifyWithDecision).
+export type DecisionTransport = (
+    state: string,
+    questions: Record<string, unknown>,
+    timeoutMs: number,
+) => Promise<Record<string, { noul?: number; choice?: string; confidence?: number }> | null>;
+
+let decisionTransport: DecisionTransport | null = async (state, questions, timeoutMs) => {
+    const [{ getSessionToken }, { encryptedFetch }, { getConvexSiteUrl }] = await Promise.all([
+        import("./session.js"),
+        import("./crypto-transport.js"),
+        import("./config/keys.js"),
+    ]);
+    const token = await getSessionToken();
+    if (!token) return null;
+    const res = await encryptedFetch(`${getConvexSiteUrl()}/api/decide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ state, questions, timeoutMs }),
+        signal: AbortSignal.timeout(timeoutMs + 1500),
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { answers?: Record<string, { noul?: number; choice?: string; confidence?: number }> })
+        .answers ?? null;
+};
+
+/** Swap how Decision-1 is reached (evals call Azure directly); null turns it off. */
+export function setDecisionTransport(t: DecisionTransport | null): void {
+    decisionTransport = t;
+}
+
+let decisionFailures = 0;
+let decisionPausedUntil = 0;
+
+const TIER_CRITERIA = {
+    chat: "No tools at all: small talk, opinions, advice, writing, math, explaining, or general knowledge",
+    simple: "One quick action or lookup on the computer or the web",
+    standard: "A normal task with a few tool calls",
+    complex: "Long multi-step work, coding, deep research, or careful reasoning",
+};
+
+async function classifyWithDecision(message: string, context: string, deadline: number): Promise<IntentClassification | null> {
+    // Full 50 in router mode, same browser priors: 50/50 either way at $0.0013 a task, tool
+    // selection 1151 vs 1390 ms mean. Two failures in a row pause it for 10 minutes, so an
+    // outage costs at most two short waits before the LLM classifier takes over.
+    if (!decisionTransport || process.env.BHAI_NO_DECISION_ROUTER === "true" || Date.now() < decisionPausedUntil)
+        return null;
+    const cats = Object.entries(CATEGORIES).filter(([, def]) => !def.alwaysInclude);
+    const questions: Record<string, unknown> = {};
+    for (const [name, def] of cats)
+        questions[name] = { type: "noul", instructions: `Does this request to a computer assistant need tools for: ${def.description}` };
+    // The main category as one choice, others only when near-certain: a yes/no per category
+    // alone said yes too readily (shell, coding, memory on "how many PDFs in Downloads"), which
+    // sent turns to Sonnet and crowded the tool set (full 50 in router mode: 48/50 at 5x cost).
+    questions.primary = {
+        type: "choice",
+        instructions: "Which kind of tools does this request to a computer assistant mainly need?",
+        criteria: Object.fromEntries(cats.map(([name, def]) => [name, def.description.slice(0, 280)])),
+    };
+    questions.tier = { type: "choice", instructions: "How much work is this request for a computer assistant?", criteria: TIER_CRITERIA };
+    questions.multi_step = {
+        type: "noul",
+        instructions: "Does the task need several dependent steps (find something, then do something with it)?",
+    };
+    const state = context ? `${context}\n\nMESSAGE TO ROUTE:\n${message}` : message;
+    try {
+        const left = Math.max(1000, deadline - Date.now());
+        const answers = await beforeDeadline(decisionTransport(state, questions, Math.min(left, 2500)), deadline);
+        if (!answers) throw new Error("no answers");
+        decisionFailures = 0;
+        const primary = answers.primary?.choice && CATEGORIES[answers.primary.choice] ? answers.primary.choice : undefined;
+        const scored = [
+            ...(primary ? [{ name: primary, p: answers.primary?.confidence ?? 0.9 }] : []),
+            ...cats
+                .map(([name]) => ({ name, p: answers[name]?.noul ?? 0 }))
+                .filter((c) => c.p >= 0.95 && c.name !== primary)
+                .sort((a, b) => b.p - a.p),
+        ].slice(0, 3);
+        const tier = TASK_TIERS.includes(answers.tier?.choice as TaskTier) ? (answers.tier?.choice as TaskTier) : undefined;
+        const categories = tier === "chat" ? [] : scored.map((c) => c.name);
+        const result: IntentClassification = {
+            intent: tier === "chat" ? "chat" : (categories[0] ?? "general"),
+            categories,
+            specific_tools: [],
+            confidence: tier === "chat" ? (answers.tier?.confidence ?? 0.8) : (scored[0]?.p ?? 0.5),
+            tier,
+            // It says multi-step even for "play X on Spotify": on a simple turn that moved the
+            // learned router's class from quick (nano) to desktop (Haiku), most of a 2.6x cost.
+            multi_step: tier !== "simple" && (answers.multi_step?.noul ?? 0) >= 0.5,
+        };
+        console.log(
+            `🧠 Decision classifier: cats=[${categories}] tier=${tier ?? "?"}${result.multi_step ? " multi-step" : ""} conf=${result.confidence.toFixed(2)}`,
+        );
+        return result;
+    } catch (err) {
+        if (++decisionFailures >= 2) {
+            decisionPausedUntil = Date.now() + 10 * 60_000;
+            decisionFailures = 0;
+        }
+        console.warn(`🧠 Decision classifier: fallback to LLM (${(err as Error).message})`);
+        return null;
+    }
+}
+
 async function classifyWithLLM(
     message: string,
     recentTools?: string[],
     conversationContext?: string,
     deadline = Date.now() + LLM_CLASSIFIER_TIMEOUT_MS,
 ): Promise<IntentClassification | null> {
-    if (!routerLLM) return null;
-
     // Check cache — include conversation context hash for disambiguation
     const cacheKey = simpleHash(`${message}|${(conversationContext || "").substring(0, 200)}`);
     const cached = intentCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < INTENT_CACHE_TTL_MS) {
         return cached.result;
     }
+
+    const decided = await classifyWithDecision(
+        message,
+        `${recentTools?.length ? `Recently used tools: ${recentTools.slice(0, 5).join(", ")}\n` : ""}${
+            conversationContext ? `RECENT CONVERSATION:\n${conversationContext}` : ""
+        }`.trim(),
+        deadline,
+    );
+    if (decided) {
+        intentCache.set(cacheKey, { result: decided, timestamp: Date.now() });
+        return decided;
+    }
+    if (!routerLLM) return null;
 
     // Build compact category + tool listing for the classifier
     const categoryList = Object.entries(CATEGORIES)
@@ -603,7 +734,9 @@ Rules:
 - Return specific tool names when obvious (e.g. "play music" → spotify)
 - Focus on the user's ACTUAL intent, not surface keywords
 - "play a song" = media, NOT shell (don't confuse "play" with "run/execute")
+- The time, the date or a timezone needs no category: get_current_time is always available
 - "run npm install" = shell, NOT media
+- Creating a picture or AI-editing the user's photo (remove someone, change the background, restyle, variations) = image, NOT file_system
 - IMPORTANT: When the user names a desktop app the agent must DRIVE (open, click, type in, switch to) — e.g. "open WhatsApp and send …", "click the Send button in Photoshop", "switch to Figma and …" — include BOTH "app_management" AND "os_control" in addition to any messaging category. Protocol tools like whatsapp_send/imessage_send work for contacts the bot already has on file; UI-driving the actual desktop app needs os_smart_click + app_manager.
 - IMPORTANT: Use the conversation context to resolve ambiguous references. If the user was just discussing a website, "open file manager" likely means a button ON that website (browser), not the OS file manager (app_management). A follow-up like "yes do it" or "try again" continues the task in the conversation, with that task's categories.
 - The context may say what the user is looking at (a screenshot of their screen, a web page open in their Chrome). "this", "here", "it" then point at that: asking to DO something with it ("do this for me", "fill this in", "finish it") means acting on it, so a page in their Chrome is browser, a desktop app is os_control + app_management. Only asking what it is or how it works is chat.
@@ -687,7 +820,114 @@ Respond with JSON only: {"intent":"short_label","categories":["cat1"],"specific_
 // Guaranteed minimum scores for high-signal domain phrases.
 // Only used when LLM classifier is unavailable.
 
-const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
+const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
+    {
+        pattern: /\b(zip|unzip|compress|decompress|tar|gzip)\b|\.zip\b/i,
+        tool: "compress_files",
+        category: "file_system",
+    },
+    { pattern: /\b(empty|clear)\b.{0,12}\b(the |my )?(trash|bin)\b/i, tool: "trash_manager", category: "file_system" },
+    { pattern: /\bapple notes?\b|\bnotes app\b|\b(a|new) note\b/i, tool: "apple_notes", category: "scheduling" },
+    // "Import my memory from ChatGPT", "bring over what Claude knows about me".
+    {
+        pattern:
+            /\b(import|bring (?:over|in)|transfer|migrate|carry over|pull in)\b.{0,40}\b(memor(?:y|ies)|what \S+(?: \S+)? knows? about me)\b|\b(chat ?gpt|claude|gemini|grok|perplexity|muse|instinct|pi|character\.?ai|copilot|meta ai)\b.{0,40}\b(memor(?:y|ies)|data export|knows? about me)\b/i,
+        tool: "import_memory",
+        category: "memory",
+    },
+    // A file named in the request ("Read task.txt and…") got no file tools at all.
+    { pattern: /\b[\w-]+\.(txt|md|csv|json|log|pdf|docx?|rtf|html?)\b/i, tool: "read", category: "file_system" },
+    // Format and size only. A bare "make" is gone: "make a picture of a cat" and "make the
+    // sky bluer in this photo" are generate_image's; "make it a png" stays here.
+    {
+        pattern:
+            /\b(convert|resize|scale|shrink)\b.*\b(images?|photos?|pictures?|png|jpe?g|heic|tiff|gif|webp)\b|\b(make|save|turn)\b.{0,30}\b(a|an|into|as) (png|jpe?g|heic|tiff|gif|webp|bmp)\b|\b(dimensions|resolution)\b.*\b(images?|photos?|pictures?|png|jpe?g)\b/i,
+        tool: "image_edit",
+        category: "file_system",
+    },
+    // Creating a picture, or changing what's in the user's photo. "open Paint/Photoshop" is the app.
+    {
+        pattern:
+            /\b(draw(?!\s+up\b)|(?<!\b(open|launch|quit|close|in|using|use)\s+)(paint|sketch|photoshop)|illustrate|doodle|restyle|recolou?r|retouch)\b|\b(draw|generate|create|design|make|paint|render)\s+(\w+\s+){0,3}(images?|pictures?|pics?|photos?|illustrations?|logos?|art|artwork|wallpapers?|posters?|stickers?|icons?|avatars?|thumbnails?|drawings?|paintings?|portraits?)\b(?!\.\w)/i,
+        tool: "generate_image",
+        category: "image",
+    },
+    // [\s\S] in the background rule: a caption on its own line after "here's my pic" still counts.
+    {
+        pattern:
+            /\b(remove|erase|delete|get rid of|cut out)\b.{0,60}\b(from|in|out of|off)\s+(this|that|the|my|these|those)?\s*(\w+\s+)?(photo|picture|image|pic|selfie)s?\b(?!\s*(library|album|folder|app|roll)\b)|^(?![\s\S]*\b(desktop|wallpaper|lock ?screen|zoom|teams|meet|call|video|terminal|theme)\b)[\s\S]*\b(change|replace|remove|blur|swap)\b.{0,30}\b(background|bg)\b/i,
+        tool: "generate_image",
+        category: "image",
+    },
+    {
+        pattern:
+            /\bedit (this|that|my|the) (photo|picture|pic|image|selfie)\b|\bmake (it|this|that|him|her|me|them|us)\s+look (like|more)\b|\b(make|turn|change|add|put)\b.{0,40}\b(in|on|to|into) (this|that|the|my) (photo|picture|pic|image|selfie)\b|\bturn (this|that|my) (photo|picture|pic|image|selfie)s? into\b|\bmake (another|a different) (version|variation)\b|\b(another|different) (version|variation)s? of (that|this|the) (image|picture|pic|photo|logo|one)\b|\bundo (that|the) (last )?((image|photo|picture) )?edit\b|\bmake (it|that|this)\b(\s+(image|picture|pic|photo|one|again|in)){0,3}\s+high(er)?[- ]quality\b|\b(put|add)\b.{0,40}\b(in|into) (one|a|the same) (photo|picture|pic|image)\b|\badd (a|an|some) \w+( \w+)? (to|on) (him|her|them|me|us)\b/i,
+        tool: "generate_image",
+        category: "image",
+    },
+    // Hinglish (verb last) and bare follow-ups. "options/versions" needs a quantity and either a
+    // short message or a picture noun, so "what are my options" and "versions of node" don't match.
+    // "background badal do" carries the same desktop/call guard as the English rule above.
+    {
+        pattern:
+            /\b(photo|pic|picture|image|tasveer|logo|wallpaper|poster|sticker)s?\b.{0,40}\bbana(o|do)?\b|\b(photo|pic|picture|image|tasveer)s?\b.{0,40}\b(hata|hatao|badal|badlo)\b|^(?![\s\S]*\b(desktop|wallpaper|lock ?screen|zoom|teams|meet|call|video|terminal|theme)\b)[\s\S]*\bbackground\b.{0,40}\b(hata|hatao|badal|badlo)\b|\b(style|jaisa|jaisi|jaise)\s+(mein\s+|me\s+)?bana|\b(banda|bande|bandi|aadmi|ladka|ladke|ladki|insaan|log|logon)\s+ko\s+hata|^\s*undo\W*$|^(?=\s*\S+(\s+\S+){0,4}\s*$).*\b(a few|some|more|different|other|several|\d|two|three|four)\s+(options|versions|variations)\b|\b(a few|some|more|different|other|several|\d|two|three|four)\s+(options|versions|variations)\b.{0,30}\b(images?|photos?|pics?|pictures?|logos?|wallpapers?|posters?)\b/i,
+        tool: "generate_image",
+        category: "image",
+    },
+    {
+        pattern: /\b(merge|combine|join|split|extract)\b.*\bpdfs?\b|\bpages?\b.*\bpdfs?\b|\bpdfs?\b.*\bpages?\b/i,
+        tool: "pdf_edit",
+        category: "file_system",
+    },
+    {
+        pattern: /\b(mac ?os|os|operating system)\b.{0,25}\bversion\b|\bversion of (mac ?os|my mac|the os)\b/i,
+        tool: "system_info",
+        category: "system_controls",
+    },
+    { pattern: /\bcalculator\b/i, tool: "calculator", category: "app_management" },
+    // "copy its name to my clipboard" is the clipboard's.
+    {
+        pattern:
+            /^(?!.*\bclipboard\b).*\b(move|rename|copy)\b.*\b(files?|folders?|documents?|pdfs?|photos?|images?|\w+\.[a-z0-9]{2,4})\b|\b(make|create|new)\b.{0,10}\bfolder\b/i,
+        tool: "file_manage",
+        category: "file_system",
+    },
+];
+
+const CHANGING_FACT =
+    /\b(yet|latest|newest|currently|right now|as of (?:now|today)|nowadays|today'?s|this (?:week|month|year)|news|recent(?:ly)?|release date|price of)\b/i;
+
+/** "Has X happened yet?", "what's the latest on Y?": the answer may have changed since anything in context. */
+// A question anywhere: "…right now? one line" ends with the ask for brevity, not the "?".
+/**
+ * A message that needs a tool even though it reads like chat: it skips the tool-less chat
+ * lane. A short, deliberate list: reusing every high-confidence keyword boost took "another
+ * word for happy" (os_control), "an issue with my boss" (github) and "I love rain" out of the
+ * lane, some of them into the 14K-token Sonnet plan.
+ */
+const CHAT_LANE_OVERRIDES: { re: RegExp; category: string }[] = [
+    // "Without switching apps: what's the Finder window called?"
+    { re: /\b(finder|sidebar|menu ?bar|the dock)\b|\b(?:app|finder|front|open|this) window\b/i, category: "os_control" },
+    // asking about the weather, in English or Hinglish
+    { re: /\b(weather|forecast|mausam|chhat(?:a|ri)|umbrella)\b|\bwill it (?:rain|snow)\b|\bbaa?rish hog/i, category: "web_search" },
+    // asking what was said before (not just mentioning yesterday)
+    {
+        re: /\b(?:did (?:I|we) (?:ask|tell|say|talk|discuss|mention)|what did (?:I|we) (?:ask|say|talk|discuss|tell)|earlier (?:today|tonight),? (?:I|we|you) (?:asked|told|said|talked|discussed))\b/i,
+        category: "memory",
+    },
+];
+/** The one category a chat-sounding message needs (it gets just that, as a simple single step), or null. */
+export const toolNeedCategory = (message: string): string | null =>
+    CHAT_LANE_OVERRIDES.find((o) => o.re.test(message))?.category ?? null;
+export const needsTools = (message: string): boolean => toolNeedCategory(message) !== null;
+
+export const asksChangingFact = (message: string): boolean =>
+    (message.includes("?") || /^\s*(what|which|who|when|where|has|have|is|are|did|does|do|how)\b/i.test(message)) &&
+    CHANGING_FACT.test(message) &&
+    // Small talk about Bhai itself ("how are you doing right now?", "what are you up to currently?")
+    !/\b(?:how (?:are|r) (?:you|u)|how(?:'s| is) it going|what(?: are|'re| r) (?:you|u) (?:doing|up to)|how (?:you|u) doing)\b/i.test(message);
+
+export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
     // Music / Media
     {
         pattern: /\b(play|pause|skip|next|previous|shuffle|repeat|queue|now.?playing)\b/i,
@@ -703,7 +943,11 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     { pattern: /\b(sonos|speaker|airplay)\b/i, category: "media", minScore: 0.6 },
     { pattern: /\b(spectrogram|waveform|audio.?viz)\b/i, category: "media", minScore: 0.7 },
     // Weather / Search
-    { pattern: /\b(weather|forecast|temperature|rain|sunny|humid)\b/i, category: "web_search", minScore: 0.7 },
+    // Hinglish too: "aaj mausam kaisa hai? chhata le jaun?" took the chat lane and a request_tools round trip.
+    { pattern: /\b(weather|forecast|temperature|rain|sunny|humid|mausam|baa?rish|garmi|thand|chhat(?:a|ri)|umbrella)\b/i, category: "web_search", minScore: 0.7 },
+    // Facts that change: "has Node 26 become LTS yet?" went to the classifier as chat (0.53)
+    // and was answered from stale context with no search tool offered.
+    { pattern: CHANGING_FACT, category: "web_search", minScore: 0.7 },
     // Scheduling / Notes
     { pattern: /\b(remind|reminder|todo|to.?do)\b/i, category: "scheduling", minScore: 0.65 },
     { pattern: /\b(note|notes|apple.?notes)\b/i, category: "scheduling", minScore: 0.6 },
@@ -716,6 +960,21 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     },
     // Communication
     { pattern: /\b(email|gmail|mail|imessage|sms|text.?message)\b/i, category: "communication", minScore: 0.65 },
+    // "Which app is in front / which apps are running?" was once filed as system_controls alone, without app_manager.
+    {
+        pattern: /\b(apps?|applications?)\b.{0,25}\b(open|running|in front|frontmost|active)\b|\b(running|open|frontmost)\s+(apps|applications)\b/i,
+        category: "app_management",
+        minScore: 0.7,
+    },
+    // "Without switching apps: what's the Finder window called?" was classed chat and got no tools.
+    { pattern: /\b(finder|sidebar|menu ?bar|the dock|(?:app|finder|front|open|this) window|on (?:my|the) screen)\b/i, category: "os_control", minScore: 0.7 },
+    // "Earlier tonight I asked you about keyboard layouts. Which ones?" took the chat lane, so
+    // session_search wasn't there and Bhai recalled only what memory injection happened to hold.
+    {
+        pattern: /\b(earlier (?:today|tonight)|last (?:night|week|time)|yesterday|the other day|did (?:I|we) (?:ask|tell|say|talk|discuss)|what did (?:I|we) (?:ask|say|talk|discuss)|we (?:talked|discussed|spoke) about)\b/i,
+        category: "memory",
+        minScore: 0.7,
+    },
     // OS / Screenshots
     { pattern: /\b(screenshot|screen.?shot|screen.?capture)\b/i, category: "os_control", minScore: 0.7 },
     // Desktop-app automation — "open WhatsApp", "click in Photoshop", "open
@@ -741,7 +1000,7 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Settings, permissions and machine state ("give zoom access to my camera", "battery")
     {
         pattern:
-            /\b((dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
+            /\b(clipboard|disk space|free space|storage|ram|memory usage|cpu|uptime|(dark|light|night) mode|appearance|settings?|preferences|permissions?|wallpaper|desktop background|battery|night.?shift|resolution|trackpad|notifications?|login items|privacy)\b|\b(access to|use) (my |the )?(camera|microphone|mic|screen|files|location|contacts|photos)\b|\b(airpods|earbuds|headphones|bluetooth)\b/i,
         category: "system_controls",
         minScore: 0.7,
     },
@@ -755,7 +1014,7 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     // Acting on whatever is on screen
     {
         pattern:
-            /\b(click|double.?click|right.?click|tap on|scroll (up|down)|press the|type (in|into)|on (the )?screen)\b|\bopen (the )?(calculator|notes|terminal|photos|preview|textedit|system settings|app store|facetime|xcode|word|excel)\b/i,
+            /\b(click|double.?click|right.?click|tap on|scroll (up|down)|press the|type (in|into)|on (the )?screen)\b|\b(calculator|notes|terminal|photos|preview|textedit|text edit|system settings|app store|facetime|xcode|pages|numbers|keynote|word|excel|powerpoint)\b|\b(use|in|open|launch|using) (the |a |a new )?[\w.-]+ (app|document|window)\b/i,
         category: "os_control",
         minScore: 0.7,
     },
@@ -766,7 +1025,13 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
         minScore: 0.7,
     },
     // Browser
-    { pattern: /\b(website|webpage|url|browse|navigate.?to|open.?site)\b/i, category: "browser", minScore: 0.65 },
+    {
+        // "open example.com in the browser", "the Wikipedia page for Alan Turing"
+        pattern:
+            /\b(website|webpage|web page|url|browser|browse|navigate.?to|open.?site|wikipedia)\b|\b[a-z0-9-]+\.(com|org|net|io|ai|dev|in|co|app|edu|gov)\b/i,
+        category: "browser",
+        minScore: 0.7,
+    },
     // Shell
     {
         pattern: /\b(terminal|npm|pip|brew|apt|git\b|docker|sudo|bash|chmod|mkdir)\b/i,
@@ -953,7 +1218,7 @@ const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] 
     },
     { pattern: /\b(dependency.?chain|import.?path|how.*depends.*on)\b/i, category: "codebase", minScore: 0.75 },
     {
-        pattern: /\b(agents\.?md|AGENTS\.?md|atlas.?agents?|project.?memory.?doc)\b/i,
+        pattern: /\b(agents\.?md|AGENTS\.?md|(?:bhai|atlas).?agents?|project.?memory.?doc)\b/i,
         category: "codebase",
         minScore: 0.85,
     },
@@ -1069,7 +1334,7 @@ const REQUEST_TOOLS_SCHEMA: ChatCompletionTool = {
     function: {
         name: "request_tools",
         description:
-            "Request additional tools when you realize you need capabilities not currently available. Describe what you need and the router will provide the right tools on your next turn. Use this when the task evolved and you need different tools than what was initially provided.",
+            "Request additional tools when you realize you need capabilities not currently available. Describe what you need and the router will provide the right tools on your next turn. Your tool list is only the subset picked for this message: before telling the owner you can't do something because no tool here does it, ask for it with this.",
         parameters: {
             type: "object",
             properties: {
@@ -1089,6 +1354,45 @@ const REQUEST_TOOLS_SCHEMA: ChatCompletionTool = {
 };
 
 // ── Boot: Pre-compute Category + MCP Embeddings ─────
+
+const CATEGORY_CACHE_PROBE = "Bhai tool router category cache probe";
+
+/**
+ * The category vectors, from the disk cache when the descriptions and the model are the same
+ * as when it was written. The model check is a probe: one fixed text embedded now must give
+ * the stored vector back, so any change to the model (or its runtime) re-embeds everything.
+ */
+async function embedCategoryDescriptions(descriptions: string[]): Promise<Float32Array[]> {
+    const emb = await import("./memory/embeddings.js");
+    const file = path.join(getDataDir(), "tool-router-categories.json");
+    let fresh: { key: string; probe: Float32Array } | null = null;
+    try {
+        const model = [emb.getActiveEmbeddingModel().modelName, emb.getActiveDim(), emb.getEffectiveDimension()];
+        const key = createHash("sha256")
+            .update(JSON.stringify([model, descriptions]))
+            .digest("hex");
+        const [probe] = await emb.embedBatch([CATEGORY_CACHE_PROBE]);
+        fresh = { key, probe };
+        const cached = JSON.parse(fs.readFileSync(file, "utf8")) as {
+            key: string;
+            probe: number[];
+            vectors: number[][];
+        };
+        const sameProbe =
+            cached.probe.length === probe.length && cached.probe.every((x, i) => Math.abs(x - probe[i]) < 1e-6);
+        if (cached.key === key && sameProbe && cached.vectors.length === descriptions.length) {
+            return cached.vectors.map((v) => Float32Array.from(v));
+        }
+    } catch {
+        /* no cache yet, or unreadable: embed (fail-open) */
+    }
+    const vectors = await emb.embedBatch(descriptions);
+    if (fresh) {
+        const data = { key: fresh.key, probe: [...fresh.probe], vectors: vectors.map((v) => [...v]) };
+        atomicJsonWrite(file, data, { indent: 0 }).catch(() => {});
+    }
+    return vectors;
+}
 
 export async function initToolRouter(): Promise<void> {
     if (embeddingsReady) return;
@@ -1115,7 +1419,7 @@ export async function initToolRouter(): Promise<void> {
             const descriptions = categoryNames.map((name) => CATEGORIES[name].description);
 
             console.log(`🎯 Tool Router: Embedding ${categoryNames.length} categories...`);
-            const categoryEmbeddingResults = await embedBatch(descriptions);
+            const categoryEmbeddingResults = await embedCategoryDescriptions(descriptions);
 
             for (let i = 0; i < categoryNames.length; i++) {
                 categoryEmbeddings.set(categoryNames[i], categoryEmbeddingResults[i]);
@@ -1129,7 +1433,8 @@ export async function initToolRouter(): Promise<void> {
                 const mcpEmbeddingResults = await embedBatch(mcpDescriptions);
 
                 for (let i = 0; i < mcpSchemas.length; i++) {
-                    mcpToolEmbeddings.set(mcpSchemas[i].function.name, mcpEmbeddingResults[i]);
+                    const { name, description } = mcpSchemas[i].function;
+                    mcpToolEmbeddings.set(`${name}\n${description ?? ""}`, mcpEmbeddingResults[i]);
                 }
             }
 
@@ -1258,10 +1563,10 @@ async function classifyToolNeeds(
     // Multiplies each category's score by the persona-specific weight
     // (~0.7-1.4). Default = 1.0 (unbiased). Reads persona lazily from
     // identity.extra.persona so a cold tool-router call (before identity
-    // init) just skips the overlay. ATLAS_NO_PERSONA_BIAS=true short-
+    // init) just skips the overlay. BHAI_NO_PERSONA_BIAS=true short-
     // circuits the entire block. Best-effort: a thrown identity read
     // never blocks tool routing.
-    if (process.env.ATLAS_NO_PERSONA_BIAS !== "true") {
+    if (process.env.BHAI_NO_PERSONA_BIAS !== "true") {
         try {
             const { getIdentityProfile } = await import("./memory/identity.js");
             const { asPersona, getPersonaToolWeights } = await import("./prompts/persona-bias.js");
@@ -1493,6 +1798,8 @@ const MAX_TOOLS_PER_CATEGORY = 12;
 const CATEGORY_FLOOR = 4;
 /** Memory tools offered every turn; the rest of `memory` comes with its category or request_tools. */
 const ALWAYS_ON_TOOLS = ["memory_store", "memory_search"];
+/** Offered whenever the category is: "check the page" turns route to browser, and reading one needs no tab. */
+const CATEGORY_COMPANIONS: Record<string, string[]> = { browser: ["web_read"] };
 function getMaxToolsTotal(): number {
     return getDimensionValue<number>("toolRouter.maxToolsTotal") ?? MAX_TOOLS_TOTAL_DEFAULT;
 }
@@ -1532,6 +1839,7 @@ export function assembleToolNames(
         // preference reordering ranks a brand-new tool low.
         const primary = catDef.tools.find((t) => allToolNames.has(t) && !selected.has(t));
         if (primary) take(primary);
+        for (const t of CATEGORY_COMPANIONS[catName] ?? []) if (allToolNames.has(t) && !selected.has(t)) take(t);
         let have = catDef.tools.filter((t) => selected.has(t)).length;
         for (const t of candidateTools) {
             if (have >= CATEGORY_FLOOR || selected.size >= maxTotal) break;
@@ -1542,6 +1850,26 @@ export function assembleToolNames(
         }
     }
 
+    // Then one tool per category per round, each category's best-ranked first: draining the
+    // first category's tail (system_controls' lock_screen, sleep_display…) left os_control,
+    // tied with it, without os_type for "work out 42×3 in Calculator, copy the result".
+    const queues = selectedCategories
+        .filter((c) => CATEGORIES[c] && !CATEGORIES[c].alwaysInclude)
+        .map((c) => candidateTools.filter((t) => CATEGORIES[c].tools.includes(t)));
+    for (let progress = true; progress && selected.size < maxTotal; ) {
+        progress = false;
+        for (const q of queues) {
+            while (q.length && selected.size < maxTotal) {
+                const t = q.shift() as string;
+                if (selected.has(t) || (catToolCounts.get(catOf(t)) ?? 0) >= MAX_TOOLS_PER_CATEGORY) continue;
+                take(t);
+                progress = true;
+                break;
+            }
+        }
+    }
+
+    // Anything ranked outside the selected categories (learned follow-ups).
     for (const tool of candidateTools) {
         if (selected.size >= maxTotal) break;
         if (selected.has(tool) || (catToolCounts.get(catOf(tool)) ?? 0) >= MAX_TOOLS_PER_CATEGORY) continue;
@@ -1619,8 +1947,43 @@ export async function selectTools(opts: {
     // Banter ("… roast me") the classifier answered with no categories also takes
     // the lane. With no classifier answer at all (timeout), routing stays normal:
     // a guessed chat lane would turn real requests into chat.
-    const chatResult =
-        llmResult?.tier === "chat" && llmResult.confidence >= 0.6
+    // A question about something that changes needs a search, not the tool-less chat lane.
+    const askingChangingFact = asksChangingFact(opts.message);
+    // A tool need that reads like chat (Finder, the weather, what was said before) gets that one
+    // category as a simple single step. Sent through the full router instead, "Earlier tonight I
+    // asked you…" picked up browser and os_control and went to the Sonnet plan, which asked the
+    // owner to clarify.
+    const overrideCategory = toolNeedCategory(opts.message);
+    if (
+        overrideCategory &&
+        CATEGORIES[overrideCategory] &&
+        !opts.requestedCategories &&
+        activeRequestedCategories.categories.length === 0 &&
+        llmResult &&
+        (llmResult.tier === "chat" || llmResult.categories.length === 0)
+    ) {
+        const names = assembleToolNames(
+            [overrideCategory],
+            CATEGORIES[overrideCategory].tools,
+            new Set(allSchemas.map((t) => t.function.name)),
+            getMaxToolsTotal(),
+        );
+        const schemas = allSchemas.filter((t) => names.has(t.function.name));
+        lastClassifiedIntent = llmResult?.intent ?? overrideCategory;
+        lastClassification = { intent: lastClassifiedIntent, specific_tools: [], confidence: 0.9, categories: [overrideCategory] };
+        console.log(`🎯 Tool Router: ${schemas.length} tools [${overrideCategory}, one step] (${Date.now() - startTime}ms)`);
+        return {
+            tools: [...schemas, REQUEST_TOOLS_SCHEMA],
+            categories: [overrideCategory],
+            skillSlugs: [],
+            totalAvailable: allSchemas.length,
+            selectedCount: schemas.length + 1,
+            classification: { ...lastClassification, tier: "simple", multi_step: false },
+        };
+    }
+    const chatResult = askingChangingFact
+        ? null
+        : llmResult?.tier === "chat" && llmResult.confidence >= 0.6
             ? llmResult
             : llmResult && llmResult.categories.length === 0 && isConversationalBanter(opts.message)
               ? { intent: "banter", categories: [], confidence: 0.6 }
@@ -1665,6 +2028,16 @@ export async function selectTools(opts: {
             categories: [...llmResult.categories],
         };
         classifierUsed = "llm";
+        // Safety net: an unmistakable need the classifier missed ("open example.com in the
+        // browser" filed as research) would leave the model without the tool. Add up to two
+        // categories whose high-confidence keyword pattern matches.
+        let added = 0;
+        for (const { pattern, category, minScore } of KEYWORD_BOOSTS) {
+            if (added < 2 && minScore >= 0.7 && !selectedCategories.includes(category) && pattern.test(opts.message)) {
+                selectedCategories.push(category);
+                added++;
+            }
+        }
     } else {
         lastClassification = null;
         // Fallback: hybrid structural + semantic + keyword boosts
@@ -1748,6 +2121,15 @@ export async function selectTools(opts: {
         }
     }
 
+    // ── A request that names a one-tool action gets that tool ──
+    // "Zip the BhaiEval folder" filed under os_control left compress_files past the cap,
+    // and gpt-4.1-nano tried to zip through Finder's menus.
+    for (const { pattern, tool, category } of NAMED_TOOLS) {
+        if (!pattern.test(opts.message) || !allToolNames.has(tool)) continue;
+        if (!selectedCategories.includes(category)) selectedCategories.push(category);
+        if (!specificTools.includes(tool)) specificTools = [...specificTools, tool];
+    }
+
     // ── Always include alwaysInclude categories ──
     for (const [catName, catDef] of Object.entries(CATEGORIES)) {
         if (catDef.alwaysInclude && !selectedCategories.includes(catName)) {
@@ -1792,9 +2174,6 @@ export async function selectTools(opts: {
         }
     }
 
-    // Update category affinity
-    updateCategoryAffinity(selectedCategories);
-
     // ══════════════════════════════════════════════
     // STAGE 3: TOOL ASSEMBLY — Cap at MAX_TOOLS
     // Precision filter: only send what's needed
@@ -1810,8 +2189,10 @@ export async function selectTools(opts: {
         }
     }
 
-    // ── Include relevant MCP tools ──
-    const mcpSchemas = getMCPToolSchemas();
+    // ── Include relevant MCP and runtime-made (Forge) tools ──
+    const mcpSchemas = [...getMCPToolSchemas(), ...getDynamicToolSchemas()].filter(
+        (t) => !selectedToolNames.has(t.function.name),
+    );
     if (mcpSchemas.length > 0) {
         if (embeddingsReady && selectedSchemas.length < getMaxToolsTotal()) {
             try {
@@ -1821,11 +2202,13 @@ export async function selectTools(opts: {
 
                 for (const mcpTool of mcpSchemas) {
                     const toolName = mcpTool.function.name;
-                    let mcpEmb = mcpToolEmbeddings.get(toolName);
+                    // Keyed by description too, so a re-created tool re-embeds.
+                    const embKey = `${toolName}\n${mcpTool.function.description ?? ""}`;
+                    let mcpEmb = mcpToolEmbeddings.get(embKey);
                     if (!mcpEmb) {
                         const { embedText } = await import("./memory/embeddings.js");
                         mcpEmb = await embedText(mcpTool.function.description || toolName);
-                        mcpToolEmbeddings.set(toolName, mcpEmb);
+                        mcpToolEmbeddings.set(embKey, mcpEmb);
                     }
                     mcpScored.push({ schema: mcpTool, score: cosineSimilarity(messageEmb, mcpEmb) });
                 }
@@ -1854,7 +2237,7 @@ export async function selectTools(opts: {
     selectedSchemas.push(REQUEST_TOOLS_SCHEMA);
 
     // ── Select relevant skill slugs ──
-    const skillSlugs = getRelevantSkillSlugs(selectedCategories);
+    const skillSlugs = getRelevantSkillSlugs(selectedCategories, `${opts.message} ${llmResult?.intent ?? ""}`);
 
     // Thread the classifier's output through the selection so callers can
     // implement fast-path gates without relying on the mutable module-level
@@ -1944,7 +2327,7 @@ export async function handleToolRequest(request: ToolRequest): Promise<{
         // ── FORGE Phase 2: auto-queue synthesis candidate ──
         // If forge is ready and the kill switch isn't set, queue a synthesis job.
         // The agent will see the synthesized tool on a subsequent iteration.
-        if (process.env.ATLAS_NO_FORGE_AUTO_SYNTHESIS !== "true") {
+        if (process.env.BHAI_NO_FORGE_AUTO_SYNTHESIS !== "true") {
             try {
                 const { queueSynthesisCandidate, isForgeReady } = await import("./forge/orchestrator.js");
                 if (isForgeReady()) {
@@ -2040,16 +2423,6 @@ export function clearToolRouterState(): void {
 
 export function isRequestToolsCall(toolName: string): boolean {
     return toolName === "request_tools";
-}
-
-// ── Record tool usage for analytics ──────────
-
-export function recordToolUsageForAnalytics(opts: {
-    toolsUsed: string[];
-    categories: string[];
-    success?: boolean;
-}): void {
-    recordToolUsage(opts);
 }
 
 // ── Get router stats ─────────────────────────

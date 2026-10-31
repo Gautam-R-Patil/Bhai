@@ -37,12 +37,19 @@ export class TemporalCache {
     /** Store results for a key */
     set(key: string, results: MemoryRecord[]): void {
         this.cache.delete(key);
+        // Expired sets are never returned: drop them now instead of holding them until evicted.
+        const now = Date.now();
+        for (const [k, e] of this.cache) if (now - e.timestamp > LRU_TTL_MS) this.cache.delete(k);
         while (this.cache.size >= LRU_MAX_SIZE) {
             const oldest = this.cache.keys().next().value;
             if (oldest === undefined) break;
             this.cache.delete(oldest);
         }
         this.cache.set(key, { results, timestamp: Date.now() });
+    }
+
+    get size(): number {
+        return this.cache.size;
     }
 
     /** Clear the entire cache (e.g., after a memory write) */

@@ -36,6 +36,7 @@ let _status: NetworkStatus = "online";
 let _consecutiveFailures = 0;
 let _lastCheckTime = 0;
 let _lastOnlineTime = Date.now();
+let _lastSuccessAt = 0; // last reported successful network call (reportNetworkSuccess)
 let _checkTimer: NodeJS.Timeout | null = null;
 let _recoveryTimer: NodeJS.Timeout | null = null;
 const _listeners: StatusListener[] = [];
@@ -150,18 +151,30 @@ export function startNetworkMonitor(): void {
 
     // Initial check
     performCheck().then(status => setStatus(status));
+    schedulePassiveCheck(CHECK_INTERVAL_MS);
+}
 
-    _checkTimer = setInterval(async () => {
+// The passive check runs 45 s after the last sign of connectivity: a successful call reported
+// in the meantime pushes it back (no HEAD while traffic flows), so an outage is still noticed
+// within 45 s of the last success, as with a fixed 45 s interval.
+function schedulePassiveCheck(delay: number): void {
+    _checkTimer = setTimeout(async () => {
+        const quiet = Date.now() - _lastSuccessAt;
+        if (quiet < CHECK_INTERVAL_MS) {
+            if (_checkTimer) schedulePassiveCheck(CHECK_INTERVAL_MS - quiet);
+            return;
+        }
         const newStatus = await performCheck();
         setStatus(newStatus);
-    }, CHECK_INTERVAL_MS);
+        if (_checkTimer) schedulePassiveCheck(CHECK_INTERVAL_MS);
+    }, delay);
     _checkTimer.unref?.();
 }
 
 /** Stop the monitor */
 export function stopNetworkMonitor(): void {
     if (_checkTimer) {
-        clearInterval(_checkTimer);
+        clearTimeout(_checkTimer);
         _checkTimer = null;
     }
     stopRecoveryPolling();
@@ -196,6 +209,7 @@ export async function reportNetworkError(): Promise<NetworkStatus> {
 
 /** Report a successful network call — resets failure counter */
 export function reportNetworkSuccess(): void {
+    _lastSuccessAt = Date.now();
     if (_consecutiveFailures > 0 || _status !== "online") {
         _consecutiveFailures = 0;
         _lastOnlineTime = Date.now();

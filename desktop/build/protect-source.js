@@ -16,7 +16,8 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { execSync } = require("child_process");
+const { execFileSync, execSync, spawnSync } = require("node:child_process");
+const { pruneBotModules } = require("./prune-bot-modules.js");
 
 // Import protection modules
 let JavaScriptObfuscator;
@@ -93,8 +94,12 @@ const OBFUSCATION_OPTIONS = {
     // (selfDefending causes issues with some runtime environments)
     selfDefending: false,
 
-    // Unicode escape
-    unicodeEscapeSequence: true,
+    // Unicode escape — OFF. Strings are still rc4-encrypted in the string
+    // array; escaping every ASCII character as \uXXXX only made the bundle 70%
+    // bigger (16.9 → 9.7 MB) and slower to parse at every start. escapeLiterals()
+    // escapes non-Latin-1 characters in string and regex literals, so V8 keeps
+    // the source one byte per char, and module paths in full as before.
+    unicodeEscapeSequence: false,
 
     // Keep module exports working
     renameGlobals: false,
@@ -128,6 +133,58 @@ const SKIP_PATTERNS = [
 
 function shouldSkip(filePath) {
     return SKIP_PATTERNS.some(p => p.test(filePath));
+}
+
+/**
+ * Post-obfuscation pass over string and regex literals.
+ *
+ * V8 stores a script's source one byte per character only when every character
+ * is Latin-1 (≤ U+00FF). With unicodeEscapeSequence off the obfuscator leaves
+ * string and regex literals as written, and their emoji / Devanagari / CJK would
+ * make the whole bundle two bytes per character. In both, \uXXXX (a surrogate
+ * pair for astral characters) means the same thing, with or without a regex's
+ * u flag, and so it does in place of an identity escape (\ + character). A
+ * backslash before U+2028/U+2029 in a string is a line continuation, which adds
+ * nothing. Template literals are left alone: a tag such as String.raw would see
+ * the escape itself.
+ *
+ * Module paths ('../dist/…js', the keys of esbuild's lazy-init wrappers) are
+ * written fully as \xNN, as unicodeEscapeSequence did, so the bundle's file
+ * names stay out of a plain-text search.
+ */
+function escapeLiterals(code) {
+    const acorn = require("acorn");
+    const hex = (ch) => {
+        const n = ch.charCodeAt(0);
+        return n > 0xff ? `\\u${n.toString(16).padStart(4, "0")}` : `\\x${n.toString(16).padStart(2, "0")}`;
+    };
+    let out = "";
+    let last = 0;
+    for (const tok of acorn.tokenizer(code, { ecmaVersion: "latest", sourceType: "module", allowHashBang: true })) {
+        const isString = tok.type === acorn.tokTypes.string;
+        if (tok.type !== acorn.tokTypes.regexp && !isString) continue;
+        const raw = code.slice(tok.start, tok.end);
+        if (isString && /^['"]\.\.\/dist\/[\w./-]+['"]$/.test(raw)) {
+            out += code.slice(last, tok.start) + raw[0] + [...raw.slice(1, -1)].map(hex).join("") + raw[0];
+            last = tok.end;
+            continue;
+        }
+        if (!/[\u0100-\uffff]/.test(raw)) continue;
+        let fixed = "";
+        for (let i = 0; i < raw.length; i++) {
+            const c = raw[i];
+            if (c === "\\") {
+                const n = raw[++i];
+                if (n === " " || n === " ") continue;
+                fixed += n.charCodeAt(0) > 0xff ? hex(n) : c + n;
+            } else {
+                fixed += c.charCodeAt(0) > 0xff ? hex(c) : c;
+            }
+        }
+        out += code.slice(last, tok.start) + fixed;
+        last = tok.end;
+    }
+    return out + code.slice(last);
 }
 
 /**
@@ -165,10 +222,17 @@ function obfuscateFile(filePath) {
             const obfuscated = JavaScriptObfuscator.obfuscate(code, OBFUSCATION_OPTIONS);
             let protectedCode = obfuscated.getObfuscatedCode();
             protectedCode = additionalScramble(protectedCode);
+            protectedCode = escapeLiterals(protectedCode);
+            const wide = (protectedCode.match(/[\u0100-\uffff]/g) || []).length;
+            if (wide) {
+                console.warn(
+                    `[PROTECT] ⚠ ${wide} non-Latin-1 characters left (template literals?): V8 will hold this bundle at two bytes per character`,
+                );
+            }
             const header = `// ${crypto.randomBytes(8).toString('hex')} © ${crypto.randomBytes(4).toString('hex')}\n`;
             const finalCode = header + protectedCode;
             // Write to a tmp .mjs so Node treats it as ESM for the parse check.
-            const probe = path.join(tmpDir, `atlas-obf-check-${process.pid}-${attempt}.mjs`);
+            const probe = path.join(tmpDir, `bhai-obf-check-${process.pid}-${attempt}.mjs`);
             fs.writeFileSync(probe, finalCode);
             const r = spawnSync(process.execPath, ["--check", probe], { encoding: "utf8" });
             fs.unlinkSync(probe);
@@ -388,8 +452,8 @@ function removeSourceMaps(dir) {
  *   • scripts/check-deps.mjs               — Windows-only; drop on macOS/Linux
  *   • scripts/dump_uia.ps1                 — Windows-only; drop on macOS/Linux
  *   • scripts/dump_atspi.py                — Linux-only;  drop on macOS/Windows
- *   • scripts/atlas-hotkey.lua             — Hammerspoon (macOS); drop on Win/Linux
- *   • scripts/atlas-hotkey.ahk             — AutoHotkey (Windows); drop on macOS/Linux
+ *   • scripts/bhai-hotkey.lua             — Hammerspoon (macOS); drop on Win/Linux
+ *   • scripts/bhai-hotkey.ahk             — AutoHotkey (Windows); drop on macOS/Linux
  *
  * Anything still needed for the target platform is preserved.
  */
@@ -423,20 +487,20 @@ function cleanResidues(botDir, platform) {
             path.join(botDir, "scripts", "dump_atspi.py"),
             path.join(botDir, "scripts", "ocr_screen.ps1"),
             path.join(botDir, "scripts", "check-deps.mjs"),
-            path.join(botDir, "scripts", "atlas-hotkey.ahk"),
+            path.join(botDir, "scripts", "bhai-hotkey.ahk"),
         );
     } else if (platform === "win32") {
         alwaysDelete.push(
             path.join(botDir, "scripts", "dump_atspi.py"),
-            path.join(botDir, "scripts", "atlas-hotkey.lua"),
+            path.join(botDir, "scripts", "bhai-hotkey.lua"),
         );
     } else if (platform === "linux") {
         alwaysDelete.push(
             path.join(botDir, "scripts", "dump_uia.ps1"),
             path.join(botDir, "scripts", "ocr_screen.ps1"),
             path.join(botDir, "scripts", "check-deps.mjs"),
-            path.join(botDir, "scripts", "atlas-hotkey.ahk"),
-            path.join(botDir, "scripts", "atlas-hotkey.lua"),
+            path.join(botDir, "scripts", "bhai-hotkey.ahk"),
+            path.join(botDir, "scripts", "bhai-hotkey.lua"),
         );
     }
 
@@ -474,6 +538,84 @@ function cleanResidues(botDir, platform) {
     return removed.length;
 }
 
+/** electron-builder's Arch enum (ia32=0, x64=1, armv7l=2, arm64=3, universal=4) as a name. */
+function archName(arch) {
+    if (typeof arch === "string") return arch;
+    return ["ia32", "x64", "armv7l", "arm64", "universal"][arch] || process.arch;
+}
+
+function findFiles(dir, nameRe, out = []) {
+    if (!fs.existsSync(dir)) return out;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) findFiles(p, nameRe, out);
+        else if (e.isFile() && nameRe.test(e.name)) out.push(p);
+    }
+    return out;
+}
+
+/** Export names of a Node-API module, loaded in a child Node (a crash can't take the build down). */
+function loadedExports(file) {
+    const r = spawnSync(
+        process.execPath,
+        [
+            "-e",
+            "const m={exports:{}};process.dlopen(m,process.argv[1]);process.stdout.write(Object.keys(m.exports).sort().join(','))",
+            file,
+        ],
+        { encoding: "utf8", timeout: 60000 },
+    );
+    if (r.status !== 0) throw new Error((r.stderr || "load failed").split("\n")[0]);
+    return r.stdout;
+}
+
+/**
+ * strip -x the large native libraries before electron-builder signs them:
+ * onnxruntime's dylibs and the bhai-native module (native/Cargo.toml keeps
+ * strip=false because of a linker bug, so it happens here, after linking).
+ * A stripped file replaces the original only after it loads in this Node with
+ * the same exports (a dylib through the .node binding next to it). Anything
+ * that can't be checked here (another arch, no binding next to it) ships as is.
+ */
+function stripNativeLibraries(botDir, arch) {
+    if (process.platform !== "darwin" || process.arch !== arch) return 0;
+    let saved = 0;
+    const libs = [
+        ...findFiles(path.join(botDir, "node_modules"), /^libonnxruntime[^/]*\.dylib$/),
+        ...findFiles(path.join(botDir, "native"), /^bhai-native\..*\.node$/),
+    ];
+    for (const file of libs) {
+        const dir = path.dirname(file);
+        const probes = file.endsWith(".node")
+            ? [file]
+            : fs
+                  .readdirSync(dir)
+                  .filter((n) => n.endsWith(".node"))
+                  .map((n) => path.join(dir, n));
+        if (probes.length === 0) continue;
+        const backup = `${file}.unstripped`;
+        const before = fs.statSync(file).size;
+        try {
+            const expected = probes.map(loadedExports);
+            fs.copyFileSync(file, backup);
+            execFileSync("strip", ["-x", file], { stdio: "pipe" });
+            execFileSync("codesign", ["--force", "--sign", "-", file], { stdio: "pipe" });
+            probes.forEach((p, i) => {
+                if (loadedExports(p) !== expected[i]) throw new Error(`exports of ${path.basename(p)} changed`);
+            });
+            fs.unlinkSync(backup);
+            saved += before - fs.statSync(file).size;
+            console.log(
+                `[PROTECT] → Stripped ${path.basename(file)}: ${(before / 1048576).toFixed(1)} → ${(fs.statSync(file).size / 1048576).toFixed(1)} MB`,
+            );
+        } catch (e) {
+            if (fs.existsSync(backup)) fs.renameSync(backup, file);
+            console.warn(`[PROTECT] → Kept ${path.basename(file)} unstripped: ${e.message}`);
+        }
+    }
+    return saved;
+}
+
 /**
  * Generate integrity hash for ASAR
  */
@@ -497,6 +639,8 @@ exports.default = async function afterPack(context) {
 
     const asarPath = path.join(resourcesDir, "app.asar");
     const botDir = path.join(resourcesDir, "bot");
+    const targetPlatform = context.electronPlatformName;
+    const targetArch = archName(context.arch);
 
     console.log("\n[PROTECT] ═══════════════════════════════════════");
     console.log("[PROTECT] Starting multi-layer source protection...");
@@ -526,8 +670,25 @@ exports.default = async function afterPack(context) {
     // compiled binaries). Runs after bundling so file-name listings already
     // hide the dist/ surface; this strips the rest.
     console.log("\n[PROTECT] Layer 0.5: Residue cleanup...");
-    const residueDeletions = cleanResidues(botDir, context.electronPlatformName);
+    const residueDeletions = cleanResidues(botDir, targetPlatform);
     console.log(`[PROTECT] → Removed ${residueDeletions} residue files`);
+
+    // 0.6 Production-only node_modules for the target OS/arch: what
+    // `npm ci --omit=dev` installs from the repo's package-lock.json, minus
+    // files Node never loads there (C/C++ sources, other platforms' prebuilds,
+    // browser builds, type declarations). A production package missing from
+    // the copied tree fails the build instead of shipping a broken feature.
+    console.log(`\n[PROTECT] Layer 0.6: Pruning bot/node_modules for ${targetPlatform}-${targetArch}...`);
+    const lock = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "package-lock.json"), "utf8"));
+    const prune = pruneBotModules(botDir, lock, { platform: targetPlatform, arch: targetArch });
+    if (prune.missing.length) {
+        throw new Error(
+            `bot/node_modules lacks production packages (run npm ci in the repo root): ${prune.missing.join(", ")}`,
+        );
+    }
+    console.log(
+        `[PROTECT] → Removed ${prune.removedPackages} packages and ${prune.removedFiles} files (${(prune.bytes / 1048576).toFixed(1)} MB)`,
+    );
 
     // 1. Protect bot source code (obfuscation + bytecode)
     // After bundling, only bot-bundle.mjs needs protection. If bundling failed,
@@ -606,16 +767,17 @@ exports.default = async function afterPack(context) {
     const nativeDir = path.join(process.cwd(), "..", "native");
     const destNativeDir = path.join(botDir, "native");
 
-    // Find the correct .node file for this platform
-    const platform = process.platform;
-    const arch = process.arch;
+    // Find the .node file for the target platform and arch (not the build
+    // machine's, which differ in a cross-arch build).
+    const platform = targetPlatform;
+    const arch = targetArch;
     let nativeNodeFile = null;
 
     if (platform === "darwin") {
         // Try universal first, then arch-specific
-        const universalPath = path.join(nativeDir, "atlas-native.darwin-universal.node");
-        const arm64Path = path.join(nativeDir, "atlas-native.darwin-arm64.node");
-        const x64Path = path.join(nativeDir, "atlas-native.darwin-x64.node");
+        const universalPath = path.join(nativeDir, "bhai-native.darwin-universal.node");
+        const arm64Path = path.join(nativeDir, "bhai-native.darwin-arm64.node");
+        const x64Path = path.join(nativeDir, "bhai-native.darwin-x64.node");
 
         if (fs.existsSync(universalPath)) {
             nativeNodeFile = universalPath;
@@ -625,14 +787,14 @@ exports.default = async function afterPack(context) {
             nativeNodeFile = x64Path;
         }
     } else if (platform === "win32") {
-        const winPath = path.join(nativeDir, `atlas-native.win32-${arch}-msvc.node`);
+        const winPath = path.join(nativeDir, `bhai-native.win32-${arch}-msvc.node`);
         if (fs.existsSync(winPath)) {
             nativeNodeFile = winPath;
         }
     } else if (platform === "linux") {
         // Try GNU first, then musl
-        const gnuPath = path.join(nativeDir, `atlas-native.linux-${arch}-gnu.node`);
-        const muslPath = path.join(nativeDir, `atlas-native.linux-${arch}-musl.node`);
+        const gnuPath = path.join(nativeDir, `bhai-native.linux-${arch}-gnu.node`);
+        const muslPath = path.join(nativeDir, `bhai-native.linux-${arch}-musl.node`);
         if (fs.existsSync(gnuPath)) {
             nativeNodeFile = gnuPath;
         } else if (fs.existsSync(muslPath)) {
@@ -643,9 +805,15 @@ exports.default = async function afterPack(context) {
     if (nativeNodeFile && fs.existsSync(nativeNodeFile)) {
         fs.mkdirSync(destNativeDir, { recursive: true });
 
-        // Copy the .node file
+        // Copy the .node file, and drop the other platforms' and arches' builds
+        // that extraResources copied from ../native.
         const nodeFileName = path.basename(nativeNodeFile);
         fs.copyFileSync(nativeNodeFile, path.join(destNativeDir, nodeFileName));
+        for (const other of fs.readdirSync(destNativeDir)) {
+            if (/^(?:bhai|atlas)-native\..*\.node$/.test(other) && other !== nodeFileName) { // atlas-: a stale pre-rename build
+                fs.unlinkSync(path.join(destNativeDir, other));
+            }
+        }
 
         // Copy the loader: index.js (fail-open front) + binding.js (napi-generated)
         for (const loader of ["index.js", "binding.js"]) {
@@ -686,6 +854,10 @@ exports.default = async function afterPack(context) {
         console.log("[PROTECT] → sharp already present in bot/node_modules");
     }
 
+    // 5d. Strip symbols from the big native libraries (before signing).
+    const stripped = stripNativeLibraries(botDir, targetArch);
+    if (stripped) console.log(`[PROTECT] → Stripping saved ${(stripped / 1048576).toFixed(1)} MB`);
+
     // 6. Write protection marker
     const marker = {
         protected: true,
@@ -700,3 +872,9 @@ exports.default = async function afterPack(context) {
     console.log("[PROTECT] Source protection complete!");
     console.log("[PROTECT] ═══════════════════════════════════════\n");
 };
+
+exports.escapeLiterals = escapeLiterals;
+exports.OBFUSCATION_OPTIONS = OBFUSCATION_OPTIONS;
+exports.archName = archName;
+exports.stripNativeLibraries = stripNativeLibraries;
+exports.obfuscateFile = obfuscateFile;

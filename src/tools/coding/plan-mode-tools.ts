@@ -85,7 +85,7 @@ export const exitPlanModeTool: ToolDefinition = {
 
         // Persist the plan to a tmp file so channel layers or the user can
         // retrieve it later if the session is interrupted.
-        const dir = path.join(tmpdir(), "atlas-plans");
+        const dir = path.join(tmpdir(), "bhai-plans");
         try {
             mkdirSync(dir, { recursive: true });
             const fname = `plan-${Date.now()}.md`;

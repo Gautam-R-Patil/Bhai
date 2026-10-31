@@ -79,7 +79,7 @@ export function getKnownCreditBalance(): number | null {
  */
 export async function checkAccountStatus(): Promise<{ allowed: boolean; reason?: string }> {
     const now = Date.now();
-    const userId = process.env.ATLAS_OTPLESS_USER_ID;
+    const userId = process.env.BHAI_OTPLESS_USER_ID;
 
     if (!userId) {
         console.log("[AccountGuard] No userId — blocking");
@@ -121,7 +121,7 @@ export async function checkAccountStatus(): Promise<{ allowed: boolean; reason?:
 
         if (data.status !== "active") {
             console.log(`[AccountGuard] Account status: ${data.status} — blocking`);
-            return { allowed: false, reason: `Account is ${data.status}. Contact support.` };
+            return { allowed: false, reason: `Account is ${data.status}. Contact the TRUSCOR team.` };
         }
 
         if (data.ai_credits <= 0) {
@@ -166,9 +166,9 @@ export async function initAccountGuard(): Promise<void> {
 
     console.log("[AccountGuard] Initializing...");
 
-    const userId = process.env.ATLAS_OTPLESS_USER_ID;
+    const userId = process.env.BHAI_OTPLESS_USER_ID;
     if (!userId) {
-        console.error("[AccountGuard] No ATLAS_OTPLESS_USER_ID — bot cannot start without a signed-in account.");
+        console.error("[AccountGuard] No BHAI_OTPLESS_USER_ID — bot cannot start without a signed-in account.");
         setTimeout(() => process.exit(78), 1000); // 78: not allowed to run — the app won't auto-restart
         return;
     }

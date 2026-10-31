@@ -375,7 +375,7 @@ async function writeFailureReport(
 }
 
 function parseEnvBudget(): number | undefined {
-    const raw = process.env.ATLAS_POST_SYNTHESIS_BUDGET_MS;
+    const raw = process.env.BHAI_POST_SYNTHESIS_BUDGET_MS;
     if (!raw) return undefined;
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : undefined;
@@ -431,8 +431,8 @@ export function parseCapabilitiesLooseInput(
  * "Cheating" patterns:
  *   - Every test uses `returns_no_error` AND the handler body is >500 chars
  *     → the handler isn't being tested for behavior, just "doesn't throw".
- *   - Every test uses `returns_no_error` OR `returns_equals` with
- *     `expected_value: undefined / null` (which deep-equal matches a null
+ *   - Every test uses `returns_no_error`, a bare `throws`, OR `returns_equals`
+ *     with `expected_value: undefined / null` (which deep-equal matches a null
  *     return) AND the handler body is >500 chars.
  * Phase 4 will replace this with adversarial test synthesis.
  */
@@ -445,6 +445,7 @@ function envIsTestSelfBait(env: SynthesisEnvelope): boolean {
     const allLowDiscriminator = tests.every(
         (t) =>
             t.expected_kind === "returns_no_error" ||
+            t.expected_kind === "throws" || // any error passes, a ReferenceError included
             (t.expected_kind === "returns_equals" && (t.expected_value === undefined || t.expected_value === null)),
     );
     return allLowDiscriminator;

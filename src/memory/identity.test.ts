@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-identity-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-identity-"));
 
 let identity: typeof import("./identity.js");
 
@@ -54,5 +54,24 @@ describe("identity snippet", () => {
         );
         expect(JSON.parse(out).success).toBe(true);
         expect(identity.getIdentityProfile().name).toEqual({ value: "Dheeraj S", verified: true });
+    });
+
+    it("core_memory_delete clears an identity field and an extra key", async () => {
+        const { coreMemoryDelete } = await import("../tools/memory-tools-advanced.js");
+        const { runWithCallerContext } = await import("../tools/cron-tool.js");
+        identity.updateIdentityProfile({
+            location: identity.statedField("location", "Delhi"),
+            extra: { kid_school: "DPS", keep: 1 },
+        });
+        for (const content of ["location", "kid_school"]) {
+            const out = await runWithCallerContext({ isOwner: true }, () =>
+                coreMemoryDelete.handler({ section: "identity", content }),
+            );
+            expect(JSON.parse(out).success).toBe(true);
+        }
+        const p = identity.getIdentityProfile();
+        expect(p.location).toBeUndefined();
+        expect(p.extra).toEqual({ keep: 1 });
+        expect(identity.getIdentityPromptSnippet()).not.toContain("Delhi");
     });
 });

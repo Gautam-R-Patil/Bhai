@@ -110,11 +110,11 @@ describe("composer templates — V3", () => {
     it("goals_status names first goal and progress", () => {
         const out = tryTemplate(
             mk("goals_status", {
-                goals: [{ title: "ship atlas", progress: 60 }],
+                goals: [{ title: "ship bhai", progress: 60 }],
             }),
             "telegram",
         );
-        expect(out).toContain("ship atlas");
+        expect(out).toContain("ship bhai");
         expect(out).toContain("60%");
     });
 
@@ -135,11 +135,11 @@ describe("composer templates — V3", () => {
     it("news_today lists headlines", () => {
         const out = tryTemplate(
             mk("news_today", {
-                headlines: [{ title: "atlas ships v3" }, { title: "convex adds feature" }],
+                headlines: [{ title: "bhai ships v3" }, { title: "convex adds feature" }],
             }),
             "telegram",
         );
-        expect(out).toContain("atlas ships v3");
+        expect(out).toContain("bhai ships v3");
         expect(out).toContain("convex adds feature");
     });
 });

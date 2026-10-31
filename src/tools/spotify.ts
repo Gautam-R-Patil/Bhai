@@ -21,7 +21,10 @@
 // music, just with less precision and fewer features.
 
 import { execFile } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { getDataDir } from "../config/paths.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 import { installSpogo, spogoBinaryPath } from "./spotify-installer.js";
@@ -57,7 +60,7 @@ let _spogoPath: string | null = null;
 async function findSpogo(): Promise<string | null> {
     if (_spogoChecked) return _spogoPath;
     _spogoChecked = true;
-    // Atlas-managed install location is checked first so it takes precedence
+    // Bhai-managed install location is checked first so it takes precedence
     // over any stale system installs the user might have.
     const candidates: string[] = [spogoBinaryPath(), "spogo"];
     // Common install locations
@@ -388,14 +391,37 @@ interface SearchCacheEntry {
     result: { uri: string; name?: string; artists?: string };
     at: number;
 }
-const _searchCache = new Map<string, SearchCacheEntry>();
-const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000; // 15 min
+// What a query found ("levitating dua lipa" → its track) holds for weeks, and a search
+// costs ~4s through spogo: keep the last 200 on disk, so the songs someone plays again
+// start without searching, across restarts too.
+const SEARCH_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const searchCacheFile = () => join(getDataDir(), "spotify-search-cache.json");
+let _searchCacheLoaded: Map<string, SearchCacheEntry> | undefined;
+function searchCache(): Map<string, SearchCacheEntry> {
+    if (!_searchCacheLoaded) {
+        _searchCacheLoaded = new Map();
+        try {
+            const saved = JSON.parse(readFileSync(searchCacheFile(), "utf8")) as [string, SearchCacheEntry][];
+            for (const [k, v] of saved) if (v?.result?.uri) _searchCacheLoaded.set(k, v);
+        } catch {
+            /* none yet */
+        }
+    }
+    return _searchCacheLoaded;
+}
 
 function writeSearchCache(cacheKey: string, result: { uri: string; name?: string; artists?: string }): void {
-    _searchCache.set(cacheKey, { result, at: Date.now() });
-    if (_searchCache.size > 200) {
-        const oldest = [..._searchCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
-        if (oldest) _searchCache.delete(oldest[0]);
+    const cache = searchCache();
+    cache.set(cacheKey, { result, at: Date.now() });
+    if (cache.size > 200) {
+        const oldest = [...cache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        if (oldest) cache.delete(oldest[0]);
+    }
+    try {
+        mkdirSync(getDataDir(), { recursive: true });
+        writeFileSync(searchCacheFile(), JSON.stringify([...cache.entries()]));
+    } catch {
+        /* the in-memory cache still works */
     }
 }
 
@@ -404,7 +430,7 @@ async function searchTop(
     query: string,
 ): Promise<{ uri: string; name?: string; artists?: string } | null> {
     const cacheKey = `${type}:${query.toLowerCase().trim()}`;
-    const cached = _searchCache.get(cacheKey);
+    const cached = searchCache().get(cacheKey);
     if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL_MS) {
         return cached.result;
     }

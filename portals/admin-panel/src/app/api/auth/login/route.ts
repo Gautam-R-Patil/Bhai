@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     // store/admins:* are exported as internalQuery/internalMutation in
     // convex/store/admins.ts (line 5), so they're NOT reachable via the
     // public /api/query path. We use admin-key-gated HTTP wrappers
-    // (defined in convex/http.ts) that ATLAS_ADMIN_KEY can call.
+    // (defined in convex/http.ts) that BHAI_ADMIN_KEY can call.
     const { admin } = await adminHttpPost<{ admin: Admin | null }>(
       "/api/admin/auth/get-by-email",
       { email }

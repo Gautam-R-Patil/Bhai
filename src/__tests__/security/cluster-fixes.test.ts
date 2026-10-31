@@ -20,7 +20,7 @@ import { _sanitizeSecretsTs } from "../../security/secrets-sanitizer.js";
 import { sanitizeMcpDescription, buildMcpEnv } from "../../mcp/client.js";
 import { getGitMCPEndpoint } from "../../mcp/gitmcp-bridge.js";
 
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-cluster-"));
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-cluster-"));
 
 afterEach(() => {
     // Drop out of any plan-mode state between tests.
@@ -159,7 +159,8 @@ describe("F5 — sensitive paths + sanitizer on read", () => {
         expect(isSensitivePath(path.join("/tmp", "secret.env")).denied).toBe(true);
         expect(isSensitivePath(path.join("/tmp", ".env.production")).denied).toBe(true);
         expect(isSensitivePath(path.join("/tmp", "server.pem")).denied).toBe(true);
-        expect(isSensitivePath(path.join(os.homedir(), ".atlas", "store", "x.json")).denied).toBe(true);
+        expect(isSensitivePath(path.join(os.homedir(), ".bhai", "store", "x.json")).denied).toBe(true);
+        expect(isSensitivePath(path.join(os.homedir(), ".atlas", "store", "x.json")).denied).toBe(true); // pre-rename root
     });
 
     it("permits ordinary files", () => {
@@ -268,7 +269,8 @@ describe("F9 — audit log protected path", () => {
         // files.ts reuses the same allowlist module so the check fires.
         await import("../../security/audit-log.js");
         const { deleteFile } = await import("../../tools/files.js");
-        const auditPath = path.resolve("data", "audit.jsonl");
+        const { getDataDir } = await import("../../config/paths.js");
+        const auditPath = path.join(getDataDir(), "audit.jsonl");
         const raw = await deleteFile.handler({ path: auditPath });
         const out = JSON.parse(raw);
         expect(out.error).toBeDefined();

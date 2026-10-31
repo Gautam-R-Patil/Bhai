@@ -156,7 +156,7 @@ describe("handoff state machine", () => {
 // Runs the /auth-login inline script against a stub DOM with manual timers:
 // enough to check the order that matters (nonce in the URL before the SDK
 // loads) and the window/browser halves of the email-link flow.
-function runAuthPage(opts: { search: string; inApp: boolean; replies?: Record<string, any[]> }) {
+function runAuthPage(opts: { search: string; inApp: boolean; replies?: Record<string, any[]>; bridgeName?: "bhaiAuth" | "atlasAuth" }) {
   const el = () => {
     const classes = new Set<string>(["hidden"]);
     const listeners: Record<string, (e: any) => unknown> = {};
@@ -182,7 +182,7 @@ function runAuthPage(opts: { search: string; inApp: boolean; replies?: Record<st
   let otplessCallback: any = null;
   const replies = opts.replies || {};
   const location = { search: opts.search, pathname: "/auth-login" };
-  const window: any = opts.inApp ? { atlasAuth: { submitToken: async (t: string) => { submitted.push(t); return { success: true }; } } } : {};
+  const window: any = opts.inApp ? { [opts.bridgeName ?? "bhaiAuth"]: { submitToken: async (t: string) => { submitted.push(t); return { success: true }; } } } : {};
   const document: any = {
     title: "Bhai — Sign In",
     getElementById: (id: string) => els[id],
@@ -245,6 +245,20 @@ describe("/auth-login page", () => {
     const h = page.location.search.slice(3);
     expect(page.fetches.filter((f) => f.code)).toEqual([{ op: "claim", h, code: "111111" }, { op: "claim", h, code: "482913" }]);
     expect(page.submitted).toEqual(["tok_12345678"]);
+  });
+
+  it("in an install from before the rename: finds window.atlasAuth and signs in through it", async () => {
+    const page = runAuthPage({
+      search: "",
+      inApp: true,
+      bridgeName: "atlasAuth",
+      replies: { claim: [{ status: "needs_code" }, { status: "ready", token: "tok_old_install" }] },
+    });
+    expect(page.fetches[0].op).toBe("start"); // inApp: the bridge was found
+    await page.tick(); // poll: needs_code
+    page.els["code-input"].value = "482913";
+    await page.els["code-form"].fire("submit");
+    expect(page.submitted).toEqual(["tok_old_install"]);
   });
 
   it("in the Bhai window: re-registers after the row goes away instead of giving up", async () => {

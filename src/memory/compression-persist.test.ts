@@ -12,16 +12,16 @@ import {
     startSession,
 } from "./session.js";
 
-const ORIG_NO_CONTINUITY = process.env.ATLAS_NO_PRUNE_CONTINUITY;
+const ORIG_NO_CONTINUITY = process.env.BHAI_NO_PRUNE_CONTINUITY;
 
 beforeEach(() => {
-    delete process.env.ATLAS_NO_PRUNE_CONTINUITY;
+    delete process.env.BHAI_NO_PRUNE_CONTINUITY;
     endSession();
 });
 
 afterEach(() => {
-    if (ORIG_NO_CONTINUITY === undefined) delete process.env.ATLAS_NO_PRUNE_CONTINUITY;
-    else process.env.ATLAS_NO_PRUNE_CONTINUITY = ORIG_NO_CONTINUITY;
+    if (ORIG_NO_CONTINUITY === undefined) delete process.env.BHAI_NO_PRUNE_CONTINUITY;
+    else process.env.BHAI_NO_PRUNE_CONTINUITY = ORIG_NO_CONTINUITY;
     endSession();
 });
 
@@ -65,11 +65,11 @@ describe("structured compression summary — fail-open", () => {
 
     it("kill-switch: get returns null and set no-ops even after a set", () => {
         startSession();
-        process.env.ATLAS_NO_PRUNE_CONTINUITY = "true";
+        process.env.BHAI_NO_PRUNE_CONTINUITY = "true";
         setLastCompressionSummary("should not persist");
         expect(getLastCompressionSummary()).toBeNull();
         // With the switch off again, the in-memory value confirms the set was a no-op.
-        delete process.env.ATLAS_NO_PRUNE_CONTINUITY;
+        delete process.env.BHAI_NO_PRUNE_CONTINUITY;
         expect(getLastCompressionSummary()).toBeNull();
     });
 });

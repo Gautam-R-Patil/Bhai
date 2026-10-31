@@ -5,22 +5,26 @@ import type { LLMClient } from "../llm.js";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import type {
-    ActiveResearch, ResearchProfile, RankedSource, StructuredFinding,
-    ResearchRound, NotifyFn,
+    ActiveResearch, ResearchProfile, RankedSource, RawFinding,
+    ResearchRound, ResearchState, NotifyFn,
 } from "./types.js";
 import { RESEARCH_DIR, AdaptiveRateLimiter } from "./profiles.js";
-import { multiEngineSearch, resetEngineHealth } from "./engines.js";
+import { multiEngineSearch } from "./engines.js";
 import { fetchPages, rankOutboundLinks, scoreDomainQuality, getDomain } from "./fetcher.js";
 import {
     generateSeedQueries, generateMoreQueries, analyzeAndExtract,
     detectContradictions, identifyGaps, synthesizeResearch,
     shouldExtractContacts, extractContactsSection,
 } from "./analysis.js";
-import { crossReferenceFindings, dedupeByText, rankSource, UrlSet } from "./scoring.js";
-import { saveResearchState, deleteResearchState, storeResearchInMemory } from "./persistence.js";
+import { crossReferenceFindings, dedupeByText, mentionsTopic, rankSource, UrlSet } from "./scoring.js";
+import { loadResearchState, saveResearchState, storeResearchInMemory } from "./persistence.js";
 import { generateHypotheses, updateHypothesis, type Hypothesis, type ResearchPlan } from "./hypothesis-engine.js";
 import { getCredibility, recordClaimVerification } from "./credibility-model.js";
 import { getDimensionValue } from "../harness/registry.js";
+import { pLimit } from "../utils/concurrency.js";
+
+type Page = Awaited<ReturnType<typeof fetchPages>>[number];
+type Analysis = Awaited<ReturnType<typeof analyzeAndExtract>>;
 
 // ── Main Background Execution ────────────────
 
@@ -29,17 +33,28 @@ export async function executeDeepResearch(
     profile: ResearchProfile,
     llm: LLMClient,
     notify: NotifyFn,
+    resume?: ResearchState,
 ): Promise<void> {
-    const allFindings: Array<{ text: string; sourceUrl: string; sourceTitle: string; categories: string[] }> = [];
-    const allSources: RankedSource[] = [];
-    const rounds: ResearchRound[] = [];
-    const visitedUrls = new UrlSet(); // the same page under another URL spelling is visited once
-    const usedQueries = new Set<string>();
+    const allFindings: RawFinding[] = resume ? [...resume.allFindings] : [];
+    const allSources: RankedSource[] = resume ? [...resume.allSources] : [];
+    const rounds: ResearchRound[] = resume ? [...resume.rounds] : [];
+    const visitedUrls = new UrlSet(resume?.visitedUrls); // the same page under another URL spelling is visited once
+    const usedQueries = new Set<string>(resume?.usedQueries);
     const signal = research.abortController.signal;
     const rateLimiter = new AdaptiveRateLimiter();
 
     // Memory leak prevention: cap findings array to avoid unbounded growth
     const MAX_FINDINGS = 1000;
+    // A follow-up (builds_on) starts from a finished research's findings, often already at the cap:
+    // keep the longest half so its own findings have room, and don't store the old ones to memory again.
+    // A resumed follow-up starts from its own checkpoint, so the old findings come from the basis's.
+    const basisTexts = research.buildsOn
+        ? new Set((resume?.buildsOn ? resume : await loadResearchState(research.buildsOn))?.allFindings.map(f => f.text))
+        : null;
+    if (resume?.buildsOn && allFindings.length > MAX_FINDINGS / 2) {
+        allFindings.sort((a, b) => b.text.length - a.text.length);
+        allFindings.length = MAX_FINDINGS / 2;
+    }
     /** Trim allFindings to MAX_FINDINGS, keeping longer (higher-confidence) findings */
     function trimFindings(): void {
         if (allFindings.length <= MAX_FINDINGS) return;
@@ -47,28 +62,33 @@ export async function executeDeepResearch(
         allFindings.sort((a, b) => b.text.length - a.text.length);
         allFindings.length = MAX_FINDINGS;
     }
-    const engineBreakdown: Record<string, number> = {};
+    // Shared with research so checkpoints and the status tool see live counts (a resume skipping Phase 1 never reassigns it).
+    const engineBreakdown: Record<string, number> = { ...resume?.research.engineBreakdown };
+    research.engineBreakdown = engineBreakdown;
 
-    // Reset engine health at the start of each research session
-    resetEngineHealth();
+    // Engine health isn't reset per research: one engine backing off is the same engine for
+    // every research running at once, and a fresh start would just re-hit the dead ones.
 
     console.log(`[RESEARCH] 🔬 Starting: ${research.id} (${research.profile} profile)`);
     console.log(`[RESEARCH]   Topic: "${research.topic}"`);
     console.log(`[RESEARCH]   Depth: ${research.depth} rounds, max ${research.maxSources} sources`);
     console.log(`[RESEARCH]   Citation depth: ${profile.citationDepth}, Academic: ${profile.useAcademicEngines}`);
 
-    await notify(`🔬 Deep research started: "${research.topic.substring(0, 50)}" (${research.profile} profile: ${research.depth} rounds, ${research.maxSources} sources)`);
+    // A fresh start was already announced by the agent's reply; a resume (often after a restart) wasn't.
+    // A follow-up arrives here with a finished research's sources: that isn't a resume.
+    const resuming = !!resume && !resume.buildsOn;
+    if (resuming) await notify(`🔬 Picking up the research on "${research.topic.substring(0, 50)}" where it stopped (${allSources.length} sources so far)`, true);
+    else await notify(`🔬 Deep research started: "${research.topic.substring(0, 50)}" (${research.profile} profile: ${research.depth} rounds, ${research.maxSources} sources)`);
 
     try {
         // ── Generate seed queries ──
-        const seedQueries = await generateSeedQueries(llm, research.topic, profile);
-        const pendingQueries = [...seedQueries];
-        console.log(`[RESEARCH] 🌱 Generated ${seedQueries.length} seed queries`);
+        const pendingQueries = resume?.pendingQueries.length ? [...resume.pendingQueries] : await generateSeedQueries(llm, research.topic, profile);
+        if (!resuming) console.log(`[RESEARCH] 🌱 Generated ${pendingQueries.length} seed queries`);
 
         // ── Hypothesis-driven research planning ──
         let researchPlan: ResearchPlan | null = null;
         let hypotheses: Hypothesis[] = [];
-        try {
+        if (!resuming) try {
             researchPlan = await generateHypotheses(llm, research.topic);
             hypotheses = researchPlan.hypotheses;
             // Add hypothesis-designed queries to the pending queue
@@ -83,21 +103,66 @@ export async function executeDeepResearch(
         // ── Phase distribution (tunable via Meta-Harness registry) ──
         const p1Ratio = getDimensionValue<number>("research.discoveryPhaseRatio") ?? 0.4;
         const p2Ratio = getDimensionValue<number>("research.deepReadPhaseRatio") ?? 0.4;
-        const phase1Rounds = Math.ceil(research.depth * p1Ratio);  // Discovery
+        // A run resumed in Phase 2 or later skips discovery. ponytail: the resumed phase's
+        // round count restarts (bounded by maxSources); save per-phase counters if that matters.
+        const skipDiscovery = (resume?.research.currentPhase ?? 0) >= 2;
+        const phase1Rounds = skipDiscovery ? 0 : Math.ceil(research.depth * p1Ratio);  // Discovery
         const phase2Rounds = Math.ceil(research.depth * p2Ratio);  // Deep Reading
-        const phase3Rounds = research.depth - phase1Rounds - phase2Rounds; // Verification
 
-        let globalRound = 0;
+        let globalRound = resume?.currentRound ?? 0;
         let consecutiveFailures = 0;
+        // Pace is this run's time over this run's rounds: a resume's earlier rounds took no time here.
+        const startRound = globalRound;
         const roundStartTime = Date.now();
+
+        // Analyze fetched pages a few at a time (profile.concurrentQueries) instead of one
+        // LLM call after another, never more pages than the source budget has room for.
+        // Returns the pages that yielded findings, in page order.
+        const analyzeBatch = async (pages: Page[]): Promise<Array<{ page: Page; analysis: Analysis }>> => {
+            const usable = pages
+                .filter(p => p.content && p.content.length >= 100 && mentionsTopic(p.content, research.topic))
+                .slice(0, Math.max(0, research.maxSources - allSources.length));
+            const analyses = await pLimit(usable.map(p => () => signal.aborted
+                ? Promise.resolve<Analysis>({ findings: [], followUpQueries: [], categories: [] })
+                : analyzeAndExtract(llm, research.topic, p.content, p.url)), profile.concurrentQueries);
+            return usable.map((page, i) => ({ page, analysis: analyses[i] })).filter(a => a.analysis.findings.length > 0);
+        };
+
+        // Record one analyzed page: its findings, its ranked source and its follow-up queries.
+        const ingest = (page: Page, analysis: Analysis, citationCount: number): void => {
+            for (const f of analysis.findings) {
+                allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
+            }
+            const ranked = rankSource(page.url, page.title, page.content, analysis.findings, citationCount, research.topic);
+            ranked.outboundLinks = page.links;
+            allSources.push(ranked);
+            for (const fq of analysis.followUpQueries) {
+                if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
+            }
+        };
+
+        // Checkpoint for deep_research({resume_id}). Page content is dropped: rankSource
+        // has already used it and nothing later reads it.
+        const checkpoint = () => saveResearchState({
+            research: Object.fromEntries(Object.entries(research).filter(([k]) => k !== "abortController")) as ResearchState["research"],
+            allFindings,
+            allSources: allSources.map(s => ({ ...s, content: "" })),
+            visitedUrls: Array.from(visitedUrls),
+            usedQueries: Array.from(usedQueries),
+            pendingQueries,
+            rounds,
+            currentRound: globalRound,
+        });
 
         // ══════════════════════════════════════
         // PHASE 1: DISCOVERY (broad search)
         // ══════════════════════════════════════
 
-        research.currentPhase = 1;
-        console.log(`[RESEARCH] ═══ PHASE 1: DISCOVERY (${phase1Rounds} rounds) ═══`);
-        await notify(`🌐 Phase 1: Discovery — casting a wide net across 6+ search engines...`);
+        if (!skipDiscovery) {
+            research.currentPhase = 1;
+            console.log(`[RESEARCH] ═══ PHASE 1: DISCOVERY (${phase1Rounds} rounds) ═══`);
+            await notify(`🌐 Phase 1: Discovery — searching the web${profile.useAcademicEngines ? " and academic databases" : ""}...`);
+        }
 
         let allEnginesOfflineCount = 0; // Track rounds where ALL engines return 0 results
 
@@ -133,9 +198,9 @@ export async function executeDeepResearch(
                 return r.results;
             });
 
-            // Deduplicate
-            const newResults = allResults.filter(r => !visitedUrls.has(r.url));
-            for (const r of newResults) visitedUrls.add(r.url);
+            // Deduplicate, adding as we go so two spellings of one page in this batch
+            // collapse too (Set.add returns the set, which is truthy)
+            const newResults = allResults.filter(r => !visitedUrls.has(r.url) && visitedUrls.add(r.url));
 
             if (newResults.length === 0) {
                 consecutiveFailures++;
@@ -149,7 +214,9 @@ export async function executeDeepResearch(
                         if (netStatus === "offline" || isOffline()) {
                             console.error(`[RESEARCH] ❌ Internet offline — aborting research after ${allEnginesOfflineCount} rounds with 0 results`);
                             research.status = "failed";
-                            await notify(`Research aborted — internet connection appears to be down. Will resume when connectivity returns.`);
+                            research.error = "The internet seemed to be down. It can be continued once back online.";
+                            research.updatedAt = new Date().toISOString();
+                            await notify(`⚠️ Research on "${research.topic.substring(0, 50)}" stopped: the internet seems to be down. Ask me to continue it once you're back online.`, true);
                             return;
                         }
                     } catch { /* network monitor not loaded */ }
@@ -167,25 +234,12 @@ export async function executeDeepResearch(
                         usedQueries.add(rephrased);
                         console.log(`[RESEARCH]   🔄 Retry ${consecutiveFailures}/3 with: "${rephrased.substring(0, 50)}..."`);
                         const retryResults = await multiEngineSearch(rephrased, profile.useAcademicEngines);
-                        const retryNew = retryResults.results.filter(r => !visitedUrls.has(r.url));
-                        for (const r of retryNew) visitedUrls.add(r.url);
+                        const retryNew = retryResults.results.filter(r => !visitedUrls.has(r.url) && visitedUrls.add(r.url));
 
                         if (retryNew.length > 0) {
-                            const pages = await fetchPages(retryNew.slice(0, 10));
-                            for (const page of pages) {
+                            for (const { page, analysis } of await analyzeBatch(await fetchPages(retryNew.slice(0, 10)))) {
                                 if (signal.aborted || allSources.length >= research.maxSources) break;
-                                if (!page.content || page.content.length < 100) continue;
-                                const analysis = await analyzeAndExtract(llm, research.topic, page.content, page.url);
-                                if (analysis.findings.length > 0) {
-                                    for (const f of analysis.findings) {
-                                        allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
-                                    }
-                                    allSources.push({ ...rankSource(page.url, page.title, page.content, analysis.findings,
-                                        retryNew.find(r => r.url === page.url)?.citationCount || 0, research.topic), outboundLinks: page.links });
-                                    for (const fq of analysis.followUpQueries) {
-                                        if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
-                                    }
-                                }
+                                ingest(page, analysis, retryNew.find(r => r.url === page.url)?.citationCount || 0);
                             }
                             consecutiveFailures = 0;
                             rateLimiter.onSuccess();
@@ -205,25 +259,9 @@ export async function executeDeepResearch(
             const pages = await fetchPages(toFetch);
 
             // Analyze each page
-            for (const page of pages) {
+            for (const { page, analysis } of await analyzeBatch(pages)) {
                 if (signal.aborted || allSources.length >= research.maxSources) break;
-                if (!page.content || page.content.length < 100) continue;
-
-                const analysis = await analyzeAndExtract(llm, research.topic, page.content, page.url);
-                if (analysis.findings.length > 0) {
-                    for (const f of analysis.findings) {
-                        allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
-                    }
-
-                    const ranked = rankSource(page.url, page.title, page.content, analysis.findings,
-                        newResults.find(r => r.url === page.url)?.citationCount || 0, research.topic);
-                    ranked.outboundLinks = page.links;
-                    allSources.push(ranked);
-
-                    for (const fq of analysis.followUpQueries) {
-                        if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
-                    }
-                }
+                ingest(page, analysis, newResults.find(r => r.url === page.url)?.citationCount || 0);
             }
 
             globalRound++;
@@ -236,29 +274,15 @@ export async function executeDeepResearch(
             research.engineBreakdown = engineBreakdown;
             research.updatedAt = new Date().toISOString();
 
-            // Estimate time remaining
-            const avgTimePerRound = (Date.now() - roundStartTime) / globalRound;
-            research.estimatedTimeRemaining = Math.round(((research.depth - globalRound) * avgTimePerRound) / 1000);
+            // Rounds still to go in Phases 1 and 2, at this run's pace, plus about a minute to write it up.
+            const avgTimePerRound = (Date.now() - roundStartTime) / Math.max(1, globalRound - startRound);
+            research.estimatedTimeRemaining = Math.round(((phase1Rounds - round - 1 + phase2Rounds) * avgTimePerRound) / 1000) + 60;
 
             if (round % 3 === 0) {
                 await notify(`🔍 Phase 1 round ${round + 1}/${phase1Rounds}: ${allSources.length} sources, ${allFindings.length} findings`);
             }
 
-            // Save state periodically
-            if (globalRound % 5 === 0) {
-                await saveResearchState({
-                    research: Object.fromEntries(Object.entries(research).filter(([k]) => k !== "abortController")) as any,
-                    allFindings: allFindings.map(f => f.text),
-                    structuredFindings: [],
-                    allSources,
-                    visitedUrls: Array.from(visitedUrls),
-                    usedQueries: Array.from(usedQueries),
-                    pendingQueries,
-                    rounds,
-                    currentRound: globalRound,
-                });
-            }
-
+            await checkpoint();
             await rateLimiter.wait();
         }
 
@@ -267,7 +291,7 @@ export async function executeDeepResearch(
         // ── Dynamic Phase Adjustment ──
         // If Phase 1 found too few sources, steal rounds from Phase 2
         let adjustedPhase2Rounds = phase2Rounds;
-        if (allSources.length < 10 && !signal.aborted) {
+        if (!skipDiscovery && allSources.length < 10 && !signal.aborted) {
             const extraRounds = Math.min(5, phase2Rounds);
             console.log(`[RESEARCH]   ⚠️ Phase 1 found only ${allSources.length} sources — running ${extraRounds} extra discovery rounds`);
             await notify(`🔄 Expanding discovery — only ${allSources.length} sources found, searching harder...`);
@@ -287,24 +311,12 @@ export async function executeDeepResearch(
 
                 const { results, engines } = await multiEngineSearch(bq, profile.useAcademicEngines);
                 for (const e of engines) engineBreakdown[e] = (engineBreakdown[e] || 0) + 1;
-                const newR = results.filter(r => !visitedUrls.has(r.url));
-                for (const r of newR) visitedUrls.add(r.url);
+                const newR = results.filter(r => !visitedUrls.has(r.url) && visitedUrls.add(r.url));
 
                 if (newR.length > 0) {
-                    const pages = await fetchPages(newR.slice(0, 8));
-                    for (const page of pages) {
+                    for (const { page, analysis } of await analyzeBatch(await fetchPages(newR.slice(0, 8)))) {
                         if (signal.aborted || allSources.length >= research.maxSources) break;
-                        if (!page.content || page.content.length < 100) continue;
-                        const analysis = await analyzeAndExtract(llm, research.topic, page.content, page.url);
-                        if (analysis.findings.length > 0) {
-                            for (const f of analysis.findings) {
-                                allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
-                            }
-                            allSources.push({ ...rankSource(page.url, page.title, page.content, analysis.findings, 0, research.topic), outboundLinks: page.links });
-                            for (const fq of analysis.followUpQueries) {
-                                if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
-                            }
-                        }
+                        ingest(page, analysis, 0);
                     }
                 }
 
@@ -314,6 +326,7 @@ export async function executeDeepResearch(
                 research.roundsCompleted = globalRound;
                 research.findingsCount = allFindings.length;
                 research.updatedAt = new Date().toISOString();
+                await checkpoint();
                 await rateLimiter.wait();
             }
 
@@ -328,7 +341,7 @@ export async function executeDeepResearch(
 
         research.currentPhase = 2;
         console.log(`[RESEARCH] ═══ PHASE 2: DEEP READING (${adjustedPhase2Rounds} rounds, citation depth: ${profile.citationDepth}) ═══`);
-        await notify(`📖 Phase 2: Deep Reading — following citation chains (depth ${profile.citationDepth})...`);
+        await notify(`📖 Phase 2: Deep Reading — ${profile.citationDepth > 0 ? `following citation chains (depth ${profile.citationDepth})` : "reading more sources from follow-up searches"}...`);
 
         // Sort sources by score, read top unread ones more deeply
         const sourcesToDeepRead = [...allSources].sort((a, b) => b.finalScore - a.finalScore);
@@ -373,8 +386,9 @@ export async function executeDeepResearch(
                     research.currentQuery = query;
                     const { results, engines } = await multiEngineSearch(query, profile.useAcademicEngines);
                     for (const e of engines) engineBreakdown[e] = (engineBreakdown[e] || 0) + 1;
-                    const newResults = results.filter(r => !visitedUrls.has(r.url));
-                    for (const r of newResults.slice(0, 8 - toFetchUrls.length)) {
+                    for (const r of results) {
+                        if (toFetchUrls.length >= 8) break;
+                        if (visitedUrls.has(r.url)) continue;
                         visitedUrls.add(r.url);
                         toFetchUrls.push(r);
                     }
@@ -385,47 +399,32 @@ export async function executeDeepResearch(
 
             const pages = await fetchPages(toFetchUrls);
 
-            for (const page of pages) {
+            for (const { page, analysis } of await analyzeBatch(pages)) {
                 if (signal.aborted || allSources.length >= research.maxSources) break;
-                if (!page.content || page.content.length < 100) continue;
-
-                const analysis = await analyzeAndExtract(llm, research.topic, page.content, page.url);
-                if (analysis.findings.length > 0) {
-                    for (const f of analysis.findings) {
-                        allFindings.push({ text: f, sourceUrl: page.url, sourceTitle: page.title, categories: analysis.categories });
-
-                        // ── Update hypotheses with new evidence ──
-                        for (let hIdx = 0; hIdx < hypotheses.length; hIdx++) {
-                            const h = hypotheses[hIdx];
-                            if (h.status === "supported" || h.status === "refuted") continue;
-                            const fLower = f.toLowerCase();
-                            const hLower = h.statement.toLowerCase();
-                            // Check if finding is relevant to this hypothesis
-                            const hWords = hLower.split(/\s+/).filter(w => w.length > 4);
-                            const matchCount = hWords.filter(w => fLower.includes(w)).length;
-                            if (matchCount >= 2) {
-                                // Simple heuristic: if finding mentions hypothesis keywords, treat as supporting
-                                const supports = !fLower.includes("not ") && !fLower.includes("false") && !fLower.includes("incorrect");
-                                hypotheses[hIdx] = updateHypothesis(h, f, supports, 0.5);
-                            }
+                ingest(page, analysis, 0);
+                for (const f of analysis.findings) {
+                    // ── Update hypotheses with new evidence ──
+                    for (let hIdx = 0; hIdx < hypotheses.length; hIdx++) {
+                        const h = hypotheses[hIdx];
+                        if (h.status === "supported" || h.status === "refuted") continue;
+                        const fLower = f.toLowerCase();
+                        const hLower = h.statement.toLowerCase();
+                        // Check if finding is relevant to this hypothesis
+                        const hWords = hLower.split(/\s+/).filter(w => w.length > 4);
+                        const matchCount = hWords.filter(w => fLower.includes(w)).length;
+                        if (matchCount >= 2) {
+                            // Simple heuristic: if finding mentions hypothesis keywords, treat as supporting
+                            const supports = !fLower.includes("not ") && !fLower.includes("false") && !fLower.includes("incorrect");
+                            hypotheses[hIdx] = updateHypothesis(h, f, supports, 0.5);
                         }
                     }
+                }
 
-                    const ranked = rankSource(page.url, page.title, page.content, analysis.findings, 0, research.topic);
-
-                    // Extract outbound links for citation chain
-                    if (profile.citationDepth > 1) {
-                        const links = page.links;
-                        ranked.outboundLinks = links;
-                        const topLinks = rankOutboundLinks(links, visitedUrls, 3, research.topic);
-                        for (const link of topLinks) {
-                            citationQueue.push({ url: link, title: `Citation chain`, depth: 2 });
-                        }
-                    }
-
-                    allSources.push(ranked);
-                    for (const fq of analysis.followUpQueries) {
-                        if (!usedQueries.has(fq) && !pendingQueries.includes(fq)) pendingQueries.push(fq);
+                // Extract outbound links for citation chain
+                if (profile.citationDepth > 1) {
+                    const topLinks = rankOutboundLinks(page.links, visitedUrls, 3, research.topic);
+                    for (const link of topLinks) {
+                        citationQueue.push({ url: link, title: `Citation chain`, depth: 2 });
                     }
                 }
             }
@@ -438,25 +437,15 @@ export async function executeDeepResearch(
             research.roundsCompleted = globalRound;
             research.findingsCount = allFindings.length;
             research.updatedAt = new Date().toISOString();
+            // Rounds still to go in this phase, at this run's pace, plus about a minute to write it up.
+            const avgPerRound = (Date.now() - roundStartTime) / Math.max(1, globalRound - startRound);
+            research.estimatedTimeRemaining = Math.round(((adjustedPhase2Rounds - round - 1) * avgPerRound) / 1000) + 60;
 
             if (round % 5 === 0) {
                 await notify(`📖 Phase 2 round ${round + 1}/${adjustedPhase2Rounds}: ${allSources.length} sources, ${allFindings.length} findings, ${citationQueue.length} citations queued`);
             }
 
-            if (globalRound % 5 === 0) {
-                await saveResearchState({
-                    research: Object.fromEntries(Object.entries(research).filter(([k]) => k !== "abortController")) as any,
-                    allFindings: allFindings.map(f => f.text),
-                    structuredFindings: [],
-                    allSources,
-                    visitedUrls: Array.from(visitedUrls),
-                    usedQueries: Array.from(usedQueries),
-                    pendingQueries,
-                    rounds,
-                    currentRound: globalRound,
-                });
-            }
-
+            await checkpoint();
             await rateLimiter.wait();
         }
 
@@ -467,6 +456,7 @@ export async function executeDeepResearch(
         // ══════════════════════════════════════
 
         research.currentPhase = 3;
+        research.estimatedTimeRemaining = 60;
         console.log(`[RESEARCH] ═══ PHASE 3: VERIFICATION & SYNTHESIS ═══`);
         await notify(`🔬 Phase 3: Verifying ${allFindings.length} findings, detecting contradictions, synthesizing report...`);
 
@@ -487,7 +477,7 @@ export async function executeDeepResearch(
 
             const duration = Math.round((Date.now() - new Date(research.startedAt).getTime()) / 1000);
             console.log(`[RESEARCH] ⚠️ Completed with limited results: ${allSources.length} sources, ${allFindings.length} findings, ${duration}s`);
-            await notify(`⚠️ Research complete with limited results (${allSources.length} sources). Search engines may be having issues. Report saved.`);
+            await notify(`⚠️ Only ${allSources.length} source(s) found — writing up what there is…`);
             return;
         }
 
@@ -584,10 +574,11 @@ export async function executeDeepResearch(
         await fs.writeFile(filePath, report);
 
         // Store findings in memory for follow-up questions
-        await storeResearchInMemory(research.topic, structuredFindings, report);
-
-        // Clean up state file
-        await deleteResearchState(research.id);
+        await storeResearchInMemory(
+            research.topic,
+            basisTexts ? structuredFindings.filter(f => !basisTexts.has(f.text)) : structuredFindings,
+            report, research.id, filePath,
+        );
 
         research.report = report;
         research.reportFile = filePath;
@@ -597,12 +588,8 @@ export async function executeDeepResearch(
 
         const duration = Math.round((Date.now() - new Date(research.startedAt).getTime()) / 1000);
         console.log(`[RESEARCH] ✅ Complete: ${allSources.length} sources, ${structuredFindings.length} findings, ${duration}s`);
-        // Brief status notify — the actual user-facing message is produced by the
-        // agent continuation in research/index.ts (which reads the report and
-        // either summarizes or executes follow-up actions). The "✅" + "Research
-        // complete" tokens here are what overlay-chat.ts matches to fire the
-        // research_complete UI signal.
-        await notify(`✅ Research complete — analyzing findings...`);
+        // Progress only: the answer itself comes from the follow-up run in research/index.ts.
+        await notify(`📝 Report written — reading it for you…`);
 
     } catch (err) {
         if (signal.aborted) {
@@ -613,6 +600,6 @@ export async function executeDeepResearch(
         research.error = (err as Error).message;
         research.updatedAt = new Date().toISOString();
         console.error(`[RESEARCH] ❌ Failed: ${(err as Error).message}`);
-        await notify(`❌ Deep research failed: ${(err as Error).message}`);
+        await notify(`❌ Research on "${research.topic.substring(0, 50)}" failed: ${(err as Error).message}`, true);
     }
 }

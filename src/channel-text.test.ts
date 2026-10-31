@@ -10,6 +10,7 @@ import {
     STUCK_REPLY_LINE,
     stuckCallbackMessage,
     stuckKeyboard,
+    takeReaction,
     takeStuckMarker,
     withStuckReplyLine,
 } from "./channel-text.js";
@@ -60,6 +61,12 @@ describe("markdownToTelegramHtml", () => {
 
     it("plain fallback strips markers", () => {
         expect(markdownToPlainText("**b** `c`\n```py\nx\n```")).toBe("b c\nx");
+    });
+
+    it("keeps spaced asterisks as arithmetic, not emphasis", () => {
+        expect(markdownToTelegramHtml("5 * 3 * 2 = 30, and 2 ** 10 ** 2")).toBe("5 * 3 * 2 = 30, and 2 ** 10 ** 2");
+        expect(markdownToPlainText("5 * 3 * 2 = 30")).toBe("5 * 3 * 2 = 30");
+        expect(markdownToTelegramHtml("*really* and **bold** and 2*3*4")).toBe("<i>really</i> and <b>bold</b> and 2*3*4");
     });
 });
 
@@ -252,5 +259,20 @@ describe("takeStuckMarker", () => {
         ]) {
             expect(takeStuckMarker(quoted)).toEqual({ text: quoted, stuck: false });
         }
+    });
+});
+
+// [[react:👍]] in a reply becomes a WhatsApp reaction and never shows as text.
+describe("takeReaction", () => {
+    it("pulls the emoji out and keeps the rest of the reply", () => {
+        expect(takeReaction("[[react:🎉]] congrats Kunal!")).toEqual({ text: "congrats Kunal!", emoji: "🎉" });
+        expect(takeReaction("[[ react : ❤️ ]]")).toEqual({ text: "", emoji: "❤️" });
+    });
+    it("leaves a reply without the marker untouched", () => {
+        expect(takeReaction("  plain reply  ")).toEqual({ text: "  plain reply  ", emoji: undefined });
+    });
+    it("drops a marker that isn't an emoji, and only the first emoji counts", () => {
+        expect(takeReaction("[[react:yes]] ok")).toEqual({ text: "ok", emoji: undefined });
+        expect(takeReaction("[[react:👍]][[react:😂]] ha")).toEqual({ text: "ha", emoji: "👍" });
     });
 });

@@ -50,6 +50,8 @@ export interface ContactRequest {
     receivedAt: number;
     status: "pending" | "allowed" | "blocked";
     ownerNotifiedJid?: string;
+    /** Their WhatsApp name: they have no contact profile until the owner allows them. */
+    pushName?: string;
 }
 
 export interface WhatsAppBotPersona {
@@ -103,10 +105,12 @@ export interface WhatsAppGroup {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
+const DATA_DIR = process.env.BHAI_DATA_DIR || path.resolve("data");
 const OWNERS_PATH = path.join(DATA_DIR, "whatsapp-owners.json");
 const CONTACTS_DIR = path.join(DATA_DIR, "whatsapp-contacts");
 const BLOCKLIST_PATH = path.join(DATA_DIR, "whatsapp-blocklist.json");
+// People waiting for the owner's "allow": kept on disk so an app restart doesn't forget them.
+const PENDING_PATH = path.join(DATA_DIR, "whatsapp-pending-requests.json");
 const PERSONA_PATH = path.join(DATA_DIR, "whatsapp-persona.json");
 const GROUPS_DIR = path.join(DATA_DIR, "whatsapp-groups");
 
@@ -176,6 +180,11 @@ function persistBlocklist(): void {
     ensureDir(DATA_DIR);
     const arr = Array.from(blocklist);
     fs.writeFileSync(BLOCKLIST_PATH, JSON.stringify(arr, null, 2), "utf-8");
+}
+
+function persistPending(): void {
+    ensureDir(DATA_DIR);
+    fs.writeFileSync(PENDING_PATH, JSON.stringify(Array.from(pendingContactRequests.values()), null, 2), "utf-8");
 }
 
 function persistPersona(): void {
@@ -266,6 +275,10 @@ export function initWhatsAppUsers(): void {
 
     // Load blocklist
     blocklist.clear();
+    pendingContactRequests.clear();
+    for (const r of loadJson<ContactRequest[]>(PENDING_PATH, [])) {
+        if (r?.id && r.status === "pending") pendingContactRequests.set(r.id, r);
+    }
     const blockArr = loadJson<string[]>(BLOCKLIST_PATH, []);
     for (const jid of blockArr) {
         blocklist.add(jid);
@@ -555,6 +568,7 @@ export function createContactRequest(
     jid: string,
     firstMessage: string,
     ownerJid: string,
+    pushName?: string,
 ): ContactRequest {
     const request: ContactRequest = {
         id: crypto.randomUUID(),
@@ -563,8 +577,10 @@ export function createContactRequest(
         receivedAt: Date.now(),
         status: "pending",
         ownerNotifiedJid: ownerJid,
+        pushName,
     };
     pendingContactRequests.set(request.id, request);
+    persistPending();
     return request;
 }
 
@@ -586,6 +602,101 @@ export function findGroupByName<G extends { name: string }>(groups: G[], name: s
 /** A LID-addressed JID (…@lid) as its phone JID when Baileys gave one; anything else unchanged. */
 export function phoneJidOf(jid: string | null | undefined, alt: string | null | undefined): string | null | undefined {
     return jid?.endsWith("@lid") && alt?.endsWith("@s.whatsapp.net") ? alt : jid;
+}
+
+/** The pending request a "New message from X" notice was about, by its name or its message. */
+export function requestForNotice(notice: string): ContactRequest | undefined {
+    if (!notice.startsWith("New message from ")) return undefined;
+    return getPendingRequests().find(
+        (r) =>
+            notice.startsWith(`New message from ${r.pushName || jidToPhone(r.jid)}:`) ||
+            notice.includes(`"${r.firstMessage.substring(0, 100)}`),
+    );
+}
+
+const YES_WORDS = /^(allow|yes|yeah|yep|yup|ok|okay|sure|haan|han|ha|approve|go ahead|reply|respond|talk|let)\b[\s,.!:-]*/i;
+const NO_WORDS = /^(block|no|nope|nah|ignore|deny|don'?t|dont)\b[\s,.!:-]*/i;
+
+/**
+ * The owner's swipe-reply on a request notice: allow (with whatever follows as who they are),
+ * block, or null when it isn't a yes or no ("who's this?" goes to the agent).
+ */
+export function noticeVerdict(reply: string): { allow: boolean; context: string } | null {
+    const text = reply.trim();
+    if (NO_WORDS.test(text)) return { allow: false, context: "" };
+    if (YES_WORDS.test(text)) return { allow: true, context: text.replace(YES_WORDS, "").trim() };
+    return null;
+}
+
+/** The name the owner gives someone while letting them in: "his name is Kunal", "she's called Riya". */
+export function nameFromContext(text: string): string | undefined {
+    const m =
+        text.match(/\b(?:his|her|their)\s+name\s+is\s+([A-Za-z][\w'-]{1,30})/i) ||
+        text.match(/\b(?:he|she|they)(?:'s|\s+is|\s+are)\s+called\s+([A-Za-z][\w'-]{1,30})/i);
+    // ("I call her Sunni" is the owner's own nickname for them, not their name.)
+    if (!m || NOT_NAMES.has(m[1].toLowerCase())) return undefined;
+    return m[1][0].toUpperCase() + m[1].slice(1);
+}
+
+/**
+ * The names the owner gave a contact: "his name is Kunal" in what they said when letting them
+ * in, and the owner's nickname for them. Never their WhatsApp name: the contact picks that, and
+ * whatever it matches decides which owner memories reach their chat.
+ */
+export function ownerGivenNames(profile: Pick<ContactProfile, "notes" | "context"> | null | undefined): string[] {
+    const names = [nameFromContext(profile?.notes ?? ""), profile?.context?.ownerNickname]
+        .map((n) => n?.trim() ?? "")
+        .filter((n) => n.length >= 3 && !/^\+?\d+$/.test(n));
+    return [...new Set(names)];
+}
+
+const NOT_NAMES = new Set(["also", "not", "in", "unknown", "something", "the", "a", "my", "your", "same", "secret", "private"]);
+
+/**
+ * Which pending question a notice is about. A notice can list every open question under its
+ * own ("_N questions pending:_"), so only its head counts; a pending-list message matches nothing.
+ */
+export function queryForNotice<Q extends { question: string; contactName: string }>(
+    pending: Q[],
+    notice: string,
+): Q | undefined {
+    // Only Bhai's own request notice ("🙋 *Kunal* asks:" / "💬 *Kunal*:") answers a request; a
+    // list, a hint or a summary that quotes it never does.
+    if (!/^(🙋|💬) \*/u.test(notice.trim())) return undefined;
+    const head = notice.split("\n\n_")[0];
+    const hits = pending.filter((q) => head.includes(`*${q.contactName}*`) && head.includes(`"${q.question}"`));
+    return hits.length === 1 ? hits[0] : undefined;
+}
+
+/** Trailing punctuation and emoji off, for reading a short reply. */
+const bare = (t: string) => t.trim().replace(/[\s.!,🙏👍✅👌]+$/u, "").trim();
+
+/**
+ * A clear yes, and nothing else: what it takes to run something a contact asked for.
+ * "let me think", "ok but not today" or "reply later" are not a yes.
+ */
+export function isClearYes(answer: string): boolean {
+    if (/^[\s👍✅👌]+$/u.test(answer) && answer.trim()) return true; // just a thumbs-up
+    return /^(yes|yeah|yep|yup|haan|han|ha|haa|ji|ji haan|haan ji|ok|okay|sure|go ahead|do it|approve|approved)( (please|go ahead|do it|sure|order it|book it|send it|kar do|karo|please do|ji))?$/i.test(
+        bare(answer),
+    );
+}
+
+
+/** A plain no. */
+export function isClearNo(answer: string): boolean {
+    return /^(no|nope|nah|nahi|na|don'?t|not now|no thanks)$/i.test(bare(answer));
+}
+
+/** A standalone yes or no: the only reply that may answer a notice without a swipe-reply. */
+export function isBareYesNo(text: string): boolean {
+    return isClearYes(text) || isClearNo(text);
+}
+
+/** Someone waiting wrote again: keep it, so the reply after "allow" answers all of it. */
+export function addToPendingRequest(request: ContactRequest, text: string): void {
+    request.firstMessage = `${request.firstMessage}\n${text}`.slice(-2000);
+    persistPending();
 }
 
 /** The pending request from `jid`, if they are already waiting. */
@@ -629,12 +740,13 @@ export function resolveContactRequest(
     request.status = action;
 
     if (action === "allowed") {
-        allowContact(request.jid);
+        allowContact(request.jid, request.pushName, request.pushName);
     } else {
         blockContact(request.jid);
     }
 
     pendingContactRequests.delete(id);
+    persistPending();
     return request;
 }
 

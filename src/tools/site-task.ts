@@ -54,7 +54,7 @@ let busy = false;
  */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Page
 async function recordSession(page: any, fresh = false): Promise<boolean> {
-    if (process.env.ATLAS_NO_SITE_MINT === "true" || process.env.ATLAS_NO_SITE_TRACE === "true") return false;
+    if (process.env.BHAI_NO_SITE_MINT === "true" || process.env.BHAI_NO_SITE_TRACE === "true") return false;
     if (typeof page?.context !== "function") return false;
     let domain = "";
     try {
@@ -80,6 +80,11 @@ const REPAIR_NEXT =
 // ponytail: in memory only; a restart mid-wait drops it (the owner starts again).
 const HUMAN_CHECK = "human_check";
 let humanCheck: { phase: Phase; input?: Record<string, unknown> } | null = null;
+/** Tests: forget the task in memory (its checkpoint is the caller's to remove). */
+export function _resetSiteTask(): void {
+    current = null;
+    humanCheck = null;
+}
 const HANDOFF =
     "The site has a step only the owner can finish (they were asked and it's still open). Tell them in one line.";
 
@@ -134,13 +139,22 @@ async function run(input: Record<string, unknown>): Promise<string> {
     {
         const action = input.action as string;
         const page = await getActivePage();
-        const base = pageDriver(page, 5000, () => getActivePage()); // a closed tab is reopened
+        // The owner's Stop (tools/index.ts STOPPABLE_TOOLS): the task ends at once.
+        const signal = input._signal as AbortSignal | undefined;
+        // A closed tab is reopened, and goes back to its last page only while no order may exist.
+        const base = pageDriver(
+            page,
+            5000,
+            () => getActivePage(),
+            signal,
+            () => !!current?.commit,
+        );
         // The skill never sees a CAPTCHA page (it must never click one): the pipeline clears it first.
         const driver: PageDriver = {
             ...base,
             snapshot: async () => {
                 const { clearCaptchaIfAny } = await import("./browser/captcha.js"); // lazy: avoids an import cycle via the bridge
-                const check = await clearCaptchaIfAny(page, input._signal as AbortSignal | undefined);
+                const check = await clearCaptchaIfAny(page, signal);
                 if (check.present && !check.cleared) throw new Error(HUMAN_CHECK);
                 return base.snapshot();
             },
@@ -160,7 +174,11 @@ async function run(input: Record<string, unknown>): Promise<string> {
                     next_step: `${HANDOFF} When they say it's done, ${again ? "call site_task with action confirm again with the same amount" : "call site_task with action resume (no answer needed)"}.`,
                 });
             }
-            current = ["done", "failed", "aborted", "refused"].includes(r.status) ? null : r.task;
+            // An order that may exist keeps its task, so the next search stops at "may already have been placed".
+            current =
+                ["done", "failed", "aborted", "refused"].includes(r.status) && r.writeStatus !== "may_have_applied"
+                    ? null
+                    : r.task;
             const { task, ...rest } = r;
             // The site changed under a learned skill: the owner's task is finished by
             // hand while recording, and that session repairs the skill.
@@ -171,11 +189,13 @@ async function run(input: Record<string, unknown>): Promise<string> {
                   ? "The order is on the site's payment page. Ask the user to finish paying there themselves (never enter card or UPI details); when they say it's done, call site_task with action resume. Do NOT order again."
                   : r.writeStatus === "may_have_applied" && r.status !== "done" && r.status !== "needs_user"
                     ? "The order may already have been placed (the submit didn't confirm). Do NOT order again: tell the user, and check the site's orders page with the browser tools."
-                    : r.reason === "total_changed"
-                      ? "The total changed since the user agreed. Show the new total (if any) and ask again before confirming."
-                      : r.reason?.startsWith("commit_rejected")
-                        ? "The site turned the order down (nothing was placed). Tell the user what it said and ask whether to try once more; only after a new yes, call site_task with action confirm again."
-                        : NEXT[r.status];
+                    : r.reason === "stopped"
+                      ? "The owner pressed Stop; nothing was ordered. Don't continue this task unless they ask."
+                      : r.reason === "total_changed"
+                        ? "The total changed since the user agreed. Show the new total (if any) and ask again before confirming."
+                        : r.reason?.startsWith("commit_rejected")
+                          ? "The site turned the order down (nothing was placed). Tell the user what it said and ask whether to try once more; only after a new yes, call site_task with action confirm again."
+                          : NEXT[r.status];
             // Showing the total is the "ask": record it, so the owner's next yes
             // grants the confirm call (else the gate would need a second yes).
             // Not inside a swarm: the owner hasn't seen the total yet, so an "ok" sent
@@ -221,7 +241,14 @@ async function run(input: Record<string, unknown>): Promise<string> {
             }
             const searchInput = { query: input.query };
             return view(
-                await runSiteTask({ skillPath, phase: "search", input: searchInput, driver, checkpointDir: dir }),
+                await runSiteTask({
+                    skillPath,
+                    phase: "search",
+                    input: searchInput,
+                    driver,
+                    checkpointDir: dir,
+                    signal,
+                }),
                 searchInput,
             );
         }
@@ -230,7 +257,14 @@ async function run(input: Record<string, unknown>): Promise<string> {
         if (action === "select") {
             const selectInput = { id: input.option_id };
             return view(
-                await runSiteTask({ task: current, phase: "select", input: selectInput, driver, checkpointDir: dir }),
+                await runSiteTask({
+                    task: current,
+                    phase: "select",
+                    input: selectInput,
+                    driver,
+                    checkpointDir: dir,
+                    signal,
+                }),
                 selectInput,
             );
         }
@@ -259,6 +293,7 @@ async function run(input: Record<string, unknown>): Promise<string> {
                     consentToken: mintConsent(current),
                     driver,
                     checkpointDir: dir,
+                    signal,
                 }),
             );
         }
@@ -266,14 +301,17 @@ async function run(input: Record<string, unknown>): Promise<string> {
             const { phase, input: phaseInput } = humanCheck;
             current.repeats = {}; // the same step again after the check is not a loop
             return view(
-                await runSiteTask({ task: current, phase, input: phaseInput, driver, checkpointDir: dir }),
+                await runSiteTask({ task: current, phase, input: phaseInput, driver, checkpointDir: dir, signal }),
                 phaseInput,
             );
         }
         if (action === "resume" && humanCheck) {
             const { phase, input: phaseInput } = humanCheck;
             current.repeats = {}; // the same step again after the check is not a loop
-            return view(await runSiteTask({ task: current, phase, input: phaseInput, driver, checkpointDir: dir }), phaseInput);
+            return view(
+                await runSiteTask({ task: current, phase, input: phaseInput, driver, checkpointDir: dir, signal }),
+                phaseInput,
+            );
         }
         if (action === "resume") {
             return view(
@@ -283,6 +321,7 @@ async function run(input: Record<string, unknown>): Promise<string> {
                     answer: input.answer as string,
                     driver,
                     checkpointDir: dir,
+                    signal,
                 }),
             );
         }

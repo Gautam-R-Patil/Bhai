@@ -6,9 +6,9 @@
 // Secure bridge between renderer (HTML UI) and main process.
 // Exposes only specific IPC methods via contextBridge.
 
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
-contextBridge.exposeInMainWorld("atlas", {
+contextBridge.exposeInMainWorld("bhai", {
     // ── Window Controls ───────────────────────
     minimize: () => ipcRenderer.invoke("window:minimize"),
     close: () => ipcRenderer.invoke("window:close"),
@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld("atlas", {
         connections: (kind, id) => ipcRenderer.invoke("memory:studio-connections", kind, id),
         you: () => ipcRenderer.invoke("memory:studio-you"),
         stats: () => ipcRenderer.invoke("memory:studio-stats"),
+        list: (opts) => ipcRenderer.invoke("memory:studio-list", opts),
+        find: (query) => ipcRenderer.invoke("memory:studio-find", query),
+        review: () => ipcRenderer.invoke("memory:studio-review"),
+        markReviewed: (ids) => ipcRenderer.invoke("memory:studio-reviewed", ids),
         updateMemory: (id, fields) => ipcRenderer.invoke("memory:studio-update-memory", id, fields),
         setImportance: (id, value) => ipcRenderer.invoke("memory:studio-set-importance", id, value),
         pinMemory: (id, pinned) => ipcRenderer.invoke("memory:studio-pin-memory", id, pinned),
@@ -39,13 +43,31 @@ contextBridge.exposeInMainWorld("atlas", {
         forgetLog: (limit) => ipcRenderer.invoke("memory:studio-forget-log", limit),
         insights: () => ipcRenderer.invoke("memory:studio-insights"),
         recomputeInsights: () => ipcRenderer.invoke("memory:studio-recompute-insights"),
+        // Import what another AI (ChatGPT, Claude, …) knows about the owner.
+        importPrompt: () => ipcRenderer.invoke("memory:import-prompt"),
+        importPreview: (opts) => ipcRenderer.invoke("memory:import-preview", opts),
+        importSave: (facts, source) => ipcRenderer.invoke("memory:import-save", facts, source),
+        importUndo: (batch) => ipcRenderer.invoke("memory:import-undo", batch),
+        pickImportFile: () => ipcRenderer.invoke("memory:import-pick-file"),
+        importEstimate: (opts) => ipcRenderer.invoke("memory:import-estimate", opts),
+        importCancel: () => ipcRenderer.invoke("memory:import-cancel"),
+        // Takes the dropped File, never a path string: a File made in the page has no path, so only
+        // a real drop resolves to one. Main checks it before the bot may read it.
+        importUseDropped: (file) => ipcRenderer.invoke("memory:import-use-dropped", webUtils.getPathForFile(file)),
     },
 
     // ── Setup ─────────────────────────────────
-    saveCredentials: (creds) => ipcRenderer.invoke("setup:save-credentials", creds),
     saveProfile: (profile) => ipcRenderer.invoke("setup:save-profile", profile),
     saveLegalAcceptance: (payload) => ipcRenderer.invoke("setup:save-legal", payload),
     openExternalUrl: (url) => ipcRenderer.invoke("util:open-external", url),
+    openReport: (filePath) => ipcRenderer.send("overlay:open-report", filePath),
+    research: {
+        list: () => ipcRenderer.invoke("research:list"),
+        report: (id) => ipcRenderer.invoke("research:report", id),
+        open: (id) => ipcRenderer.send("research:open", id),
+        openSource: (id, url) => ipcRenderer.send("research:open-source", id, url),
+        action: (a) => ipcRenderer.invoke("research:action", a),
+    },
     setupReseedNow: () => ipcRenderer.invoke("setup:reseed-now"),
     chooseWorkspace: () => ipcRenderer.invoke("setup:choose-workspace"),
     createWorkspace: (path) => ipcRenderer.invoke("setup:create-workspace", path),
@@ -85,6 +107,10 @@ contextBridge.exposeInMainWorld("atlas", {
     onBotLog: (callback) => {
         ipcRenderer.on("bot-log", (_, msg) => callback(msg));
     },
+    // Screen locked or nobody at the Mac for 2 minutes: freeze the background orbs.
+    onAmbientPaused: (callback) => {
+        ipcRenderer.on("ambient-paused", (_, paused) => callback(paused));
+    },
     onInstallProgress: (callback) => {
         ipcRenderer.on("install-progress", (_, data) => callback(data));
     },
@@ -108,7 +134,15 @@ contextBridge.exposeInMainWorld("atlas", {
 
     // ── Chats (chat bar history) ──────────────
     listChats: () => ipcRenderer.invoke("chats:list"),
+    getUpcoming: () => ipcRenderer.invoke("schedule:upcoming"),
+    getActivity: () => ipcRenderer.invoke("dash:activity"),
+    chatSend: (chat, text, file) => ipcRenderer.invoke("chat:send", { chat, text, file }),
+    chatStop: () => ipcRenderer.send("chat:stop"),
+    onChatEvent: (callback) => { ipcRenderer.on("chat:event", (_, data) => callback(data)); },
     getChat: (id) => ipcRenderer.invoke("chats:get", id),
+    revealImage: (path) => ipcRenderer.invoke("chats:revealImage", path),
+    saveImage: (path) => ipcRenderer.invoke("chats:saveImage", path),
+    copyImage: (path) => ipcRenderer.invoke("chats:copyImage", path),
     clearChats: () => ipcRenderer.invoke("chats:clear"),
     onGoogleOAuthSuccess: (callback) => {
         ipcRenderer.on("google-oauth-success", (_, email) => callback(email));

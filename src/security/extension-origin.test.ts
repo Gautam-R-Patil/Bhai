@@ -8,7 +8,7 @@ import {
 } from "./extension-origin.js";
 
 afterEach(() => {
-    delete process.env.ATLAS_EXTENSION_IDS;
+    delete process.env.BHAI_EXTENSION_IDS;
     _resetExtensionIdsForTests();
 });
 
@@ -24,7 +24,7 @@ describe("unpackedExtensionId", () => {
 describe("isForeignExtensionOrigin", () => {
     it("refuses any extension but Bhai's own", () => {
         const ours = unpackedExtensionId("/Applications/Bhai.app/Contents/Resources/chrome-extension");
-        process.env.ATLAS_EXTENSION_IDS = ours;
+        process.env.BHAI_EXTENSION_IDS = ours;
         expect(bhaiExtensionIds()?.has(ours)).toBe(true);
         expect(isForeignExtensionOrigin(`chrome-extension://${ours}`)).toBe(false);
         expect(isForeignExtensionOrigin(`chrome-extension://${"a".repeat(32)}`)).toBe(true);

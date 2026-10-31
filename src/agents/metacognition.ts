@@ -264,9 +264,9 @@ function pendingRiskCost(recentToolNames: string[]): number {
 // τ is the confidence above which paying for the expensive arm is not worth it.
 // Pending read-only work → high τ-headroom → downgrade expensive arms unless
 // confidence is genuinely low. Destructive pending → keep firing unless very
-// confident (P≥0.9). Pure arithmetic, ZERO LLM. Gate: ATLAS_NO_META_VOC.
+// confident (P≥0.9). Pure arithmetic, ZERO LLM. Gate: BHAI_NO_META_VOC.
 function applyVocThreshold(state: MetacognitionState, a: MetaAssessment): MetaAssessment {
-    if (process.env.ATLAS_NO_META_VOC === "true") return a;
+    if (process.env.BHAI_NO_META_VOC === "true") return a;
     if (a.intervention === "none" || a.intervention === "ask_user") return a;
     const cL = INTERVENTION_CREDIT_COST[a.intervention];
     const cW = pendingRiskCost(state.signals.recentToolNames);
@@ -418,13 +418,13 @@ export function computeReasoningQuality(state: MetacognitionState, taskCompleted
 // Persist one row per turn so confidence/intervention quality can be analyzed
 // and (later) calibrated against real outcomes — the signal computeReasoningQuality
 // produced was previously never recorded. Append-only JSONL, fail-open, mirrors
-// the value-gate audit-log pattern. Disable with ATLAS_NO_METACOG_LOG=true.
+// the value-gate audit-log pattern. Disable with BHAI_NO_METACOG_LOG=true.
 export function logOutcome(
     state: MetacognitionState,
     taskCompleted: boolean,
     meta: { taskType?: string; modelTier?: string } = {},
 ): void {
-    if (process.env.ATLAS_NO_METACOG_LOG === "true") return;
+    if (process.env.BHAI_NO_METACOG_LOG === "true") return;
     try {
         const s = state.signals;
         const last = state.assessmentHistory[state.assessmentHistory.length - 1];
@@ -470,7 +470,7 @@ export function logOutcome(
 // signals already flagged sustained trouble. escalate/ask_user are zero-cost
 // (next iteration runs a higher tier / a rephrase nudge — both already budgeted).
 //
-// Kill switch: ATLAS_NO_META_INTERVENTIONS=true reverts to today's pure
+// Kill switch: BHAI_NO_META_INTERVENTIONS=true reverts to today's pure
 // nudge-only behavior (the same env already gates the nudge cooldown-repeat).
 
 import * as nodeFs from "node:fs";
@@ -520,7 +520,7 @@ const MAX_ASK_USER_NUDGES = 2;
 
 export async function applyIntervention(ctx: InterventionContext): Promise<void> {
     // GATE: env DISABLES the real dispatch and reverts to nudge-only.
-    if (process.env.ATLAS_NO_META_INTERVENTIONS === "true") return;
+    if (process.env.BHAI_NO_META_INTERVENTIONS === "true") return;
     const iv = ctx.assessment.intervention;
     // ZERO added cost on a healthy turn.
     if (iv === "none") return;
@@ -597,7 +597,7 @@ async function criticsArm(ctx: InterventionContext): Promise<void> {
     ctx.state.lastCriticsIter = ctx.iterations;
     const { runMultiCriticDebate } = await import("./multi-critic.js");
     const taskResult = recentAssistantText(ctx.messages, 3000) || "(no output produced yet)";
-    const budgetMs = Number(process.env.ATLAS_POST_SYNTHESIS_BUDGET_MS ?? "90000");
+    const budgetMs = Number(process.env.BHAI_POST_SYNTHESIS_BUDGET_MS ?? "90000");
     const adversarial = `Adversarially audit the work so far for the SPECIFIC failure the agent is stuck on. ORIGINAL REQUEST: ${ctx.originalRequest}`;
     const consensus = await Promise.race([
         runMultiCriticDebate(ctx.llm, adversarial, taskResult),
@@ -646,7 +646,7 @@ function recentAssistantText(messages: import("../llm.js").ChatCompletionMessage
 // Reads a nightly-fit calibrator (data/metacog-calibrators.json) and, in shadow
 // mode (DEFAULT), computes + logs calibratedP vs the raw confidence WITHOUT
 // changing the returned assessment — proving zero behavior change before anyone
-// acts on it. Behavior only changes when ATLAS_METACOG_SHADOW=false AND a
+// acts on it. Behavior only changes when BHAI_METACOG_SHADOW=false AND a
 // calibrator that beat its baseline exists. Pure TS stats + one JSONL append;
 // ZERO LLM, ZERO native. Mirrors the value-gate shadow pattern (sqlite.ts).
 
@@ -864,7 +864,7 @@ function logCalibrationShadow(row: {
     modelTier?: string;
     intervention: string;
 }): void {
-    if (process.env.ATLAS_NO_METACOG_LOG === "true") return;
+    if (process.env.BHAI_NO_METACOG_LOG === "true") return;
     try {
         const fs = nodeFs;
         const path = nodePath;
@@ -900,7 +900,7 @@ function calibrate(state: MetacognitionState, a: MetaAssessment): MetaAssessment
         modelTier: ctx?.modelTier,
         intervention: a.intervention,
     });
-    const shadow = process.env.ATLAS_METACOG_SHADOW !== "false"; // DEFAULT ON
+    const shadow = process.env.BHAI_METACOG_SHADOW !== "false"; // DEFAULT ON
     if (shadow) return a; // compute + log, DO NOT change behavior
     // ENFORCING (only after ECE/Brier proven to beat baseline): rerun the same
     // fixed cutoffs assessJS uses, against the calibrated probability.

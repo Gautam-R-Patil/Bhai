@@ -13,12 +13,14 @@ try {
     // bytenode not available - running in dev mode
 }
 
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, globalShortcut, screen, systemPreferences, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, globalShortcut, screen, systemPreferences, nativeTheme, powerMonitor } = require("electron");
 const { spawn, execFile } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const { createRequire } = require("node:module");
 const { autoUpdater } = require("electron-updater");
+const { envOf, upgradeEnvText, withLegacyEnvNames, upgradeMarkers, logDate, adoptLegacy, bhaiHome } = require("./legacy-names");
 
 // ── Protected String Decoder ─────────────────────
 // Decodes XOR-encoded prompts and skills at runtime
@@ -107,6 +109,9 @@ const IS_DEV = !app.isPackaged;
 const BOT_DIR = IS_DEV
     ? path.join(__dirname, "..")
     : path.join(process.resourcesPath, "bot");
+// Baileys (wizard WhatsApp pairing) and imapflow (IMAP test) load from the bot's
+// node_modules: one shipped copy, and the patched Baileys the bot itself runs.
+const botRequire = createRequire(path.join(BOT_DIR, "package.json"));
 const DATA_DIR = IS_DEV
     ? path.join(__dirname, "..", "data")
     : path.join(app.getPath("userData"), "data");
@@ -116,6 +121,8 @@ const ENV_PATH = IS_DEV
 const SETUP_FLAG = path.join(app.getPath("userData"), ".setup-complete");
 const LOGS_DIR = path.join(app.getPath("userData"), "logs");
 const LOG_RETENTION_DAYS = 3; // Keep logs for 3 days
+// ~/.bhai: copied over from ~/.atlas here, before the bot starts or anything reads it.
+const BHAI_HOME = bhaiHome(require("node:os").homedir());
 
 // ── v1 → v2 Setup Migration (D10) ─────────────
 // Runs once at boot before the wizard-gate so v1 installs are tagged + seeded.
@@ -141,25 +148,31 @@ const OVERLAY_MAX_HEIGHT = 600;
 const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
+// Shown while the bot boots; the ##BHAI_READY## reload swaps in the real overlay.
+// With a message instead when the bot won't come up (see botDownMessage).
+const overlaySplash = (text = "Bhai is waking up…") =>
+    "data:text/html," +
+    encodeURIComponent(
+        `<meta charset="utf-8"><style>:root{--bg-panel:rgba(252,251,249,.97);color:#1d1d1f}@media(prefers-color-scheme:dark){:root{--bg-panel:rgba(30,28,26,.97);color:#f5f5f7}}body{margin:0;padding:0 24px;height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;font:500 15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif}</style>${text}`,
+    );
 // The overlay page embeds the owner token only for a request that proves it holds it
 // (src/overlay/overlay-chat.ts): this app's own requests add it, read from the 0600 file
 // the bot writes, so another local process or a browser tab opening the page gets none.
+const OVERLAY_TOKEN_FILE = path.join(BHAI_HOME, "overlay-local-token");
 let overlayTokenHooked = false;
 function hookOverlayToken(ses) {
     if (overlayTokenHooked) return;
     overlayTokenHooked = true;
-    const tokenFile = path.join(require("node:os").homedir(), ".atlas", "overlay-local-token");
     ses.webRequest.onBeforeSendHeaders({ urls: [`${OVERLAY_URL}/*`] }, (details, cb) => {
         try {
-            const tok = fs.readFileSync(tokenFile, "utf8").trim();
+            const tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim();
             if (tok) details.requestHeaders["X-Bhai-Overlay"] = tok;
         } catch {
-            /* bot hasn't written it yet: the page loads token-less and is reloaded on ##ATLAS_READY## */
+            /* bot hasn't written it yet: the page loads token-less and is reloaded on ##BHAI_READY## */
         }
         cb({ requestHeaders: details.requestHeaders });
     });
 }
-const OVERLAY_RESIZE_MS = 500;
 const OVERLAY_HIDE_DELAY_MS = 260;
 // macOS 26 Spotlight-style corners; keep in sync with --panel-radius in src/overlay/overlay.html.
 const OVERLAY_CORNER_RADIUS = 26;
@@ -167,17 +180,20 @@ const OVERLAY_DARK_TINT = "#1C1A18E0";
 
 // ── Convex deployment selector ─────────────────────────────────────
 // Packaged DMG → prod by default. `npm start` (dev) → dev. Override either
-// via `ATLAS_ENV=prod|dev` or per-URL via `CONVEX_URL` / `CONVEX_SITE_URL`.
-const _ATLAS_IS_PROD = process.env.ATLAS_ENV
-    ? process.env.ATLAS_ENV === "prod"
+// via `BHAI_ENV=prod|dev` or per-URL via `CONVEX_URL` / `CONVEX_SITE_URL`.
+const _BHAI_IS_PROD = envOf("ENV")
+    ? envOf("ENV") === "prod"
     : app.isPackaged;
-const _CONVEX_DEPLOY_NAME = _ATLAS_IS_PROD ? "avid-finch-726" : "avid-finch-726";
+const _CONVEX_DEPLOY_NAME = _BHAI_IS_PROD ? "avid-finch-726" : "avid-finch-726";
 const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.site`;
 const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.cloud`;
 
-const { parseOtplessVerifyResponse, isLegacyUserId } = require("./auth-helpers");
+const { parseOtplessVerifyResponse, isLegacyUserId, isLoopbackHost } = require("./auth-helpers");
 const { createAgentCursor, parseCursorLine } = require("./agent-cursor");
+const { fileMemo } = require("./file-memo");
+const { pruneCompileCache } = require("./compile-cache");
 const { readVault, registerVaultIpc } = require("./vault-store");
+const { readMasterKey, setAsideIfUnreadable } = require("./settings-key");
 
 // ── Desktop Session Token Management ─────────────
 // Authenticates the Electron main process with the Convex backend via
@@ -199,9 +215,10 @@ const { readVault, registerVaultIpc } = require("./vault-store");
 // kept here as breadcrumbs for legacy callers.
 let _desktopSessionToken = null;
 let _desktopSessionExpiry = 0;
-// Set when the server says the owner removed this Mac (Account → Devices on another one):
-// it gets no session until someone signs in here again.
-let _deviceRemoved = false;
+// Set when the server refuses this Mac a session until someone signs in here again:
+// "device_removed" (the owner removed it in Account → Devices on another one) or
+// "sign_in_required" (no device secret yet, e.g. signed in before secrets existed).
+let _signInNeeded = null;
 
 /** This device as the bot names it (src/session.ts getDeviceFingerprint): one Devices row per Mac. */
 function deviceFingerprint() {
@@ -216,16 +233,24 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
 
     let userId = overrideUserId;
 
+    // Until someone signs in here again the server will only refuse; asking anyway
+    // just spends the sign-in rate limit.
+    if (_signInNeeded) return null;
+    const saved = loadAccountSession();
     if (!userId) {
-        const session = loadAccountSession();
-        if (!session || !session.userId) return null;
-        userId = session.userId;
+        if (!saved || !saved.userId) return null;
+        userId = saved.userId;
+    }
+    if (!saved?.deviceSecret) {
+        _signInNeeded = "sign_in_required";
+        return null;
     }
 
     const https = require("https");
     const bodyStr = JSON.stringify({
         otplessUserId: userId,
         deviceFingerprint: deviceFingerprint(),
+        deviceSecret: saved.deviceSecret,
     });
 
     return new Promise((resolve) => {
@@ -244,12 +269,12 @@ async function getDesktopSessionToken(overrideUserId, overrideInfo) {
                 try {
                     const data = JSON.parse(raw);
                     if (data.token) {
-                        _deviceRemoved = false;
+                        _signInNeeded = null;
                         _desktopSessionToken = data.token;
                         _desktopSessionExpiry = data.expiresAt || (Date.now() + 86400000);
                         resolve(data.token);
                     } else {
-                        if (data.error === "device_removed") _deviceRemoved = true;
+                        if (data.error === "device_removed" || data.error === "sign_in_required") _signInNeeded = data.error;
                         console.warn("[Session] Desktop session failed:", data.error || "unknown");
                         resolve(null);
                     }
@@ -324,6 +349,7 @@ async function convexSiteRequest(method, urlPath, bodyObj) {
 // Channels: users on the "beta" channel get the BETA feed. Switch via
 // store.set("updateChannel", "beta" | "stable" | "canary").
 const UPDATE_FEED_BASE = `${CONVEX_SITE_URL}/api/updates`;
+const { updateFeedUrl, isFeedMissing, checkResult } = require("./update-feed");
 
 function getUpdateChannel() {
     const ch = (store.get("updateChannel") || "stable").toString().toLowerCase();
@@ -332,12 +358,10 @@ function getUpdateChannel() {
 
 function configureAutoUpdater() {
     const channel = getUpdateChannel();
-    // Feed URL is the directory; electron-updater appends latest-mac.yml /
-    // latest.yml. Pass channel via query string — our Convex handler reads
-    // it from `?channel=...`.
-    const url = channel === "stable"
-        ? UPDATE_FEED_BASE
-        : `${UPDATE_FEED_BASE}?channel=${channel}`;
+    // Feed URL is the directory; with the channel set, electron-updater asks for
+    // <channel>-mac.yml / <channel>.yml under it and keeps the query
+    // (?channel=..., and arch=x64 on an Intel Mac: see update-feed.js).
+    const url = updateFeedUrl(UPDATE_FEED_BASE, channel);
     autoUpdater.setFeedURL({ provider: "generic", url });
     autoUpdater.channel = channel;
     console.log(`[Updater] Configured | channel=${channel} | url=${url}`);
@@ -349,7 +373,7 @@ function configureAutoUpdater() {
 
 function getLogFilePath() {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    return path.join(LOGS_DIR, `atlas-${today}.log`);
+    return path.join(LOGS_DIR, `bhai-${today}.log`);
 }
 
 // Buffered async log writer. Bot stdout fires this on every line (heartbeat,
@@ -577,13 +601,11 @@ function cleanOldLogs() {
         cutoffDate.setDate(cutoffDate.getDate() - LOG_RETENTION_DAYS);
 
         for (const file of files) {
-            if (!file.startsWith('atlas-') || !file.endsWith('.log')) continue;
+            // bhai-YYYY-MM-DD.log (atlas-… from before the rename ages out too)
+            const date = logDate(file);
+            if (!date) continue;
 
-            // Extract date from filename: atlas-YYYY-MM-DD.log
-            const dateMatch = file.match(/atlas-(\d{4}-\d{2}-\d{2})\.log/);
-            if (!dateMatch) continue;
-
-            const fileDate = new Date(dateMatch[1]);
+            const fileDate = new Date(date);
             if (fileDate < cutoffDate) {
                 fs.unlinkSync(path.join(LOGS_DIR, file));
                 console.log(`Cleaned old log file: ${file}`);
@@ -637,50 +659,39 @@ function initProtection() {
 // ── Encryption Layer ──────────────────────────
 
 /**
- * Get or create the master encryption key using Windows DPAPI.
- * The key is protected by the user's Windows login — it can only
- * be decrypted by the same Windows user account.
+ * The master encryption key, kept by the OS keychain (Keychain / DPAPI). A refusal is
+ * remembered until relaunch, so one denied prompt isn't asked again on every read.
  */
+let masterKey = null;
+let masterKeyError = null;
 function getMasterKey() {
-    const keyPath = path.join(app.getPath("userData"), ".keystore");
+    if (masterKey) return masterKey;
+    if (masterKeyError) throw masterKeyError;
+    try {
+        masterKey = readMasterKey(path.join(app.getPath("userData"), ".keystore"), safeStorage);
+        return masterKey;
+    } catch (err) {
+        masterKeyError = err;
+        throw err;
+    }
+}
 
-    if (fs.existsSync(keyPath)) {
+/** Settings saved while the keychain was refused (older builds used this key then): still read them. */
+function decryptStored(buf) {
+    try {
+        return decrypt(buf, getMasterKey());
+    } catch (err) {
         try {
-            const encryptedKey = fs.readFileSync(keyPath);
-            if (safeStorage.isEncryptionAvailable()) {
-                return safeStorage.decryptString(encryptedKey);
-            }
-            // Fallback: derive from machine identity
-            return deriveMachineKey();
+            return decrypt(buf, deriveMachineKey());
         } catch {
-            return deriveMachineKey();
+            throw err;
         }
     }
-
-    // Generate new 256-bit key
-    const key = crypto.randomBytes(32).toString("hex");
-
-    if (safeStorage.isEncryptionAvailable()) {
-        const encrypted = safeStorage.encryptString(key);
-        fs.writeFileSync(keyPath, encrypted);
-    } else {
-        // Store with machine-derived encryption as fallback
-        const machineKey = deriveMachineKey();
-        const cipher = crypto.createCipheriv(
-            "aes-256-gcm",
-            Buffer.from(machineKey, "hex").subarray(0, 32),
-            crypto.randomBytes(12)
-        );
-        // For simplicity in fallback, use machineKey to just derive
-        fs.writeFileSync(keyPath, key); // Less secure fallback
-    }
-
-    return key;
 }
 
 /**
- * Derive a machine-unique key from hardware identifiers.
- * Not as secure as DPAPI but works as a fallback.
+ * Derive a machine-unique key from hardware identifiers. Only read now: older builds
+ * encrypted with it when the keychain refused.
  */
 function deriveMachineKey() {
     const os = require("os");
@@ -727,11 +738,14 @@ function decrypt(encryptedBuffer, masterKey) {
  * Save the .env file encrypted.
  */
 function saveEnvEncrypted(envContent) {
+    envContent = withLegacyEnvNames(envContent); // ATLAS_ twins for a pre-rename build
     if (ENV_PATH.endsWith(".enc")) {
-        // Production: encrypt before writing
-        const masterKey = getMasterKey();
-        const encryptedData = encrypt(envContent, masterKey);
-        fs.writeFileSync(ENV_PATH, encryptedData);
+        // Production: encrypt before writing (throws, writing nothing, when the keychain refused the key).
+        // Atomic: a crash mid-write must not leave half a settings file.
+        const data = encrypt(envContent, getMasterKey());
+        setAsideIfUnreadable(ENV_PATH, (buf) => decryptStored(buf));
+        fs.writeFileSync(`${ENV_PATH}.tmp`, data);
+        fs.renameSync(`${ENV_PATH}.tmp`, ENV_PATH);
     } else {
         // Dev mode: write plain text to .env
         fs.writeFileSync(ENV_PATH, envContent, "utf-8");
@@ -819,7 +833,7 @@ function buildDetectionDeps() {
         whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
     };
 
-    // Decrypt atlas-account.enc here so the detector can read the canonical
+    // Decrypt bhai-account.enc here so the detector can read the canonical
     // signin state. saveAccountSession writes to this file; prefs.account in
     // electron-store is never populated, so the detector previously always
     // claimed "not signed in" no matter how many times you signed in.
@@ -889,13 +903,10 @@ function requireInstaller() {
 function loadEnvDecrypted() {
     if (!fs.existsSync(ENV_PATH)) return "";
     try {
-        if (ENV_PATH.endsWith(".enc")) {
-            const masterKey = getMasterKey();
-            const encryptedData = fs.readFileSync(ENV_PATH);
-            return decrypt(encryptedData, masterKey);
-        }
+        // Old ATLAS_X lines read as BHAI_X, so the next save writes the new names.
+        if (ENV_PATH.endsWith(".enc")) return upgradeEnvText(decryptStored(fs.readFileSync(ENV_PATH)));
         // Dev mode: plain .env
-        return fs.readFileSync(ENV_PATH, "utf-8");
+        return upgradeEnvText(fs.readFileSync(ENV_PATH, "utf-8"));
     } catch {
         return "";
     }
@@ -926,13 +937,37 @@ let botProcess = null;
 let mainWindow = null;
 let tray = null;
 let overlayWindow = null;
-let overlayResizeTimer = null;
+// While the overlay is shown, its page reports its content height (overlay:height).
+let overlayFollowsContent = false;
 let botStartTime = null;
-let botMessageCount = 0;
+// Messages today: kept per calendar day on disk, so a restart doesn't zero it.
+const MESSAGES_TODAY_FILE = path.join(DATA_DIR, "messages-today.json");
+const localDay = () => new Date().toLocaleDateString("en-CA");
+let messagesToday = { day: localDay(), count: 0 };
+try { messagesToday = JSON.parse(fs.readFileSync(MESSAGES_TODAY_FILE, "utf-8")); } catch { /* first run */ }
+function countMessagesToday() {
+    if (messagesToday.day !== localDay()) messagesToday = { day: localDay(), count: 0 };
+    return messagesToday.count;
+}
+function addMessageToday() {
+    countMessagesToday();
+    messagesToday.count++;
+    try { fs.writeFileSync(MESSAGES_TODAY_FILE, JSON.stringify(messagesToday)); } catch { /* best effort */ }
+}
 let botToolCount = 0;
 const channelStatuses = {};
+let lastChannelPush = ""; // what the panel last got over "channel-status-update"
+// Push channel statuses to the panel, only when something changed (or a fresh page loaded).
+function pushChannelStatuses(force = false) {
+    const win = mainWindow;
+    const snap = JSON.stringify(channelStatuses);
+    if ((force || snap !== lastChannelPush) && win && !win.isDestroyed()) {
+        lastChannelPush = snap;
+        win.webContents.send("channel-status-update", channelStatuses);
+    }
+}
 
-// WhatsApp owner sign-up: the bot's own number (from its ##ATLAS_WA_SELF## line)
+// WhatsApp owner sign-up: the bot's own number (from its ##BHAI_WA_SELF## line)
 // lets the panel offer a wa.me link/QR with the code already typed in.
 let waSelfNumber = "";
 async function waOtpPayload(code) {
@@ -1013,7 +1048,8 @@ let updateDownloaded = false;
 let downloadProgress = 0;
 
 // ── Account Session (module-level) ────────────
-const ACCOUNT_SESSION_PATH = path.join(DATA_DIR, "atlas-account.enc");
+const ACCOUNT_SESSION_PATH = path.join(DATA_DIR, "bhai-account.enc");
+const LEGACY_ACCOUNT_SESSION_PATH = path.join(DATA_DIR, "atlas-account.enc"); // before the rename
 
 /** Save account session encrypted to disk */
 function saveAccountSession(session) {
@@ -1021,7 +1057,12 @@ function saveAccountSession(session) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
         const masterKey = getMasterKey();
         const data = encrypt(JSON.stringify(session), masterKey);
-        fs.writeFileSync(ACCOUNT_SESSION_PATH, data);
+        // Also under the pre-rename name, so an older build (channel downgrade) stays signed in
+        // with the same device secret. Drop after a release or two.
+        for (const file of [ACCOUNT_SESSION_PATH, LEGACY_ACCOUNT_SESSION_PATH]) {
+            fs.writeFileSync(`${file}.tmp`, data);
+            fs.renameSync(`${file}.tmp`, file);
+        }
     } catch (err) {
         console.error("[Account] Failed to save session:", err.message);
     }
@@ -1030,10 +1071,9 @@ function saveAccountSession(session) {
 /** Load account session from encrypted file */
 function loadAccountSession() {
     try {
-        if (!fs.existsSync(ACCOUNT_SESSION_PATH)) return null;
-        const masterKey = getMasterKey();
-        const encrypted = fs.readFileSync(ACCOUNT_SESSION_PATH);
-        const json = decrypt(encrypted, masterKey);
+        const file = adoptLegacy(ACCOUNT_SESSION_PATH, LEGACY_ACCOUNT_SESSION_PATH);
+        if (!fs.existsSync(file)) return null;
+        const json = decryptStored(fs.readFileSync(file));
         const session = JSON.parse(json);
         if (session && isLegacyUserId(session.userId)) {
             console.log("[Auth] Purging legacy session:", session.userId);
@@ -1049,6 +1089,7 @@ function loadAccountSession() {
 /** Delete local account session */
 function deleteAccountSession() {
     try { fs.unlinkSync(ACCOUNT_SESSION_PATH); } catch { /* */ }
+    try { fs.unlinkSync(LEGACY_ACCOUNT_SESSION_PATH); } catch { /* */ }
 }
 
 // ── Auto-Updater Event Handlers ──────────────
@@ -1132,12 +1173,8 @@ function setupAutoUpdater() {
     autoUpdater.on("error", (err) => {
         const msg = err.message || "";
         // 404 is expected when the server hasn't published a release yet
-        // (empty YAML with version 0.0.0). Don't spam retries for those.
-        const isMissing =
-            msg.includes("404") ||
-            msg.includes("Not Found") ||
-            msg.includes("ERR_UPDATER_LATEST_VERSION_NOT_FOUND");
-        if (msg.includes("401") || msg.includes("403") || isMissing) {
+        // (or none for an Intel Mac). Don't spam retries for those.
+        if (isFeedMissing(err)) {
             console.error("[Updater] endpoint unavailable:", msg);
             return; // nothing published / feed off — not worth a toast
         }
@@ -1236,20 +1273,126 @@ let stopPromise = null; // resolves when the bot being stopped has really exited
 let botCrashTimes = []; // recent crash times, for restart backoff
 let installInFlight = null; // the running setup install, shared by every caller
 let overlayLoadFailed = false; // the overlay tried to load before the bot was listening
+// Set when the bot won't start again on its own (exit 78, or it gave up after crashing):
+// the overlay shows this instead of retrying the splash forever.
+let botDownMessage = null;
+const SIGN_IN_AGAIN_MSG = "Bhai couldn't start. Open Bhai to sign in again or check your credits.";
 
 function getBotStatus() {
     return isAlive(botProcess) ? "running" : "stopped";
+}
+
+// The bot's boot probe found Accessibility or Screen Recording not working (a stale
+// grant macOS still reports as granted, or a revoked one): say so once per app run.
+// Not during setup (the permission tiles ask there) and not for one the user skipped.
+let permsNotice = null; // kept referenced so its click handler survives GC
+function notifyBrokenPermission(p) {
+    const skipped = store.get("skippedPermissions") || {};
+    const name = ["accessibility", "screen"].find((k) => p[k] === false && !skipped[k]);
+    const { Notification } = require("electron");
+    if (!name || permsNotice || !fs.existsSync(SETUP_FLAG) || !Notification.isSupported()) return;
+    const { prefPaneUrlFor } = require("./components/permissions-grid");
+    permsNotice = new Notification({
+        title: "Bhai",
+        body: `${name === "accessibility" ? "Accessibility" : "Screen Recording"} looks off. Click to fix.`,
+    });
+    permsNotice.on("click", () => shell.openExternal(prefPaneUrlFor(name)).catch(() => {}));
+    permsNotice.show();
+}
+
+// Bot → "##BHAI_NOTIFY##{kind,title,body,tag?,actions?}" (src/desktop-notify.ts): a
+// finished long task, a proactive message, an inbox suggestion, Bhai stuck or waiting
+// for a yes. A click opens the chat the owner last used, where the reply is (or
+// `onClick`); the reply box and buttons answer Bhai without opening anything. A tag
+// replaces the earlier notification with that tag; {close: tag} takes it away.
+const { createNotifyGate, actionToSend } = require("./notify-gate");
+const shouldNotify = createNotifyGate((k) => store.get(k));
+const liveNotes = new Map(); // tag → its notification, still on screen
+let lastChatSurface = "overlay"; // "panel" once the owner chats in the app window
+let sendFromNotification = null; // ({text, chat} | {raw}) → the bot, over the in-app chat socket (registerIPC)
+function closeNotes(match) {
+    for (const [tag, n] of liveNotes) if (match(tag)) { liveNotes.delete(tag); n.close(); }
+}
+// Back in a Bhai window: its turn notifications are read.
+app.on("browser-window-focus", () => closeNotes((t) => t.startsWith("turn:")));
+function showBotNotification(note, onClick) {
+    const { Notification, BrowserWindow } = require("electron");
+    if (typeof note.close === "string") return closeNotes((t) => t === note.close);
+    if (!Notification.isSupported() || !shouldNotify(note, !!BrowserWindow.getFocusedWindow())) return;
+    const tag = typeof note.tag === "string" ? note.tag : null;
+    const chat = tag && tag.startsWith("turn:") ? tag.slice(5) : undefined;
+    const actions = (Array.isArray(note.actions) ? note.actions : []).slice(0, 3);
+    const n = new Notification({
+        title: String(note.title || "Bhai").slice(0, 80),
+        body: String(note.body).slice(0, 240),
+        icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
+        hasReply: note.kind !== "handoff" && !onClick,
+        replyPlaceholder: "Reply to Bhai",
+        actions: actions.map((a) => ({ type: "button", text: String(a.label || "").slice(0, 40) })),
+    });
+    n.on("reply", (details, legacyReply) => {
+        const text = String(details?.reply ?? legacyReply ?? "").trim();
+        if (text) sendFromNotification?.({ text, chat });
+    });
+    n.on("action", (details, legacyIndex) => {
+        const send = actionToSend(actions[details?.actionIndex ?? legacyIndex]);
+        if (send) sendFromNotification?.({ ...send, chat });
+    });
+    if (tag) {
+        closeNotes((t) => t === tag);
+        liveNotes.set(tag, n);
+        n.on("close", () => { if (liveNotes.get(tag) === n) liveNotes.delete(tag); });
+    }
+    n.on("click", () => {
+        if (onClick) onClick();
+        else if (lastChatSurface === "panel" && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+        } else showOverlay();
+    });
+    n.show();
+}
+
+// Bhai's face on the owner's Telegram bot: set once per bot, and only while it has
+// no photo, so a picture the owner chose is never replaced.
+async function ensureTelegramAvatar(token) {
+    if (!/^\d+:[\w-]{30,}$/.test(token || "")) return;
+    const botId = token.split(":")[0]; // a bot token starts with the bot's user id
+    const doneFile = path.join(DATA_DIR, "telegram-avatar.json");
+    try { if (JSON.parse(fs.readFileSync(doneFile, "utf8")).botId === botId) return; } catch { /* not yet */ }
+    const api = (method) => `https://api.telegram.org/bot${token}/${method}`;
+    try {
+        const photos = await (await fetch(`${api("getUserProfilePhotos")}?user_id=${botId}&limit=1`)).json();
+        if (!photos.ok) return;
+        if (photos.result.total_count === 0) {
+            const form = new FormData();
+            form.append("photo", JSON.stringify({ type: "static", photo: "attach://avatar" }));
+            const jpg = fs.readFileSync(path.join(__dirname, "assets", "mascot", "telegram-avatar.jpg"));
+            form.append("avatar", new Blob([jpg], { type: "image/jpeg" }), "avatar.jpg");
+            const r = await (await fetch(api("setMyProfilePhoto"), { method: "POST", body: form })).json();
+            if (!r.ok) { console.warn("[Telegram] Couldn't set the bot's photo:", r.description); return; }
+        }
+        fs.writeFileSync(doneFile, JSON.stringify({ botId }));
+    } catch (err) {
+        console.warn("[Telegram] Bot photo check failed:", err.message);
+    }
 }
 
 async function startBot() {
     if (stopPromise) await stopPromise; // never run two bots at once
     if (isAlive(botProcess)) return { status: "already_running" };
 
-    // ── Account gate: check status before starting ──
+    // ── Account gate: signed out, or a device without its sign-in secret, only gets refused ──
     const session = loadAccountSession();
-    if (session && session.user) {
-        // Account is configured — we'll pass credentials to the bot
-        // but the actual pre-start check is done async (see startBotAsync below)
+    if (!session?.userId) {
+        console.log("[BOT] Not starting: signed out (Account → Sign in)");
+        return { status: "signed_out" };
+    }
+    if (session?.userId && !session.deviceSecret) {
+        _signInNeeded = "sign_in_required";
+        botDownMessage = SIGN_IN_AGAIN_MSG;
+        console.log("[BOT] Not starting: sign in again (Account) — this device has no sign-in secret yet");
+        return { status: "sign_in_required" };
     }
 
     // Ensure data dir exists
@@ -1274,8 +1417,8 @@ async function startBot() {
         console.log("[BOT]", msg);
         // Save to log file (all messages)
         writeToLogFile(msg);
-        // Send to renderer (will only show errors as toast)
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        // The panel only toasts ❌ lines (addBotLog); everything else is in the log file.
+        if (msg.includes("❌") && mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("bot-log", msg);
         }
     };
@@ -1301,7 +1444,7 @@ async function startBot() {
     let args = ["--no-warnings", entryPoint];
     // Ensure common binary paths are in PATH — macOS Electron apps don't inherit full shell PATH
     const extraPaths = [
-        path.join(require("os").homedir(), ".atlas", "bin"), // Atlas-managed tools (spogo, etc.)
+        path.join(BHAI_HOME, "bin"), // Bhai-managed tools (spogo, etc.)
         "/opt/homebrew/bin",       // Homebrew (Apple Silicon)
         "/usr/local/bin",          // Homebrew (Intel) / system tools
         "/opt/homebrew/sbin",
@@ -1318,24 +1461,29 @@ async function startBot() {
         ...process.env,
         PATH: mergedPath,
         DOTENV_CONFIG_PATH: tempEnvPath,
-        ATLAS_DATA_DIR: DATA_DIR,
+        BHAI_DATA_DIR: DATA_DIR,
+        // The state root this app settled on (~/.atlas when copying it to ~/.bhai failed).
+        BHAI_HOME: BHAI_HOME,
         // Where Settings writes .user-personality.json (personality-sync.ts).
-        ATLAS_USER_DATA_DIR: app.getPath("userData"),
+        BHAI_USER_DATA_DIR: app.getPath("userData"),
+        // The bot sends native notifications through us (showBotNotification).
+        BHAI_DESKTOP_NOTIFY: "1",
         NODE_ENV: "production",
         // V8 code cache for the 23MB bundle: a warm start skips re-compiling it.
         NODE_COMPILE_CACHE: path.join(app.getPath("userData"), "v8-cache"),
-        // The app draws Bhai's ghost cursor (agent-cursor.js); off with ATLAS_NO_AGENT_CURSOR=true.
+        // The app draws Bhai's ghost cursor (agent-cursor.js); off with BHAI_NO_AGENT_CURSOR=true.
         // Not on Linux: setOpacity/content protection do nothing there, so Bhai's
         // own screenshots would see the overlay (and it can render opaque without
         // a compositor).
-        ...(CURSOR_SUPPORTED ? { ATLAS_AGENT_CURSOR_IPC: "1" } : {}),
+        ...(CURSOR_SUPPORTED ? { BHAI_AGENT_CURSOR_IPC: "1" } : {}),
     };
 
     // Pass Convex URL + OTPless identity to bot process for credit enforcement
     spawnEnv.CONVEX_URL = CONVEX_API_URL;
     if (session && session.userId) {
-        spawnEnv.ATLAS_OTPLESS_USER_ID = session.userId;
-        spawnEnv.ATLAS_ACCOUNT_EMAIL = session.email || "";
+        spawnEnv.BHAI_OTPLESS_USER_ID = session.userId;
+        spawnEnv.BHAI_ACCOUNT_EMAIL = session.email || "";
+        if (session.deviceSecret) spawnEnv.BHAI_DEVICE_SECRET = session.deviceSecret;
     }
 
     if (!IS_DEV) {
@@ -1352,10 +1500,11 @@ async function startBot() {
         await fetchRuntimeKey(_keyFetchToken);
     }
     if (_runtimeKey) {
-        spawnEnv.ATLAS_RUNTIME_KEY = _runtimeKey;
+        spawnEnv.BHAI_RUNTIME_KEY = _runtimeKey;
     }
 
     let child = null;
+    botDownMessage = null;
     try {
         child = botProcess = spawn(executable, args, {
             cwd: BOT_DIR,
@@ -1374,7 +1523,7 @@ async function startBot() {
     botProcess.stdout.on("data", (data) => {
         // Line-buffer so a companion marker split across chunks isn't lost, and
         // keep the markers out of the user's log.
-        const lines = (stdoutTail + data.toString()).split("\n");
+        const lines = upgradeMarkers(stdoutTail + data.toString()).split("\n");
         stdoutTail = lines.pop();
         const rest = [];
         for (const line of lines) {
@@ -1385,6 +1534,10 @@ async function startBot() {
             }
             const cvv = line.match(/^##BHAI_VAULT_CVV##(\{.*\})\s*$/);
             if (cvv) { try { askCvv(JSON.parse(cvv[1])); } catch { /* malformed line */ } continue; }
+            const note = line.match(/^##BHAI_NOTIFY##(\{.*\})\s*$/);
+            if (note) { try { showBotNotification(JSON.parse(note[1])); } catch { /* malformed line */ } continue; }
+            const perms = line.match(/^##BHAI_PERMS##(\{.*\})\s*$/);
+            if (perms) { try { notifyBrokenPermission(JSON.parse(perms[1])); } catch { /* malformed line */ } continue; }
             const m = line.match(/^##BHAI_BUDDY##(\{.*\})\s*$/);
             if (!m) { rest.push(line); continue; }
             try { handleBuddyStatus(JSON.parse(m[1])); } catch { /* malformed line */ }
@@ -1393,14 +1546,14 @@ async function startBot() {
         if (msg) {
             sendLog(msg);
             // Track stats from log output
-            if (msg.includes("User:") || msg.includes("[Overlay] User:")) botMessageCount++;
+            if (msg.includes("User:")) addMessageToday();
             if (msg.includes("Tools   :")) {
                 const match = msg.match(/(\d+)\s*registered/);
                 if (match) botToolCount = parseInt(match[1]);
             }
 
             // WhatsApp QR forwarding — convert raw QR string to data URL image
-            const qrMatch = msg.match(/##ATLAS_QR##(.+)##END_QR##/);
+            const qrMatch = msg.match(/##BHAI_QR##(.+)##END_QR##/);
             if (qrMatch) {
                 const qrString = qrMatch[1];
                 try {
@@ -1424,8 +1577,8 @@ async function startBot() {
             }
 
             // Overlay server is listening: load the overlay now (it failed while the bot booted).
-            if (msg.includes("##ATLAS_READY##")) {
-                sendLog(`Bot ready in ${msg.split("##ATLAS_READY##")[1]?.trim() || "?"}ms`);
+            if (msg.includes("##BHAI_READY##")) {
+                sendLog(`Bot ready in ${msg.split("##BHAI_READY##")[1]?.trim() || "?"}ms`);
                 if (overlayLoadFailed && overlayWindow && !overlayWindow.isDestroyed()) {
                     overlayLoadFailed = false;
                     overlayWindow.loadURL(OVERLAY_URL);
@@ -1433,12 +1586,12 @@ async function startBot() {
             }
 
             // WhatsApp OTP forwarding
-            const selfMatch = msg.match(/##ATLAS_WA_SELF##(\d+)##END_SELF##/);
+            const selfMatch = msg.match(/##BHAI_WA_SELF##(\d+)##END_SELF##/);
             if (selfMatch) {
                 waSelfNumber = selfMatch[1];
                 if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("whatsapp-otp", { self: waSelfNumber });
             }
-            const otpMatch = msg.match(/##ATLAS_WA_OTP##(.+)##END_OTP##/);
+            const otpMatch = msg.match(/##BHAI_WA_OTP##(.+)##END_OTP##/);
             if (otpMatch) {
                 waOtpPayload(otpMatch[1]).then(p => {
                     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("whatsapp-otp", p);
@@ -1463,15 +1616,12 @@ async function startBot() {
             if (msg.includes("[DISCORD] Bot online") || (msg.includes("discord") && msg.includes("ready"))) channelStatuses.discord = "connected";
             if (msg.includes("[SLACK]") && msg.includes("\u26A1")) channelStatuses.slack = "connected";
             if (msg.includes("[MATRIX] Bot started")) channelStatuses.matrix = "connected";
-            if (msg.includes("Email connected") || msg.includes("IMAP connected")) channelStatuses.email = "connected";
+            if (msg.includes("Email connected") || msg.includes("IMAP connected") || msg.includes("Bhai's email:")) channelStatuses.email = "connected";
             if (msg.includes("\u2705 Bot online: @")) channelStatuses.telegram = "connected";
             if (msg.includes("Bhai online (Telegram disabled)")) channelStatuses.telegram = "not_configured";
+            if (msg.includes("[TELEGRAM] Stopped:")) channelStatuses.telegram = "disconnected";
 
-            // Push status updates to renderer
-            const win = mainWindow;
-            if (win && !win.isDestroyed()) {
-                win.webContents.send("channel-status-update", channelStatuses);
-            }
+            pushChannelStatuses();
         }
     });
 
@@ -1484,8 +1634,8 @@ async function startBot() {
             const isError = /\[ERROR\]|❌|Error:|Uncaught|Unhandled/.test(msg);
             console.error("[BOT ERR]", msg);
             writeToLogFile(`${isError ? "[ERROR]" : "[WARN]"} ${msg}`);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send("bot-log", `${isError ? "❌" : "⚠"} ${msg}`);
+            if (isError && mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send("bot-log", `❌ ${msg}`);
             }
         }
     });
@@ -1526,7 +1676,15 @@ async function startBot() {
             } else {
                 sendLog("Bot crashed 5 times in 10 minutes; not restarting. Use Start to try again.");
                 exitStatus = "failed";
+                botDownMessage = "Bhai stopped after crashing several times. Open Bhai and press Start to try again.";
             }
+        }
+        if (code === 78) botDownMessage = SIGN_IN_AGAIN_MSG;
+        // Down for good (gave up restarting, or signed out): say so even with no Bhai window open.
+        if (exitStatus === "failed" || code === 78) {
+            showBotNotification({ kind: "stuck", title: "Bhai stopped", body: botDownMessage, tag: "bot-down" }, () => {
+                if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+            });
         }
         hideBuddy();
         for (const k of Object.keys(channelStatuses)) delete channelStatuses[k];
@@ -1539,13 +1697,14 @@ async function startBot() {
         updateTrayMenu();
     });
 
+    closeNotes((t) => t === "bot-down"); // it's back
     // Notify renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("bot-status", "running");
     }
     updateTrayMenu();
     botStartTime = Date.now();
-    botMessageCount = 0;
+    ensureTelegramAvatar(loadEnvKey("TELEGRAM_BOT_TOKEN")); // an existing bot without a photo gets Bhai's
 
     return { status: "started" };
 }
@@ -1593,6 +1752,12 @@ function startLocalServer() {
         const desktopDir = __dirname;
         const desktopDirResolved = path.resolve(desktopDir);
         const server = http.createServer((req, res) => {
+            // A rebound website (its name pointed at 127.0.0.1) would read the app's files here.
+            if (!isLoopbackHost(req.headers.host, server.address()?.port)) {
+                res.writeHead(421);
+                res.end("Misdirected");
+                return;
+            }
             let filePath = path.join(desktopDir, req.url === "/" ? "/panel.html" : req.url);
             // Strip query strings
             filePath = filePath.split("?")[0];
@@ -1650,10 +1815,22 @@ function startLocalServer() {
 // remote loads (e.g. the OTPless-hosted auth page on tryatlasagi.com).
 const TRUSTED_LOCAL_ORIGINS = new Set([new URL(OVERLAY_URL).origin]);
 
+// target=_blank links in the panel/wizard: allowed sites open in the default browser.
+// Chat replies (the chat bar) link anywhere on the web, so any http(s) link opens.
+function openPanelLink(url, anyWebLink = false) {
+    const links = require("./panel-links");
+    const target = anyWebLink ? links.chatLinkTarget(url) : links.panelLinkTarget(url);
+    if (target) shell.openExternal(target).catch(() => {});
+    else console.warn(`[Window] Blocked link to ${url}`);
+}
+
 function hardenBrowserWindow(win, opts = {}) {
     const allowed = Array.isArray(opts.allowedNavigateOrigins) ? opts.allowedNavigateOrigins : [];
     const allowLocal = opts.allowLocal !== false; // file:// + http://127.0.0.1 by default
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        if (opts.externalLinks || opts.webLinks) openPanelLink(url, !!opts.webLinks);
+        return { action: "deny" };
+    });
     // Local means our own files and our own servers (the bot's page, the panel's server),
     // not any service on a localhost port: a window keeps its preload wherever it navigates.
     const guard = (e, url) => {
@@ -1693,7 +1870,7 @@ function createWizardWindow() {
         title: "Bhai Setup — © TRUSCOR Private Limited",
     });
 
-    hardenBrowserWindow(mainWindow);
+    hardenBrowserWindow(mainWindow, { externalLinks: true });
     mainWindow.loadFile(path.join(__dirname, "wizard.html"));
     if (IS_DEV) mainWindow.webContents.openDevTools({ mode: "detach" });
 }
@@ -1736,7 +1913,13 @@ async function createPanelWindow() {
         title: "Bhai — © TRUSCOR Private Limited",
     });
 
-    hardenBrowserWindow(mainWindow);
+    hardenBrowserWindow(mainWindow, { externalLinks: true });
+    mainWindow.webContents.on("did-finish-load", () => {
+        pushChannelStatuses(true);
+        ambientPaused = false; // a fresh page runs its orbs
+        syncAmbient();
+    });
+    mainWindow.on("show", syncAmbient);
     // The native close button hides to the menu bar, like the app's own close
     // control; Quit (⌘Q / tray) still quits.
     mainWindow.on("close", (e) => {
@@ -1784,6 +1967,10 @@ let buddyReady = false;
 let buddyState = null;
 let buddyHideTimer = null;
 let buddyWatchdog = null;
+// A hidden buddy is destroyed after a while (its renderer is ~25 MB);
+// ensureBuddyWindow() makes it again and replays the state.
+const BUDDY_DESTROY_MS = 5 * 60_000;
+let buddyDestroyTimer = null;
 
 function ensureBuddyWindow() {
     if (buddyWindow && !buddyWindow.isDestroyed()) return buddyWindow;
@@ -1833,6 +2020,10 @@ function hideBuddy() {
     renderBuddy();
     buddyHideTimer = setTimeout(() => {
         if (buddyWindow && !buddyWindow.isDestroyed()) buddyWindow.hide();
+        clearTimeout(buddyDestroyTimer);
+        buddyDestroyTimer = setTimeout(() => {
+            if (buddyWindow && !buddyWindow.isDestroyed() && !buddyWindow.isVisible()) buddyWindow.destroy();
+        }, BUDDY_DESTROY_MS);
     }, 450);
 }
 
@@ -1848,6 +2039,7 @@ function showBuddy(mood, text, hideAfterMs, force = false) {
         if (buddyState?.visible) hideBuddy();
         return;
     }
+    clearTimeout(buddyDestroyTimer);
     const win = ensureBuddyWindow();
     clearTimeout(buddyHideTimer);
     clearTimeout(buddyWatchdog);
@@ -1861,10 +2053,46 @@ function showBuddy(mood, text, hideAfterMs, force = false) {
     else buddyWatchdog = setTimeout(hideBuddy, 90_000);
 }
 
+// ── Panel background: freeze the drifting orbs when nobody's looking ──
+// Screen locked, or no keyboard/mouse input for 2 minutes. The panel picks
+// this up over "ambient-paused" (panel.html) and the orbs carry on from where
+// they stopped once someone's back.
+const AMBIENT_IDLE_S = 120;
+const AMBIENT_CHECK_MS = 5000;
+let ambientPaused = false;
+let screenLocked = false;
+let ambientTimer = null;
+// Checks idle time every 5 s, only while the panel is on screen.
+function syncAmbient() {
+    const win = mainWindow;
+    if (!win || win.isDestroyed() || !win.isVisible()) {
+        clearInterval(ambientTimer);
+        ambientTimer = null;
+        return;
+    }
+    if (!ambientTimer) ambientTimer = setInterval(syncAmbient, AMBIENT_CHECK_MS);
+    const paused = screenLocked || powerMonitor.getSystemIdleTime() >= AMBIENT_IDLE_S;
+    if (paused === ambientPaused) return;
+    ambientPaused = paused;
+    win.webContents.send("ambient-paused", paused);
+}
+function initAmbientPause() {
+    try {
+        powerMonitor.on("lock-screen", () => { screenLocked = true; syncAmbient(); });
+        powerMonitor.on("unlock-screen", () => { screenLocked = false; syncAmbient(); });
+        // The bot's cron timers pause in sleep; this lets a job due just after wake run on time.
+        powerMonitor.on("resume", () => writeToBot("##BHAI_RESUME##"));
+    } catch (err) {
+        console.warn("[Ambient] idle pause off:", err.message);
+    }
+}
+
 // ── Bhai's ghost cursor ──────────────────────────
 // Bot → "##BHAI_CURSOR##{json}" lines from the computer-use tools; acks go back
-// on its stdin. The (hidden) windows are made once at app ready and follow
-// display changes, so nothing is created in the middle of a click.
+// on its stdin. The (hidden) windows are made ahead of the first glide: on the
+// bot's "warm" line (a model call was offered os_* tools) or the buddy's
+// "screen" status. They follow display changes and are freed 10 minutes after
+// the last session or warm.
 const CURSOR_SUPPORTED = process.platform !== "linux";
 let agentCursor = null;
 function initAgentCursor() {
@@ -1934,6 +2162,7 @@ function handleBuddyStatus({ type, text }) {
     switch (type) {
         case "thinking": return showBuddy("thinking", buddyLine("thinking"));
         case "screen":
+            try { agentCursor?.warm(); } catch { /* cosmetic */ }
             // Out of the way for the agent's screenshots and clicks: the native
             // glass can't be hidden from CSS, and the window would block clicks.
             if (overlayShowing()) { overlayWindow.setOpacity(0); overlayWindow.setIgnoreMouseEvents(true); }
@@ -1958,7 +2187,7 @@ let overlayGlassNative; // undefined = not loaded yet, null = unavailable
 function attachOverlayGlass(win) {
     try {
         if (overlayGlassNative === undefined) {
-            overlayGlassNative = require(path.join(BOT_DIR, "native", `atlas-native.darwin-${process.arch}.node`));
+            overlayGlassNative = require(path.join(BOT_DIR, "native", `bhai-native.darwin-${process.arch}.node`));
         }
         const [w, h] = win.getContentSize();
         // Dark glass gets a smoky tint so white text stays readable over busy or
@@ -2027,7 +2256,8 @@ function createOverlayWindow() {
 
     // F4: deny window.open() and constrain navigation. Overlay loads from
     // 127.0.0.1 (the bot's overlay server), so allowLocal=true is sufficient.
-    hardenBrowserWindow(overlayWindow);
+    // Links in replies open in the default browser.
+    hardenBrowserWindow(overlayWindow, { webLinks: true });
 
     // macOS: show on all Spaces and in fullscreen
     if (process.platform === "darwin") {
@@ -2036,13 +2266,27 @@ function createOverlayWindow() {
 
     hookOverlayToken(overlayWindow.webContents.session);
     overlayWindow.loadURL(OVERLAY_URL);
+    // The boot splash reports no height: shrink to the bar if it replaced a tall page.
+    overlayWindow.webContents.on("did-finish-load", () => {
+        if (overlayFollowsContent && overlayWindow?.webContents.getURL().startsWith("data:")) {
+            overlayWindow.setContentSize(OVERLAY_WIDTH, OVERLAY_MIN_HEIGHT);
+        }
+    });
 
     // Retry loading if the bot server isn't ready yet (race condition on first show)
     overlayWindow.webContents.on("did-fail-load", (_e, errCode, errDesc, url) => {
         if (errCode === -102 || errCode === -6 || errDesc === "ERR_CONNECTION_REFUSED") {
-            // Bot server not up yet: the bot's ##ATLAS_READY## line reloads it the
+            // Bot server not up yet: the bot's ##BHAI_READY## line reloads it the
             // moment it listens; this slower retry is only a fallback.
+            // Not coming up at all: say why instead of retrying forever. Still
+            // flagged failed so a later start's ##BHAI_READY## loads the overlay.
+            if (botDownMessage && !isAlive(botProcess)) {
+                overlayLoadFailed = true;
+                overlayWindow.loadURL(overlaySplash(botDownMessage));
+                return;
+            }
             overlayLoadFailed = true;
+            overlayWindow.loadURL(overlaySplash());
             setTimeout(() => {
                 if (overlayLoadFailed && overlayWindow && !overlayWindow.isDestroyed()) {
                     overlayLoadFailed = false;
@@ -2071,7 +2315,7 @@ function createOverlayWindow() {
 
     overlayWindow.on("closed", () => {
         overlayWindow = null;
-        stopHeightPolling();
+        overlayFollowsContent = false;
     });
 
     // Click outside → hide (but NOT while the agent is actively working)
@@ -2100,22 +2344,22 @@ function createOverlayWindow() {
 
 function showOverlay() {
     // The chat UI is served by the bot. If it isn't running, start it (when
-    // signed in) and say so, instead of opening a blank, endlessly retrying window.
+    // signed in) and show the overlay's splash until it listens.
     if (!botProcess) {
-        const { Notification } = require("electron");
         const signedIn = !!(loadAccountSession() || {}).userId;
-        if (signedIn) startBot().catch((err) => console.error("[OVERLAY] Auto-start failed:", err.message));
-        if (Notification.isSupported()) {
-            new Notification({
-                title: "Bhai",
-                body: signedIn ? "Bhai is starting — press the shortcut again in a few seconds." : "Open Bhai and sign in to start chatting.",
-            }).show();
+        if (!signedIn) {
+            const { Notification } = require("electron");
+            if (Notification.isSupported()) {
+                new Notification({ title: "Bhai", body: "Open Bhai and sign in to start chatting." }).show();
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+            return;
         }
-        if (!signedIn && mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
-        return;
+        startBot().catch((err) => console.error("[OVERLAY] Auto-start failed:", err.message));
     }
 
     hideBuddy(); // the overlay has its own mascot
+    lastChatSurface = "overlay";
 
     // Create lazily
     if (!overlayWindow || overlayWindow.isDestroyed()) {
@@ -2183,14 +2427,14 @@ function showOverlay() {
         }
     }, 200);
 
-    // Start dynamic height polling
-    startHeightPolling();
+    // Follow the page's content height from now on
+    overlayFollowsContent = true;
 }
 
 function hideOverlay() {
     if (!overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) return;
 
-    stopHeightPolling();
+    overlayFollowsContent = false;
 
     // Inject spring-out animation (matches the Hammerspoon version)
     overlayWindow.webContents.executeJavaScript(`
@@ -2251,8 +2495,8 @@ function toggleLiveVoice() {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow.webContents.executeJavaScript(`
             (function() {
-                if (window._atlasWS && window._atlasWS.readyState === 1) {
-                    window._atlasWS.send(JSON.stringify({ type: "${msgType}" }));
+                if (window._bhaiWS && window._bhaiWS.readyState === 1) {
+                    window._bhaiWS.send(JSON.stringify({ type: "${msgType}" }));
                     return true;
                 }
                 return false;
@@ -2285,31 +2529,14 @@ const OVERLAY_CONTENT_HEIGHT_JS = `(() => {
     return Math.ceil(bottom);
 })()`;
 
-function startHeightPolling() {
-    stopHeightPolling();
-    overlayResizeTimer = setInterval(() => {
-        if (!overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) {
-            stopHeightPolling();
-            return;
-        }
-        overlayWindow.webContents.executeJavaScript(
-            OVERLAY_CONTENT_HEIGHT_JS
-        ).then((scrollHeight) => {
-            if (!overlayWindow || overlayWindow.isDestroyed()) return;
-            const newH = Math.min(Math.max(scrollHeight, OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
-            const [, currentH] = overlayWindow.getContentSize();
-            if (Math.abs(currentH - newH) > 2) {
-                overlayWindow.setContentSize(OVERLAY_WIDTH, newH);
-            }
-        }).catch(() => {});
-    }, OVERLAY_RESIZE_MS);
-}
-
-function stopHeightPolling() {
-    if (overlayResizeTimer) {
-        clearInterval(overlayResizeTimer);
-        overlayResizeTimer = null;
-    }
+// The overlay page (src/overlay/overlay.html) reports its content height from a
+// ResizeObserver; the window follows it while shown.
+function onOverlayHeight(e, h) {
+    if (!overlayFollowsContent || !overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) return;
+    if (e.sender !== overlayWindow.webContents || !Number.isFinite(h)) return;
+    const newH = Math.min(Math.max(Math.round(h), OVERLAY_MIN_HEIGHT), OVERLAY_MAX_HEIGHT);
+    const [, currentH] = overlayWindow.getContentSize();
+    if (Math.abs(currentH - newH) > 2) overlayWindow.setContentSize(OVERLAY_WIDTH, newH);
 }
 
 // ── IPC Handlers ──────────────────────────────
@@ -2322,17 +2549,25 @@ function registerIPC() {
 
     let authWindow = null;
 
-    function finalizeAuth({ session, userId, email, phone, name }) {
+    function finalizeAuth({ session, userId, email, phone, name, deviceSecret }) {
         saveAccountSession({
             userId,
             token: session.token,
             email: email || null,
             phone: phone || null,
             name: name || null,
+            deviceSecret: deviceSecret || null,
             created_at: new Date().toISOString(),
         });
         _desktopSessionToken = session.token;
         _desktopSessionExpiry = session.expiresAt || (Date.now() + 86400000);
+        _signInNeeded = null;
+        // The bot needs the new identity and device secret: restart a running one, and
+        // start one that stopped for want of a sign-in (once setup is done).
+        if (isAlive(botProcess) || fs.existsSync(SETUP_FLAG)) {
+            stopBot();
+            startBot().catch((err) => console.error("[AUTH] Bot start failed:", err.message));
+        }
         // Seed the profile name from sign-in (the Profile screen is gone): the bot
         // writes it into the identity memory on boot (src/setup/wizard-seed.ts).
         if (name) {
@@ -2384,7 +2619,7 @@ function registerIPC() {
         // F3: lock down the auth window — it's the only window we load remote
         // content into. setWindowOpenHandler denies window.open() from the
         // page; will-navigate confines the renderer to the auth page's host.
-        const authUrl = process.env.ATLAS_AUTH_URL || `${CONVEX_SITE_URL}/auth-login`;
+        const authUrl = envOf("AUTH_URL") || `${CONVEX_SITE_URL}/auth-login`;
         const authHost = (() => { try { return new URL(authUrl).host; } catch { return "tryatlasagi.com"; } })();
         hardenBrowserWindow(authWindow, { allowedNavigateOrigins: [authHost], allowLocal: false });
         // OTPless SDK requires a real HTTPS origin; auth-login/ hosts the
@@ -2395,6 +2630,70 @@ function registerIPC() {
     }
 
     // Overlay IPC — auto-show overlay from preload (e.g. research completion)
+    // In-app chat: the panel talks to Bhai over the chat bar's socket, held here so
+    // the owner token never reaches the page. One socket; each send names its chat.
+    let appChatWs = null;
+    let appChatId = null;
+    let appChatConnecting = null;
+    // Callers that arrive while it connects share that connect: a second socket would
+    // forward every broadcast to the panel twice.
+    const appChatSocket = () => {
+        if (appChatWs && appChatWs.readyState === 1) return Promise.resolve(appChatWs);
+        appChatConnecting ??= connectAppChat().finally(() => { appChatConnecting = null; });
+        return appChatConnecting;
+    };
+    const connectAppChat = () => new Promise((resolve, reject) => {
+        let tok = "";
+        try { tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim(); } catch { /* bot not up yet */ }
+        if (!tok) return reject(new Error("Bhai isn't running"));
+        const ws = new WebSocket(`ws://127.0.0.1:18792/?localToken=${encodeURIComponent(tok)}`);
+        ws.onopen = () => { appChatWs = ws; resolve(ws); };
+        ws.onerror = () => reject(new Error("Couldn't reach Bhai"));
+        ws.onclose = () => {
+            if (appChatWs !== ws) return;
+            appChatWs = null;
+            // A reply on its way is gone with the socket: the page ends its live turn (idle: ignored).
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("chat:event", { chat: appChatId, msg: { type: "error", text: "Lost the connection mid-answer. Ask me again." } });
+        };
+        ws.onmessage = (e) => {
+            let msg;
+            try { msg = JSON.parse(e.data); } catch { return; }
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("chat:event", { chat: appChatId, msg });
+        };
+    });
+    sendFromNotification = async ({ text, chat, raw }) => {
+        try {
+            const ws = await appChatSocket();
+            if (raw) return ws.send(JSON.stringify(raw));
+            appChatId = (chat || appChatId || `notify-${Date.now().toString(36)}`).slice(0, 64);
+            // source "notification": Bhai answers with a notification too, however quick the turn.
+            ws.send(JSON.stringify({ type: "chat", chat: appChatId, text: String(text).slice(0, 8000), meta: { source: "notification" } }));
+        } catch { /* Bhai isn't running: nothing to hand it to */ }
+    };
+    ipcMain.handle("chat:send", async (_, { chat, text, file } = {}) => {
+        lastChatSurface = "panel";
+        const t = String(text || "").trim().slice(0, 8000);
+        const hasFile = file && typeof file.name === "string" && typeof file.base64 === "string" && file.base64.length < 28_000_000;
+        if ((!t && !hasFile) || typeof chat !== "string") return { ok: false, error: "Nothing to send" };
+        try {
+            const ws = await appChatSocket();
+            appChatId = chat.slice(0, 64);
+            // One file or image per message, the way the chat bar sends a dropped file.
+            ws.send(JSON.stringify(hasFile
+                ? { type: "file_attach", chat: appChatId, name: file.name.slice(0, 200), base64: file.base64, mimeType: String(file.mimeType || "application/octet-stream"), text: t }
+                : { type: "chat", chat: appChatId, text: t }));
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
+    });
+    ipcMain.on("chat:stop", () => {
+        if (appChatWs && appChatWs.readyState === 1) appChatWs.send(JSON.stringify({ type: "stop" }));
+    });
+    // The panel polls these every 5 s: recompute only when the file changes.
+    const auditLog = path.join(DATA_DIR, "audit.jsonl");
+    const activityToday = fileMemo(auditLog, () => require("./activity").doneToday(auditLog));
+    ipcMain.handle("dash:activity", () => activityToday(new Date().toDateString()));
     ipcMain.on("overlay:show", () => {
         showOverlay();
     });
@@ -2409,28 +2708,80 @@ function registerIPC() {
         }
         return { ok: false, error: "live-voice not available" };
     });
-    ipcMain.on("overlay:notify", (_, msg) => {
-        // Sent by the bot-served overlay page: plain short strings only.
-        const title = typeof msg?.title === "string" ? msg.title.slice(0, 80) : "";
-        const body = typeof msg?.body === "string" ? msg.body.slice(0, 240) : "";
-        const { Notification } = require("electron");
-        // The only sender today is "research complete" — a task notice.
-        if (store.get("notificationsEnabled") === false || store.get("notifyOnTask") === false) return;
-        if (Notification.isSupported()) {
-            // Windows silently drops notifications with an empty body — always provide one
-            const safeBody = body || "Bhai notification";
-            new Notification({
-                title: title || "Bhai",
-                body: safeBody,
-                icon: path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png"),
-            }).show();
+    // A finished research report. The page names the file, so only a .md that sits in a
+    // folder named Research opens: a planted path can't launch anything else.
+    const safeReportPath = (filePath) => {
+        if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return null;
+        let file;
+        try { file = fs.realpathSync(filePath); } catch { return null; } // a link named .md can't point at an app
+        if (path.extname(file).toLowerCase() !== ".md" || path.basename(path.dirname(file)) !== "Research") return null;
+        return file;
+    };
+    ipcMain.on("overlay:height", onOverlayHeight);
+    ipcMain.on("overlay:open-report", (_, filePath) => {
+        const file = safeReportPath(filePath);
+        if (file) shell.openPath(file);
+    });
+
+    // The Research page: past and running researches from the bot's index, their reports,
+    // and start / stop / continue / dig deeper, which go to the bot over the chat socket.
+    const researchEntries = () => {
+        try {
+            const index = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "research-index.json"), "utf8"));
+            return Array.isArray(index.researches) ? index.researches : [];
+        } catch { return []; }
+    };
+    ipcMain.handle("research:list", () =>
+        researchEntries()
+            .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
+            .slice(0, 100)
+            .map((e) => ({
+                id: e.id, topic: e.topic, profile: e.profile, status: e.status, startedAt: e.startedAt,
+                updatedAt: e.updatedAt, completedAt: e.completedAt, durationSec: e.durationSec,
+                sourcesProcessed: e.sourcesProcessed, findingsCount: e.findingsCount, error: e.error,
+                hasReport: !!e.reportFile,
+                // Continue / Dig deeper need its checkpoint; only the newest finished ones keep it.
+                resumable: fs.existsSync(path.join(DATA_DIR, "research", `${e.id}.state.json`)),
+            })));
+    ipcMain.handle("research:report", (_, id) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        try { return file ? fs.readFileSync(file, "utf8").slice(0, 1_000_000) : null; } catch { return null; }
+    });
+    ipcMain.on("research:open", (_, id) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        if (file) shell.openPath(file);
+    });
+    // A source cited in a report: only a web link that is in that report opens.
+    ipcMain.on("research:open-source", (_, id, url) => {
+        const file = safeReportPath(researchEntries().find((e) => e.id === id)?.reportFile);
+        let parsed;
+        try { parsed = new URL(url); } catch { return; }
+        if (!file || !["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return;
+        try { if (fs.readFileSync(file, "utf8").includes(url)) shell.openExternal(parsed.href); } catch { /* report gone */ }
+    });
+    ipcMain.handle("research:action", async (_, a = {}) => {
+        const action = ["start", "cancel", "resume"].includes(a.action) ? a.action : null;
+        const id = typeof a.id === "string" ? a.id.slice(0, 80) : undefined;
+        const topic = typeof a.topic === "string" ? a.topic.trim().slice(0, 2000) : "";
+        if (!action || (action === "start" ? !topic : !id)) return { ok: false, error: "Nothing to do" };
+        try {
+            const ws = await appChatSocket();
+            ws.send(JSON.stringify({
+                type: "research_action", action, id, topic,
+                profile: ["quick", "standard", "deep", "exhaustive"].includes(a.profile) ? a.profile : "standard",
+                buildsOn: typeof a.buildsOn === "string" ? a.buildsOn.slice(0, 80) : undefined,
+            }));
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
         }
     });
 
     // Open auth window from renderer. Short-circuits if a valid session already exists.
     ipcMain.handle("window:openAuth", () => {
         const existing = loadAccountSession();
-        if (existing && existing.userId && !isLegacyUserId(existing.userId)) {
+        // Signed in before device secrets (or told to sign in again): open sign-in.
+        if (existing && existing.userId && !isLegacyUserId(existing.userId) && existing.deviceSecret && !_signInNeeded) {
             if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
             return { success: true, alreadySignedIn: true };
         }
@@ -2489,12 +2840,12 @@ function registerIPC() {
     // Use saveEnvKVs (merge strategy) so saving from Settings does NOT
     // wipe channel credentials that channels:save-config wrote (Email,
     // Discord, Slack, WhatsApp, Matrix, etc.) or other env keys like
-    // CONVEX_URL / ATLAS_ENV. Only the keys explicitly present in the
+    // CONVEX_URL / BHAI_ENV. Only the keys explicitly present in the
     // payload are touched; everything else in .env is preserved.
     ipcMain.handle("settings:save", (_, settings) => {
         try {
             const kvs = {};
-            for (const key of ["TELEGRAM_BOT_TOKEN", "ALLOWED_USER_IDS", "GITHUB_TOKEN", "ATLAS_WORKSPACE"]) {
+            for (const key of ["TELEGRAM_BOT_TOKEN", "ALLOWED_USER_IDS", "GITHUB_TOKEN", "BHAI_WORKSPACE"]) {
                 if (Object.prototype.hasOwnProperty.call(settings, key)) {
                     kvs[key] = settings[key] ?? "";
                 }
@@ -2533,7 +2884,16 @@ function registerIPC() {
         }
         return out;
     }
-    ipcMain.handle("chats:list", () => {
+    // Reminders and scheduled tasks the bot saved (src/tools/scheduled.ts).
+    const scheduledFile = path.join(DATA_DIR, "scheduled-tasks.json");
+    const upcoming = fileMemo(scheduledFile, () => {
+        try {
+            const saved = JSON.parse(fs.readFileSync(scheduledFile, "utf-8"));
+            return Array.isArray(saved) ? saved.map(({ id, expression, description, fireAt }) => ({ id, expression, description, fireAt })) : [];
+        } catch { return []; }
+    });
+    ipcMain.handle("schedule:upcoming", () => upcoming());
+    const chatList = fileMemo(CHAT_LOG, () => {
         const chats = new Map();
         for (const e of readChatLog()) {
             let c = chats.get(e.chat);
@@ -2544,8 +2904,76 @@ function registerIPC() {
         }
         return [...chats.values()].sort((a, b) => b.end - a.end);
     });
+    ipcMain.handle("chats:list", () => chatList());
+    // Bhai's own folders (src/config/paths.ts getWorkspaceDir's candidates): images it made live there.
+    function workspaceRoots() {
+        const home = app.getPath("home");
+        return [loadEnvKey("BHAI_WORKSPACE"), store.get("workspace"), path.join(app.getPath("desktop"), "Bhai Files"),
+            path.join(home, "Documents", "Bhai Files"), path.join(BHAI_HOME, "files"), path.join(home, "Bhai Files")]
+            .filter((d) => typeof d === "string" && d)
+            .map((d) => { try { return fs.realpathSync(d); } catch { return null; } })
+            .filter(Boolean);
+    }
+    /** An image file inside Bhai's workspace, resolved; null for anything else. */
+    function workspaceImage(p) {
+        if (typeof p !== "string" || !/\.(png|jpe?g|webp|gif)$/i.test(p)) return null;
+        try {
+            const real = fs.realpathSync(p);
+            if (!fs.statSync(real).isFile()) return null;
+            return workspaceRoots().some((r) => real.startsWith(r + path.sep)) ? real : null;
+        } catch { return null; }
+    }
+    // Thumbnails by path+mtime: reopening a chat doesn't re-decode every image on the main thread.
+    // JPEG stays JPEG (smaller); PNG/WebP/GIF stay PNG so a transparent sticker keeps its alpha.
+    const thumbCache = new Map();
+    function imageThumb(p) {
+        const key = `${p}|${fs.statSync(p).mtimeMs}`;
+        let url = thumbCache.get(key);
+        if (url === undefined) {
+            const img = nativeImage.createFromPath(p).resize({ width: 640 });
+            const jpeg = /\.jpe?g$/i.test(p);
+            const buf = jpeg ? img.toJPEG(80) : img.toPNG();
+            url = buf.length ? `data:image/${jpeg ? "jpeg" : "png"};base64,${buf.toString("base64")}` : "";
+            if (thumbCache.size >= 100) thumbCache.delete(thumbCache.keys().next().value);
+            thumbCache.set(key, url);
+        }
+        return url;
+    }
+    const fromMainWindow = (evt) => mainWindow && !mainWindow.isDestroyed() && evt.sender === mainWindow.webContents;
     ipcMain.handle("chats:get", (_, id) =>
-        readChatLog().filter((e) => e.chat === id).map(({ role, text, ts }) => ({ role, text, ts })));
+        readChatLog().filter((e) => e.chat === id).map(({ role, text, ts, images }) => {
+            // Images Bhai made in that reply, as small thumbnails; a deleted file is skipped.
+            const thumbs = (Array.isArray(images) ? images : []).map(workspaceImage).filter(Boolean)
+                .map((p) => { try { return { url: imageThumb(p), name: path.basename(p), path: p }; } catch { return { url: "" }; } })
+                .filter((im) => im.url);
+            return thumbs.length ? { role, text, ts, images: thumbs } : { role, text, ts };
+        }));
+    ipcMain.handle("chats:revealImage", (evt, p) => {
+        if (!fromMainWindow(evt)) return false;
+        const real = workspaceImage(p);
+        if (real) shell.showItemInFolder(real);
+        return !!real;
+    });
+    // Download/Copy in the image viewer act on the original file, not the 640px thumbnail.
+    // true = saved, null = the owner cancelled, false = not a workspace image or the copy failed.
+    ipcMain.handle("chats:saveImage", async (evt, p) => {
+        if (!fromMainWindow(evt)) return false;
+        const real = workspaceImage(p);
+        if (!real) return false;
+        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+            defaultPath: path.join(app.getPath("downloads"), path.basename(real)),
+        });
+        if (canceled || !filePath) return null;
+        try { await fs.promises.copyFile(real, filePath); return true; } catch { return false; }
+    });
+    ipcMain.handle("chats:copyImage", (evt, p) => {
+        if (!fromMainWindow(evt)) return false;
+        const real = workspaceImage(p);
+        const img = real && nativeImage.createFromPath(real);
+        if (!img || img.isEmpty()) return false;
+        require("electron").clipboard.writeImage(img);
+        return true;
+    });
     ipcMain.handle("chats:clear", () => {
         fs.rmSync(CHAT_LOG, { force: true });
         return true;
@@ -2619,7 +3047,8 @@ function registerIPC() {
                 const Database = require("better-sqlite3");
                 const db = new Database(dbPath, { readonly: true, fileMustExist: true });
                 try {
-                    const row = db.prepare("SELECT COUNT(*) AS cnt FROM behavioral_traits WHERE confidence > 0.3").get();
+                    // Same count the Memory page shows.
+                    const row = db.prepare("SELECT COUNT(*) AS cnt FROM memories WHERE consolidated_into IS NULL").get();
                     if (row) memCount = String(row.cnt);
                 } finally {
                     db.close();
@@ -2628,7 +3057,7 @@ function registerIPC() {
         } catch { /* DB may be locked or table may not exist */ }
         return {
             uptimeMs: Date.now() - botStartTime,
-            messagesHandled: botMessageCount,
+            messagesHandled: countMessagesToday(),
             memoryCount: memCount,
             toolCount: botToolCount || "—",
         };
@@ -3426,6 +3855,126 @@ function registerIPC() {
         }
     });
 
+    // ── Memory page: list, search, weekly review ─────────────────────
+    // Rows for the list view, in the same id scheme as the graph (mem:/ent:/trait:).
+    const STUDIO_MEM_COLS = "id, content, category, source, importance, created_at, COALESCE(pinned, 0) AS pinned";
+    const _memItem = (r) => ({
+        id: `mem:${r.id}`, kind: "memory", text: r.content, category: r.category || "general",
+        source: r.source || "", importance: r.importance, createdAt: r.created_at, pinned: !!r.pinned,
+    });
+    const _entItem = (r) => ({ id: `ent:${r.id}`, kind: "entity", text: r.name, category: r.type || "thing", createdAt: r.created_at });
+    const _traitItem = (r) => {
+        const name = r.trait_key.replace(/_/g, " ");
+        const value = r.value && r.value !== "true" ? `: ${r.value}` : "";
+        return { id: `trait:${r.trait_key}`, kind: "trait", text: name[0].toUpperCase() + name.slice(1) + value, confidence: r.confidence, createdAt: r.created_at };
+    };
+    // Facts about the owner; Bhai's own research notes and chat summaries aren't asked about.
+    const REVIEW_SKIP = "category NOT IN ('research', 'session_summary', 'bhai_did') AND COALESCE(source, '') NOT LIKE 'import%'";
+
+    ipcMain.handle("memory:studio-list", async (_, opts) => {
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const o = opts || {};
+                const limit = Math.min(Math.max(1, Number(o.limit) || 100), 500);
+                const offset = Math.max(0, Number(o.offset) || 0);
+                const count = (sql, params) => (_safeGet(db, sql, params) || {}).c || 0;
+                if (o.kind === "entity") {
+                    return {
+                        success: true, total: count("SELECT COUNT(*) AS c FROM entities"),
+                        items: _safeAll(db, "SELECT id, name, type, created_at FROM entities ORDER BY last_accessed_at DESC LIMIT ? OFFSET ?", [limit, offset]).map(_entItem),
+                    };
+                }
+                if (o.kind === "trait") {
+                    return {
+                        success: true, total: count("SELECT COUNT(*) AS c FROM behavioral_traits WHERE confidence > 0.3"),
+                        items: _safeAll(db, "SELECT trait_key, value, confidence, created_at FROM behavioral_traits WHERE confidence > 0.3 ORDER BY confidence DESC LIMIT ? OFFSET ?", [limit, offset]).map(_traitItem),
+                    };
+                }
+                const where = "consolidated_into IS NULL" + (o.category ? " AND category = ?" : "");
+                const params = o.category ? [String(o.category)] : [];
+                return {
+                    success: true, total: count(`SELECT COUNT(*) AS c FROM memories WHERE ${where}`, params),
+                    items: _safeAll(db, `SELECT ${STUDIO_MEM_COLS} FROM memories WHERE ${where}
+                        ORDER BY pinned DESC, importance DESC, created_at DESC LIMIT ? OFFSET ?`, [...params, limit, offset]).map(_memItem),
+                };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // By meaning through the bot's recall(); by words when the bot isn't running.
+    ipcMain.handle("memory:studio-find", async (_, query) => {
+        const q = typeof query === "string" ? query.trim().slice(0, 500) : "";
+        if (!q) return { success: true, items: [] };
+        const found = await _importCallBot("search", { query: q }, 8000);
+        try {
+            const db = _studioOpenDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                let memRows;
+                if (found.success && Array.isArray(found.ids)) {
+                    const ids = found.ids.filter(Number.isInteger);
+                    const byId = new Map(ids.length
+                        ? _safeAll(db, `SELECT ${STUDIO_MEM_COLS} FROM memories WHERE consolidated_into IS NULL AND id IN (${ids.map(() => "?").join(",")})`, ids).map((r) => [r.id, r])
+                        : []);
+                    memRows = ids.map((id) => byId.get(id)).filter(Boolean);
+                } else {
+                    const words = q.split(/\s+/).slice(0, 8);
+                    memRows = _safeAll(db, `SELECT ${STUDIO_MEM_COLS} FROM memories WHERE consolidated_into IS NULL AND ${words.map(() => "content LIKE ?").join(" AND ")}
+                        ORDER BY importance DESC, created_at DESC LIMIT 50`, words.map((w) => `%${w}%`));
+                }
+                const like = `%${q}%`;
+                return {
+                    success: true,
+                    byMeaning: !!found.success,
+                    items: [
+                        ..._safeAll(db, "SELECT id, name, type, created_at FROM entities WHERE name LIKE ? LIMIT 10", [like]).map(_entItem),
+                        ..._safeAll(db, "SELECT trait_key, value, confidence, created_at FROM behavioral_traits WHERE confidence > 0.3 AND (trait_key LIKE ? OR value LIKE ?) LIMIT 10", [like.replace(/ /g, "_"), like]).map(_traitItem),
+                        ...memRows.map(_memItem),
+                    ],
+                };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // New facts from the last 7 days the owner hasn't kept, fixed or forgotten yet.
+    ipcMain.handle("memory:studio-review", async () => {
+        try {
+            const db = _studioOpenWriteDb(); // creates memory_reviewed on first use
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const rows = db.prepare(`SELECT ${STUDIO_MEM_COLS} FROM memories
+                    WHERE consolidated_into IS NULL AND created_at > datetime('now', '-7 days') AND ${REVIEW_SKIP}
+                      AND id NOT IN (SELECT memory_id FROM memory_reviewed)
+                    ORDER BY created_at DESC LIMIT 200`).all();
+                return { success: true, items: rows.map(_memItem) };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("memory:studio-reviewed", async (_, ids) => {
+        const nums = (Array.isArray(ids) ? ids : []).map(Number).filter(Number.isInteger);
+        if (!nums.length) return { success: true };
+        try {
+            const db = _studioOpenWriteDb();
+            if (!db) return { success: false, error: "No memory database found" };
+            try {
+                const ins = db.prepare("INSERT OR IGNORE INTO memory_reviewed (memory_id) VALUES (?)");
+                _studioRunWithRetry(() => db.transaction(() => { for (const id of nums) ins.run(id); })());
+                return { success: true };
+            } finally { db.close(); }
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
     // ── Memory Studio: write paths ──────────────────────────────────
     // Open a R/W handle, run the change in a transaction, retry on
     // SQLITE_BUSY (the bot child process holds its own write handle and
@@ -3454,6 +4003,8 @@ function registerIPC() {
             )`).run();
         } catch { /* */ }
         try { handle.prepare("CREATE INDEX IF NOT EXISTS idx_forget_log_kind ON memory_forget_log(kind, forgotten_at)").run(); } catch { /* */ }
+        // Memories the owner kept or fixed in the weekly review (the page's own table; the bot never reads it).
+        try { handle.prepare("CREATE TABLE IF NOT EXISTS memory_reviewed (memory_id INTEGER PRIMARY KEY, reviewed_at TEXT DEFAULT (datetime('now')))").run(); } catch { /* */ }
         // Forgotten means gone: older rows kept the content.
         try { handle.prepare("UPDATE memory_forget_log SET content_snapshot = NULL WHERE content_snapshot IS NOT NULL").run(); } catch { /* */ }
         try {
@@ -3857,26 +4408,135 @@ function registerIPC() {
         }
     });
 
-    // Setup: save credentials
-    ipcMain.handle("setup:save-credentials", async (_, creds) => {
-        try {
-            const envLines = [
-                "# Bhai — Environment Variables",
-                "# Encrypted by TRUSCOR Secure Storage",
-                "",
-                `TELEGRAM_BOT_TOKEN=${creds.botToken}`,
-                `ALLOWED_USER_IDS=${creds.userIds}`,
-            ];
-            if (creds.githubToken) envLines.push(`GITHUB_TOKEN=${creds.githubToken}`);
-            if (creds.workspace) envLines.push(`ATLAS_WORKSPACE=${creds.workspace}`);
+    // ── Memory import (from ChatGPT, Claude, …) ─────────────
+    // Extraction and saving run in the bot (src/memory/memory-import.ts) behind
+    // the overlay server's owner token. The renderer may only make the bot read
+    // the file the owner just picked in the native dialog.
+    let _importPickedPath = null;
+    const IMPORT_MAX_BYTES = 200 * 1024 * 1024;
+    // A big paste or export is ~30 model parts, 3 at a time, each allowed 90 s (memory-import.ts).
+    const IMPORT_PREVIEW_MS = 600_000;
 
-            const envContent = envLines.join("\n") + "\n";
-            saveEnvEncrypted(envContent);
+    // The preview in flight, so Cancel can drop its connection; the bot stops starting parts when it closes.
+    let _importPreviewReq = null;
 
-            return { success: true };
-        } catch (err) {
-            return { success: false, error: err.message };
+    // node:http, not fetch: Node's fetch stops waiting for headers at 300 s, and the bot only
+    // answers a preview once extraction is done.
+    function _importCallBot(route, body, timeoutMs, cancelable = false) {
+        let tok = "";
+        try { tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim(); } catch { /* bot never started */ }
+        if (!tok) return Promise.resolve({ success: false, error: "Bhai isn't running. Start Bhai and try again." });
+        const data = body ? JSON.stringify(body) : null;
+        return new Promise((resolve) => {
+            const fail = (err) => resolve(req._canceled ? { success: false, canceled: true, error: "Stopped." } : {
+                success: false,
+                error: err.name === "AbortError" ? "That took too long. Try importing a smaller part." : "Bhai isn't running. Start Bhai and try again.",
+            });
+            const req = require("http").request(`${OVERLAY_URL}/api/memory/${route}`, {
+                method: data ? "POST" : "GET",
+                headers: { Authorization: `Bearer ${tok}`, ...(data ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } : {}) },
+                signal: AbortSignal.timeout(timeoutMs),
+            }, (res) => {
+                let raw = "";
+                res.setEncoding("utf8");
+                res.on("data", (c) => { raw += c; });
+                res.on("error", fail);
+                res.on("end", () => {
+                    let json = {};
+                    try { json = JSON.parse(raw); } catch { /* not JSON */ }
+                    if (res.statusCode < 200 || res.statusCode > 299) {
+                        resolve({ success: false, error: json.error || (res.statusCode === 413 ? "That's too big to import." : `Bhai answered ${res.statusCode}`) });
+                    } else resolve({ success: !json.error, ...json });
+                });
+            });
+            req.on("error", fail);
+            if (cancelable) {
+                _importPreviewReq = req;
+                req.on("close", () => { if (_importPreviewReq === req) _importPreviewReq = null; });
+            }
+            req.end(data ?? undefined);
+        });
+    }
+
+    // Preview and estimate take the same input: pasted text, or the file the owner picked or dropped.
+    function _importInput(opts) {
+        const { text, filePath, source } = opts || {};
+        if (typeof text === "string" && text.trim()) {
+            if (text.length > 20 * 1024 * 1024) return { error: "That's too much text. Try a smaller part." };
+            return { body: { text, source } };
         }
+        if (!filePath || filePath !== _importPickedPath) return { error: "Choose the file again." };
+        // Export .zips go as they are: the bot picks conversations.json (or the biggest text) out itself.
+        try {
+            if (fs.statSync(filePath).size > IMPORT_MAX_BYTES) return { error: "That file is too big to import." };
+        } catch (err) {
+            return { error: `Couldn't read that file: ${err.message}` };
+        }
+        return { body: { path: filePath, source } };
+    }
+
+    ipcMain.handle("memory:import-prompt", () => _importCallBot("import/prompt", null, 5000));
+
+    ipcMain.handle("memory:import-pick-file", async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            title: "Choose your export",
+            filters: [{ name: "Exports", extensions: ["txt", "md", "json", "zip"] }],
+            properties: ["openFile"],
+        });
+        if (result.canceled || !result.filePaths.length) return { canceled: true };
+        _importPickedPath = result.filePaths[0];
+        return { canceled: false, path: _importPickedPath, name: path.basename(_importPickedPath) };
+    });
+
+    // An export .zip dropped on the import dialog counts as picked, like one chosen in the dialog
+    // (the preload resolves the path from the dropped File; text files are read in the renderer).
+    ipcMain.handle("memory:import-use-dropped", (_, filePath) => {
+        if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return { success: false, error: "Choose the file instead." };
+        if (path.extname(filePath).toLowerCase() !== ".zip") {
+            return { success: false, error: "Drop a .txt, .md, .json or export .zip file." };
+        }
+        try {
+            if (!fs.statSync(filePath).isFile()) return { success: false, error: "That isn't a file." };
+        } catch {
+            return { success: false, error: "Couldn't find that file. Choose it instead." };
+        }
+        _importPickedPath = filePath;
+        return { success: true, path: filePath, name: path.basename(filePath) };
+    });
+
+    ipcMain.handle("memory:import-estimate", (_, opts) => {
+        const input = _importInput(opts);
+        if (input.error) return { success: false, error: input.error };
+        return _importCallBot("import/estimate", input.body, 30_000);
+    });
+
+    ipcMain.handle("memory:import-preview", (_, opts) => {
+        const input = _importInput(opts);
+        if (input.error) return { success: false, error: input.error };
+        if (_importPreviewReq) { // one preview at a time
+            _importPreviewReq._canceled = true;
+            _importPreviewReq.destroy();
+        }
+        return _importCallBot("import/preview", input.body, IMPORT_PREVIEW_MS, true);
+    });
+
+    ipcMain.handle("memory:import-cancel", () => {
+        const req = _importPreviewReq;
+        _importPreviewReq = null;
+        if (!req) return { success: true, canceled: false };
+        req._canceled = true;
+        req.destroy();
+        return { success: true, canceled: true };
+    });
+
+    ipcMain.handle("memory:import-save", (_, facts, source) => {
+        if (!Array.isArray(facts) || !facts.length) return { success: false, error: "Nothing selected." };
+        return _importCallBot("import/save", { facts, source }, 120_000);
+    });
+
+    ipcMain.handle("memory:import-undo", (_, batch) => {
+        if (typeof batch !== "string" || !batch) return { success: false, error: "Nothing to undo." };
+        return _importCallBot("import/undo", { batch }, 60_000);
     });
 
     // Setup: save user profile
@@ -3897,9 +4557,9 @@ function registerIPC() {
 
     // W3: Magic Moment rich detection. Returns running-app snapshot.
     // Called once per Ready Hub mount. Best-effort: empty array on
-    // failure or when ATLAS_NO_MAGIC_MOMENT_RICH=true.
+    // failure or when BHAI_NO_MAGIC_MOMENT_RICH=true.
     ipcMain.handle("setup:detect-magic-moment", async () => {
-        if (process.env.ATLAS_NO_MAGIC_MOMENT_RICH === "true") {
+        if (envOf("NO_MAGIC_MOMENT_RICH") === "true") {
             return { names: [], platform: process.platform, disabled: true };
         }
         try {
@@ -4028,8 +4688,8 @@ function registerIPC() {
     function resolveWorkspaceOptions() {
         try {
             const env = loadEnvDecrypted() || "";
-            const wsLine = env.split("\n").find((l) => l.startsWith("ATLAS_WORKSPACE="));
-            if (wsLine) return { workspace: wsLine.slice("ATLAS_WORKSPACE=".length).trim() };
+            const wsLine = env.split("\n").find((l) => l.startsWith("BHAI_WORKSPACE="));
+            if (wsLine) return { workspace: wsLine.slice("BHAI_WORKSPACE=".length).trim() };
         } catch { /* ignore */ }
         return {};
     }
@@ -4261,7 +4921,7 @@ function registerIPC() {
     }
 
     ipcMain.handle("settings:integrations", () => {
-        const custom = loadEnvKey("ATLAS_WORKSPACE") || "";
+        const custom = loadEnvKey("BHAI_WORKSPACE") || "";
         return {
             workspace: custom || path.join(app.getPath("desktop"), "Bhai Files"),
             workspaceIsDefault: !custom,
@@ -4294,7 +4954,7 @@ function registerIPC() {
     });
 
     ipcMain.handle("settings:open-workspace", () => {
-        const dir = loadEnvKey("ATLAS_WORKSPACE") || path.join(app.getPath("desktop"), "Bhai Files");
+        const dir = loadEnvKey("BHAI_WORKSPACE") || path.join(app.getPath("desktop"), "Bhai Files");
         fs.mkdirSync(dir, { recursive: true });
         return shell.openPath(dir);
     });
@@ -4476,12 +5136,18 @@ function registerIPC() {
     });
 
     // Setup: request an OS permission by opening the correct Preferences pane.
+    // macOS lists the app under Microphone/Accessibility only once it has asked,
+    // so ask first: the prompt comes from the tile the user just clicked.
     // Non-darwin is a no-op returning {ok:true, skipped:true}.
     ipcMain.handle("setup:request-permission", async (_evt, name) => {
         if (process.platform !== "darwin") return { ok: true, skipped: true };
         const { prefPaneUrlFor } = require("./components/permissions-grid");
         const url = prefPaneUrlFor(name);
         if (!url) return { ok: false, error: "unknown permission: " + String(name) };
+        if (name === "microphone" && systemPreferences.getMediaAccessStatus("microphone") === "not-determined") {
+            return { ok: await systemPreferences.askForMediaAccess("microphone") };
+        }
+        if (name === "accessibility") systemPreferences.isTrustedAccessibilityClient(true);
         try { await shell.openExternal(url); return { ok: true }; }
         catch (err) { return { ok: false, error: err.message || String(err) }; }
     });
@@ -4611,7 +5277,7 @@ function registerIPC() {
                 if (j.__parseError) return { ok: false, error: `Matrix returned ${j.__parseError}` };
                 if (!j.user_id) return { ok: false, error: j.error || "Matrix rejected token" };
             } else if (type === "email") {
-                const { ImapFlow } = require("imapflow");
+                const { ImapFlow } = botRequire("imapflow");
                 const client = new ImapFlow({
                     host: creds.imapHost,
                     port: creds.imapPort,
@@ -4665,7 +5331,7 @@ function registerIPC() {
     // separate task (E3c); this IPC only opens the browser-based authorize page.
     ipcMain.handle("setup:slack-oauth-start", async () => {
         const clientId = process.env.SLACK_CLIENT_ID || "REPLACE_ME";
-        const url = "https://slack.com/oauth/v2/authorize?scope=chat:write,app_mentions:read,im:history&client_id=" + encodeURIComponent(clientId);
+        const url = "https://slack.com/oauth/v2/authorize?scope=chat:write,files:write,app_mentions:read,im:history&client_id=" + encodeURIComponent(clientId);
         const popup = new BrowserWindow({
             width: 520,
             height: 720,
@@ -4685,7 +5351,7 @@ function registerIPC() {
 
     // Setup: persist personalize block (hotkey/theme/voice/wakeWord) into
     // electron-store AND mirror voice + wake-word + hotkey into .env.enc via
-    // ATLAS_* env keys so the bot actually reads the user's choice on next boot.
+    // BHAI_* env keys so the bot actually reads the user's choice on next boot.
     ipcMain.handle("setup:save-personalize", async (_evt, update) => {
         try {
             const { mergePersonalize, envKVsFromPersonalize } = require(path.join(__dirname, "wizard", "personalize-reducer.js"));
@@ -4741,16 +5407,13 @@ function registerIPC() {
     // ── Auto-Updater IPC ─────────────────────────
     ipcMain.handle("update:check", async () => {
         if (IS_DEV) return { available: false, isDev: true };
-        try {
+        return checkResult(() => {
             // Guarantee the feed URL is set before electron-updater fetches.
             // Without this, a fresh install with no app-update.yml falls back
             // to the default GitHub provider and 404s on a stale repo.
             configureAutoUpdater();
-            const result = await autoUpdater.checkForUpdates();
-            return { available: !!result?.updateInfo, version: result?.updateInfo?.version };
-        } catch (err) {
-            return { error: err.message };
-        }
+            return autoUpdater.checkForUpdates();
+        });
     });
 
     ipcMain.handle("update:download", async () => {
@@ -4977,7 +5640,7 @@ function registerIPC() {
             } catch (err) {
                 console.warn("[Account] Convex info query failed:", err.message);
             }
-            if (_deviceRemoved) return { signedIn: false, deviceRemoved: true };
+            if (_signInNeeded) return { signedIn: false, deviceRemoved: _signInNeeded === "device_removed", signInAgain: true };
 
             return {
                 signedIn: true,
@@ -5023,7 +5686,7 @@ function registerIPC() {
     });
 
     // ── Store IPC ───────────────────────────────────────────────
-    const STORE_DIR = path.join(app.getPath("home"), ".atlas", "store");
+    const STORE_DIR = path.join(BHAI_HOME, "store");
 
     // Fetch store items via the session-authenticated proxy. Store Convex
     // functions are internalQuery-only (security audit fb99bbf) and are not
@@ -5269,7 +5932,7 @@ function registerIPC() {
     // Bhai's own key; add more as ecosystem partners are vetted. Stored as
     // an env-overridable allowlist so we don't ship a hardcoded list that's
     // tedious to rotate.
-    const TRUSTED_PUBLISHER_KEYS = (process.env.ATLAS_TRUSTED_PUBLISHER_KEYS || "")
+    const TRUSTED_PUBLISHER_KEYS = (envOf("TRUSTED_PUBLISHER_KEYS") || "")
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
@@ -5492,7 +6155,7 @@ function registerIPC() {
 
             // If ZIP contains MCP config or package.json, detect type
             let itemType = "skill";
-            if (extractedFiles.some(f => f.includes("atlas.config.json") || f.includes("package.json"))) {
+            if (extractedFiles.some(f => f.includes("bhai.config.json") || f.includes("atlas.config.json") || f.includes("package.json"))) {
                 itemType = "mcp";
             }
 
@@ -5506,8 +6169,8 @@ function registerIPC() {
                 zip.extractAllTo(skillDir, true);
             }
 
-            // Write/overwrite the skill markdown with ATLAS-compatible frontmatter
-            const atlasContent = `---
+            // Write/overwrite the skill markdown with Bhai-compatible frontmatter
+            const bhaiContent = `---
 name: ${name}
 description: ${description}
 categories: ${JSON.stringify(categories)}
@@ -5516,7 +6179,7 @@ version: ${version}
 sideloaded_at: ${new Date().toISOString()}
 ---
 ${body}`;
-            fs.writeFileSync(path.join(skillDir, "SKILL.md"), atlasContent);
+            fs.writeFileSync(path.join(skillDir, "SKILL.md"), bhaiContent);
 
             // Update installs.json
             const installsPath = path.join(STORE_DIR, "installs.json");
@@ -5864,7 +6527,7 @@ ${body}`;
     // Real IMAP login, not just a TLS reachability check: a wrong app password
     // should fail here, not silently after the restart.
     ipcMain.handle("channel:test-email", async (_, { user, password, imapHost, imapPort }) => {
-        const { ImapFlow } = require("imapflow");
+        const { ImapFlow } = botRequire("imapflow");
         const port = Number(imapPort) || 993;
         const client = new ImapFlow({ host: imapHost, port, secure: port === 993, auth: { user, pass: savedOr(password, "EMAIL_PASSWORD") }, logger: false });
         try {
@@ -5910,7 +6573,10 @@ ${body}`;
             await new Promise(r => setTimeout(r, 3000));
             let r;
             try { r = await convexSiteRequest("POST", "/api/telegram/managed/collect", { username }); } catch { continue; }
-            if (r && r.status === "ready") return { success: true, username, token: r.token, userId: r.ownerId, name: r.ownerName || "" };
+            if (r && r.status === "ready") {
+                ensureTelegramAvatar(r.token);
+                return { success: true, username, token: r.token, userId: r.ownerId, name: r.ownerName || "" };
+            }
             if (r && r.status === "expired") return { success: false, message: "That request expired" };
             if (r && r.error && !/rate limit/i.test(r.error)) return { success: false, message: r.error };
         }
@@ -5977,13 +6643,13 @@ ${body}`;
     // Setup: start a WhatsApp pair session from inside the wizard.
     // Runs Baileys directly from main.js so the user can scan the QR BEFORE
     // the bot has booted. Emits QR strings on the existing `whatsapp-qr`
-    // channel (which preload.js:152 bridges to window.atlas.onWhatsAppQR).
+    // channel (which preload.js:152 bridges to window.bhai.onWhatsAppQR).
     // Emits the literal string "connected" when pairing completes.
     ipcMain.handle("setup:wa-pair-start", async () => {
         try {
             const { startPair, isPairing } = require(path.join(__dirname, "setup", "whatsapp-pair.js"));
             if (isPairing()) return { ok: true, alreadyRunning: true };
-            const baileysFactory = require("@whiskeysockets/baileys");
+            const baileysFactory = botRequire("@whiskeysockets/baileys");
             const send = (payload) => {
                 if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send("whatsapp-qr", payload);
@@ -6107,11 +6773,11 @@ function downloadAndInstallNode(sendProgress) {
 
 // Augment PATH with common binary locations missing from Electron's stripped
 // dock-launch PATH. brew (Apple Silicon at /opt/homebrew/bin), ollama, python3,
-// and ATLAS-managed tools all live in non-default locations.
+// and Bhai-managed tools all live in non-default locations.
 function buildAugmentedPath() {
     if (process.platform === "win32") return process.env.PATH || "";
     const extras = [
-        path.join(require("os").homedir(), ".atlas", "bin"),
+        path.join(BHAI_HOME, "bin"),
         "/opt/homebrew/bin",       // Homebrew (Apple Silicon)
         "/usr/local/bin",          // Homebrew (Intel) / general
         "/opt/homebrew/sbin",
@@ -6541,8 +7207,12 @@ app.whenReady().then(async () => {
     });
     // Run v1 → v2 migration before anything reads SETUP_FLAG or prefs.json.
     await runV2Migration();
-    // Ghost-cursor windows exist (hidden) before any bot can drive the screen.
+    // Ghost cursor: track displays now; its windows load when the bot warms them.
     initAgentCursor();
+    initAmbientPause();
+    // The packaged bot runs on Electron's Node: other versions' compile caches
+    // (left by earlier app versions) are never read again. Dev runs a system Node.
+    if (!IS_DEV) pruneCompileCache(path.join(app.getPath("userData"), "v8-cache")).catch(() => {});
 
     // Configure the auto-updater feed URL once at startup. Some launch paths
     // (native menu shortcuts, scheduled checks) call autoUpdater directly
@@ -6632,28 +7302,13 @@ app.whenReady().then(async () => {
     setupAutoUpdater();
     createTray();
 
-    // Request microphone permission (macOS requires explicit ask)
-    if (process.platform === "darwin") {
-        try {
-            const micStatus = systemPreferences.getMediaAccessStatus("microphone");
-            if (micStatus !== "granted") {
-                console.log("[PERMISSIONS] Requesting microphone access...");
-                const granted = await systemPreferences.askForMediaAccess("microphone");
-                console.log(`[PERMISSIONS] Microphone: ${granted ? "granted" : "denied"}`);
-            } else {
-                console.log("[PERMISSIONS] Microphone: already granted");
-            }
-        } catch (err) {
-            console.warn("[PERMISSIONS] Microphone permission request failed:", err.message);
-        }
-    }
-
     // Clean old log files on startup (keeps only last 3 days)
     cleanOldLogs();
 
-    // Check accessibility permission on macOS (required for global shortcuts)
+    // Check accessibility permission on macOS (required for global shortcuts).
+    // Log only: the prompt comes from the wizard / Ready Hub permission tiles.
     if (process.platform === "darwin") {
-        const trusted = systemPreferences.isTrustedAccessibilityClient(true); // true = prompt if not trusted
+        const trusted = systemPreferences.isTrustedAccessibilityClient(false);
         if (!trusted) {
             console.warn("[SHORTCUT] ⚠️ Accessibility permission not granted — global shortcuts may not work. Grant permission in System Settings > Privacy & Security > Accessibility.");
         }
@@ -6726,7 +7381,7 @@ app.on("window-all-closed", (e) => {
 
 app.on("before-quit", () => {
     isQuitting = true;
-    stopHeightPolling();
+    overlayFollowsContent = false;
     if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow.destroy();
         overlayWindow = null;

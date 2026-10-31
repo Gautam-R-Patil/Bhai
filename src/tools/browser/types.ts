@@ -34,7 +34,7 @@ export interface InteractiveElement {
     y: number;
     tag: string;
     text: string;
-    atlasId: string;
+    bhaiId: string;
     handle?: ElementHandle;
     editorType?: EditorType;
     isOCRElement?: boolean;
@@ -58,7 +58,7 @@ export interface FrameScanResult {
     y: number;
     tag: string;
     text: string;
-    atlasId: string;
+    bhaiId: string;
     score: number;
     editorType?: EditorType;
 }

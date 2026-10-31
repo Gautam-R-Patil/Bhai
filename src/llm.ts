@@ -9,7 +9,8 @@ import type {
 } from "openai/resources/chat/completions.js";
 import { getConvexSiteUrl } from "./config/keys.js";
 import type { Config } from "./config.js";
-import { encryptedFetch } from "./crypto-transport.js";
+import { encryptedFetch, encryptedFetchStream } from "./crypto-transport.js";
+import { type LLMDelta, readFrames } from "./llm-stream.js";
 import { getSessionToken, handleAuthError } from "./session.js";
 
 // ── Types ─────────────────────────────────────
@@ -59,12 +60,19 @@ export interface LLMClient {
         lean?: boolean;
         /**
          * Deadline per model attempt, in ms, instead of the transport's default
-         * (ATLAS_LLM_ATTEMPT_TIMEOUT_MS, 25s). For long generations, e.g. a
+         * (BHAI_LLM_ATTEMPT_TIMEOUT_MS, 25s). For long generations, e.g. a
          * thinking model writing a few KB of code.
          */
         timeoutMs?: number;
         /** The caller's cancel: aborts the attempt in flight and tries no other model. */
         signal?: AbortSignal;
+        /**
+         * Stream the answer: text/notes/tool starts as they arrive. A `reset`
+         * means drop what this call showed so far (another attempt starts).
+         * The resolved completion is still the answer. Off with
+         * BHAI_NO_STREAMING=true. A throw from here fails the call (no fallback).
+         */
+        onDelta?: (d: LLMDelta) => void;
     }): Promise<ChatCompletion>;
     config: Config;
 }
@@ -119,6 +127,7 @@ export const MODEL_DISPLAY: Record<string, string> = {
 import { sanitizeContextEchoes } from "./context-scrubber.js";
 import { type ChatParams, createDefaultPipeline } from "./llm-middleware.js";
 import { tryParseOssToolCalls } from "./llm-parser-fallback.js";
+import { warmCursorForTools } from "./screen/agent-cursor.js";
 import { protect, protectMessages } from "./security/pii-vault.js";
 import { IS_MAC, IS_WIN } from "./tools/platform.js";
 import { sanitizeToolSchemas, type ToolSchemaShape } from "./tools/schema-sanitizer.js";
@@ -157,17 +166,22 @@ async function getModelFallback(model: string, exclude?: string[]): Promise<stri
 
 // Per-attempt deadline. Thinking turns legitimately run long (max allows ~65K
 // tokens), so a flat 25s aborted them and silently failed over to a cheaper
-// model. An explicit ATLAS_LLM_ATTEMPT_TIMEOUT_MS still wins.
+// model. An explicit BHAI_LLM_ATTEMPT_TIMEOUT_MS still wins.
 const ATTEMPT_TIMEOUT_BY_EFFORT: Partial<Record<ThinkingLevel, number>> = {
     medium: 60_000,
     high: 120_000,
     max: 180_000,
 };
 export function attemptTimeoutMs(effort?: ThinkingLevel): number {
-    const env = Number(process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS);
+    const env = Number(process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS);
     if (env > 0) return env;
     return (effort && ATTEMPT_TIMEOUT_BY_EFFORT[effort]) || 25_000;
 }
+
+// A streamed attempt fails when the server goes quiet this long between frames (at least;
+// never less than the attempt budget). The server pings every 10 s while a stream is open.
+const STREAM_GAP_MS = 30_000;
+const OUT_OF_CREDITS = "You've run out of AI credits. Reach the TRUSCOR team for more.";
 
 // ── Create Client ─────────────────────────────
 
@@ -189,15 +203,19 @@ export function createLLMClient(config: Config): LLMClient {
             lean,
             timeoutMs,
             signal,
+            onDelta,
         }) {
             // A fresh deadline per fetch (each fallback hop gets its own), sized
             // by thinking effort; joined with the caller's signal if any.
+            const attemptMs = timeoutMs && timeoutMs > 0 ? timeoutMs : attemptTimeoutMs(lean ? "off" : thinkingLevel);
             const deadline = () => {
-                const ms = timeoutMs && timeoutMs > 0 ? timeoutMs : attemptTimeoutMs(lean ? "off" : thinkingLevel);
+                const ms = attemptMs;
                 const t = ms ? AbortSignal.timeout(ms) : undefined;
                 return t && signal ? AbortSignal.any([t, signal]) : t;
             };
             signal?.throwIfAborted();
+            // Screen-driving tools on offer: the desktop loads the ghost cursor's windows now.
+            warmCursorForTools(tools);
             // ── Network health guard: fail fast if internet is down ──
             try {
                 const { isOffline, reportNetworkError } = await import("./network-health.js");
@@ -297,12 +315,15 @@ export function createLLMClient(config: Config): LLMClient {
                 requestBody.reasoning = {
                     effort: isThinking ? effort : lean || thinkingLevel === "off" ? "none" : "low",
                 };
+                // How long this attempt waits: the proxy fits an Azure try plus its Claude
+                // fallback inside it, so a slow call isn't answered (and paid) twice.
+                requestBody.attemptTimeoutMs = attemptMs;
 
                 // Exclude already-tried models so each hop surfaces a new provider.
                 // Window-aware mode (opt-in): estimate the request's token size once
                 // and skip fallback candidates whose context window can't hold it,
                 // closing the silent 1M→200K hop on large-context turns. Zero LLM cost.
-                const windowAware = process.env.ATLAS_WINDOW_AWARE_PRUNE === "true";
+                const windowAware = process.env.BHAI_WINDOW_AWARE_PRUNE === "true";
                 let estTokens = 0;
                 if (windowAware) {
                     try {
@@ -340,6 +361,135 @@ export function createLLMClient(config: Config): LLMClient {
                 }
                 let lastError: Error | null = null;
 
+                // ── Streaming (onDelta) ──
+                // A throwing onDelta is a caller bug, not a model failure: it is
+                // rethrown as is and no other model runs (each would be charged and
+                // would likely hit the same throw).
+                const stream = onDelta && process.env.BHAI_NO_STREAMING !== "true" ? onDelta : undefined;
+                let streamed = false;
+                let callerFault: { err: unknown } | undefined;
+                const deliver = (d: LLMDelta) => {
+                    streamed = true;
+                    try {
+                        stream?.(d);
+                    } catch (err) {
+                        callerFault ??= { err };
+                        throw err;
+                    }
+                };
+                // One streamed request. Headers must arrive within the attempt
+                // budget (a timer cleared once they do, so it never cuts the body);
+                // the first frame gets what is left of it, then frames may be
+                // STREAM_GAP_MS apart. Only the caller's signal stays on the fetch.
+                const streamOnce = async (body: string, token: string): Promise<ChatCompletion> => {
+                    if (streamed) deliver({ kind: "reset" });
+                    const started = Date.now();
+                    const headerWait = new AbortController();
+                    const timer = setTimeout(
+                        () =>
+                            headerWait.abort(
+                                new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+                            ),
+                        attemptMs,
+                    );
+                    let opened: { response: Response; rid: string };
+                    try {
+                        opened = await encryptedFetchStream(proxyUrl, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                            body,
+                            signal: signal ? AbortSignal.any([headerWait.signal, signal]) : headerWait.signal,
+                        });
+                    } finally {
+                        clearTimeout(timer);
+                    }
+                    return readFrames(opened.response, opened.rid, {
+                        firstFrameMs: Math.max(1, attemptMs - (Date.now() - started)),
+                        // A slow-thinking model may be quiet as long as a plain call may take.
+                        gapMs: Math.max(STREAM_GAP_MS, attemptMs),
+                        signal,
+                        onDelta: deliver,
+                    });
+                };
+                // streamOnce plus today's auth handling: a 401 refreshes the session
+                // and streams once more; a 402 gets the fixed out-of-credits copy.
+                const streamChat = async (body: string, token: string): Promise<ChatCompletion> => {
+                    try {
+                        try {
+                            return await streamOnce(body, token);
+                        } catch (err) {
+                            if ((err as { status?: number }).status !== 401 || callerFault || signal?.aborted)
+                                throw err;
+                            const fresh = await handleAuthError();
+                            if (!fresh) throw new Error("Authentication failed — could not refresh session");
+                            return await streamOnce(body, fresh);
+                        }
+                    } catch (err) {
+                        if ((err as { status?: number }).status === 402 && !callerFault) {
+                            throw Object.assign(new Error(OUT_OF_CREDITS), { status: 402 });
+                        }
+                        throw err;
+                    }
+                };
+
+                // Today's success bookkeeping, shared by both paths.
+                const finish = async (
+                    responseData: ChatCompletion,
+                    currentModel: string,
+                    callLatency: number,
+                    isFallback: boolean,
+                ): Promise<ChatCompletion> => {
+                    // Log thinking if present
+                    const choice = responseData.choices?.[0];
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const reasoning =
+                        (choice as any)?.message?.reasoning_content ||
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        (choice as any)?.message?.reasoning;
+                    if (reasoning && typeof reasoning === "string") {
+                        const preview = reasoning.substring(0, 150).replace(/\n/g, " ");
+                        console.log(`  💭 Thinking: ${preview}...`);
+                    }
+
+                    // Track success for adaptive routing
+                    try {
+                        const { updateModelStats } = await import("./model-router.js");
+                        const inputEst = responseData.usage?.prompt_tokens || 500;
+                        const outputEst = responseData.usage?.completion_tokens || 300;
+                        updateModelStats(currentModel, callLatency, true, inputEst, outputEst);
+                    } catch {
+                        /* router not loaded yet */
+                    }
+
+                    // Report network success to health monitor
+                    try {
+                        const { reportNetworkSuccess } = await import("./network-health.js");
+                        reportNetworkSuccess();
+                    } catch {
+                        /* */
+                    }
+
+                    if (isFallback) {
+                        console.log(`  ✅ Fallback to ${MODEL_DISPLAY[currentModel] || currentModel} succeeded`);
+                    }
+
+                    // OSS tool-call parser fallback: when the server returns
+                    // content with embedded <tool_call>… / <|python_tag|> / other
+                    // native markup but tool_calls is empty, parse and fill it in.
+                    tryParseOssToolCalls(responseData);
+
+                    // Strip any leaked <memory-context> fence echoes from the
+                    // final assistant content before it reaches channels.
+                    const msg = responseData.choices?.[0]?.message as { content?: string | null } | undefined;
+                    if (msg && typeof msg.content === "string" && msg.content) {
+                        msg.content = sanitizeContextEchoes(msg.content);
+                    }
+
+                    // Response caching is now handled by the cache middleware in the pipeline
+
+                    return responseData;
+                };
+
                 for (const currentModel of modelsToTry) {
                     // Skip circuit-broken models instantly
                     if (await isModelCircuitOpen(currentModel)) {
@@ -363,6 +513,10 @@ export function createLLMClient(config: Config): LLMClient {
                         }
 
                         const callStart = Date.now();
+                        if (stream) {
+                            const streamedData = await streamChat(JSON.stringify(modelBody), sessionToken);
+                            return await finish(streamedData, currentModel, Date.now() - callStart, isFallback);
+                        }
                         const response = await encryptedFetch(proxyUrl, {
                             method: "POST",
                             headers: {
@@ -407,7 +561,7 @@ export function createLLMClient(config: Config): LLMClient {
 
                         // Credit exhaustion — don't retry, throw immediately
                         if (response.status === 402) {
-                            throw Object.assign(new Error("You've run out of AI credits. Reach the TRUSCOR team for more."), {
+                            throw Object.assign(new Error(OUT_OF_CREDITS), {
                                 status: 402,
                             });
                         }
@@ -428,58 +582,10 @@ export function createLLMClient(config: Config): LLMClient {
 
                         const responseData = (await response.json()) as ChatCompletion;
                         const callLatency = Date.now() - callStart;
-
-                        // Log thinking if present
-                        const choice = responseData.choices?.[0];
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const reasoning =
-                            (choice as any)?.message?.reasoning_content ||
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            (choice as any)?.message?.reasoning;
-                        if (reasoning && typeof reasoning === "string") {
-                            const preview = reasoning.substring(0, 150).replace(/\n/g, " ");
-                            console.log(`  💭 Thinking: ${preview}...`);
-                        }
-
-                        // Track success for adaptive routing
-                        try {
-                            const { updateModelStats } = await import("./model-router.js");
-                            const inputEst = responseData.usage?.prompt_tokens || 500;
-                            const outputEst = responseData.usage?.completion_tokens || 300;
-                            updateModelStats(currentModel, callLatency, true, inputEst, outputEst);
-                        } catch {
-                            /* router not loaded yet */
-                        }
-
-                        // Report network success to health monitor
-                        try {
-                            const { reportNetworkSuccess } = await import("./network-health.js");
-                            reportNetworkSuccess();
-                        } catch {
-                            /* */
-                        }
-
-                        if (isFallback) {
-                            console.log(`  ✅ Fallback to ${MODEL_DISPLAY[currentModel] || currentModel} succeeded`);
-                        }
-
-                        // OSS tool-call parser fallback: when the server returns
-                        // content with embedded <tool_call>… / <|python_tag|> / other
-                        // native markup but tool_calls is empty, parse and fill it in.
-                        tryParseOssToolCalls(responseData);
-
-                        // Strip any leaked <memory-context> fence echoes from the
-                        // final assistant content before it reaches channels.
-                        const msg = responseData.choices?.[0]?.message as { content?: string | null } | undefined;
-                        if (msg && typeof msg.content === "string" && msg.content) {
-                            msg.content = sanitizeContextEchoes(msg.content);
-                        }
-
-                        // Response caching is now handled by the cache middleware in the pipeline
-
-                        return responseData;
+                        return await finish(responseData, currentModel, callLatency, isFallback);
                     } catch (err) {
                         if (signal?.aborted) throw err; // cancelled: no other model, no network report
+                        if (callerFault) throw callerFault.err; // the caller's onDelta threw: not the model's fault
                         lastError = err as Error;
                         const status = (err as { status?: number }).status;
 
@@ -499,7 +605,15 @@ export function createLLMClient(config: Config): LLMClient {
 
                         // Report network errors to health monitor so it can detect offline state
                         const errMsg = (err as Error).message || "";
+                        // A streamed attempt's failure gets the line the plain path writes for a bad status.
+                        if (stream && status) {
+                            const { sanitizeSecrets } = await import("./security/secrets-sanitizer.js");
+                            console.error(
+                                `  ❌ ${MODEL_DISPLAY[currentModel] || currentModel} failed (${status}): ${sanitizeSecrets(errMsg).sanitized.slice(0, 200)}`,
+                            );
+                        }
                         const isNetworkError =
+                            errMsg.includes("stream stalled") || // a streamed attempt's timeout (504)
                             errMsg.includes("fetch failed") ||
                             errMsg.includes("ENOTFOUND") ||
                             errMsg.includes("ETIMEDOUT") ||
@@ -543,6 +657,15 @@ export function createLLMClient(config: Config): LLMClient {
                             model: primaryModel,
                         };
                         const sessionToken = await getSessionToken();
+                        if (sessionToken && stream) {
+                            const callStart = Date.now();
+                            const responseData = await streamChat(JSON.stringify(modelBody), sessionToken);
+                            console.log(
+                                `  ✅ Last-resort retry succeeded — ${MODEL_DISPLAY[primaryModel] || primaryModel} is back`,
+                            );
+                            // finish() also records the success, which closes the breaker.
+                            return await finish(responseData, primaryModel, Date.now() - callStart, false);
+                        }
                         if (sessionToken) {
                             const response = await encryptedFetch(proxyUrl, {
                                 method: "POST",
@@ -568,7 +691,8 @@ export function createLLMClient(config: Config): LLMClient {
                                 return responseData;
                             }
                         }
-                    } catch {
+                    } catch (err) {
+                        if (callerFault || (stream && signal?.aborted)) throw callerFault ? callerFault.err : err;
                         // Truly dead — fall through to throw
                     }
                 }

@@ -87,6 +87,8 @@ async function generateDocBodies(
                 Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(body),
+            // An 8K-token JSON draft outruns the 25s per-attempt default.
+            signal: AbortSignal.timeout(120_000),
         });
         if (!res.ok) return null;
         const payload = (await res.json()) as {
@@ -195,7 +197,8 @@ export const designDocsTool: ToolDefinition = {
             action: `drafting design docs for '${task.slice(0, 60)}'`,
         });
 
-        const bodies = (await generateDocBodies(task)) ?? fallbackBodies(task);
+        const drafted = await generateDocBodies(task);
+        const bodies = drafted ?? fallbackBodies(task);
         const files = {
             prd: path.join(dir, "PRD.md"),
             technical: path.join(dir, "TECHNICAL.md"),
@@ -218,7 +221,11 @@ export const designDocsTool: ToolDefinition = {
         return JSON.stringify({
             success: true,
             ...result,
+            ...(drafted ? {} : { placeholder: true }),
             approval_hint:
+                (drafted
+                    ? ""
+                    : "The LLM draft failed; these are empty templates. Fill all three files with edit (allowed in this mode) before sending them for approval. ") +
                 "Agent is now in AWAITING_APPROVAL mode — your tool access is restricted to the design docs dir and channel senders. " +
                 "Deliver all three files to the user (render_md_to_pdf first for TG/WA) and ask 'approve, or what changes?' " +
                 "When the user explicitly approves, call approve_design_docs to exit this mode and begin implementation. " +

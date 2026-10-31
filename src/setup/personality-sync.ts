@@ -40,7 +40,8 @@ function composeAddendumContent(p: PersonalityFile): string {
     const body = PRESET_BODIES[p.preset] ?? PRESET_BODIES.casual_playful;
     const lines = ["The user picked how you should sound. Stay Bhai — this is a dial on your character, not a different one.", "", body];
     if (p.notes && p.notes.trim().length > 0) {
-        lines.push("", "Additional notes from the user:", p.notes.trim());
+        // Settings caps this at 800 characters; the file is read as-is, so cap it here too.
+        lines.push("", "Additional notes from the user:", p.notes.trim().slice(0, 800));
     }
     lines.push("", "Core identity rules (ownership, anti-hallucination, no interrogation) still take precedence — this only shapes tone.");
     return lines.join("\n");
@@ -97,7 +98,17 @@ export interface PersonalitySyncResult {
     version?: number;
 }
 
-export async function syncPersonalityIfPresent(dirs: { userDataDir?: string; dataDir?: string }): Promise<PersonalitySyncResult> {
+// One sync at a time (boot, the Settings watcher, retries): each reads the file
+// when its turn comes, so the newest choice is always the last push to land.
+let syncChain: Promise<unknown> = Promise.resolve();
+
+export function syncPersonalityIfPresent(dirs: { userDataDir?: string; dataDir?: string }): Promise<PersonalitySyncResult> {
+    const next = syncChain.then(() => syncOnce(dirs));
+    syncChain = next.catch(() => {});
+    return next;
+}
+
+async function syncOnce(dirs: { userDataDir?: string; dataDir?: string }): Promise<PersonalitySyncResult> {
     const { source, marker } = resolvePersonalityPaths(dirs);
     if (!source) return { ran: false, reason: "no-file" };
     if (!fs.existsSync(source)) return { ran: false, reason: "no-file" };

@@ -15,6 +15,14 @@ export interface SearchResult {
 
 // ── Findings ─────────────────────────────────
 
+/** A finding as extracted from one page, before cross-referencing. */
+export interface RawFinding {
+    text: string;
+    sourceUrl: string;
+    sourceTitle: string;
+    categories: string[];
+}
+
 export interface StructuredFinding {
     text: string;
     sourceUrl: string;
@@ -87,6 +95,14 @@ export interface ActiveResearch {
     engineBreakdown?: Record<string, number>;
     estimatedTimeRemaining?: number;
     originalPrompt?: string;
+    /** Where it was asked (channel, user), so a resume after a restart reports there too. */
+    origin?: { channel: string; userId: string; userName?: string; isOwner: boolean; isPrivate?: boolean };
+    /** Times it was resumed after a restart; capped so a run that crashes the app isn't restarted forever. */
+    autoResumes?: number;
+    /** False from "completed" until the answer goes out; a restart in between re-sends it at boot. */
+    delivered?: boolean;
+    /** The finished research this one follows up on; kept in its checkpoints so a resumed follow-up still skips the old findings when storing to memory. */
+    buildsOn?: string;
 }
 
 export interface ResearchIndexEntry {
@@ -103,6 +119,10 @@ export interface ResearchIndexEntry {
     originalPrompt?: string;
     durationSec?: number;
     error?: string;
+    /** The process running it; a "running" entry whose process is gone was cut off by a restart. */
+    pid?: number;
+    /** False while a completed research's answer hasn't gone out yet (see ActiveResearch.delivered). */
+    delivered?: boolean;
 }
 
 export interface ResearchIndex {
@@ -116,25 +136,25 @@ export interface ResearchProfile {
     concurrentQueries: number;
     citationDepth: number;
     useAcademicEngines: boolean;
-    multiPass: boolean;
-    synthesisModel: string;
 }
 
 // ── Persistence ──────────────────────────────
 
 export interface ResearchState {
     research: Omit<ActiveResearch, "abortController">;
-    allFindings: string[];
-    structuredFindings: StructuredFinding[];
+    allFindings: RawFinding[];
     allSources: RankedSource[];
     visitedUrls: string[];
     usedQueries: string[];
     pendingQueries: string[];
     rounds: ResearchRound[];
     currentRound: number;
+    /** Set only on the starting point of a fresh follow-up (not a resume): the finished research it builds on. */
+    buildsOn?: string;
 }
 
 // ── Callbacks ────────────────────────────────
 
-export type NotifyFn = (msg: string) => Promise<void>;
+/** important: also worth a chat message (resumed, failed); the rest is progress, shown on the computer only. */
+export type NotifyFn = (msg: string, important?: boolean) => Promise<void>;
 export type ProgressFn = (msg: string) => Promise<void>;

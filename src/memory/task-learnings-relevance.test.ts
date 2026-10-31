@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 describe("task learnings recall", () => {
     it("only recalls learnings that share words with the task", async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "learn-"));
-        process.env.ATLAS_DATA_DIR = dir;
+        process.env.BHAI_DATA_DIR = dir;
         const recent = new Date().toISOString();
         fs.writeFileSync(
             path.join(dir, "task-learnings.json"),

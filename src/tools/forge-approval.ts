@@ -4,10 +4,10 @@
 import { approveDynamicTool, revokeDynamicTool } from "../forge/orchestrator.js";
 import { isForgeReady } from "../forge/orchestrator.js";
 import { getPlanModeState } from "../agents/plan-mode.js";
-import { ownerSaid } from "../security/consent.js";
+import { ownerApproved } from "../security/consent.js";
 
-// Verbatim-quote audit-log gate. Matches the design-docs flow's banned set
-// so agents can't shortcut by replaying "ok" or "approved" as user_quote.
+// Verbatim-quote audit-log gate (site-skill-mint) so agents can't shortcut by
+// replaying "ok" or "approved" as user_quote.
 const BANNED_USER_QUOTE_WORDS = new Set([
     "ok",
     "yes",
@@ -46,7 +46,7 @@ export const approveDynamicToolTool = {
         function: {
             name: "approve_dynamic_tool",
             description:
-                "Approve a synthesized persistent tool the user has reviewed. The tool moves from awaiting_approval → active and becomes callable. user_quote MUST be the user's verbatim approval text — generic words like 'ok' or 'yes' are rejected.",
+                "Turn on a synthesized persistent tool after the owner said yes. The tool moves from awaiting_approval → active and becomes callable. user_quote is the owner's own yes from their latest message.",
             parameters: {
                 type: "object",
                 properties: {
@@ -54,7 +54,7 @@ export const approveDynamicToolTool = {
                     user_quote: {
                         type: "string",
                         description:
-                            "Verbatim text the user used to approve, ≥10 chars. Used as an audit-log record.",
+                            'The owner\'s own yes, copied from their latest message (e.g. "yes turn it on"). Used as an audit-log record.',
                     },
                 },
                 required: ["slug", "user_quote"],
@@ -70,16 +70,12 @@ export const approveDynamicToolTool = {
         if (!slug) {
             return JSON.stringify({ ok: false, error: "slug required" });
         }
-        const check = isQuoteAcceptable(userQuote);
-        if (!check.ok) {
-            return JSON.stringify({ ok: false, error: check.reason });
-        }
-        // The quote must be something the owner actually typed after the
-        // approval was requested — not text the model wrote.
-        if (!ownerSaid(userQuote, approvalRequestedAt())) {
+        // The quote must come from the owner's latest message, sent after the
+        // approval was requested, and that message must say yes (not no).
+        if (!ownerApproved(userQuote, approvalRequestedAt())) {
             return JSON.stringify({
                 ok: false,
-                error: "user_quote must be the user's own words from a message sent after you asked for approval. Ask them first.",
+                error: "user_quote must be the user's own yes from a message sent after you asked for approval. Ask them first.",
             });
         }
         const result = await approveDynamicTool(slug, userQuote);

@@ -51,9 +51,9 @@ These rules override anything in the task bodies if they conflict.
 If a task requires changing any of the above, stop and re-read the spec — you're in the wrong wave.
 
 **Kill-switches active in W1.**
-- `ATLAS_NO_AWAKENING=true` → skip the awakening step on first install
-- `ATLAS_NO_MAGIC_MOMENT=true` → hide the magic-moment card
-- `ATLAS_NO_ONBOARDING_AUDIO=true` → force-disable wizard audio regardless of preference
+- `BHAI_NO_AWAKENING=true` → skip the awakening step on first install
+- `BHAI_NO_MAGIC_MOMENT=true` → hide the magic-moment card
+- `BHAI_NO_ONBOARDING_AUDIO=true` → force-disable wizard audio regardless of preference
 
 All three default off (feature on). Implement them as guards in the call sites, not as build-time flags.
 
@@ -532,10 +532,10 @@ Open `desktop/wizard.html`. Replace lines 11–38 (from `<body>` down through th
                 <path d="M11 5L6 9H2v6h4l5 4z"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/>
             </svg>
         </button>
-        <button class="chrome-btn" title="Minimize" onclick="atlas.minimize()">
+        <button class="chrome-btn" title="Minimize" onclick="bhai.minimize()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
-        <button class="chrome-btn" title="Close" onclick="atlas.close()">
+        <button class="chrome-btn" title="Close" onclick="bhai.close()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
     </div>
@@ -647,16 +647,16 @@ Open `desktop/wizard/boot.js`. Replace the entire file with:
         const folioEl = document.getElementById("chrome-folio");
         if (!stepEl) return; // not the wizard page
 
-        const atlas  = window.atlas || {};
+        const bhai  = window.bhai || {};
         const router = window.WizardRouter;
         const Cin    = window.Cinematic || { scribeRule: function () {}, applyConfidence: function () {} };
-        if (!router || !atlas.setupDetect) {
+        if (!router || !bhai.setupDetect) {
             stepEl.textContent = "Setup shell failed to load (router or IPC missing).";
             return;
         }
 
         let state;
-        try { state = await atlas.setupDetect(); }
+        try { state = await bhai.setupDetect(); }
         catch (err) {
             stepEl.textContent = "Detection failed: " + (err.message || String(err));
             return;
@@ -673,7 +673,7 @@ Open `desktop/wizard/boot.js`. Replace the entire file with:
         }
 
         async function refreshState() {
-            try { state = await atlas.setupDetect(); }
+            try { state = await bhai.setupDetect(); }
             catch { return; }
             const nxt = router.getSteps(state);
             steps = nxt.steps;
@@ -755,8 +755,8 @@ Open `desktop/wizard/boot.js`. Replace the entire file with:
         if (audioBtn) {
             audioBtn.addEventListener("click", function () {
                 const next = !((state.personalize && state.personalize.audio && state.personalize.audio.enabled) || false);
-                if (atlas.setupSavePersonalize) {
-                    atlas.setupSavePersonalize({
+                if (bhai.setupSavePersonalize) {
+                    bhai.setupSavePersonalize({
                         audio: { enabled: next },
                     }).catch(function () { /* best-effort */ });
                 }
@@ -966,8 +966,8 @@ Open `desktop/wizard/steps/terms.js`. Keep the existing acceptance-validation lo
         cta.innerHTML = Copy.get("terms", "accept") + ' <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="9 6 15 12 9 18"/></svg></span>';
         cta.addEventListener("click", async function () {
             if (!inputs.every(function (i) { return i.checked; })) return;
-            if (window.atlas && typeof window.atlas.setupSaveTermsAcceptance === "function") {
-                try { await window.atlas.setupSaveTermsAcceptance({ accepted: true, version: window.WizardRouter.CURRENT_ACCEPTANCE_VERSION }); }
+            if (window.bhai && typeof window.bhai.setupSaveTermsAcceptance === "function") {
+                try { await window.bhai.setupSaveTermsAcceptance({ accepted: true, version: window.WizardRouter.CURRENT_ACCEPTANCE_VERSION }); }
                 catch (_) { /* best-effort */ }
             }
             if (ctx && typeof ctx.refreshState === "function") await ctx.refreshState();
@@ -1037,8 +1037,8 @@ Replace the entire file with:
         options.className = "signin-options";
 
         function openAuthAndAdvance() {
-            if (window.atlas && typeof window.atlas.openAuthWindow === "function") {
-                window.atlas.openAuthWindow();
+            if (window.bhai && typeof window.bhai.openAuthWindow === "function") {
+                window.bhai.openAuthWindow();
             }
             // The OTPless flow lives in a popup; user returns to the wizard via
             // setup:account-status-change → boot.js refreshState. Don't auto-advance —
@@ -1196,7 +1196,7 @@ Replace the entire file with:
             const n = input.value.trim();
             if (!n) { err.textContent = "Please enter a name."; return; }
             err.textContent = "";
-            if (!window.atlas || typeof window.atlas.saveProfile !== "function") {
+            if (!window.bhai || typeof window.bhai.saveProfile !== "function") {
                 err.textContent = "Save unavailable (IPC not ready).";
                 return;
             }
@@ -1205,14 +1205,14 @@ Replace the entire file with:
             // replaces this with the persona step.
             const tone = existingProfile.tone || "friendly";
             let res;
-            try { res = await window.atlas.saveProfile({ name: n, tone: tone }); }
+            try { res = await window.bhai.saveProfile({ name: n, tone: tone }); }
             catch (e) { err.textContent = "Save failed: " + (e.message || e); return; }
             if (!res || !res.success) {
                 err.textContent = (res && res.error) || "Save failed.";
                 return;
             }
-            if (ctx && ctx.state && ctx.state.isReconfigure && window.atlas && typeof window.atlas.setupReseedNow === "function") {
-                try { await window.atlas.setupReseedNow(); } catch { /* next bot restart picks up */ }
+            if (ctx && ctx.state && ctx.state.isReconfigure && window.bhai && typeof window.bhai.setupReseedNow === "function") {
+                try { await window.bhai.setupReseedNow(); } catch { /* next bot restart picks up */ }
             }
             if (ctx && typeof ctx.refreshState === "function") await ctx.refreshState();
             if (ctx && typeof ctx.onAdvance === "function") ctx.onAdvance();
@@ -1243,7 +1243,7 @@ Replace the entire `personalize.js` with the version below. Component mounts (`H
         const defaultHot   = pz.hotkey   || (platform === "win32" ? "Control+Space" : "Alt+Space");
         const defaultTheme = pz.theme    || "";
         const defaultVoice = pz.voice    || { backend: "gemini-live", name: "Aoede" };
-        const defaultWake  = pz.wakeWord || { enabled: false, phrase: "Hey Atlas" };
+        const defaultWake  = pz.wakeWord || { enabled: false, phrase: "Hey Bhai" };
         const defaultPersonality = pz.personality || { preset: "casual_playful", notes: "" };
 
         const section = document.createElement("section");
@@ -1341,7 +1341,7 @@ Replace the entire `personalize.js` with the version below. Component mounts (`H
         phraseLabel.textContent = Copy.get("personalize", "wake_phrase_label");
         const phraseInput = document.createElement("input");
         phraseInput.type = "text";
-        phraseInput.value = defaultWake.phrase || "Hey Atlas";
+        phraseInput.value = defaultWake.phrase || "Hey Bhai";
         phraseField.appendChild(phraseLabel);
         phraseField.appendChild(phraseInput);
         if (!sw.checked) phraseField.style.display = "none";
@@ -1410,15 +1410,15 @@ Replace the entire `personalize.js` with the version below. Component mounts (`H
                 hotkey:   (hotkeyPicker && typeof hotkeyPicker.getValue === "function") ? hotkeyPicker.getValue() : hotkeyValue,
                 theme:    (themeSwitch  && typeof themeSwitch.getValue  === "function") ? themeSwitch.getValue()  : themeValue,
                 voice:    (voicePicker  && typeof voicePicker.getValue  === "function") ? (voicePicker.getValue() || defaultVoice) : defaultVoice,
-                wakeWord: { enabled: sw.checked, phrase: phraseInput.value.trim() || "Hey Atlas" },
+                wakeWord: { enabled: sw.checked, phrase: phraseInput.value.trim() || "Hey Bhai" },
                 personality: { preset: personaPreset, notes: defaultPersonality.notes || "" },
             };
-            if (!window.atlas || typeof window.atlas.setupSavePersonalize !== "function") {
+            if (!window.bhai || typeof window.bhai.setupSavePersonalize !== "function") {
                 err.textContent = "Save unavailable (IPC not ready).";
                 return;
             }
             let res;
-            try { res = await window.atlas.setupSavePersonalize(payload); }
+            try { res = await window.bhai.setupSavePersonalize(payload); }
             catch (e) { err.textContent = "Save failed: " + (e.message || e); return; }
             if (!res || !res.success) {
                 err.textContent = (res && res.error) || "Save failed.";
@@ -1547,8 +1547,8 @@ Replace the entire file with:
             // Mark every remaining permission as skipped so the Ready Hub shows amber.
             const keys = ["accessibility", "screen", "microphone", "location"];
             for (const k of keys) {
-                if (window.atlas && window.atlas.setupMarkPermissionSkipped) {
-                    try { await window.atlas.setupMarkPermissionSkipped(k, true); } catch { /* best-effort */ }
+                if (window.bhai && window.bhai.setupMarkPermissionSkipped) {
+                    try { await window.bhai.setupMarkPermissionSkipped(k, true); } catch { /* best-effort */ }
                 }
             }
             if (grid && typeof grid.unmount === "function") { try { grid.unmount(); } catch {} }
@@ -1600,7 +1600,7 @@ cta.innerHTML = 'Continue <span class="chev"><svg viewBox="0 0 24 24" fill="none
 
 (d) Change Back button class to `btn btn-text` and remove the text "Back" reassignment (`back.textContent = "Back"` should stay — that one is fine, no Copy.get key for it).
 
-Leave all the IPC calls (`atlas.setupChooseVisionTier`, etc.) intact.
+Leave all the IPC calls (`bhai.setupChooseVisionTier`, etc.) intact.
 
 - [ ] **Step 3: Refactor `install.js`.**
 
@@ -1931,7 +1931,7 @@ Add a helper:
 
 ```javascript
 function needsAwakening(s) {
-    if (process.env.ATLAS_NO_AWAKENING === "true") return false;
+    if (process.env.BHAI_NO_AWAKENING === "true") return false;
     if (s && s.isReconfigure) return false;
     if (s && s.account && s.account.signedIn) return false; // returning user, already booted before
     return true;
@@ -1950,7 +1950,7 @@ function envFlag(name) {
 }
 
 function needsAwakening(s) {
-    if (envFlag("ATLAS_NO_AWAKENING")) return false;
+    if (envFlag("BHAI_NO_AWAKENING")) return false;
     if (s && s.isReconfigure) return false;
     if (s && s.account && s.account.signedIn) return false;
     return true;
@@ -2029,7 +2029,7 @@ Expected: PASS — including the existing router tests.
 
 Run: `cd desktop && npm start`
 
-Expected: on first launch (or after deleting `~/.atlas/setup-state.json` if you've already gone through setup), the wizard opens directly into the awakening cinematic. Click Begin (or wait 2.5s, then click Begin) → welcome step → onwards.
+Expected: on first launch (or after deleting `~/.bhai/setup-state.json` if you've already gone through setup), the wizard opens directly into the awakening cinematic. Click Begin (or wait 2.5s, then click Begin) → welcome step → onwards.
 
 Close.
 
@@ -2041,7 +2041,7 @@ git commit -m "feat(wizard): insert awakening step before welcome on first insta
 
 ALL_STEPS prepends 'awakening'; getSteps emits it for first-install
 flows only (reconfigure + signed-in returning users skip). Honors
-ATLAS_NO_AWAKENING=true env switch."
+BHAI_NO_AWAKENING=true env switch."
 ```
 
 ### Task 13: Hide awakening from the indicator strip
@@ -2053,7 +2053,7 @@ The awakening step is too cinematic for a dot. The indicator already skips it in
 
 - [ ] **Step 1: Run the wizard on a fresh setup state.**
 
-Run: `rm -f ~/.atlas/setup-state.json && cd desktop && npm start`
+Run: `rm -f ~/.bhai/setup-state.json && cd desktop && npm start`
 
 Expected: awakening renders. The dot strip at the bottom is hidden (CSS rule `body[data-step="awakening"] .indicator { opacity: 0 }`). Click Begin. The dot strip fades in, with the first dot active.
 
@@ -2070,16 +2070,16 @@ boot.js starts at index 1, so the awakening step never has a dot.
 Verified manually."
 ```
 
-### Task 14: ATLAS_NO_AWAKENING kill-switch verification
+### Task 14: BHAI_NO_AWAKENING kill-switch verification
 
 Smoke-test the kill-switch is honored in both env and detected reconfigure paths.
 
 **Files:**
 - Manual verification only.
 
-- [ ] **Step 1: Test with `ATLAS_NO_AWAKENING=true`.**
+- [ ] **Step 1: Test with `BHAI_NO_AWAKENING=true`.**
 
-Run: `rm -f ~/.atlas/setup-state.json && ATLAS_NO_AWAKENING=true cd desktop && npm start`
+Run: `rm -f ~/.bhai/setup-state.json && BHAI_NO_AWAKENING=true cd desktop && npm start`
 
 Expected: wizard opens directly to welcome (or whatever step the router picks based on state — but NOT awakening).
 
@@ -2096,7 +2096,7 @@ Close.
 - [ ] **Step 3: Commit a verification note.**
 
 ```bash
-git commit --allow-empty -m "chore(wizard): verify ATLAS_NO_AWAKENING + reconfigure skip awakening (manual)"
+git commit --allow-empty -m "chore(wizard): verify BHAI_NO_AWAKENING + reconfigure skip awakening (manual)"
 ```
 
 ---
@@ -2126,10 +2126,10 @@ Open `desktop/ready-hub.html`. Replace lines 11–33 with:
     <div class="chrome-mark">A.T.L.A.S</div>
     <div class="chrome-folio">READY</div>
     <div class="chrome-tools">
-        <button class="chrome-btn" title="Minimize" onclick="atlas.minimize()">
+        <button class="chrome-btn" title="Minimize" onclick="bhai.minimize()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
-        <button class="chrome-btn" title="Close" onclick="atlas.close()">
+        <button class="chrome-btn" title="Close" onclick="bhai.close()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
     </div>
@@ -2162,7 +2162,7 @@ Loads copy.js, cinematic.js, and the upcoming magic-moment.js."
 
 ### Task 16: Rebuild components/ready-hub-body.js
 
-The body becomes: broadsheet hero, iridescent rule, magic-moment card, settings index grid, action row, "Try this" list. Same `mountHub(container, state, atlas) → handle` API so `hub-boot.js` doesn't change.
+The body becomes: broadsheet hero, iridescent rule, magic-moment card, settings index grid, action row, "Try this" list. Same `mountHub(container, state, bhai) → handle` API so `hub-boot.js` doesn't change.
 
 **Files:**
 - Modify: `desktop/components/ready-hub-body.js`
@@ -2277,10 +2277,10 @@ function escapeHtml(s) {
 }
 ```
 
-Find the existing `renderTiles(tilesWrap, state, atlas)` function. Replace its body with:
+Find the existing `renderTiles(tilesWrap, state, bhai)` function. Replace its body with:
 
 ```javascript
-function renderTiles(tilesWrap, state, atlas) {
+function renderTiles(tilesWrap, state, bhai) {
     if (!tilesWrap) return;
     const TM = _getTileModel();
     if (!TM) return;
@@ -2315,7 +2315,7 @@ function renderTiles(tilesWrap, state, atlas) {
         const route = model.onClickRoute;
         if (route) {
             cell.style.cursor = "pointer";
-            cell.addEventListener("click", function () { handleTileRoute(route, atlas); });
+            cell.addEventListener("click", function () { handleTileRoute(route, bhai); });
         }
         tilesWrap.appendChild(cell);
     }
@@ -2327,7 +2327,7 @@ Keep `applyDiff`, `mergeRealAccount`, `startLiveUpdates`, `handleTileRoute`, `mo
 ```javascript
 // Mount magic-moment if available + not killed by env.
 if (window.MagicMoment && typeof window.MagicMoment.mount === "function"
-    && !(typeof process !== "undefined" && process.env && process.env.ATLAS_NO_MAGIC_MOMENT === "true")) {
+    && !(typeof process !== "undefined" && process.env && process.env.BHAI_NO_MAGIC_MOMENT === "true")) {
     const mmHost = body.querySelector("#hub-magic-moment");
     if (mmHost) window.MagicMoment.mount(mmHost, enriched);
 }
@@ -2638,7 +2638,7 @@ Both default to muted via personalize.audio.enabled=false."
 
 ### Task 20: Add desktop/wizard/audio.js
 
-Lightweight audio helper. Preloads both clips. `play(id)` plays unless disabled. Respects `personalize.audio.enabled` and `ATLAS_NO_ONBOARDING_AUDIO`.
+Lightweight audio helper. Preloads both clips. `play(id)` plays unless disabled. Respects `personalize.audio.enabled` and `BHAI_NO_ONBOARDING_AUDIO`.
 
 **Files:**
 - Create: `desktop/wizard/audio.js`
@@ -2674,7 +2674,7 @@ function setEnabled(v) { _enabled = !!v; }
 
 function play(id) {
     if (!_enabled) return;
-    if (typeof process !== "undefined" && process.env && process.env.ATLAS_NO_ONBOARDING_AUDIO === "true") return;
+    if (typeof process !== "undefined" && process.env && process.env.BHAI_NO_ONBOARDING_AUDIO === "true") return;
     preload();
     const a = _audioElements[id];
     if (!a) return;
@@ -2741,10 +2741,10 @@ git commit -m "feat(wizard): WizardAudio helper + wire up confirm + awakening cu
 
 Two clips preloaded on first enable. setEnabled toggles from boot.js
 based on personalize.audio.enabled. play() is best-effort (autoplay
-block silently ignored). Honors ATLAS_NO_ONBOARDING_AUDIO=true."
+block silently ignored). Honors BHAI_NO_ONBOARDING_AUDIO=true."
 ```
 
-### Task 21: ATLAS_NO_MAGIC_MOMENT kill-switch verification
+### Task 21: BHAI_NO_MAGIC_MOMENT kill-switch verification
 
 Smoke-test the kill-switch.
 
@@ -2753,12 +2753,12 @@ Smoke-test the kill-switch.
 
 - [ ] **Step 1: Test.**
 
-Run: `ATLAS_NO_MAGIC_MOMENT=true cd desktop && npm start` and go to Ready Hub. Expected: no magic-moment card. Settings index, actions, Try this all still visible.
+Run: `BHAI_NO_MAGIC_MOMENT=true cd desktop && npm start` and go to Ready Hub. Expected: no magic-moment card. Settings index, actions, Try this all still visible.
 
 - [ ] **Step 2: Commit a verification note.**
 
 ```bash
-git commit --allow-empty -m "chore(wizard): verify ATLAS_NO_MAGIC_MOMENT hides the card (manual)"
+git commit --allow-empty -m "chore(wizard): verify BHAI_NO_MAGIC_MOMENT hides the card (manual)"
 ```
 
 ---
@@ -2777,7 +2777,7 @@ A single doc that lists every visible behavior to verify before merging W1. The 
 ```markdown
 # W1 Cinematic Spine — Acceptance Checklist
 
-> Run on a clean `~/.atlas/setup-state.json`. Walk every line. Anything
+> Run on a clean `~/.bhai/setup-state.json`. Walk every line. Anything
 > not green is a blocker.
 
 ## Awakening
@@ -2836,11 +2836,11 @@ A single doc that lists every visible behavior to verify before merging W1. The 
 - [ ] Audio is OFF by default (no sound on advance).
 - [ ] Toggling the 🔊 in the chrome enables confirm chimes on advance.
 - [ ] With audio enabled, the awakening plays a bell ~1.45s in.
-- [ ] `ATLAS_NO_ONBOARDING_AUDIO=true` silences everything regardless of toggle.
+- [ ] `BHAI_NO_ONBOARDING_AUDIO=true` silences everything regardless of toggle.
 
 ## Kill-switches
-- [ ] `ATLAS_NO_AWAKENING=true` → awakening skipped, welcome is first.
-- [ ] `ATLAS_NO_MAGIC_MOMENT=true` → magic-moment card hidden on Ready Hub.
+- [ ] `BHAI_NO_AWAKENING=true` → awakening skipped, welcome is first.
+- [ ] `BHAI_NO_MAGIC_MOMENT=true` → magic-moment card hidden on Ready Hub.
 
 ## Comparison to demo
 - [ ] Open `desktop/onboarding-demo/index.html` side by side. The production wizard's visuals match the demo within ~2% (font sizes, weights, padding, motion timing). Any divergence is a bug in the production code, not the demo.
@@ -2955,7 +2955,7 @@ Before marking W1 complete, walk the spec (`docs/superpowers/specs/2026-05-16-on
 - §7.6 audio: Tasks 19–20. **✓**
 - §7.7 step transitions: CSS in Tasks 2–3, JS in Task 7. **✓**
 - §7.8 theme integration: Tasks 7 + 9 (live preview in personalize). **✓**
-- §11 kill-switches in W1: `ATLAS_NO_AWAKENING` (Tasks 12, 14), `ATLAS_NO_MAGIC_MOMENT` (Tasks 17, 21), `ATLAS_NO_ONBOARDING_AUDIO` (Task 20). **✓**
+- §11 kill-switches in W1: `BHAI_NO_AWAKENING` (Tasks 12, 14), `BHAI_NO_MAGIC_MOMENT` (Tasks 17, 21), `BHAI_NO_ONBOARDING_AUDIO` (Task 20). **✓**
 
 Nothing in W2 / W3 is touched.
 

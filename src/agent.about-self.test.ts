@@ -13,6 +13,8 @@ describe("isAboutBhai", () => {
     it("catches xagilab.com, Bhai Bridge, and Bhai named with TRUSCOR", () => {
         expect(isAboutBhai("what's on https://xagilab.com")).toBe(true);
         expect(isAboutBhai("the Bhai Bridge popup is blank")).toBe(true);
+        expect(isAboutBhai("the bhai chrome extension side panel is empty")).toBe(true);
+        expect(isAboutBhai("my bhai sent me this extension of the deadline")).toBe(false);
         expect(isAboutBhai("Bhai, built by TRUSCOR, reviewed")).toBe(true);
         expect(isAboutBhai("Bhai: a proactive personal AI agent with computer use")).toBe(true);
     });

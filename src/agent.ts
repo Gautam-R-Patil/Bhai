@@ -20,6 +20,8 @@ import {
 } from "./agents/circuit-breaker.js";
 import { classifyComplexity } from "./agents/complexity-classifier.js";
 import { takeStuckMarker } from "./channel-text.js";
+import { stripInternalTags, stripOverlayMarkers } from "./stream-filter.js";
+import { createTurnStream, type TurnEventSink, type TurnStream } from "./turn-events.js";
 import { historyForCaller } from "./guest-history.js";
 import { runWithEvalTraceId } from "./agents/evaluator.js";
 import { listActiveLongTasks } from "./agents/long-task.js";
@@ -46,12 +48,14 @@ import {
     planModeReminderBody,
 } from "./agents/plan-mode.js";
 import { judgeFixToIntervention, progressJudgeEnabled, runProgressJudge } from "./agents/progress-judge.js";
+import { smartTruncate } from "./agents/smart-truncate.js";
 import {
     canonicalArgsHash,
     createGuardrailState,
     recordToolCall as recordGuardrailCall,
 } from "./agents/tool-call-guardrail.js";
-import { offloadIfLarge } from "./agents/tool-output-offload.js";
+import { OFFLOAD_THRESHOLD_BYTES, keepRestReadable, offloadIfLarge } from "./agents/tool-output-offload.js";
+import { conversationKey, rememberInboundImages, toReadableImage } from "./media/image-memory.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
 import { withoutGrid } from "./screen/grid-overlay.js";
 import { anySecretTyped, hasVaultToken, resetVaultTask, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
@@ -80,6 +84,7 @@ import { getLocationSnippet, getTimezone } from "./location/index.js";
 import { getAnticipationSnippet, trackSessionForAnticipation } from "./memory/anticipation.js";
 import { bhaiDidMemory, didLine } from "./memory/bhai-did.js";
 import { buildMemoryCards } from "./memory/cards.js";
+import { syncForgetsFromElsewhere } from "./memory/forget.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { pruneContext } from "./memory/context-pruning.js";
 import { getEmotionalContextSnippet } from "./memory/emotional.js";
@@ -105,6 +110,7 @@ import { getStrategyContext, saveStrategy } from "./memory/strategy-library.js";
 import {
     buildPlaybook,
     inLaneOrder,
+    isVerifiedWin,
     type PlaybookCall,
     playbookTaskText,
     STUCK_NOTE_OPENER,
@@ -137,6 +143,7 @@ import { CODE_TOOLS, protect, REVEAL_TOOLS, reveal, revealArgs } from "./securit
 import { isToolAllowed, NON_OWNER_TOOLS } from "./security/tool-access.js";
 import { formatStepStatus, SELF_REPORTING_TOOLS, startStepHeartbeat } from "./step-status.js";
 import {
+    asksChangingFact,
     clearToolRouterState,
     getLastIntent,
     handleToolRequest,
@@ -144,16 +151,12 @@ import {
     selectTools,
     selectToolsFast,
 } from "./tool-router.js";
-import {
-    getPreferredTools,
-    recordIntentToolUsage,
-    recordToolFailure,
-    recordToolRecovery,
-    recordToolSuccess,
-} from "./tool-router-analytics.js";
+import { getPreferredTools, recordIntentToolUsage } from "./tool-router-analytics.js";
 import { autoSaveSession, getBrowserContext, trackBrowserStep } from "./tools/browser-memory.js";
 import { noteShownMemories, runAsMainLoopTool } from "./tools/cron-tool.js";
-import { clearCache, executeTool, resetRateLimits, withTurnSignal } from "./tools/index.js";
+import { runQuickCommand } from "./quick-commands.js";
+import * as learnedRouter from "./routing/learned-router.js";
+import { clearCache, executeTool, getToolSchemasByNames, resetRateLimits, withTurnSignal } from "./tools/index.js";
 import { sendFailed, withSendLedger } from "./tools/send-ledger.js";
 import { ownerMemoryTool } from "./tools/tool-intelligence.js";
 
@@ -295,13 +298,14 @@ function stripChannelTags(text: string): string {
 }
 
 /**
- * The message points at Bhai itself: its repo, its site, Bhai Bridge, or text
+ * The message points at Bhai itself: its repo, its site, its Chrome extension
+ * (now named "Bhai", formerly "Bhai Bridge"), or text
  * naming Bhai together with TRUSCOR. A friend called "bhai" never counts, nor does
  * a <name>.bhai@xagilab.com mail address.
  */
 export function isAboutBhai(text: string): boolean {
     return (
-        /github\.com\/gautam-r-patil\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b/i.test(text) ||
+        /github\.com\/gautam-r-patil\/bhai\b|(?<!@)xagilab\.com|\bbhai bridge\b|\bbhai (?:chrome )?(?:extension|side ?panel)\b/i.test(text) ||
         // Bhai described as itself, not "bhai, send the TRUSCOR invoice".
         /\bbhai\b[^.\n]{0,60}\b(?:(?:personal )?ai (?:agent|assistant|companion)|built by truscor)/i.test(text)
     );
@@ -340,6 +344,19 @@ export function runWithTurnNudges<T>(owned: Set<object>, fn: () => T): T {
 }
 export function stripTurnNudges(msgs: ChatCompletionMessageParam[], owned: ReadonlySet<object>): void {
     for (let i = msgs.length - 1; i >= 0; i--) if (owned.has(msgs[i])) msgs.splice(i, 1);
+}
+
+/**
+ * Send the model back for another pass: its draft reply plus a steering note, both kept
+ * only for this turn. Left in the history they read, next turn, as a reply nobody got
+ * and as words the owner never said.
+ */
+export function pushRetry(msgs: ChatCompletionMessageParam[], draft: string, note: string): void {
+    const a: ChatCompletionMessageParam = { role: "assistant", content: draft };
+    const u: ChatCompletionMessageParam = { role: "user", content: `[Automatic check, not from the owner] ${note}` };
+    turnNudges.getStore()?.add(a);
+    turnNudges.getStore()?.add(u);
+    msgs.push(a, u);
 }
 
 /**
@@ -382,6 +399,11 @@ export function extractDoneContract(text: string | null | undefined): string | u
 export function contractProgressLine(content: string | null | undefined, hasToolCalls: boolean): string | undefined {
     const ack = hasToolCalls && extractDoneContract(content) ? findAckLine(content) : undefined;
     return ack && `[ACK] ${ack}`;
+}
+
+/** A final reply that only announces the work ("on it — …; done = …") with no tool call made yet. */
+export function ackWithoutAction(reply: string, toolCallsSoFar: number): boolean {
+    return toolCallsSoFar === 0 && !!extractDoneContract(reply) && !takeStuckMarker(reply).stuck;
 }
 
 /** Steers the verify step to check the criterion the agent itself promised. */
@@ -459,14 +481,7 @@ export function isDeferrable(tc: { function: { name: string; arguments: string }
 
 /** Strip internal debug tags and LLM artifacts from responses before returning to channels */
 function sanitizeAgentResponse(text: string): string {
-    return text
-        .replace(/<system_log>[\s\S]*?<\/system_log>/g, "")
-        .replace(/<tool_log[\s\S]*?<\/tool_log>/g, "")
-        .replace(/\[Tool Result [^\]]+\]:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, "")
-        .replace(/\[NO_REPLY\]/gi, "")
-        .replace(/\[no_reply\]/gi, "")
-        .replace(/\[SOURCE:.*?\]/gs, "")
-        .trim();
+    return stripInternalTags(text).trim();
 }
 
 /** Channels that stay silent when the whole reply is [NO_REPLY]; the overlay and the rest always answer. */
@@ -477,13 +492,14 @@ const TEAM_CHAT = "team chat: short; markdown lists and code blocks are fine";
 /** How a reply should look on each channel; the only place reply length and markup are set per channel. */
 const CHANNEL_REGISTER: Record<string, string> = {
     telegram: PHONE_CHAT,
-    whatsapp: PHONE_CHAT,
+    // Reply markers WhatsApp acts on, then strips (whatsapp.ts actOnReply, whatsapp-media.ts takeChatActions).
+    whatsapp: `${PHONE_CHAT}; markers act in this chat and never show: [[react:👍]] reacts to their message like tap-and-hold (reply with only it when a reaction says it all); [[voice]] sends your reply as a voice note, only when they ask for one or the reply truly needs to be heard (their sending a voice note is not a reason); [[poll:Question|A|B]] starts a poll; [[location:lat,lng|Name]] sends a pin; [[event:Name|YYYY-MM-DD HH:MM|Place]] creates an event`,
     discord: TEAM_CHAT,
     slack: TEAM_CHAT,
     matrix: TEAM_CHAT,
     email: "email: full sentences, no emoji or chat slang, greeting/sign-off only if theirs had one",
     overlay:
-        'desktop overlay: short by default, full answer when asked. Markers go at the END: <!--QUICK_ACTIONS:["Option 1","Option 2"]--> for a choice or confirmation (always before deleting, overwriting, installing or anything destructive); <!--COLLAPSE:Title-->long content<!--/COLLAPSE--> around code over 5 lines or lists over 5 items; for the current time output exactly <!--WIDGET: {"type": "clock"}--> instead of the time',
+        'desktop overlay: short by default, full answer when asked. Markers go at the END: <!--QUICK_ACTIONS:["Option 1","Option 2"]--> for a choice or confirmation (always before deleting, overwriting, installing or anything destructive); <!--COLLAPSE:Title-->long content<!--/COLLAPSE--> around code over 5 lines or lists over 5 items; for the time here output exactly <!--WIDGET: {"type": "clock"}--> instead of the time; for another place, write its time in words and add <!--WIDGET: {"type": "clock", "tz": "Asia/Tokyo", "label": "Tokyo"}--> with its IANA zone',
 };
 
 /** The final reply as channels get it: an exact [NO_REPLY] on a silent-capable, user-typed turn survives sanitizing. */
@@ -499,9 +515,20 @@ export function finalReplyText(raw: string, channelContext?: ChannelContext): st
     const text = sanitizeAgentResponse(raw);
     // Overlay markers (<!--QUICK_ACTIONS-->, <!--WIDGET-->, <!--COLLAPSE-->) mean nothing elsewhere and would show
     // as literal text. Only those: other HTML comments can be real content (code, "A --> B").
-    return channelContext?.channel === "overlay"
-        ? text
-        : text.replace(/<!--\s*(?:QUICK_ACTIONS|WIDGET|\/?COLLAPSE)\b[\s\S]*?-->/g, "").trim();
+    return channelContext?.channel === "overlay" ? text : stripOverlayMarkers(text).trim();
+}
+
+/**
+ * The question an orchestrator plan asks the owner first, or null. Only the ASK_USER marker the
+ * plan prompt defines counts: ordinary steps like "see which apps are running" are not questions.
+ */
+export function planAskQuestion(planText: string): string | null {
+    if (!/\bASK_USER\b/i.test(planText.split("\n").slice(0, 3).join("\n"))) return null;
+    // The rest of the line, minus one pair of wrapping quotes: stopping at the first quote turned
+    // ASK_USER "Which 'Time'? …" (the plan prompt's own example) and "What's …" into "Which"/"What".
+    const asked = planText.match(/ASK_USER[:\s]*(.+)/i)?.[1]?.trim().replace(/^(["'])(.*)\1$/, "$2");
+    const question = asked || planText.split("\n").find((l) => l.includes("?"));
+    return question?.trim() || null;
 }
 
 /**
@@ -521,7 +548,9 @@ export function antiGivingUpFailures(
         if (m.role !== "tool") return false;
         const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
         return (
-            txt.includes('"error"') ||
+            // A successful result can carry "error":null; only a set error counts.
+            // (whitespace inside the lookahead: pretty-printed JSON has '"error": null')
+            /"error":(?!\s*(?:null|false|"")\s*[,}\n])/.test(txt) ||
             txt.includes('"success":false') ||
             txt.includes("NOT_PLAYING") ||
             txt.includes("NO_RESULTS") ||
@@ -558,7 +587,8 @@ export function antiGivingUpFailures(
         "unable to",
     ].some((p) => lower.includes(p));
     // Substantial replies (>200 chars) delegating to the user are likely genuine instructions.
-    const fire = (isDelegatingToUser && isActionTask && responseText.length < 200) || isGivingUp;
+    // "Not available" is an honest answer to a plain question; it is giving up only on a task.
+    const fire = isActionTask && ((isDelegatingToUser && responseText.length < 200) || isGivingUp);
     return fire ? failures : 0;
 }
 
@@ -568,6 +598,19 @@ export function antiGivingUpFailures(
  * of the task the owner already gave; asking first just stalls it. A step with effects
  * outside (send, pay, delete…) still gets asked.
  */
+/**
+ * The push after a reply that asked leave to look. It names the owner's message: told only to
+ * "finish the task", a recall question ("which articles did I ask about earlier?") went back to
+ * an older unfinished Spotify request in the history and answered about that instead.
+ */
+export function leaveToLookNote(ownerMessage: string, canSeeScreen: boolean): string {
+    const asked = ownerMessage.trim().replace(/\s+/g, " ").slice(0, 200);
+    return (
+        `Don't ask leave to look: do the look-only step yourself${canSeeScreen ? " (open what shows it, e.g. the right System Settings pane, and read it with os_inspect or a screenshot)" : " (open or read it with your tools)"}, ` +
+        `then answer the owner's message: "${asked}". Answer that message only, not an earlier request.`
+    );
+}
+
 export function asksLeaveToLook(responseText: string, canSeeScreen = false): boolean {
     if (takeStuckMarker(responseText).stuck) return false;
     const l = responseText.toLowerCase().replace(/[’‘]/g, "'");
@@ -597,9 +640,45 @@ const OUT_OF_CREDITS_REPLY =
 
 // ── Milestone tool descriptions ───────────────
 
+/** A short reply that only promises to go and do it ("I'll check", "nikaalta hoon") instead of doing it. */
+export const announcesWithoutDoing = (reply: string): boolean =>
+    reply.trim().length < 220 &&
+    /\b(?:I'?ll|I will|let me|I'm going to|gonna) (?:quickly |just |go )?(?:check|look|find|search|pull|grab|fetch|get|see|open|read|dig)\b|\b(?:checking|looking (?:it )?up) (?:now|that|it)\b|\b(?:nikaal|dekh|check kar|pata kar)(?:ta|ti) (?:hoon|hu|hun)\b/i.test(reply);
+
+/** "Answer in two sentences", "one line", "briefly": the owner asked for a short answer. */
+export const askedToBeBrief = (text: string): boolean =>
+    /\b(one|two|three|1|2|3) (line|lines|sentence|sentences|words?)\b|\b(briefly|in short|tl;?dr|short answer|quick answer)\b/i.test(text);
+
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
     browser_navigate: (a) => `🌐 Opening ${((a.url as string) || "").substring(0, 60)}...`,
     web_search: (a) => `🔍 Searching: "${a.query || ""}"`,
+    shell_exec_background: (a) => `⚙️ Starting in the background: ${String(a.command || "").substring(0, 40)}`,
+    shell_wait_process: () => "⏳ Waiting for it to finish",
+    shell_check_process: () => "⏳ Checking on it",
+    app_manager: (a) => (a.action === "list" ? "🪟 Checking which apps are open" : `🪟 ${a.action || "Managing"} ${a.app || "an app"}`),
+    system_info: () => "💻 Checking the Mac's status",
+    os_inspect: (a) => `🔎 Reading ${a.app ? `${a.app}'s` : "the"} window`,
+    // Labels for what the screen tools do. Never the typed text or a message body: a progress
+    // line shows on every surface and os_type may be typing a password.
+    os_smart_click: (a) => `🖱️ Clicking ${String(a.instruction || a.target || "it").substring(0, 40)}`,
+    os_click_id: () => "🖱️ Clicking it",
+    browser_click_at: () => "🖱️ Clicking on the page",
+    browser_click: () => "🖱️ Clicking on the page",
+    os_type: (a) => (a.app ? `⌨️ Typing in ${a.app}` : "⌨️ Typing"),
+    browser_type: () => "⌨️ Typing on the page",
+    os_screenshot: () => "📸 Looking at the screen",
+    os_visual_verify: () => "👀 Checking it worked",
+    os_context: () => "👀 Checking what's on screen",
+    browser_extract: () => "📊 Reading the page",
+    browser_form_state: () => "📋 Checking the form",
+    browser_switch_tab: () => "🗂️ Switching tabs",
+    check_deep_research: () => "🔬 Checking on the research",
+    set_reminder: () => "⏰ Setting the reminder",
+    weather: (a) => `🌤️ Checking the weather${a.location ? ` in ${String(a.location).substring(0, 30)}` : ""}`,
+    contact_lookup: () => "📇 Looking up the contact",
+    whatsapp_send: () => "💬 Sending on WhatsApp",
+    apple_script: () => "⚙️ Running an AppleScript",
+    web_read: (a) => `📖 Reading ${String(a.url || "").replace(/^https?:\/\/(www\.)?/, "").substring(0, 60)}`,
     shell_exec: (a) => `⚙️ Running command: ${((a.command as string) || "").substring(0, 50)}`,
     browser_scan: () => `🔍 Scanning the active browser page DOM...`,
     browser_analyze: () => `🔎 Analyzing page elements...`,
@@ -607,11 +686,20 @@ const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => 
     browser_save_strategy: (a) => `💾 Saving strategy: "${a.task_pattern || ""}"`,
     write: (a) => `📝 Writing file: ${a.file_path || ""}`,
     edit: (a) => `✏️  Editing: ${a.file_path || ""}`,
-    read: (a) => `📖 Reading: ${a.file_path || ""}`,
+    // A saved tool output's path is internal (data/tool-outputs/turn-…/x-toolu_….txt): say what it is.
+    read: (a) => (/[\\/]tool-outputs[\\/]/.test(String(a.file_path)) ? "📖 Reading the rest of it" : `📖 Reading: ${a.file_path || ""}`),
     append_file: (a) => `➕ Appending to: ${a.file_path || ""}`,
-    grep: (a) => `🔎 Searching: "${a.pattern || ""}"`,
+    grep: (a) => `🔎 Searching for: ${String(a.pattern || "").substring(0, 40)}`,
     glob: (a) => `📂 Finding files: "${a.pattern || ""}"`,
     memory_store: (a) => `🧠 Remembering: "${((a.content as string) || "").substring(0, 40)}"`,
+    generate_image: (a) =>
+        a.undo
+            ? "↩️ Going back a version…"
+            : a.source === "last"
+              ? "🎨 Tweaking the image…"
+              : a.source
+                ? "🖼️ Editing your photo…"
+                : "🎨 Painting the image…",
     browser_parallel_tabs: (a) =>
         `🔀 Processing ${Array.isArray(a.tab_actions) ? a.tab_actions.length : 0} tabs in parallel...`,
 };
@@ -624,18 +712,25 @@ const TOOL_RESULT_LIMITS: Record<string, number> = {
     browser_extract: 3000,
     browser_analyze: 2500,
     browser_run_js: 3000,
+    web_read: 13_000, // its default 12K of page text plus the JSON around it; more is offloaded to a file
     shell_exec: 4000,
     read: 5000,
     grep: 4000,
     glob: 2000,
     deep_research: 6000,
+    check_deep_research: 16000, // the finished report: the follow-up answers from all of it, not its first 4K
     os_inspect: 8000, // a whole 60-element list, still under the 8KB offload line
+    // failures[] + raw_tail; bigger results are offloaded with a head+tail preview. A result
+    // that stayed inline is at most this many bytes, so at most this many chars: kept whole.
+    test_run: OFFLOAD_THRESHOLD_BYTES,
 };
 const DEFAULT_RESULT_LIMIT = 4000;
 
 function truncateToolResult(toolName: string, result: string): string {
     const limit = TOOL_RESULT_LIMITS[toolName] ?? DEFAULT_RESULT_LIMIT;
     if (result.length <= limit) return result;
+    // Shell output keeps its tail: compilers and test runners print the errors last.
+    if (toolName.startsWith("shell_")) return smartTruncate(toolName, result, limit);
     const safe = protect(result, { credentials: !CODE_TOOLS.has(toolName) }); // mask before cutting
     if (safe.length <= limit) return safe;
     return `${safe.substring(0, limit)}\n[... truncated from ${safe.length} chars]`;
@@ -722,6 +817,21 @@ export interface AgentResponse {
     receipt?: Receipt;
     /** The memory this owner turn stored last, for a one-tap "Forget that" (memoryUndoAction). */
     memoryUndo?: { id: number; at: number };
+    /** The filtered answer streamed so far, when the turn was stopped (onTurnEvent turns only). */
+    partialText?: string;
+    /** The owner's Stop ended this turn (a Stop that lands after the answer leaves it unset). */
+    stopped?: boolean;
+    /** Images generate_image made this turn, for the channel to show. */
+    images?: GeneratedImage[];
+}
+
+export interface GeneratedImage {
+    path: string;
+    mimeType: string;
+    prompt: string;
+    kind: "generated" | "edited" | "undo";
+    /** The before image for edits/undo, when it is a file. */
+    sourcePath?: string;
 }
 
 export interface ChannelContext {
@@ -744,6 +854,20 @@ export interface ChannelContext {
     contactProfile?: any; // WhatsApp ContactProfile
     /** A run nobody typed (scheduled task, research follow-up): it can't answer a consent question. */
     autonomous?: boolean;
+    /**
+     * A run steered by content nobody vetted (the research follow-up reads web pages): it may
+     * read and report, never send, post, buy, book or delete — it suggests, the owner acts.
+     */
+    noOutward?: boolean;
+    /** The reply carries the turn's generated images (unset: the channel decides, see turnShowsImages). */
+    showsImages?: boolean;
+    /** Where a result that arrives after the turn goes: chat id, jid, room, channel[:thread]; "owner" = the owner's chats (a scheduled run). */
+    replyTo?: string;
+    /**
+     * Live chat surfaces: structured turn events (status, steps, streamed answer, owner notes).
+     * Set = main-loop model calls stream (and take the turn's abort signal); unset = no change.
+     */
+    onTurnEvent?: TurnEventSink;
 }
 
 // ── Session State ─────────────────────────────
@@ -899,6 +1023,8 @@ interface ToolCallResult {
     receiptUrl?: string;
     /** Touched the vault (a vault tool or a {{vault:…}} token) or had its screenshot withheld. */
     secret?: boolean;
+    /** Its full output was saved to a file the result tells the model to `read`. */
+    savedOutput?: boolean;
 }
 
 /** The tool call failed, judged from its own result flags, not from the word "error" in its output. */
@@ -1005,7 +1131,8 @@ async function executeAndProcessToolCall(
     // and tools that gate on owner identity would refuse.
     if (fnName === "deep_research" && userMessage) {
         fnArgs._originalPrompt = userMessage;
-        if (channelContext) fnArgs._channelContext = channelContext;
+        // The continuation runs after this turn ended: it must not stream into its events.
+        if (channelContext) fnArgs._channelContext = { ...channelContext, onTurnEvent: undefined };
     }
 
     // ── Handle request_tools meta-tool (bidirectional router communication) ──
@@ -1211,39 +1338,32 @@ async function executeAndProcessToolCall(
     // save the full content to disk and replace it with a preview + file path.
     // The `read` tool can fetch the full file later if the model needs it.
     let workingResult = rawResult;
+    let savedAt: string | undefined;
     try {
-        const offloaded = offloadIfLarge(fnName, toolCall.id, currentTurnId(), rawResult);
+        const offloaded = offloadIfLarge(fnName, toolCall.id, currentTurnId(), rawResult, TOOL_RESULT_LIMITS[fnName]);
         workingResult = offloaded.content;
+        savedAt = offloaded.savedAt;
     } catch {
         /* offload failure leaves workingResult = rawResult */
     }
 
     let result = truncateToolResult(fnName, workingResult);
+    if (!savedAt) {
+        const cut = result;
+        result = keepRestReadable(fnName, toolCall.id, currentTurnId(), rawResult, cut);
+        if (result !== cut) savedAt = "saved";
+    }
     console.log(`  ✅ Tool result: ${ownerMemoryTool(fnName) ? `(${result.length} chars)` : result.substring(0, 500)}`);
 
     // Fence attacker-influenceable tool output (web/browser/MCP/research) so the
     // model treats it as data, not instructions (indirect prompt-injection
     // defense). Applied after offload/truncate so both the inline result and any
-    // disk-offload preview are covered. Disable with ATLAS_NO_UNTRUSTED_WRAP=true.
-    if (process.env.ATLAS_NO_UNTRUSTED_WRAP !== "true") {
-        try {
-            const { isUntrustedToolResult, wrapUntrustedToolResult } = await import("./context-scrubber.js");
-            if (isUntrustedToolResult(fnName)) {
-                result = wrapUntrustedToolResult(fnName, result);
-            }
-        } catch {
-            /* scrubber unavailable — leave result unfenced */
-        }
-    }
-
-    // Feed the PASTE pattern speculator so it can learn recurring tool
-    // sequences. Cheap (rolling list push + native batch); if the module
-    // isn't initialized the call is a no-op.
+    // disk-offload preview are covered. Disable with BHAI_NO_UNTRUSTED_WRAP=true.
     try {
-        const { recordToolExecution } = await import("./execution/pattern-speculator.js");
-        recordToolExecution(fnName, !isError);
+        const { fenceToolResult } = await import("./context-scrubber.js");
+        result = fenceToolResult(fnName, result);
     } catch {
-        /* pattern speculator not wired in this build */
+        /* scrubber unavailable — leave result unfenced */
     }
 
     const isBrowser = isBrowserTool(fnName);
@@ -1264,6 +1384,7 @@ async function executeAndProcessToolCall(
         isBrowser,
         isError,
         reportedFailure,
+        savedOutput: !!savedAt,
         imageUrl,
         receiptUrl,
         secret,
@@ -1338,7 +1459,9 @@ async function executeToolCallsBatch(
     // land before the click that focuses its field. Those run in call order.
     const TOOL_BATCH_TIMEOUT_MS = 120_000;
     const done = new Map<string, ToolCallResult>();
+    const started = new Set<string>();
     const run = async (tc: (typeof toolCalls)[number]) => {
+        started.add(tc.id);
         const r = await executeAndProcessToolCall(
             tc,
             ctx.onToolRequest,
@@ -1365,7 +1488,9 @@ async function executeToolCallsBatch(
     // Each call already has its own timeout in executeTool, so the in-order
     // lane gets room for every step. Once the batch is given up on, no further
     // screen step may START (a late "send" click after a reported failure).
-    const batchTimeoutMs = TOOL_BATCH_TIMEOUT_MS + 35_000 * screenCalls.length;
+    // An image edit can take ~3 min (its own tool timeout is 200s).
+    const imageCall = nonBrowserCalls.some((tc) => tc.function.name === "generate_image");
+    const batchTimeoutMs = TOOL_BATCH_TIMEOUT_MS + 35_000 * screenCalls.length + (imageCall ? 90_000 : 0);
     let gaveUp = false;
     const nonBrowserPromise =
         nonBrowserCalls.length > 0
@@ -1389,21 +1514,24 @@ async function executeToolCallsBatch(
               ]).catch((err) => {
                   gaveUp = true;
                   console.error(`  ⚠️ Non-browser tool batch error: ${(err as Error).message}`);
-                  // Keep the results of steps that did finish; only the rest are errors.
-                  return nonBrowserCalls.map(
-                      (tc) =>
-                          done.get(tc.id) ?? {
-                              toolCallId: tc.id,
-                              fnName: tc.function.name,
-                              fnArgs: {} as Record<string, unknown>,
-                              result: JSON.stringify({ error: `${(err as Error).message}; this step did not finish` }),
-                              finalContent: JSON.stringify({
-                                  error: `${(err as Error).message}; this step did not finish`,
-                              }),
-                              isBrowser: false,
-                              isError: true,
-                          },
-                  );
+                  // Keep the results of steps that did finish; only the rest are errors. A step
+                  // still running when we gave up isn't cancelled: its change may yet land.
+                  return nonBrowserCalls.map((tc) => {
+                      const finished = done.get(tc.id);
+                      if (finished) return finished;
+                      const error = started.has(tc.id)
+                          ? `${(err as Error).message}; this step was still running and may yet finish. If it changes something, check whether it happened before running it again`
+                          : `${(err as Error).message}; this step was not started`;
+                      return {
+                          toolCallId: tc.id,
+                          fnName: tc.function.name,
+                          fnArgs: {} as Record<string, unknown>,
+                          result: JSON.stringify({ error }),
+                          finalContent: JSON.stringify({ error }),
+                          isBrowser: false,
+                          isError: true,
+                      };
+                  });
               })
             : Promise.resolve([] as ToolCallResult[]);
 
@@ -1472,6 +1600,8 @@ export interface MediaAttachment {
     type: "image" | "video" | "audio";
     base64: string;
     mimeType: string;
+    /** A screenshot Bhai took (screen, browser tab): context for this turn, never a photo to edit. */
+    capture?: true;
 }
 
 export async function runAgent(
@@ -1485,6 +1615,8 @@ export async function runAgent(
     toolAllowlist?: string[],
     channelContext?: ChannelContext,
 ): Promise<AgentResponse> {
+    // Memories forgotten in the app's Memory screen: drop what this process still caches.
+    syncForgetsFromElsewhere();
     // A non-owner (Slack/Discord guest, widget visitor) runs on a history of their own,
     // never the owner's: forked, so isContactAgent also keeps owner memories out.
     historyFork = historyForCaller(historyFork, channelContext);
@@ -1495,6 +1627,13 @@ export async function runAgent(
     // privileges when they interleave LLM awaits. Absent channelContext
     // defaults to non-owner (harness/research/voice paths).
     const callerIsOwner = channelContext?.isOwner === true;
+    const turnStream = channelContext?.onTurnEvent
+        ? createTurnStream(channelContext.onTurnEvent, {
+              channel: channelContext.channel,
+              // Thinking and narration: the owner's own, attended turns only.
+              notes: callerIsOwner && !channelContext.autonomous,
+          })
+        : undefined;
     const runWithCaller = async (fn: () => Promise<AgentResponse>): Promise<AgentResponse> => {
         // Lazy ESM import to avoid circular dep at module-load time.
         // (Was `require()` previously — `require` is undefined in ESM-
@@ -1503,11 +1642,27 @@ export async function runAgent(
         const mod = await import("./tools/cron-tool.js");
         let res: AgentResponse;
         const nudges = new Set<object>();
+        // HEIC and the like: JPEG before the model or generate_image sees them (in place, so both do).
+        for (const m of media ?? []) if (m.type === "image") Object.assign(m, await toReadableImage(m));
+        const turnImages = (media ?? [])
+            .filter((m) => m.type === "image" && !m.capture)
+            .map((m) => ({ base64: m.base64, mimeType: m.mimeType }));
+        // A guest's photos never become the owner's "attached" photo (overlay sockets all share userId "local").
+        const convKey = channelContext
+            ? conversationKey(channelContext.channel, callerIsOwner ? channelContext.userId : `guest:${channelContext.userId}`)
+            : "default";
+        // Only someone who can edit photos needs theirs kept.
+        if (callerIsOwner || toolAllowlist?.includes("generate_image")) rememberInboundImages(convKey, turnImages);
         const caller: import("./tools/cron-tool.js").CronCallerContext = {
             isOwner: callerIsOwner,
             autonomous: channelContext?.autonomous === true,
+            noOutward: channelContext?.noOutward === true,
             isPrivate: channelContext?.isPrivate === true,
+            showsImages: channelContext?.showsImages,
             message: stripChannelTags(userMessage),
+            turnImages,
+            conversationKey: convKey,
+            replyTo: mod.lateReplyTarget(channelContext),
         };
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
@@ -1519,6 +1674,7 @@ export async function runAgent(
             // so a recurring cron job may send the same text on its next tick.
             res = await (channelContext?.autonomous ? withSendLedger(turn) : turn());
         } finally {
+            turnStream?.end();
             // Read after the turn: pruning may have swapped the history array.
             stripTurnNudges(historyFork ?? conversationHistory, nudges);
             // Prune between turns, off the next turn's critical path.
@@ -1556,6 +1712,9 @@ export async function runAgent(
         }
         // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
         if (caller.storedMemory && channelContext?.isPrivate === true && res) res.memoryUndo = caller.storedMemory;
+        // The requester's own images, any chat, stuck turn or not: they're made and paid for, and
+        // send_file skipped them as already shown.
+        if (res && caller.generatedImages?.length) res.images = caller.generatedImages;
         return res;
     };
     if (!isForked) {
@@ -1577,6 +1736,7 @@ export async function runAgent(
                     toolAllowlist,
                     channelContext,
                     _earlyTraceId,
+                    turnStream,
                 ),
             ),
         ).catch((err: unknown) => {
@@ -1596,6 +1756,7 @@ export async function runAgent(
             toolAllowlist,
             channelContext,
             null,
+            turnStream,
         ),
     );
 }
@@ -1611,6 +1772,7 @@ async function _runAgentBody(
     toolAllowlist: string[] | undefined,
     channelContext: ChannelContext | undefined,
     _injectedTraceId: string | null,
+    turnStream: TurnStream | undefined,
 ): Promise<AgentResponse> {
     const isForked = !!historyFork;
     // A non-owner never gets the owner's tools by default (a channel that
@@ -1625,6 +1787,8 @@ async function _runAgentBody(
     // What a contact or guest says is never the owner's: it must not become the owner's goal,
     // session context or anticipation pattern. (No channel context = an owner path, e.g. voice.)
     const ownerTurn = channelContext?.isOwner !== false;
+    // The owner is here and reading: not a cron, research continuation or sub-agent run.
+    const ownerAttended = channelContext?.isOwner === true && !channelContext.autonomous && !isForked;
 
     // Tag every runAgent invocation with a unique turn id so offloaded
     // tool outputs cluster per turn on disk.
@@ -1678,6 +1842,7 @@ async function _runAgentBody(
     // Only a message the owner actually sent can answer a consent question.
     if (channelContext?.isOwner && !channelContext.autonomous) {
         noteOwnerMessage(userIntentText);
+        learnedRouter.noteNextMessage(userIntentText); // "no, that's wrong" counts against the last pick
         noteOwnerBusy(userIntentText); // "not now" → proactive holds for 2h
         noteOwnerMood(userIntentText); // grief, health, lost money, crisis → shades off
         // Any channel: the owner talking back is engagement (proactive fatigue gate).
@@ -1790,6 +1955,20 @@ async function _runAgentBody(
         );
     }
 
+    // ── Quick commands: everyday computer commands run without a model call ──
+    // (src/quick-commands.ts). The owner's own text turns only; anything not fully
+    // understood, or a step that fails, carries on to the model below.
+    if (!isForked && channelContext?.isOwner === true && !channelContext.autonomous && !media?.length) {
+        const quick = await runQuickCommand(userIntentText, executeTool).catch(() => null);
+        if (quick?.reply) {
+            console.log(`  ⚡ Quick command: ${quick.reply}`);
+            workingHistory.push({ role: "assistant", content: quick.reply });
+            if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
+            return { text: quick.reply, toolCalls: 1 };
+        }
+        if (quick?.partial) workingHistory.push({ role: "system", content: quick.partial });
+    }
+
     const messages: ChatCompletionMessageParam[] = workingHistory;
 
     let iterations = 0;
@@ -1801,6 +1980,8 @@ async function _runAgentBody(
     // Verify-before-done gate — see src/agents/verify-before-done.ts.
     const verifyGate = newVerifyGateState();
     let lookNudged = false; // asksLeaveToLook fires once per run
+    let ackNudged = false; // the ack-without-action nudge, once per run
+    let antiGiveUpNudged = false; // the anti-giving-up retry, once per run
     const receiptFor = async (text: string): Promise<Receipt | undefined> => {
         const receipt = pickReceipt(verifyGate, {
             stuck: takeStuckMarker(text).stuck,
@@ -1816,6 +1997,7 @@ async function _runAgentBody(
     const didLines: string[] = [];
     const recordBatch = (batch: ToolCallResult[]) => {
         recordBatchForVerifyGate(verifyGate, batch);
+        if (batch.some((r) => r.imageUrl)) turnSawImage = true;
         // Lane order, like the gate: a screen check batched with a browser action may have run before it.
         for (const r of inLaneOrder(batch)) {
             turnCalls.push({ fnName: r.fnName, fnArgs: r.fnArgs, failed: toolFailed(r) });
@@ -1828,6 +2010,25 @@ async function _runAgentBody(
     // A Retry/Skip handoff turn is keyed by the report it replies to, or learns nothing.
     const playbookTask = playbookTaskText(rawUserMessage, userIntentText);
     const settleLearnings = (reply: string, stuck = takeStuckMarker(reply).stuck) => {
+        if (turnArm && turnClass) {
+            const verified = isVerifiedWin(turnCalls, reply, stuck);
+            const base = learnedRouter.turnOutcome({
+                verified,
+                stuck,
+                infra: turnArmInfra,
+                calls: iterations,
+                seconds: (Date.now() - turnStartedAt) / 1000,
+            });
+            // Handed to another model mid-turn: it needed help, whatever the ending.
+            const outcome = base && turnArmLeft ? { ...base, success: 0, failure: stuck ? 0.5 : 0.25 } : base;
+            if (outcome) {
+                learnedRouter.recordOutcome(turnClass, turnArm.id, outcome);
+                // The owner's "no, that's wrong" can follow only a turn they saw and that
+                // didn't end on a question (where "no" is the answer).
+                if (ownerAttended && !/\?\s*$/.test(reply.trim()))
+                    learnedRouter.noteTurn(turnClass, turnArm.id, outcome.success);
+            }
+        }
         const did = bhaiDidMemory(didLines.splice(0), {
             isOwner: channelContext?.isOwner === true,
             autonomous: channelContext?.autonomous === true,
@@ -1859,6 +2060,14 @@ async function _runAgentBody(
     // skips the memory nudge while it's short and nothing has gone wrong.
     let guiTurn = false;
     let guiTrouble = false;
+    // Learned router (src/routing/learned-router.ts): the turn's model and how it went.
+    let turnClass: learnedRouter.TaskClass | undefined;
+    let turnArm: learnedRouter.Arm | undefined;
+    let turnCats: string[] = [];
+    let turnArmReleased = false; // the rules above choose again from here
+    let turnArmLeft = false; // another model actually ran part of this turn
+    let turnArmInfra = false; // a provider error or a silent fallback: not the model's doing
+    let turnSawImage = false; // a tool result carried a screenshot this turn
     const guiPinned = () =>
         guiTurn &&
         !guiTrouble &&
@@ -1867,11 +2076,11 @@ async function _runAgentBody(
         (requestedCategories ?? []).every((c) => GUI_LOOP_CATEGORIES.has(c));
 
     // ── Auto Plan Mode (coding intent only) ──
-    // Off by default — opt in with ATLAS_AUTO_PLAN_MODE=true.
+    // Off by default — opt in with BHAI_AUTO_PLAN_MODE=true.
     // Never triggers for sub-agent calls (historyFork) or non-coding tasks.
     // Fail-open: any classifier error leaves plan mode untouched.
     try {
-        if (!isForked && process.env.ATLAS_AUTO_PLAN_MODE === "true" && !isPlanMode() && rawUserMessage) {
+        if (!isForked && process.env.BHAI_AUTO_PLAN_MODE === "true" && !isPlanMode() && rawUserMessage) {
             const taskType = detectTaskType(rawUserMessage);
             if (taskType === "coding") {
                 const complexity = classifyComplexity(rawUserMessage);
@@ -1905,9 +2114,20 @@ async function _runAgentBody(
     const turnStartedAt = Date.now();
     let toolStep = 0;
     let stepStatus = "working on it";
+    const elapsedSec = () => Math.round((Date.now() - turnStartedAt) / 1000);
     const sendStatus = (status: string) => {
         stepStatus = status;
+        turnStream?.status(status, toolStep, elapsedSec());
         return sendProgress(formatStepStatus(toolStep, status, Date.now() - turnStartedAt));
+    };
+    const askOwner = (result: string) => {
+        try {
+            // The result is fenced as untrusted: the JSON is the site_task output inside the fence.
+            const json = result.slice(result.indexOf("{"), result.lastIndexOf("}") + 1);
+            const r = JSON.parse(json) as { status?: string; needsUser?: { prompt?: string; retry?: string } };
+            if (r.status === "needs_user" && r.needsUser?.prompt)
+                turnStream?.ask([r.needsUser.retry, r.needsUser.prompt].filter(Boolean).join(" "));
+        } catch {}
     };
     const runToolBatch = async (
         calls: Array<{ id: string; function: { name: string; arguments: string } }>,
@@ -1922,6 +2142,8 @@ async function _runAgentBody(
             }
         };
         stepStatus = calls.map(milestoneOf).find(Boolean) ?? "working on it";
+        turnStream?.step(stepStatus);
+        turnStream?.status(stepStatus, toolStep, elapsedSec());
         const stop =
             onProgress && !calls.some((tc) => SELF_REPORTING_TOOLS.has(tc.function.name))
             ? startStepHeartbeat(
@@ -1929,10 +2151,17 @@ async function _runAgentBody(
                   () => void sendStatus(stepStatus),
               )
             : () => {};
+        let failed = true;
         try {
-            return await executeToolCallsBatch(calls, { ...ctx, sendProgress, sendStatus });
+            const results = await executeToolCallsBatch(calls, { ...ctx, sendProgress, sendStatus });
+            failed = results.some(toolFailed);
+            // A site task waiting on the owner (a code, a payment): its manifest prompt (fixed
+            // text, never the page's or the code) reaches the surfaces now, not after a model call.
+            for (const r of results) if (r.fnName === "site_task") askOwner(r.result);
+            return results;
         } finally {
             stop();
+            turnStream?.stepEnd(failed ? "failed" : "done", elapsedSec());
         }
     };
 
@@ -1982,9 +2211,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
     // Metacognition state — self-monitoring for loop/struggle detection
     const metaState = createMetacognitionState();
     let metaNudged = false;
+    let promiseNudged = false; // "I'll check" with no tool call: one push to actually do it
     let lastMetaNudgeIter = -100;
     // P5.3: at most ONE adversarial progress-judge call per stuck turn (Haiku),
-    // and only when ATLAS_PROGRESS_JUDGE=true. Turn-scoped, reset per runAgent.
+    // and only when BHAI_PROGRESS_JUDGE=true. Turn-scoped, reset per runAgent.
     let judgeFired = false;
     // A2: cross-iteration dispatcher state — drives escalate/replan/critics/ask_user.
     const interventionState: InterventionState = createInterventionState();
@@ -1994,7 +2224,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
     // Per-turn loop guardrail — catches a single tool retrying identical args
     // (a spiral the whole-batch no-progress guard below misses). Warn-only
-    // unless ATLAS_TOOL_LOOP_HARDSTOP=true.
+    // unless BHAI_TOOL_LOOP_HARDSTOP=true.
     const guardrailState = createGuardrailState();
 
     // Hard loop guard: count consecutive tool batches where EVERY call failed
@@ -2005,7 +2235,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
     // narrow: only ALL-failed/empty batches count, polling tools are exempt,
     // and any usable output resets the streak — so legitimate long/iterative
     // work is never cut short. Env-tunable; 0 disables.
-    const NO_PROGRESS_LIMIT = Number(process.env.ATLAS_NO_PROGRESS_LIMIT ?? "8");
+    const NO_PROGRESS_LIMIT = Number(process.env.BHAI_NO_PROGRESS_LIMIT ?? "8");
     let noProgressStreak = 0;
 
     // Circuit breaker — trips after sustained failures or no-progress
@@ -2013,8 +2243,28 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
     let lastLlmError = ""; // the last model error this turn (to say "out of credits" plainly)
     // Hard stop for a turn that never converges (each step costs credits).
-    const MAX_AGENT_ITERATIONS = Number(process.env.ATLAS_MAX_ITERATIONS ?? "60");
+    const MAX_AGENT_ITERATIONS = Number(process.env.BHAI_MAX_ITERATIONS ?? "60");
 
+    const stopped = (): AgentResponse => {
+        console.log(`  🛑 Task cancelled by user`);
+        // A stopped streamed answer stays in history as what the owner saw.
+        const partialText = turnStream?.partial() || undefined;
+        workingHistory.push({
+            role: "assistant",
+            content: partialText ? `${partialText} [stopped]` : "Task cancelled by user.",
+        });
+        // Credit already deducted per-API-call, just return
+        const stats = getSessionCreditStats();
+        if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
+        return {
+            text: `✅ Task stopped. (${stats.creditsUsed} credits used)`,
+            toolCalls: totalToolCalls,
+            stopped: true,
+            ...(partialText && { partialText }),
+        };
+    };
+    // Main-loop model calls stream into the turn events (and stop with the turn) only on live surfaces.
+    const live = () => (turnStream ? { onDelta: turnStream.live(), signal } : {});
     while (true) {
         if (iterations >= MAX_AGENT_ITERATIONS) {
             console.log(`  🛑 Iteration cap (${MAX_AGENT_ITERATIONS}) reached`);
@@ -2033,7 +2283,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // Metacognition-driven nudge. A2: instead of a single one-shot nudge,
         // re-fire when struggle/loop PERSISTS — a stuck agent that ignored the
         // first nudge gets steered again — but on a cooldown so we never spam.
-        // Disable the repeat behavior entirely with ATLAS_NO_META_INTERVENTIONS=true
+        // Disable the repeat behavior entirely with BHAI_NO_META_INTERVENTIONS=true
         // (reverts to the original one-shot nudge).
         if (iterations > 3) {
             // C: stamp the (taskType, modelTier) the calibrator keys on. The model
@@ -2044,7 +2294,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 modelTier: interventionState.forcedModel ?? undefined,
             });
             const metaCheck = assess(metaState);
-            const interventionsOff = process.env.ATLAS_NO_META_INTERVENTIONS === "true";
+            const interventionsOff = process.env.BHAI_NO_META_INTERVENTIONS === "true";
             const NUDGE_COOLDOWN = 5;
             const cooldownPassed = iterations - lastMetaNudgeIter >= NUDGE_COOLDOWN;
             const shouldNudge = metaCheck.loopDetected || metaCheck.struggleDetected;
@@ -2065,7 +2315,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 );
             }
             // P5.3 — opt-in adversarial progress judge. Fires AT MOST ONCE per stuck
-            // turn, and ONLY when ATLAS_PROGRESS_JUDGE=true (DEFAULT OFF). Healthy
+            // turn, and ONLY when BHAI_PROGRESS_JUDGE=true (DEFAULT OFF). Healthy
             // turns (no loop AND repeats<3 AND confidence≥0.35) never enter this
             // branch → ZERO added LLM cost in the default config. When it fires it
             // makes exactly ONE Haiku call; its likely_fix overrides the heuristic
@@ -2094,7 +2344,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // A2: make MetaAssessment.intervention ACT. The text nudge above is the
             // fallback; this dispatches the computed enum (escalate/replan/critics/
             // ask_user) into concrete cooldown-gated, fail-open actions. On a healthy
-            // turn (intervention === "none") or with ATLAS_NO_META_INTERVENTIONS=true
+            // turn (intervention === "none") or with BHAI_NO_META_INTERVENTIONS=true
             // it is a no-op with ZERO added cost. Awaited because escalate/ask_user
             // set state consumed by THIS iteration's model pick below.
             await applyIntervention({
@@ -2160,14 +2410,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         }
 
         // Check for cancellation
-        if (signal?.aborted) {
-            console.log(`  🛑 Task cancelled by user`);
-            workingHistory.push({ role: "assistant", content: "Task cancelled by user." });
-            // Credit already deducted per-API-call, just return
-            const stats = getSessionCreditStats();
-            if (_harnessTraceId) finalizeTrace(_harnessTraceId, false);
-            return { text: `✅ Task stopped. (${stats.creditsUsed} credits used)`, toolCalls: totalToolCalls };
-        }
+        if (signal?.aborted) return stopped();
 
         // ── Mid-session credit check (every 5 tool calls) ──
         // If credits run out while working, stop gracefully instead of continuing
@@ -2373,7 +2616,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // approval → walkthrough ceremony.
                 try {
                     const { classifyCodingComplexity } = await import("./model-router.js");
-                    const c = classifyCodingComplexity(userMessage);
+                    const c = classifyCodingComplexity(rawUserMessage); // the overlay notes ("…a login page", 500 chars) made every coding ask "complex"
+                    console.log(`  🧩 Coding complexity: ${c}`);
                     if (c === "complex") {
                         parts.push(
                             '<coding_complexity level="complex">\n' +
@@ -2419,7 +2663,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     /* task-learnings not initialized */
                 }
 
-                // ── Project memory (ATLAS.md walk-up) ──
+                // ── Project memory (BHAI.md walk-up) ──
                 // Only for coding-classified queries to avoid injecting
                 // project conventions into chat/research flows.
                 try {
@@ -2440,7 +2684,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // compared to the previous serial flow.
                 const cwd = process.cwd();
                 const repoMapTask = (async () => {
-                    if (process.env.ATLAS_NO_REPO_MAP === "true") return null;
+                    if (process.env.BHAI_NO_REPO_MAP === "true") return null;
                     try {
                         const { generateRepoMap } = await import("./tools/repo-map.js");
                         const map = await generateRepoMap(cwd, {
@@ -2471,7 +2715,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // surface in repo_map/architecture) for embedded instructions.
                 // Fails OPEN: scan error or kill-switch → inject as before.
                 const guardContext = async (label: string, body: string | null): Promise<string | null> => {
-                    if (!body || process.env.ATLAS_NO_THREAT_SCAN === "true") return body;
+                    if (!body || process.env.BHAI_NO_THREAT_SCAN === "true") return body;
                     try {
                         const { scanForThreats } = await import("./security/threat-patterns.js");
                         const r = scanForThreats(body, "context");
@@ -2505,7 +2749,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // Tells the LLM which shell, screenshot engine, clipboard engine, OCR
             // tool, and automation helpers are actually available at runtime so it
             // avoids calling tools that will fail on this platform.
-            if (process.env.ATLAS_NO_CAPABILITY_INJECTION !== "true") {
+            if (process.env.BHAI_NO_CAPABILITY_INJECTION !== "true") {
                 try {
                     const { getPlatformCapabilities, formatCapabilitiesForContext } = await import(
                         "./utils/platform-capabilities.js"
@@ -2670,7 +2914,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 /* DB not initialized */
             }
 
-            const browserCtx = getBrowserContext(userMessage);
+            const browserCtx = getBrowserContext(rawUserMessage); // not the channel notes: their "interact with THIS tab" matched strategies on every turn
             if (browserCtx) parts.push(browserCtx);
 
             // ── Chrome Extension Context ──
@@ -2726,10 +2970,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             try {
                 // W2: pull persona from identity.extra.persona once per turn,
                 // narrow via asPersona, and pass into the dynamic context.
-                // ATLAS_NO_PERSONA_BIAS=true short-circuits both this read
+                // BHAI_NO_PERSONA_BIAS=true short-circuits both this read
                 // and the eventual prompt module (in dynamic-assembler).
                 let _personaForCtx: import("./prompts/persona-bias.js").Persona | undefined;
-                if (process.env.ATLAS_NO_PERSONA_BIAS !== "true") {
+                if (process.env.BHAI_NO_PERSONA_BIAS !== "true") {
                     try {
                         const idMod = await import("./memory/identity.js");
                         const biasMod = await import("./prompts/persona-bias.js");
@@ -2860,8 +3104,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     // so we can see which subsystems are pulling weight vs
                     // returning empty. Enabled by default (low log volume,
                     // fires once per first-iteration turn); silence via
-                    // ATLAS_MEMORY_TELEMETRY=false.
-                    if (process.env.ATLAS_MEMORY_TELEMETRY !== "false") {
+                    // BHAI_MEMORY_TELEMETRY=false.
+                    if (process.env.BHAI_MEMORY_TELEMETRY !== "false") {
                         const shapes = parts.map((p) => {
                             const header = (p.match(/^[^\n]+/)?.[0] ?? "").slice(0, 40).replace(/\s+/g, " ");
                             return `${header}=${p.length}c`;
@@ -2933,7 +3177,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // injection (and into overnight dream-replay), defeating the
             // boundary sanitizer.
             if (ownerTurn) {
-                appendTurn("user", safeUserMessage);
+                // The owner's words only: the channel notes ([SOURCE: …], [BROWSER CONTEXT: …]
+                // with a page-written tab title) rode along into every later ACTIVE SESSION.
+                appendTurn("user", sanitizeUntrustedContent(rawUserMessage));
                 trackSessionForAnticipation();
             }
         }
@@ -2971,7 +3217,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             toolSelection = turnToolSelection;
         } else {
             toolSelection = await selectTools({
-                message: userMessage,
+                message: rawUserMessage, // the owner's words, not the channel notes (tab titles)
                 recentToolCalls: lastToolCalls?.map((tc) => tc.function.name),
                 iteration: iterations,
                 requestedCategories,
@@ -2982,6 +3228,28 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         turnToolReqKey = reqKey;
         const tools = toolSelection.tools;
         activeCategories = toolSelection.categories;
+        // Re-asked "has X happened yet?", the model repeated its earlier answer from history
+        // with web_search right there. A fresh look is the point of asking.
+        if (
+            iterations === 1 &&
+            asksChangingFact(rawUserMessage) &&
+            tools.some((t) => t.function.name === "web_search")
+        )
+            pushNudge(
+                messages,
+                "If this asks about something in the world that may have changed (a release, news, a price, a score), check it with web_search now; earlier answers in this conversation may be out of date. A question about this computer or the owner's own things doesn't need a search.",
+            );
+        // Same failure with images: after one outage the model said "the image model isn't set up"
+        // from history on every later ask, and a weaker model said undo didn't exist.
+        if (
+            iterations === 1 &&
+            toolSelection.categories[0] === "image" &&
+            tools.some((t) => t.function.name === "generate_image")
+        )
+            pushNudge(
+                messages,
+                "If this asks to make, edit, undo or redo an image, call generate_image now (undo true goes back to the previous version); earlier failures in this conversation don't mean it fails now. A question about a picture needs no new image.",
+            );
 
         // ── Task-context routing (iteration 1) ──
         // The router picked a model from the raw message before anything knew
@@ -3021,6 +3289,32 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             unhingedTurn = getActivePreset() === "unhinged" && !isSerious();
         }
 
+        // ── Learned router: the model for this kind of task, from evidence ──
+        // (src/routing/learned-router.ts). Rules above it: an explicit ask for depth, a forced
+        // pick, unhinged (Grok writes the turn), and complex work keeping at least Sonnet.
+        if (
+            iterations === 1 &&
+            !forcedPick &&
+            !unhingedTurn &&
+            turnTier !== "complex" &&
+            toolSelection.classification &&
+            process.env.BHAI_NO_LEARNED_ROUTER !== "true" &&
+            !opusWarranted(rawUserMessage, errorCount, modelHint)
+        ) {
+            turnClass = learnedRouter.classifyTurn(toolSelection.classification, hasMediaThisIter);
+            turnCats = toolSelection.classification.categories ?? [];
+            const pick = learnedRouter.chooseArm(turnClass, {
+                // Only the owner's own turns try a model, and only low-risk kinds of task.
+                lowRisk: ownerAttended && learnedRouter.lowRiskTurn(turnClass, turnCats),
+                vision: hasMediaThisIter,
+            });
+            turnArm = pick.arm;
+            model = pick.arm.model;
+            console.log(
+                `  🎯 Learned router: ${turnClass} → ${pick.arm.id}${pick.explored ? " (trying)" : ""} [${pick.reason}]`,
+            );
+        }
+
         // ── Simple desktop tasks stay on Haiku ──
         // From iteration 3 the native router moves os_* loops to Sonnet by
         // iteration count alone, a rule from when the model couldn't see the
@@ -3038,6 +3332,24 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         } else if (guiPinned() && claudeTier(model) !== "haiku") {
             console.log(`  🖱️ Desktop task stays on Haiku (router picked ${claudeTier(model)})`);
             model = MODELS.HAIKU;
+        }
+
+        // The learned pick keeps the turn (one model: one prompt cache) until something goes
+        // wrong, the turn widens into another kind of task (request_tools: browser, code), or a
+        // nudge asked for a stronger model (lastToolCalls cleared); then the rules above decide.
+        if (iterations > 1 && turnArm && !turnArmReleased && turnClass) {
+            const widened =
+                !!requestedCategories?.length &&
+                learnedRouter.classifyTurn(
+                    { ...toolSelection.classification, categories: [...turnCats, ...requestedCategories] },
+                    false,
+                ) !== turnClass;
+            // A model that can't find things in a screenshot (scripts/eval-grounding.ts: gpt-4.1-nano
+            // and gpt-4o-mini 3%, Haiku 94%) hands the turn back once one arrives.
+            const blind = turnSawImage && !turnArm.vision;
+            if (blind) console.log(`  🎯 Learned router: ${turnArm.id} can't read screenshots, back to the rules`);
+            if (forcedPick || errorCount > 0 || widened || blind || lastToolCalls === undefined) turnArmReleased = true;
+            else model = turnArm.model;
         }
 
         // Unhinged keeps the whole turn on Grok (after the desktop Haiku pin above).
@@ -3076,8 +3388,13 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             }
         }
 
-        // Skill slugs are sent to the server for server-side injection
-        const iterSkillSlugs = iterations === 1 ? toolSelection.skillSlugs : [];
+        // Skill slugs are sent to the server for server-side injection — on every iteration
+        // of the turn, not just the first. The server builds the system prompt from them
+        // (skills, plus the browsing/coding prompts they bring), and the prompt cache keys on
+        // tools → system: dropping them after iteration 1 changed the system prompt, so every
+        // later call missed the cache (26K tokens at full price instead of ~47K at a tenth)
+        // and the model lost its browsing instructions mid-task.
+        const iterSkillSlugs = toolSelection.skillSlugs;
 
         // Fence the memory/context block with <memory-context>…</memory-context>
         // markers so the LLM treats it as recalled context, not new user input.
@@ -3141,10 +3458,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // Skip the ~14K-token Sonnet plan for UNAMBIGUOUS single-domain tasks:
         // the classifier was confident AND only one action-category is in play.
         // Genuinely multi-domain or ambiguous tasks still get a plan. Tunable
-        // via ATLAS_ALWAYS_ORCHESTRATE=true to restore the old always-on path.
+        // via BHAI_ALWAYS_ORCHESTRATE=true to restore the old always-on path.
         const classifierConf = toolSelection.classification?.confidence ?? 0;
         const unambiguousSingleStep =
-            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" && actionCategoryCount <= 1 && classifierConf >= 0.85;
+            process.env.BHAI_ALWAYS_ORCHESTRATE !== "true" && actionCategoryCount <= 1 && classifierConf >= 0.85;
 
         // ── Simple GUI/messaging fast-path gate ──
         // "open WhatsApp and send a message" classifies as cats=[os_control,
@@ -3174,8 +3491,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             / then |, then|after that| followed by /i.test(rawUserMessage) ||
             (rawUserMessage.match(/\b(?:and|&)\b/gi)?.length ?? 0) >= 2;
         const simpleGuiFastPath =
-            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
-            process.env.ATLAS_NO_GUI_FASTPATH !== "true" &&
+            process.env.BHAI_ALWAYS_ORCHESTRATE !== "true" &&
+            process.env.BHAI_NO_GUI_FASTPATH !== "true" &&
             allCatsSimple &&
             !multiStepIntent &&
             !multiAppOrChained &&
@@ -3185,7 +3502,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // chat turn doesn't need a plan however many categories it touches.
         const turnCls = toolSelection.classification;
         const classifierSaysSingleStep =
-            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
+            process.env.BHAI_ALWAYS_ORCHESTRATE !== "true" &&
             !!turnCls?.tier &&
             !turnCls.multi_step &&
             turnCls.tier !== "complex" &&
@@ -3205,9 +3522,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             try {
                 const planStart = Date.now();
                 // Dynamic plan-model routing by task complexity (DeepSeek/Gemini/Sonnet).
-                // ATLAS_NO_DYNAMIC_ORCHESTRATOR forces "complex" → Sonnet (old behavior).
+                // BHAI_NO_DYNAMIC_ORCHESTRATOR forces "complex" → Sonnet (old behavior).
                 const orchComplexity =
-                    process.env.ATLAS_NO_DYNAMIC_ORCHESTRATOR === "true"
+                    process.env.BHAI_NO_DYNAMIC_ORCHESTRATOR === "true"
                         ? "complex"
                         : classifyOrchestratorComplexity(rawUserMessage, {
                               activeCategories: activeCategories || [],
@@ -3216,7 +3533,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                               actionCategoryCount,
                           });
                 const orchPick = pickOrchestratorModel(orchComplexity);
-                const orchShadow = process.env.ATLAS_ORCH_SHADOW === "true";
+                const orchShadow = process.env.BHAI_ORCH_SHADOW === "true";
                 const planModel = orchShadow ? MODELS.SONNET : orchPick.model;
                 const planThinking = orchShadow ? "low" : orchPick.thinkingLevel;
                 console.log(
@@ -3276,7 +3593,7 @@ ${planToolsBlock(tools.filter((t) => toolAllowlist === undefined || isToolAllowe
 HINTS (apply a hint only if the tools it names are listed above):
 - Desktop: app_manager action='activate' app="WhatsApp"; os_smart_click instruction="the Send button" clicks by description (prefer it over os_nav+os_click_element or raw apple_script); os_type text=/key=/combo= after focusing the field; os_visual_verify expect_text=/expect_gone= after any step that changes UI state. Raw AppleScript keystrokes are the LAST resort.
 - Music: spotify action='play' query="exact song name" (or "<name> playlist", "liked songs"); action='now_playing' to verify. music_control is the same for Apple Music.
-- Messaging: whatsapp_send for paired contacts; messages_tool is iMessage only. If whatsapp_send fails, drive the WhatsApp app: app_manager activate → os_smart_click "new chat button" → os_type the name → os_smart_click the contact → os_type the message → os_smart_click "send button" → os_visual_verify expect_text=the_message.
+- Messaging: whatsapp_send for paired contacts; messages_tool is iMessage only. If whatsapp_send fails, drive the WhatsApp app: app_manager activate → os_smart_click "new chat button" → os_type the name → os_smart_click the contact → os_type the message → os_smart_click "send button" → os_visual_verify expect_text="Type a message" (the compose box is empty) → os_visual_verify expect_text=the message (the sent bubble is on screen). Both must pass: either alone also passes when nothing was typed or the text was never sent.
 
 CRITICAL RULES:
 1. **Verify before declaring done.** Every UI-driving plan ENDS with os_visual_verify (or for music, spotify action='now_playing'). Never say "done" off a fire-and-forget AppleScript.
@@ -3335,21 +3652,8 @@ PLAN:`,
                 }
 
                 if (planText.length > 20) {
-                    // Check if orchestrator wants to ask the user a question
-                    const firstLines = planText.split("\n").slice(0, 3).join(" ").toLowerCase();
-                    const isAskingUser =
-                        firstLines.includes("ask_user") ||
-                        firstLines.includes("ask the user") ||
-                        firstLines.includes("which ") ||
-                        firstLines.includes("clarify");
-
-                    if (isAskingUser) {
-                        // Extract the question and inject as the agent's response
-                        const questionMatch = planText.match(/(?:ASK_USER|ask the user)[:\s]*["']?([^"'\n]+)/i);
-                        const question =
-                            questionMatch?.[1] ||
-                            planText.split("\n").find((l) => l.includes("?")) ||
-                            "Could you clarify what you mean?";
+                    const question = planAskQuestion(planText);
+                    if (question) {
                         iterationMessages.push({
                             role: "system" as const,
                             content: `[ORCHESTRATOR] The task is ambiguous. Ask the user this question before proceeding: "${question.trim()}"\nDo NOT guess or assume — relay this question to the user.`,
@@ -3375,9 +3679,19 @@ PLAN:`,
         // ── Tool Allowlist Filtering ──
         // When a toolAllowlist is provided, restrict the tools sent to the LLM
         // to only those in the list. This enforces channel-level tool restrictions.
+        // An allowlist (contacts, groups, guests) is a handful of tools: offer all of them, not the
+        // routed set cut down to it. The router's chat lane or a browser pick left a contact's turn
+        // with no ask_owner, so "I'll pass it on" went nowhere.
         let finalTools = tools;
         if (toolAllowlist !== undefined) {
-            finalTools = tools.filter((t) => isToolAllowed(toolAllowlist, t.function.name));
+            const { getMCPToolSchemas } = await import("./mcp/client.js");
+            const { inContactRun } = await import("./tools/ask-owner.js");
+            finalTools = [...getToolSchemasByNames([...toolAllowlist, "get_current_time"]), ...getMCPToolSchemas()].filter(
+                (t) =>
+                    isToolAllowed(toolAllowlist, t.function.name) &&
+                    // ask_owner only reaches the owner from a WhatsApp contact's chat; elsewhere it would always fail.
+                    (t.function.name !== "ask_owner" || inContactRun()),
+            );
         }
 
         // ── Plan/Spec Mode Gating ──
@@ -3406,6 +3720,7 @@ PLAN:`,
             console.warn(`[AGENT] plan-mode gating skipped: ${(err as Error).message}`);
         }
 
+        if (turnArm && model !== turnArm.model) turnArmLeft = true; // another model runs this step
         let response: Awaited<ReturnType<LLMClient["chat"]>> | undefined;
         try {
             response = await llm.chat({
@@ -3420,8 +3735,13 @@ PLAN:`,
                 // Unhinged runs hot: a higher sampling temperature makes Grok wilder
                 // and less predictable — the point of the mode. Normal turns omit it.
                 temperature: model === MODELS.GROK ? 1.1 : undefined,
+                ...live(),
             });
         } catch (llmErr) {
+            // Stopped mid-call: what streamed stays as the partial answer. Failed: withdrawn.
+            if (signal?.aborted) return stopped();
+            turnStream?.withdraw();
+            if (turnArm && model === turnArm.model) turnArmInfra = true; // provider trouble, not the model's answer
             cbRecordFailure(circuitBreaker);
             console.error(`[AGENT] LLM call threw: ${(llmErr as Error).message} — attempting recovery`);
             lastLlmError = (llmErr as Error).message ?? "";
@@ -3443,11 +3763,14 @@ PLAN:`,
                     thinkingLevel: iterThinking,
                     modelOverride: fallbackModel,
                     skillSlugs: iterSkillSlugs,
+                    ...live(),
                 });
                 if (response?.choices?.length) {
                     console.log(`  ✅ LLM error recovered with fallback model ${fallbackModel}`);
                 }
             } catch (fallbackErr) {
+                if (signal?.aborted) return stopped();
+                turnStream?.withdraw();
                 console.warn(`  ⚠️ Fallback model also failed: ${(fallbackErr as Error).message}`);
             }
             if (!response?.choices?.length) {
@@ -3504,6 +3827,7 @@ PLAN:`,
                         thinkingLevel: iterThinking,
                         modelOverride: retryModel,
                         skillSlugs: iterSkillSlugs,
+                        ...live(),
                     });
                     if (retryResponse?.choices?.length) {
                         response = retryResponse;
@@ -3512,6 +3836,8 @@ PLAN:`,
                         break;
                     }
                 } catch (retryErr) {
+                    if (signal?.aborted) return stopped();
+                    turnStream?.withdraw();
                     console.warn(`  ⚠️ Retry with ${retryModel} failed: ${(retryErr as Error).message}`);
                 }
             }
@@ -3525,6 +3851,7 @@ PLAN:`,
                         thinkingLevel: iterThinking,
                         modelOverride: model,
                         skillSlugs: iterSkillSlugs,
+                        ...live(),
                     });
                     if (lastRetry?.choices?.length) {
                         response = lastRetry;
@@ -3532,7 +3859,8 @@ PLAN:`,
                         console.log(`  ✅ Empty response recovered on final retry with ${model}`);
                     }
                 } catch {
-                    /* fall through to error */
+                    if (signal?.aborted) return stopped();
+                    turnStream?.withdraw(); // fall through to error
                 }
             }
             if (!recovered) {
@@ -3545,6 +3873,16 @@ PLAN:`,
                 continue;
             }
         }
+        // A reply from another model than the pick (Convex's silent Azure→Claude fallback, a
+        // client failover): provider trouble, so this turn says nothing about the picked model.
+        const served = String(response.model ?? "");
+        if (
+            turnArm &&
+            model === turnArm.model &&
+            served &&
+            (turnArm.model.startsWith("azure/") ? /^claude/i.test(served) : claudeTier(served) !== claudeTier(turnArm.model))
+        )
+            turnArmInfra = true;
         const choice = response.choices[0];
 
         // ── Live Thinking Display ──
@@ -3554,7 +3892,9 @@ PLAN:`,
             (choice as any)?.message?.reasoning_content ||
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (choice as any)?.message?.reasoning;
-        if (reasoning && typeof reasoning === "string" && onProgress) {
+        // Owner's own attended turns only (no channel context = an internal owner path).
+        const showsThinking = !channelContext || (channelContext.isOwner && !channelContext.autonomous);
+        if (reasoning && typeof reasoning === "string" && onProgress && showsThinking) {
             try {
                 await onProgress(`[THINKING] ${reasoning}`);
             } catch {
@@ -3723,7 +4063,15 @@ PLAN:`,
                 STOP_WORDS.some((w) => lastUserText.includes(w)) && lastUserText.split(" ").length <= 10;
 
             // 6. Is the user's message simple enough that it probably doesn't need tool use?
-            const isSimpleUserMessage = lastUserText.split(" ").length <= 6;
+            // A one-step ask (the classifier said simple, not multi-step) or one that asked to be
+            // short ("two sentences", "one line"): a short answer after one search is the job done.
+            // The nudge re-sent the whole context to a Pro model to say so (20 times in a day).
+            const cls = toolSelection.classification;
+            const isSimpleUserMessage =
+                lastUserText.split(" ").length <= 6 ||
+                (cls?.tier === "simple" && !cls.multi_step) ||
+                cls?.tier === "chat" ||
+                askedToBeBrief(lastUserText);
 
             // ── Smart Delegation Detection ─────────────────────────────
             // Instead of brittle regex, analyze the CONTEXT to determine if the
@@ -3733,8 +4081,11 @@ PLAN:`,
             // the user instead of trying alternative approaches → it's giving up.
             // If the agent is asking a DISAMBIGUATION question (no errors) → legitimate.
 
-            const recentFailures = antiGivingUpFailures(messages, lastUserText, responseText, totalToolCalls);
+            const recentFailures = antiGiveUpNudged
+                ? 0
+                : antiGivingUpFailures(messages, lastUserText, responseText, totalToolCalls);
             if (recentFailures > 0) {
+                antiGiveUpNudged = true;
                 const hasVisualTools = toolSelection.categories.includes("os_control");
                 const continuationHint = hasVisualTools
                     ? "Use os_smart_click with a natural-language instruction (e.g. 'the Wi-Fi row') — it cascades AX → OmniParser → UI-TARS/cloud grounding automatically and is far more reliable than os_ocr_click, which has been failing here. Only fall back to os_screenshot + os_click if os_smart_click returns cascade_miss. You have full mouse+keyboard control."
@@ -3743,30 +4094,37 @@ PLAN:`,
                 console.log(
                     `  🔄 Anti-giving-up: agent stopped after tool failure (${recentFailures} errors) — forcing retry with visual fallback`,
                 );
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({
-                    role: "user",
-                    content: `Your previous approach didn't work, but the task is NOT done. Don't ask me — try a different approach yourself. ${continuationHint} If your dedicated tool failed, that's fine — you have dozens of other tools. Complete the task, then verify the result.`,
-                });
+                turnStream?.sendBack("Taking another pass");
+                pushRetry(
+                    messages,
+                    responseText,
+                    `Your previous approach didn't work, but the task is NOT done. Don't ask the owner — try a different approach yourself. ${continuationHint} If your dedicated tool failed, that's fine — you have dozens of other tools. Complete the task, then verify the result.`,
+                );
                 lastToolCalls = undefined;
                 continue;
             }
 
-            if (
-                !lookNudged &&
-                asksLeaveToLook(
-                    responseText,
-                    toolSelection.categories.some((c) => c === "os_control" || c === "system_controls"),
-                )
-            ) {
+            const canSeeScreen = toolSelection.categories.some((c) => c === "os_control" || c === "system_controls");
+            if (!lookNudged && asksLeaveToLook(responseText, canSeeScreen)) {
                 lookNudged = true;
                 console.log("  🔄 Asked leave to look before finishing — continuing instead");
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({
-                    role: "user",
-                    content:
-                        "You can see my screen yourself: don't ask me to look or ask leave to look. Open what shows it (e.g. the right System Settings pane), read it with os_inspect or a screenshot, finish the task, and give me the actual answer.",
-                });
+                turnStream?.sendBack("Taking another pass");
+                pushRetry(messages, responseText, leaveToLookNote(rawUserMessage, canSeeScreen));
+                lastToolCalls = undefined;
+                continue;
+            }
+
+            // An ack with no action: the contract line ("on it — …; done = …") and no tool
+            // call, so nothing happened. Small models stop there (gpt-5-nano, model-ladder eval).
+            if (!ackNudged && ackWithoutAction(responseText, totalToolCalls)) {
+                ackNudged = true;
+                console.log("  🔄 Announced the task but called no tool — continuing");
+                turnStream?.sendBack("Taking another pass");
+                pushRetry(
+                    messages,
+                    responseText,
+                    "You said what you'll do but made no tool call, so nothing has happened yet. Do it now with your tools, then tell the owner the result.",
+                );
                 lastToolCalls = undefined;
                 continue;
             }
@@ -3778,16 +4136,36 @@ PLAN:`,
             // mode that no other guard catches (the persistence-nudge fires
             // on count-of-tool-calls, not on whether the actions were
             // verified). Capped at one fire per run via verifyGate.nudgedThisRun.
-            // Kill-switch: ATLAS_NO_VERIFY_GATE=true disables.
+            // Kill-switch: BHAI_NO_VERIFY_GATE=true disables.
             if (verifyGateFires(verifyGate, responseText)) {
                 console.log(
                     `  🔍 Verify gate: ${verifyGate.lastMutator} mutated UI but no verification ran — forcing one more iteration`,
                 );
                 verifyGate.nudgedThisRun = true;
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({ role: "user", content: buildVerifyReminder(verifyGate) });
+                turnStream?.sendBack("Checking it actually worked");
+                pushRetry(messages, responseText, buildVerifyReminder(verifyGate));
                 if (turnContract) pushNudge(messages, contractCheckNudge(turnContract));
                 lastToolCalls = undefined; // bump model selection to PRO for the verify-and-respond turn
+                continue;
+            }
+
+            // ── Promised, didn't do it ──
+            // On Grok (unhinged), "kal baarish hogi?" got "Kal ka asli haal nikaalta hoon" (I'll go
+            // check) with the weather tool offered and no call, and the turn ended there.
+            if (
+                !promiseNudged &&
+                totalToolCalls === 0 &&
+                !toolSelection.categories.includes("chat_only") &&
+                !isAskingUser &&
+                announcesWithoutDoing(responseText)
+            ) {
+                promiseNudged = true;
+                console.log("  🤝 Promise nudge: the reply says it will check, but no tool ran");
+                pushRetry(
+                    messages,
+                    responseText,
+                    "You said you'd look it up but called no tool. Call the tool now and answer with the result; don't mention this check.",
+                );
                 continue;
             }
 
@@ -3821,12 +4199,12 @@ PLAN:`,
                 console.log(
                     `  🔄 Persistence nudge: model paused after ${totalToolCalls} tool calls — checking if more work needed`,
                 );
-                messages.push({ role: "assistant", content: responseText });
-                messages.push({
-                    role: "user",
-                    content:
-                        "It looks like there may be more steps to complete this task. If you are genuinely done, go ahead and give your final answer. Otherwise, continue working.",
-                });
+                turnStream?.sendBack("Taking another pass");
+                pushRetry(
+                    messages,
+                    responseText,
+                    "There may be more steps to this task. If it is done, give your final answer to the owner's last message and don't mention this check; otherwise keep working.",
+                );
                 // Force PRO model for the assessment (without polluting errorCount)
                 // The next iteration will use PRO regardless of tool history
                 lastToolCalls = undefined; // Clears FLASH routing, causes chooseModel to pick PRO
@@ -3848,16 +4226,25 @@ PLAN:`,
                 TIER_RANK[claudeTier(finalSelection.modelId)] > TIER_RANK[claudeTier(model)]
             ) {
                 console.log(`  🧠 Switching to ${finalSelection.displayName} for final answer`);
-                const finalResponse = await llm.chat({
-                    messages: iterationMessages,
-                    tools: finalTools,
-                    thinkingLevel: finalSelection.thinkingLevel,
-                    modelOverride: finalSelection.modelId,
-                });
+                turnStream?.sendBack("Taking another pass");
+                const finalResponse = await llm
+                    .chat({
+                        messages: iterationMessages,
+                        tools: finalTools,
+                        thinkingLevel: finalSelection.thinkingLevel,
+                        modelOverride: finalSelection.modelId,
+                        ...live(),
+                    })
+                    .catch((err: unknown) => {
+                        if (signal?.aborted) return null;
+                        throw err;
+                    });
+                if (!finalResponse) return stopped();
                 const finalChoice = finalResponse.choices[0];
                 if (finalChoice) {
                     if (finalChoice.message.tool_calls?.length) {
                         // PRO wants to keep working — push its message and loop
+                        turnStream?.withdraw(true);
                         messages.push({
                             role: "assistant",
                             content: finalChoice.message.content || null,
@@ -3939,12 +4326,12 @@ PLAN:`,
                                 console.log(`  ✂️ Pruned ${dropped} mid-conversation messages to recover from overflow`);
                             }
                         }
-                        messages.push({ role: "assistant", content: "" });
-                        messages.push({
-                            role: "user",
-                            content:
-                                "You produced an empty response. Please provide a concise meaningful reply to the user based on what you've already done.",
-                        });
+                        turnStream?.sendBack("Taking another pass");
+                        pushRetry(
+                            messages,
+                            "",
+                            "You produced an empty response. Please provide a concise meaningful reply to the user based on what you've already done.",
+                        );
                         lastToolCalls = undefined;
                         continue;
                     }
@@ -3973,11 +4360,12 @@ PLAN:`,
                 console.log(
                     `  🔄 Empty response after tool calls — retry ${emptyResponseRetries}/${MAX_EMPTY_RETRIES}`,
                 );
-                messages.push({ role: "assistant", content: "" });
-                messages.push({
-                    role: "user",
-                    content: "You produced an empty response. Please provide a meaningful reply to the user.",
-                });
+                turnStream?.sendBack("Taking another pass");
+                pushRetry(
+                    messages,
+                    "",
+                    "You produced an empty response. Please provide a meaningful reply to the user.",
+                );
                 lastToolCalls = undefined;
                 continue;
             }
@@ -3995,18 +4383,22 @@ PLAN:`,
                         );
                         // Feed quality failure back to router for future routing decisions
                         recordQualityFailure(model, selection.taskType, cascadeCheck.reason);
+                        turnStream?.sendBack("Taking another pass");
                         try {
                             const escalatedResponse = await llm.chat({
                                 messages: iterationMessages,
                                 tools: finalTools,
                                 thinkingLevel: selection.thinkingLevel,
                                 modelOverride: nextModel,
+                                ...live(),
                             });
                             const escalatedText = escalatedResponse.choices?.[0]?.message?.content;
                             if (escalatedText) {
                                 text = sanitizeAgentResponse(escalatedText) || text;
                             }
                         } catch (err) {
+                            if (signal?.aborted) return stopped();
+                            turnStream?.withdraw();
                             console.warn(`  ⚠️ Cascade escalation failed: ${(err as Error).message}`);
                         }
                     }
@@ -4045,7 +4437,7 @@ PLAN:`,
 
             // Credits deducted per-API-call in llm.ts
             if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
-            if (process.env.ATLAS_NO_FORGE_VERIFIER !== "true") {
+            if (process.env.BHAI_NO_FORGE_VERIFIER !== "true") {
                 import("./forge/pending-consumer.js")
                     .then(({ consumeOnePending }) => consumeOnePending())
                     .catch((e: Error) => console.warn("[forge] pending consume failed:", e.message));
@@ -4053,6 +4445,9 @@ PLAN:`,
             settleLearnings(text);
             return { text, toolCalls: totalToolCalls, receipt: await receiptFor(text) };
         }
+
+        // Text before tool calls was narration, not the answer.
+        turnStream?.withdraw(true);
 
         // Append assistant message with tool calls
         messages.push({
@@ -4099,6 +4494,17 @@ PLAN:`,
         // osStateMutated; that's the right semantics because a *failed* click
         // can still leave the UI in a half-changed state we need to verify.
         recordBatch(batchResults);
+        // A tool made or turned on this batch must be offered next iteration.
+        if (batchResults.some((r) => !r.isError && (r.fnName === "create_tool" || r.fnName === "approve_dynamic_tool")))
+            turnToolSelection = undefined;
+        // A result saved to a file says "Call `read`": a browser or search turn must have it.
+        // (A guest turn's allowlist still filters it out before the model sees it.)
+        else if (
+            turnToolSelection &&
+            batchResults.some((r) => r.savedOutput) &&
+            !turnToolSelection.tools.some((t) => t.function.name === "read")
+        )
+            turnToolSelection = { ...turnToolSelection, tools: [...turnToolSelection.tools, ...getToolSchemasByNames(["read"])] };
 
         // Circuit breaker: tool calls completed = progress
         const batchHasSuccess = batchResults.some((r) => !r.isError);
@@ -4115,23 +4521,6 @@ PLAN:`,
             recordIntentToolUsage(currentIntent, usedToolNames);
         }
 
-        // Track tool failures and successes for the learning system
-        let lastFailedTool: string | null = null;
-        for (const r of batchResults) {
-            const content = typeof r.finalContent === "string" ? r.finalContent : JSON.stringify(r.finalContent);
-            if (toolFailed(r)) {
-                recordToolFailure(r.fnName, content.substring(0, 200));
-                lastFailedTool = r.fnName;
-            } else {
-                recordToolSuccess(r.fnName);
-                // If previous tool failed and this one succeeded → record recovery
-                if (lastFailedTool) {
-                    recordToolRecovery(lastFailedTool, r.fnName, `${lastFailedTool} failed → ${r.fnName} succeeded`);
-                    lastFailedTool = null;
-                }
-            }
-        }
-
         for (const r of batchResults) {
             const errorMsg = getErrorMessage(r.fnName, r.result);
             if (errorMsg) await sendProgress(errorMsg);
@@ -4140,7 +4529,7 @@ PLAN:`,
 
             // ── Per-turn loop guardrail: identical-args repeat detection ──
             // Appends a steering hint when the same tool keeps failing with the
-            // same args. Warn-only unless ATLAS_TOOL_LOOP_HARDSTOP=true.
+            // same args. Warn-only unless BHAI_TOOL_LOOP_HARDSTOP=true.
             const guard = recordGuardrailCall(guardrailState, {
                 fnName: r.fnName,
                 fnArgs: r.fnArgs,
@@ -4194,7 +4583,7 @@ PLAN:`,
         //   • genuinely-empty-but-successful ops (mkdir, mv, grep-no-match)
         // Long-running WORK delegates out via start_long_task (handled below)
         // and never grinds this loop, so this only catches interactive spirals.
-        // Disable entirely with ATLAS_NO_PROGRESS_LIMIT=0.
+        // Disable entirely with BHAI_NO_PROGRESS_LIMIT=0.
         const LOOP_EXEMPT_TOOLS = new Set([
             "shell_check_process",
             "shell_wait_process",

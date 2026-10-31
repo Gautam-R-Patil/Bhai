@@ -8,28 +8,44 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
-import { readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
-import { join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, realpathSync, copyFileSync, constants as fsConstants } from "node:fs";
+import { basename, extname, join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir, homedir } from "node:os";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { getWorkspaceDir } from "../config/paths.js";
-import { isStuckReplyPhrase, withStuckReplyLine } from "../channel-text.js";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { getDownloadsDir, getImagesDir, getWorkspaceDir, getBhaiHome } from "../config/paths.js";
+import { isStuckReplyPhrase, stuckActionButtons, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
+import { registerImageDelivery } from "../media/image-jobs.js";
 import {
     runAgent,
     getConversationHistory,
     setConversationHistory,
     type MediaAttachment,
     type ChannelContext,
+    type AgentResponse,
+    type GeneratedImage,
 } from "../agent.js";
 import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
 import { formatStepStatus, parseStepLine } from "../step-status.js";
-import { logChatMessage, markChatReset, recentChatContext } from "./chat-log.js";
+import { closeDesktopNotification, notifyDesktop, notifyTurnEnd } from "../desktop-notify.js";
+import { getPlanModeState } from "../agents/plan-mode.js";
+import { consentAskedSince } from "../security/consent.js";
+import { logChatMessage, markChatReset, recentChatContext, unansweredAsk } from "./chat-log.js";
+import { createTurnRelay } from "./turn-relay.js";
 import { classifyQuery } from "../memory/classifier.js";
+import {
+    conversationKey,
+    lastInboundImages,
+    markPhotoQuestion,
+    rememberInboundImages,
+    takePhotoQuestion,
+    toReadableImage,
+    type InboundImage,
+} from "../media/image-memory.js";
 import { memoryUndoAction, undoMemoryTap } from "../memory/forget.js";
 import { captureScreenshot } from "../tools/platform.js";
 import { getUserPresence } from "../proactive/activity.js";
@@ -41,7 +57,8 @@ import {
     getVoiceStagePhrase,
     getWaitPhrase,
 } from "../alive-ux.js";
-import { setOverlayResearchProgress } from "../tools/index.js";
+import { setOverlayResearchProgress, setOverlayResearchResult } from "../tools/index.js";
+import { parseQuickCommand } from "../quick-commands.js";
 import { getWidgetScript, getWidgetPage, validateWidgetToken } from "../widget/widget.js";
 import {
     initPushNotifications,
@@ -53,13 +70,13 @@ import { globalInboxBus, getInboxManager, type InboxEvent } from "../proactive/i
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// ATLAS_OVERLAY_PORT is for tests, so they never touch a running Bhai on 18792.
-const OVERLAY_PORT = Number(process.env.ATLAS_OVERLAY_PORT) || 18792;
+// BHAI_OVERLAY_PORT is for tests, so they never touch a running Bhai on 18792.
+const OVERLAY_PORT = Number(process.env.BHAI_OVERLAY_PORT) || 18792;
 
 // DNS-rebinding guard (see security/loopback.ts): "/" embeds the owner token.
 export const isLoopbackHost = (host: string | undefined) => isLoopbackHostFor(host, OVERLAY_PORT);
 // ── Local-bootstrap auth token ──────────────────
-// Written 0o600 to ~/.atlas/overlay-local-token at boot.
+// Written 0o600 to ~/.bhai/overlay-local-token at boot.
 // The native Swift overlay reads this file and supplies it as `Bearer <token>`
 // for HTTP endpoints OR `?localToken=<token>` for the WS handshake.
 // Distinct from WIDGET_TOKEN (which gates the web-widget surface).
@@ -68,7 +85,7 @@ let _localToken: string | null = null;
 
 export function getOverlayLocalToken(): string {
     if (_localToken) return _localToken;
-    const tokenPath = join(homedir(), ".atlas", "overlay-local-token");
+    const tokenPath = join(getBhaiHome(), "overlay-local-token");
     try {
         if (existsSync(tokenPath)) {
             const existing = readFileSync(tokenPath, "utf-8").trim();
@@ -169,6 +186,7 @@ function resolveSafePath(userPath: string): string | null {
 export { resolveSafePath as _resolveSafePathForTest };
 export { isDeniedServePath as _isDeniedServePathForTest };
 export { isScreenQuery as _isScreenQueryForTest };
+export { handleFileAttachment as _handleFileAttachmentForTest };
 export { parseInteractiveElements as _parseInteractiveElementsForTest };
 
 let httpServer: ReturnType<typeof createServer> | null = null;
@@ -188,11 +206,38 @@ const chatOf = (ws: WebSocket) => chatIds.get(ws) || "overlay";
 const offeredUndo = new WeakMap<WebSocket, string>();
 
 let drawerIds = new Set<string>();
+let drawerTimer: ReturnType<typeof setInterval> | null = null;
+let drawerWakes = 0;
 
-/** Send the owner's open chat bars every running research / long task, and what has ended. */
-async function pushTaskDrawer(): Promise<void> {
+/**
+ * Poll the task drawer every 4 s while a research / long task runs (one more push sends its
+ * end), and not at all otherwise. Woken when a task starts and when an owner chat bar connects.
+ */
+function wakeTaskDrawer(): void {
+    drawerWakes++;
+    if (drawerTimer) return;
+    drawerTimer = setInterval(() => {
+        const wakes = drawerWakes;
+        pushTaskDrawer()
+            .then((busy) => {
+                // A task that started while this tick ran woke us: keep polling for it.
+                if (!busy && wakes === drawerWakes && drawerTimer) {
+                    clearInterval(drawerTimer);
+                    drawerTimer = null;
+                }
+            })
+            .catch(() => {});
+    }, 4000);
+    drawerTimer.unref?.();
+}
+
+/**
+ * Send the owner's open chat bars every running research / long task, and what has ended.
+ * True while there is something to keep watching (no open chat bar: false, its connect wakes it).
+ */
+async function pushTaskDrawer(): Promise<boolean> {
     const owners = ownerClients().filter((c) => c.readyState === 1);
-    if (owners.length === 0) return;
+    if (owners.length === 0) return false;
     const [{ listRunningResearch }, { listActiveLongTasks }] = await Promise.all([
         import("../research/index.js"),
         import("../agents/long-task.js"),
@@ -218,25 +263,47 @@ async function pushTaskDrawer(): Promise<void> {
     const now = new Set(items.map((i) => i.taskId));
     const ended = [...drawerIds].filter((id) => !now.has(id));
     drawerIds = now;
-    if (items.length === 0 && ended.length === 0) return;
+    if (items.length === 0 && ended.length === 0) return false;
     for (const c of owners) {
         for (const i of items) c.send(JSON.stringify({ type: "task_progress", ...i }));
         for (const taskId of ended) c.send(JSON.stringify({ type: "task_complete", taskId }));
     }
+    return items.length > 0;
 }
+
+// The owner's message a restart left unanswered: told once, on the chat bar's next connect.
+let interruptedAsk: string | null = null;
+const restartNotice = (ask: string) =>
+    `I restarted before I could answer “${ask.length > 120 ? `${ask.slice(0, 117)}…` : ask}”. Ask me again if you still need it.`;
 
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
+    // An image that waited in the server's queue: shown like a scheduled task's (and logged to the chat).
+    // No chat window open yet: the next tick tries again (for up to a day; the files are in Images).
+    registerImageDelivery("overlay", async (_to, images, text) => {
+        if (!ownerClients().length) return false;
+        if (!images.length) return sendOverlayNotification(text, { requested: true });
+        for (const [i, img] of images.entries()) await sendOverlayImage(img.path, i ? "" : text, { requested: true });
+        return true;
+    });
     // Pick up where the conversation left off before a restart.
     if (getConversationHistory().length === 0) {
         const recent = recentChatContext(12 * 60 * 60 * 1000, 20);
+        // A message that got no reply (Bhai restarted mid-turn) leaves the history: the
+        // next, unrelated reply answered it blind ("Battery: I can't read… Paris.").
+        // The owner hears about it once instead (below, on connect).
+        if (recent.at(-1)?.role === "user") recent.pop();
+        interruptedAsk = unansweredAsk(10 * 60_000);
+        // The chat bar is usually hidden after a restart and its toast fades in 12s: a real
+        // notification reaches the owner. Standalone bot: the toast on connect (below).
+        if (interruptedAsk && notifyDesktop("stuck", "Bhai restarted", restartNotice(interruptedAsk))) interruptedAsk = null;
         if (recent.length) setConversationHistory(recent);
     }
     // Ensure the local bootstrap token exists on disk so the native Swift
     // overlay (and any other local-process client) can authenticate.
     try {
         getOverlayLocalToken();
-        console.log(`🔐 [OVERLAY] local-auth token at ~/.atlas/overlay-local-token (0o600)`);
+        console.log(`🔐 [OVERLAY] local-auth token at ~/.bhai/overlay-local-token (0o600)`);
     } catch (err) {
         console.warn(`[OVERLAY] Failed to init local-auth token: ${(err as Error).message}`);
     }
@@ -272,15 +339,15 @@ export function initOverlayChat(llm: LLMClient): void {
                     // Inject the loopback auth token so the page's WebSocket can
                     // authenticate (the server rejects token-less WS handshakes).
                     // Token only travels over 127.0.0.1 to a 0o600-gated client.
-                    // overlay.html reads it via both %%ATLAS_LOCAL_TOKEN%% (primary,
-                    // window.__ATLAS_LOCAL_TOKEN__) and window.__atlasLocalToken.
+                    // overlay.html reads it via both %%BHAI_LOCAL_TOKEN%% (primary,
+                    // window.__BHAI_LOCAL_TOKEN__) and window.__bhaiLocalToken.
                     // Only the desktop app's own overlay window gets the owner token: it sends
                     // it back in X-Bhai-Overlay (desktop/main.js). Any other load — the agent's
                     // browser sent here by a web page, another local process or account —
                     // gets the page without it, so it can't be read off this page.
                     const token = overlayPageToken(req.headers["x-bhai-overlay"]);
-                    html = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, token);
-                    const injection = `<script>window.__atlasLocalToken=${JSON.stringify(token)};</script>`;
+                    html = html.replace(/%%BHAI_LOCAL_TOKEN%%/g, token);
+                    const injection = `<script>window.__bhaiLocalToken=${JSON.stringify(token)};</script>`;
                     if (html.includes("</head>")) {
                         html = html.replace("</head>", `${injection}</head>`);
                     } else {
@@ -302,14 +369,21 @@ export function initOverlayChat(llm: LLMClient): void {
             res.end(JSON.stringify({ status: "ok", clients: overlayClients.size }));
 
         } else if (url.pathname === "/api/mentions") {
-            // Return tool list + home dir for the @ picker
+            // Return tool list + home dir for the @ picker. Auth like /api/browse: the
+            // workspace path names the owner's account, and any local process could ask.
+            if (!authorizeRequest(req)) {
+                res.writeHead(401, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Authorization required" }));
+                return;
+            }
             const { getToolNames } = await import("../tools/index.js");
             const { getLoadedSkills } = await import("../skills/loader.js");
-            const { homedir } = await import("node:os");
             const tools = getToolNames().map(name => ({ type: "tool", name, label: name.replace(/_/g, " ") }));
             const skills = getLoadedSkills().map((s: { name: string }) => ({ type: "skill", name: s.name, label: s.name }));
             res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "http://127.0.0.1:18792" });
-            res.end(JSON.stringify({ tools, skills, homeDir: homedir() }));
+            // The file picker starts where /api/browse serves from: the workspace (the home
+            // folder it used to start in is refused, so the picker showed "Nothing here").
+            res.end(JSON.stringify({ tools, skills, rootDir: resolveSafePath(getWorkspaceDir()) ?? getWorkspaceDir() }));
 
         } else if (url.pathname === "/api/browse") {
             // Browse filesystem for @ file/folder picker — workspace-only, auth required
@@ -413,6 +487,11 @@ export function initOverlayChat(llm: LLMClient): void {
             });
             res.end(getWidgetScript(wsUrl));
 
+        // ── Import memory from another AI, and the Memory page's search (desktop; owner token only) ──
+        } else if (url.pathname.startsWith("/api/memory/import/") || url.pathname === "/api/memory/search") {
+            const { handleMemoryImportRoute } = await import("./memory-import-routes.js");
+            await handleMemoryImportRoute(req, res, url.pathname, authorizeRequest(req), llmClient);
+
         // ── Push notification subscription endpoint ──
         } else if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
             if (!authorizeRequest(req)) {
@@ -449,7 +528,7 @@ export function initOverlayChat(llm: LLMClient): void {
         // ── A2A (Agent-to-Agent) protocol endpoints ──
         // No wildcard CORS: the agent card at /.well-known/agent.json is
         // public but we don't allow cross-origin browser POSTs; mutating
-        // routes require ATLAS_A2A_TOKEN. Without that token in env, only
+        // routes require BHAI_A2A_TOKEN. Without that token in env, only
         // /.well-known/agent.json works.
         } else if (isA2ARoute(url.pathname)) {
             const authHeader = (req.headers["authorization"] as string | undefined) || null;
@@ -486,11 +565,9 @@ export function initOverlayChat(llm: LLMClient): void {
     });
 
     // Initialize push notifications (generates/loads VAPID keys)
-    try {
-        initPushNotifications();
-    } catch (err) {
+    initPushNotifications().catch((err) => {
         console.warn("[OVERLAY] Push notification init failed (non-fatal):", (err as Error).message);
-    }
+    });
 
     // WebSocket server — real-time chat
     wss = new WebSocketServer({ server: httpServer });
@@ -508,6 +585,20 @@ export function initOverlayChat(llm: LLMClient): void {
             if (client.readyState === 1) {
                 try { client.send(json); } catch { /* ignore */ }
             }
+        }
+        // Offline, chat-fallback.ts sends it to Telegram/WhatsApp; live, the inbox is silent without this.
+        if (ev.kind === "added" && ev.item.status === "pending" && ownerClients().length > 0) {
+            const { id, topic, suggestedAction } = ev.item.intent;
+            // topic is an internal label (a raw thought, "anomaly x"): the body is the composed text.
+            notifyDesktop("inbox", "Bhai has a suggestion", ev.item.composedText || suggestedAction?.summary || topic, {
+                tag: `inbox:${id}`,
+                actions: [
+                    { label: "Approve", ws: { type: "inbox:approve", id } },
+                    { label: "Dismiss", ws: { type: "inbox:reject", id } },
+                ],
+            });
+        } else if (ev.kind === "updated" && ev.item.status !== "pending") {
+            closeDesktopNotification(`inbox:${ev.item.intent.id}`);
         }
     });
 
@@ -558,11 +649,16 @@ export function initOverlayChat(llm: LLMClient): void {
         chatIds.set(ws, `${connKind || "client"}-${randomBytes(4).toString("hex")}`);
         overlayClients.add(ws);
         console.log(`💬 ${isWidget ? "Widget" : "Overlay"} chat connected (${overlayClients.size} client${overlayClients.size > 1 ? "s" : ""})`);
+        if (wsIsOwner(ws)) wakeTaskDrawer(); // tasks may have started while no chat bar was open
 
         // Send ready signal
         // `busy`: an owner turn is still running (a reconnecting chat bar keeps waiting for it;
         // if none is, its reply was lost and it unlocks).
         ws.send(JSON.stringify({ type: "ready", busy: connKind === "native-overlay" && ownerTurnRunning() }));
+        if (connKind === "native-overlay" && interruptedAsk) {
+            ws.send(JSON.stringify({ type: "notification", text: restartNotice(interruptedAsk) }));
+            interruptedAsk = null;
+        }
 
         // Send current inbox state on connect (so a fresh overlay sees pending items).
         // Owner only: the inbox holds the owner's pending drafts and actions.
@@ -636,6 +732,15 @@ export function initOverlayChat(llm: LLMClient): void {
 
                 if (typeof msg.chat === "string" && msg.chat) chatIds.set(ws, msg.chat.slice(0, 64));
 
+                if (msg.type === "hello") {
+                    // A chat bar (re)joining its chat while that chat's turn runs picks up where it was.
+                    const t = ownerTurn;
+                    if (t && wsIsOwner(ws) && t.chat === chatOf(ws)) {
+                        ws.send(JSON.stringify({ type: "turn_snapshot", turn: t.turn, ...t.relay.snapshot() }));
+                    }
+                    return;
+                }
+
                 if (msg.type === "cancel_task") {
                     // The task drawer's Cancel: the owner's researches and long tasks only.
                     if (!wsIsOwner(ws) || typeof msg.taskId !== "string") return;
@@ -643,6 +748,30 @@ export function initOverlayChat(llm: LLMClient): void {
                     const { cancelLongTask } = await import("../agents/long-task.js");
                     const cancelled = (await cancelResearchById(msg.taskId)) || cancelLongTask(msg.taskId);
                     sendToClient(ws, cancelled ? { type: "task_cancelled", taskId: msg.taskId } : { type: "task_complete", taskId: msg.taskId });
+                    return;
+                }
+
+                if (msg.type === "research_action") {
+                    // The app's Research page: start (or dig deeper into a finished one), stop, continue.
+                    if (!wsIsOwner(ws)) return;
+                    const research = await import("../research/index.js");
+                    const owner = { channel: "overlay", userId: "local", isOwner: true, isPrivate: true };
+                    let out: { error?: string; research_id?: string } = {};
+                    if (msg.action === "cancel" && typeof msg.id === "string") {
+                        // Not running may mean failed or interrupted, not finished: say which.
+                        if (!(await research.cancelResearchById(msg.id))) out = { error: `Not running. ${await research.researchStatusLine(msg.id)}` };
+                    } else if (msg.action === "resume" && typeof msg.id === "string") {
+                        out = JSON.parse(await research.deepResearch.handler({ resume_id: msg.id, _channelContext: owner }));
+                    } else if (msg.action === "start" && typeof msg.topic === "string" && msg.topic.trim()) {
+                        out = JSON.parse(await research.deepResearch.handler({
+                            topic: msg.topic.trim().slice(0, 2000),
+                            profile: typeof msg.profile === "string" ? msg.profile : "standard",
+                            builds_on: typeof msg.buildsOn === "string" ? msg.buildsOn : undefined,
+                            _originalPrompt: msg.topic.trim().slice(0, 2000),
+                            _channelContext: owner,
+                        }));
+                    }
+                    sendToClient(ws, { type: "research_action_result", action: msg.action, id: out.research_id ?? msg.id, error: out.error });
                     return;
                 }
 
@@ -661,6 +790,31 @@ export function initOverlayChat(llm: LLMClient): void {
                         // new message can't start a second turn on the same history.
                         sendToClient(ws, { type: "progress", text: "Stopping…" });
                     }
+                    return;
+                }
+
+                if (msg.type === "reveal_file") {
+                    // An image's "Show in Finder": the owner's own files under the workspace only.
+                    const p = wsIsOwner(ws) ? revealablePath(msg.path) : null;
+                    if (!p) return;
+                    const [cmd, args] =
+                        process.platform === "darwin"
+                            ? ["open", ["-R", p]]
+                            : process.platform === "win32"
+                              ? ["explorer", [`/select,"${p}"`]]
+                              : ["xdg-open", [dirname(p)]];
+                    // explorer misreads Node's quoting of a path with spaces; Windows paths can't hold `"`.
+                    execFile(cmd, args, { windowsVerbatimArguments: true }, () => {
+                        /* explorer exits 1 even on success */
+                    });
+                    return;
+                }
+
+                if (msg.type === "save_image") {
+                    // An image's "Download": the original file, not the thumbnail. Same paths as reveal_file.
+                    if (!wsIsOwner(ws)) return;
+                    const name = saveImageToDownloads(msg.path);
+                    sendToClient(ws, { type: "saved_image", ok: !!name, name, id: msg.id });
                     return;
                 }
 
@@ -687,7 +841,13 @@ export function initOverlayChat(llm: LLMClient): void {
                         typeof image.base64 === "string" &&
                         image.base64.length < 8_000_000 &&
                         /^image\/(jpeg|png|webp)$/.test(image.mimeType)
-                            ? ({ type: "image", base64: image.base64, mimeType: image.mimeType } as MediaAttachment)
+                            ? ({
+                                  type: "image",
+                                  base64: image.base64,
+                                  mimeType: image.mimeType,
+                                  // A tab screenshot is context, not a photo to edit; a pasted image is the user's.
+                                  ...(msg.meta?.imageKind === "pasted" ? {} : { capture: true }),
+                              } as MediaAttachment)
                             : undefined;
                     await handleOverlayMessage(
                         ws,
@@ -708,11 +868,8 @@ export function initOverlayChat(llm: LLMClient): void {
                     if (actionText === "feedback:good" || actionText === "feedback:bad") {
                         const isGood = actionText === "feedback:good";
                         console.log(`📊 [Overlay] User feedback: ${isGood ? "👍 good" : "👎 bad"}`);
-                        // Record feedback for learning — both tool analytics and strategy library
+                        // Reinforce the most recent strategy
                         try {
-                            const { recordTaskFeedback } = await import("../tool-router-analytics.js");
-                            recordTaskFeedback(isGood);
-                            // Also reinforce the most recent strategy
                             const { getTopStrategies, reinforceStrategy } = await import("../memory/strategy-library.js");
                             const recent = getTopStrategies(1);
                             if (recent.length > 0) {
@@ -736,6 +893,9 @@ export function initOverlayChat(llm: LLMClient): void {
                 } else if (msg.type === "file_attach" && msg.name && msg.base64) {
                     // File drag-and-dropped into overlay
                     await handleFileAttachment(ws, msg.name, msg.base64, msg.mimeType || "application/octet-stream", msg.text || "");
+                } else if (typeof msg.type === "string" && msg.type.startsWith("voice_") && !wsIsOwner(ws)) {
+                    // The mic and its transcripts are the owner's, never a web-widget visitor's.
+                    return;
                 } else if (msg.type === "voice_start") {
                     await startVoiceCapture(ws);
                 } else if (msg.type === "voice_stop") {
@@ -776,7 +936,7 @@ export function initOverlayChat(llm: LLMClient): void {
     httpServer.listen(OVERLAY_PORT, "127.0.0.1", () => {
         console.log(`💬 Overlay chat on http://127.0.0.1:${OVERLAY_PORT}`);
         // The desktop app loads the overlay on this line instead of polling.
-        console.log(`##ATLAS_READY## ${Math.round(process.uptime() * 1000)}`);
+        console.log(`##BHAI_READY## ${Math.round(process.uptime() * 1000)}`);
         // The overlay window is owned by the Electron desktop app on ALL platforms
         // (createOverlayWindow in desktop/main.js, toggled by the global hotkey).
         // The server just hosts the HTTP+WS endpoint it connects to.
@@ -784,24 +944,23 @@ export function initOverlayChat(llm: LLMClient): void {
 
     // The chat bar's task drawer: running deep researches and long tasks, with Cancel.
     // (The drawer existed but nothing on the server ever sent it a task.)
-    setInterval(() => {
-        pushTaskDrawer().catch(() => {});
-    }, 4000).unref();
+    void import("../research/index.js").then((m) => m.setResearchStartHook(wakeTaskDrawer)).catch(() => {});
+    void import("../agents/long-task.js").then((m) => m.setLongTaskStartHook(wakeTaskDrawer)).catch(() => {});
 
     // ── Persistent Overlay Research Progress ──────
-    // This callback persists across agent iterations (unlike _onProgress which is cleared)
-    // So background research progress + completion notifications always reach the overlay
+    // Its own event, not "progress": that one is a turn's status line (the chat bar's card,
+    // the app chat's "working" line), and a background research isn't that turn. The text
+    // is already written for the owner; the tool-step humanizer turned it into "searching…".
     setOverlayResearchProgress(async (msg: string) => {
-        if (overlayClients.size === 0) return;
-        const isComplete =
-            msg.includes("Deep research complete") || msg.includes("✅") || msg.includes("Research complete");
-        for (const client of ownerClients()) {
-            sendToClient(client, { type: "progress", text: humanizeForOverlay(msg) });
-            if (isComplete) {
-                // Signal overlay to auto-show and display results prominently
-                sendToClient(client, { type: "research_complete", text: msg });
-            }
-        }
+        for (const client of ownerClients()) sendToClient(client, { type: "research_status", text: msg });
+    });
+    // The finished answer: a card that stays until dismissed, with the report one click away.
+    // The owner asked for it, so Do Not Disturb doesn't hold it back.
+    setOverlayResearchResult(async (text, taskId, reportFile) => {
+        const clients = ownerClients().filter((c) => c.readyState === 1);
+        for (const client of clients) sendToClient(client, { type: "research_complete", text, taskId, reportFile });
+        if (clients.length > 0) notifyDesktop("done", "Research ready", text);
+        return clients.length > 0;
     });
 
     // ── Context-Aware Placeholder ──────────────
@@ -869,13 +1028,22 @@ function isScreenQuery(msg: string): boolean {
 
     // A stuck report's handoff reply ("retry it", "skip it") is about the task, not the screen.
     if (isStuckReplyPhrase(msg)) return false;
+    // An image reply's follow-up chips ("Undo that edit") are about that image.
+    // So are the chips under a photo sent with no words ("Describe it").
+    if ([...IMAGE_FOLLOWUPS, ...PHOTO_CHIPS].some((t) => t.toLowerCase() === lower)) return false;
+    // "how much battery do i have" is a quick command, answered without a screenshot or a model.
+    if (parseQuickCommand(msg)) return false;
 
     // 1. Direct keyword match
     if (SCREEN_KEYWORDS.some(kw => lower.includes(kw))) return true;
 
+    // A question about the outside world ("what time is it in Tokyo", "is it raining")
+    // isn't about the screen, whatever pronoun it uses.
+    const externalRef = /\b(google|youtube|weather|rain(ing)?|news|wikipedia|github|spotify|telegram|file|folder|path|url|http|www|email|calendar|time|date|remind|alarm|music|song|play|search for|find me|look up)\b/i.test(lower);
+
     // 2. ANY short message (≤6 words) containing a deictic pronoun probably refers to screen
     //    e.g. "how to fix this", "what is that", "help me with this", "why is it not working"
-    if (words.length <= 6 && DEICTIC_WORDS.some(d => words.includes(d))) return true;
+    if (words.length <= 6 && !externalRef && DEICTIC_WORDS.some(d => words.includes(d))) return true;
 
     // 3. Short implicit queries starting with a screen-intent verb with no clear object
     //    e.g. "explain", "summarize", "fix it", "debug", "help", "what now".
@@ -891,8 +1059,7 @@ function isScreenQuery(msg: string): boolean {
     //    (not every short question: "what's the capital of France?" needs no screenshot)
     if (words.length <= 6 && /^(what|why|how)\b/i.test(lower)) {
         const aboutCurrentWork = /\b(should i|do i|now|next|wrong|happening|happened|going on|fix|broken|stuck|error)\b/i.test(lower);
-        const hasNoExternalRef = !/\b(google|youtube|weather|news|wikipedia|github|spotify|telegram|file|folder|path|url|http|www|email|calendar|time|date|remind|alarm|music|song|play|search for|find me|look up)\b/i.test(lower);
-        if (aboutCurrentWork && hasNoExternalRef) return true;
+        if (aboutCurrentWork && !externalRef) return true;
     }
 
     return false;
@@ -902,7 +1069,7 @@ function isScreenQuery(msg: string): boolean {
 async function captureScreen(): Promise<{ base64: string; mimeType: string } | null> {
     let tmpPath: string | null = null;
     try {
-        tmpPath = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
+        tmpPath = join(tmpdir(), `bhai_screen_${Date.now()}.png`);
         await captureScreenshot(tmpPath);
         const rawBuffer = readFileSync(tmpPath);
         try {
@@ -947,10 +1114,94 @@ const turnAborts = new Map<WebSocket, AbortController>();
 /** The owner's turns share one conversation history, so only one may run at a time. */
 const ownerTurnRunning = (): boolean => [...turnAborts.keys()].some(wsIsOwner);
 const BUSY_TEXT = "I'm still on your last message. Wait for my reply, or press Esc to stop it.";
+const STUCK_NOTIFY_ACTIONS = stuckActionButtons();
+
+/** The turn ended asking the owner for a yes: a consent ask, or design docs / a new tool awaiting approval. */
+function askedOwnerSince(since: number): boolean {
+    const s = getPlanModeState();
+    const awaiting = s.mode === "awaiting_approval" || s.mode === "awaiting_dynamic_tool_approval";
+    return consentAskedSince(since) || (awaiting && s.enteredAt >= since);
+}
 
 function ownerClients(): WebSocket[] {
     return [...overlayClients].filter(wsIsOwner);
 }
+
+/** Where a turn's messages go: its own socket, or after a reconnect the owner's socket back in the same chat. */
+function liveSocket(ws: WebSocket, chat: string): WebSocket | undefined {
+    if (ws.readyState === 1) return ws;
+    if (!wsIsOwner(ws)) return undefined;
+    return ownerClients().find((c) => c !== ws && c.readyState === 1 && chatIds.get(c) === chat);
+}
+
+const STREAM_CUT_TEXT = "Lost the connection mid-answer. Ask me again.";
+
+/** One overlay turn's id and live events (`turn_*`). */
+function newTurn(ws: WebSocket, chat: string) {
+    const turn = randomBytes(6).toString("hex");
+    const started = Date.now();
+    const relay = createTurnRelay({
+        turn,
+        owner: wsIsOwner(ws),
+        // Never the "only owner socket" fallback: that can put an overlay turn in the side panel.
+        // A closed socket just drops them; a rejoining chat bar asks for a snapshot.
+        send: (m) => {
+            try {
+                liveSocket(ws, chat)?.send(JSON.stringify(m));
+            } catch { /* closed mid-send */ }
+        },
+    });
+    return {
+        chat,
+        turn,
+        relay,
+        worked: () => ({ secs: Math.round((Date.now() - started) / 1000), steps: relay.snapshot().steps.length }),
+    };
+}
+type OverlayTurn = ReturnType<typeof newTurn>;
+/** The owner's running turn (one at a time), for the snapshot a rejoining chat bar gets. */
+let ownerTurn: OverlayTurn | null = null;
+
+/** Run a turn: Stop can abort it, a rejoining chat bar can catch up, and its live events end with it. */
+async function runTurn(
+    ws: WebSocket,
+    live: OverlayTurn,
+    run: (signal: AbortSignal) => Promise<AgentResponse>,
+): Promise<{ result: AgentResponse; stopped: boolean }> {
+    const ac = new AbortController();
+    turnAborts.set(ws, ac);
+    if (wsIsOwner(ws)) ownerTurn = live;
+    try {
+        // The agent says whether Stop ended the turn: a late Stop still delivers the finished answer.
+        const result = await run(ac.signal);
+        return { result, stopped: !!result.stopped };
+    } finally {
+        if (turnAborts.get(ws) === ac) turnAborts.delete(ws);
+        if (ownerTurn === live) ownerTurn = null;
+        live.relay.finish();
+    }
+}
+
+/** A stopped turn keeps the answer it had already streamed, in the reply and in the chat's history. */
+function sendStoppedReply(ws: WebSocket, chat: string, r: AgentResponse, live: OverlayTurn, source?: string) {
+    const text = r.partialText ? `${r.partialText}\n\nStopped.` : "Stopped.";
+    logChatMessage(chat, "assistant", text, source);
+    sendToClient(ws, { type: "response", text, stopped: true, turn: live.turn, worked: live.worked() });
+}
+
+/** The turn failed: if its answer was already on screen, say the answer was cut off. */
+const turnFailedText = (live: OverlayTurn, fallback: string) =>
+    live.relay.snapshot().answer ? STREAM_CUT_TEXT : fallback;
+
+/** Agent progress for an overlay socket (the owner's live thinking goes as its own type). */
+const overlayProgress = (ws: WebSocket) => async (msg: string) => {
+    if (msg.startsWith("[THINKING] ")) {
+        const thinkingText = msg.slice(11).trim();
+        if (thinkingText) sendToClient(ws, { type: "thinking_content", text: thinkingText });
+        return;
+    }
+    sendToClient(ws, overlayProgressMessage(msg));
+};
 
 // ── Handle Overlay Message ────────────────────
 
@@ -964,7 +1215,8 @@ async function handleOverlayMessage(
     tabShot?: MediaAttachment,
     imageKind: "tab" | "pasted" = "tab",
 ): Promise<void> {
-    if (!llmClient) {
+    const llm = llmClient;
+    if (!llm) {
         sendToClient(ws, { type: "error", text: "LLM not initialized" });
         return;
     }
@@ -973,6 +1225,7 @@ async function handleOverlayMessage(
     // its Stop handle.
     if (wsIsOwner(ws) && ownerTurnRunning()) {
         sendToClient(ws, { type: "error", text: BUSY_TEXT });
+        if (source === "notification") notifyDesktop("done", "Bhai is busy", "I'm still on your last message. Reply again once I'm done.");
         return;
     }
     // "/new" (or "/clear") starts over without a model call: clears the shared
@@ -1002,7 +1255,8 @@ async function handleOverlayMessage(
 
     // Send varied "thinking" status using alive-ux
     const thinkingText = getThinkingPhrase("default");
-    sendToClient(ws, { type: "thinking", text: `💭 ${thinkingText}` });
+    const live = newTurn(ws, chat);
+    sendToClient(ws, { type: "thinking", text: `💭 ${thinkingText}`, turn: live.turn });
 
     // Track for timeout warnings
     const startTime = Date.now();
@@ -1017,6 +1271,7 @@ async function handleOverlayMessage(
 
     // Auto-detect screen queries and capture screenshot
     let media: MediaAttachment[] | undefined;
+    let photoAsked: InboundImage[] = [];
 
     // Inject Chrome extension status so the agent knows which browser to use.
     // "here", "this page", "this email" in overlay messages = the user's real Chrome tab.
@@ -1045,9 +1300,14 @@ async function handleOverlayMessage(
 [SOURCE: Bhai's side panel in the user's Chrome — respond there, NOT on Telegram. Keep it short.
 ${
             imageKind === "pasted"
-                ? "Attached: an image the user pasted into the chat. Answer about it directly."
+                ? "Attached: an image the user shared with you (pasted in, or picked on a page). Answer about it directly."
                 : `Attached: a screenshot of the Chrome tab the user is looking at (the page only). Orange strokes or boxes on it are the user's own drawing: focus on what they marked. Answer as if you can see the page, without "based on the screenshot". To act on the page, use the browser tools on this tab; to point something out to them, use browser_mark.`
         }]${chromeCtxNote}`;
+    } else if (wsIsOwner(ws) && (photoAsked = takePhotoQuestion(OVERLAY_PHOTO_KEY)).length) {
+        // The answer to "What should I do with it?", a chip or typed: it's about that photo, not
+        // the screen. Already remembered, so `capture` keeps it from being added twice.
+        media = photoAsked.map((i) => ({ type: "image", ...i, capture: true }));
+        taggedMessage = `${userMessage}\n\n[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. The user just sent this photo (attached) and was asked what to do with it, so this is most likely the answer; to change the photo, use generate_image with source "attached".]${chromeCtxNote}`;
     } else if (wsIsOwner(ws) && source !== "chrome-extension" && isScreenQuery(userMessage)) {
         // Only the owner's own chat bar may look at the screen — never a web-widget visitor,
         // and not the Chrome panel, which sends its tab instead.
@@ -1056,7 +1316,7 @@ ${
 
         const screenshot = await captureScreen();
         if (screenshot) {
-            media = [{ type: "image", base64: screenshot.base64, mimeType: screenshot.mimeType }];
+            media = [{ type: "image", base64: screenshot.base64, mimeType: screenshot.mimeType, capture: true }];
             taggedMessage = `${userMessage}
 
 [SOURCE: Desktop overlay chat — respond here, NOT on Telegram.
@@ -1082,32 +1342,24 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
 
 
     try {
-        // Progress callback — sends live updates to the overlay using alive-ux
-        const onProgress = async (msg: string) => {
-            // Live thinking display — send as special type so overlay can render it differently
-            if (msg.startsWith("[THINKING] ")) {
-                const thinkingText = msg.slice(11).trim();
-                if (thinkingText) {
-                    sendToClient(ws, { type: "thinking_content", text: thinkingText });
-                }
-                return;
-            }
-            sendToClient(ws, overlayProgressMessage(msg));
-        };
-
         // Use the SAME shared conversation history (no fork)
         // Fast-path: pass "simple" hint for greetings so model router picks a lighter model
         const overlayHint = !media && classifyQuery(userMessage) === "llm_only" ? "simple" as const : undefined;
-        const ac = new AbortController();
-        turnAborts.set(ws, ac);
-        const result = await runAgent(llmClient, taggedMessage, onProgress, media, ac.signal, undefined, overlayHint, undefined, { channel: "overlay", userId: "local", isOwner: wsIsOwner(ws), isPrivate: wsIsOwner(ws) }).finally(() => {
-            if (turnAborts.get(ws) === ac) turnAborts.delete(ws);
-        });
+        const { result, stopped } = await runTurn(ws, live, (signal) =>
+            runAgent(llm, taggedMessage, overlayProgress(ws), media, signal, undefined, overlayHint, undefined, {
+                channel: "overlay",
+                userId: "local",
+                isOwner: wsIsOwner(ws),
+                isPrivate: wsIsOwner(ws),
+                replyTo: wsIsOwner(ws) ? "local" : undefined,
+                onTurnEvent: live.relay.sink,
+            }),
+        );
 
         // Clear timeout warning timer
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
-        if (ac.signal.aborted) {
-            sendToClient(ws, { type: "response", text: "Stopped.", stopped: true });
+        if (stopped) {
+            sendStoppedReply(ws, chat, result, live, source);
             return;
         }
 
@@ -1126,11 +1378,12 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         // Parse interactive elements from response
         const interactive = parseInteractiveElements(cleanText);
         console.log(`📝 [Overlay] Clean text length: ${cleanText.length}, interactive text length: ${interactive.text.length}`);
+        const images = await overlayImages(result, wsIsOwner(ws));
 
-        if (!interactive.text && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
+        if (!interactive.text && !images.length && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
             // LLM returned only internal tags (e.g. [NO_REPLY]) — don't leave user hanging
             console.warn(`⚠️ [Overlay] Response stripped to empty — sending fallback`);
-            sendToClient(ws, { type: "response", text: "hmm", toolCalls: 0, quickActions: [], files: [], links: [], widgets: [] });
+            sendToClient(ws, { type: "response", text: "hmm", toolCalls: 0, quickActions: [], files: [], links: [], widgets: [], turn: live.turn, worked: live.worked() });
             return;
         }
 
@@ -1140,6 +1393,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             { label: "👍", action: "feedback:good" },
             { label: "👎", action: "feedback:bad" },
         ] : (interactive.quickActions || []);
+        feedbackActions.unshift(...imageQuickActions(images));
         // Bhai just noted something: one tap takes it back (memoryUndo is set only for the owner's turn).
         if (result.memoryUndo) {
             const action = memoryUndoAction(result.memoryUndo);
@@ -1147,7 +1401,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             feedbackActions.push({ label: "Forget that", action });
         }
 
-        logChatMessage(chat, "assistant", interactive.text, source);
+        logChatMessage(chat, "assistant", interactive.text, source, imagePaths(result));
         sendToClient(ws, {
             type: "response",
             text: interactive.text,
@@ -1156,18 +1410,73 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             files: interactive.files,
             links: interactive.links,
             widgets: interactive.widgets,
+            images: images.length ? images : undefined,
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
+            turn: live.turn,
+            worked: live.worked(),
         });
+        if (wsIsOwner(ws)) {
+            notifyTurnEnd(interactive.text, startTime, {
+                chat,
+                stuck: result.stuck,
+                stuckActions: STUCK_NOTIFY_ACTIONS,
+                waiting: askedOwnerSince(startTime),
+                fromNotification: source === "notification",
+            });
+        }
     } catch (err) {
         if (timeoutWarningTimer) clearTimeout(timeoutWarningTimer);
         console.error("[OVERLAY] Agent error:", err);
         const errorType = categorizeError(err as Error);
-        sendToClient(ws, { type: "error", text: getErrorMessage(errorType) });
+        const failedText = turnFailedText(live, getErrorMessage(errorType));
+        sendToClient(ws, { type: "error", text: failedText });
+        if (wsIsOwner(ws)) notifyTurnEnd(failedText, startTime, { chat, failed: true, fromNotification: source === "notification" });
     }
 }
 
 // ── Handle File Attachment (drag-and-drop) ────
+
+/**
+ * A dropped non-image file. Text goes inline; a binary one (PDF, zip, docx) would be
+ * mojibake, so the owner's copy is saved to Downloads for the file tools (as Telegram does).
+ */
+export function droppedFileContext(fileName: string, base64: string, mimeType: string, owner: boolean): string {
+    const buf = Buffer.from(base64, "base64");
+    const decoded = buf.toString("utf-8");
+    // Binary: a NUL byte, or a lot that isn't text (bad UTF-8, control codes). A Latin-1 /
+    // Windows-1252 file only has the odd U+FFFD (its accents) and stays inline.
+    let odd = 0;
+    for (const ch of decoded) {
+        const c = ch.charCodeAt(0);
+        if (c === 0xfffd || (c < 0x20 && c !== 9 && c !== 10 && c !== 13 && c !== 12)) odd++;
+    }
+    if (!buf.includes(0) && odd <= decoded.length * 0.3) {
+        return `\n\nFile contents of "${fileName}":\n\`\`\`\n${decoded.substring(0, 8000)}\n\`\`\``;
+    }
+    const safeName = basename(fileName).replace(/[^\w.\- ]/g, "_").slice(-120) || "document";
+    const safeMime = mimeType.replace(/[^\w.+/-]/g, "") || "unknown type";
+    if (!owner) return `\n\n[Binary file "${safeName}" (${safeMime}) can't be read here.]`;
+    const savedPath = join(getDownloadsDir(), `${randomUUID().slice(0, 8)}_${safeName}`);
+    writeFileSync(savedPath, buf, { mode: 0o600 });
+    return `\n\nDocument "${safeName}" (${safeMime}) saved at ${savedPath}. Read it with your file tools.`;
+}
+
+/** The owner's attached photo, kept in Bhai Files/Images/Sent so Chats can show it; undefined for other files. */
+export function saveSentPhoto(fileName: string, base64: string, mimeType: string): string | undefined {
+    const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" }[mimeType];
+    if (!ext) return undefined; // HEIC etc.: Chats can't thumbnail them, the 📎 line stays
+    try {
+        const dir = join(getImagesDir(), "Sent");
+        mkdirSync(dir, { recursive: true });
+        const stem = basename(fileName).replace(/\.[^.]*$/, "").replace(/[^\w.-]+/g, "_").slice(0, 40) || "photo";
+        const file = join(dir, `${stem}_${Date.now()}.${ext}`);
+        writeFileSync(file, Buffer.from(base64, "base64"));
+        return file;
+    } catch {
+        return undefined;
+    }
+}
 
 async function handleFileAttachment(
     ws: WebSocket,
@@ -1176,10 +1485,6 @@ async function handleFileAttachment(
     mimeType: string,
     userText: string,
 ): Promise<void> {
-    if (!llmClient) {
-        sendToClient(ws, { type: "error", text: "LLM not initialized" });
-        return;
-    }
     // A reloaded chat bar, a second owner window or the extension must not start a second
     // turn on the shared history: it would interleave with the running one and take over
     // its Stop handle.
@@ -1190,20 +1495,48 @@ async function handleFileAttachment(
 
     console.log(`\n📎 [Overlay] File attached: ${fileName} (${mimeType})`);
     const chat = chatOf(ws);
-    logChatMessage(chat, "user", userText ? `${userText}\n📎 ${fileName}` : `📎 ${fileName}`);
-    sendToClient(ws, { type: "thinking" });
+    const sentPhoto = wsIsOwner(ws) ? saveSentPhoto(fileName, base64, mimeType) : undefined;
+    // A saved photo shows as a thumbnail in Chats; only other files need the 📎 line.
+    logChatMessage(
+        chat,
+        "user",
+        sentPhoto ? userText : userText ? `${userText}\n📎 ${fileName}` : `📎 ${fileName}`,
+        undefined,
+        sentPhoto ? [sentPhoto] : undefined,
+    );
 
     const isImage = mimeType.startsWith("image/");
+    // The owner's photo with no words: ask what to do with it, no model call. A chip starts the turn.
+    let kept = false;
+    if (isImage && !userText.trim() && wsIsOwner(ws)) {
+        const photo = await toReadableImage({ base64, mimeType });
+        rememberInboundImages(OVERLAY_PHOTO_KEY, [photo]);
+        kept = lastInboundImages(OVERLAY_PHOTO_KEY).includes(photo);
+    }
+    // Asked only when this photo was kept (an oversized one isn't): else the usual turn sees it.
+    if (kept) {
+        markPhotoQuestion(OVERLAY_PHOTO_KEY);
+        const text = "What should I do with it?";
+        logChatMessage(chat, "assistant", text, "overlay");
+        sendToClient(ws, { type: "response", text, toolCalls: 0, quickActions: PHOTO_CHIPS, files: [], links: [], widgets: [] });
+        return;
+    }
+    const llm = llmClient;
+    if (!llm) {
+        sendToClient(ws, { type: "error", text: "LLM not initialized" });
+        return;
+    }
+    const live = newTurn(ws, chat);
+    sendToClient(ws, { type: "thinking", turn: live.turn });
+
     let media: MediaAttachment[] | undefined;
     let fileContext = "";
 
     if (isImage) {
         media = [{ type: "image", base64, mimeType }];
     } else {
-        // For text/code files, decode and include as text
         try {
-            const decoded = Buffer.from(base64, "base64").toString("utf-8");
-            fileContext = `\n\nFile contents of "${fileName}":\n\`\`\`\n${decoded.substring(0, 8000)}\n\`\`\``;
+            fileContext = droppedFileContext(fileName, base64, mimeType, wsIsOwner(ws));
         } catch {
             fileContext = `\n\n[Could not decode file: ${fileName}]`;
         }
@@ -1213,18 +1546,21 @@ async function handleFileAttachment(
         ? `${userText}${fileContext}\n\n[SOURCE: Desktop overlay chat — file attached: ${fileName}]`
         : `[SOURCE: Desktop overlay chat — respond here, NOT on Telegram. The user dropped a file: "${fileName}". ${isImage ? "Analyze the image and describe what you see." : `Here is its content:${fileContext}`}]`;
 
+    const startTime = Date.now();
     try {
-        const onProgress = async (msg: string) => {
-            sendToClient(ws, overlayProgressMessage(msg));
-        };
-
-        const ac = new AbortController();
-        turnAborts.set(ws, ac);
-        const result = await runAgent(llmClient, prompt, onProgress, media, ac.signal, undefined, undefined, undefined, { channel: "overlay", userId: "local", isOwner: wsIsOwner(ws), isPrivate: wsIsOwner(ws) }).finally(() => {
-            if (turnAborts.get(ws) === ac) turnAborts.delete(ws);
-        });
-        if (ac.signal.aborted) {
-            sendToClient(ws, { type: "response", text: "Stopped.", stopped: true });
+        // Reasoning goes as `thinking_content` (owner turns only), never as a progress line.
+        const { result, stopped } = await runTurn(ws, live, (signal) =>
+            runAgent(llm, prompt, overlayProgress(ws), media, signal, undefined, undefined, undefined, {
+                channel: "overlay",
+                userId: "local",
+                isOwner: wsIsOwner(ws),
+                isPrivate: wsIsOwner(ws),
+                replyTo: wsIsOwner(ws) ? "local" : undefined,
+                onTurnEvent: live.relay.sink,
+            }),
+        );
+        if (stopped) {
+            sendStoppedReply(ws, chat, result, live);
             return;
         }
         const cleanText = withStuckReplyLine(result, wsIsOwner(ws))
@@ -1235,27 +1571,34 @@ async function handleFileAttachment(
             .replace(/\[no_reply\]/gi, '')
             .trim();
         const interactive = parseInteractiveElements(cleanText);
+        const images = await overlayImages(result, wsIsOwner(ws));
 
-        if (!interactive.text && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
+        if (!interactive.text && !images.length && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
             sendToClient(ws, { type: "silent" });
             return;
         }
 
-        logChatMessage(chat, "assistant", interactive.text);
+        logChatMessage(chat, "assistant", interactive.text, "overlay", imagePaths(result));
         sendToClient(ws, {
             type: "response",
             text: interactive.text,
             toolCalls: result.toolCalls,
-            quickActions: interactive.quickActions,
+            quickActions: [...imageQuickActions(images), ...interactive.quickActions],
             files: interactive.files,
             links: interactive.links,
             widgets: interactive.widgets,
+            images: images.length ? images : undefined,
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
+            turn: live.turn,
+            worked: live.worked(),
         });
+        if (wsIsOwner(ws)) {
+            notifyTurnEnd(interactive.text, startTime, { chat, stuck: result.stuck, stuckActions: STUCK_NOTIFY_ACTIONS, waiting: askedOwnerSince(startTime) });
+        }
     } catch (err) {
         console.error("[OVERLAY] File attachment error:", err);
-        sendToClient(ws, { type: "error", text: "Could not process the file." });
+        sendToClient(ws, { type: "error", text: turnFailedText(live, "Could not process the file.") });
     }
 }
 
@@ -1375,17 +1718,12 @@ function sendToClient(ws: WebSocket, data: unknown): void {
     const status = msg?.type ? COMPANION_TYPES[msg.type] : undefined;
     if (status) emitCompanionStatus(status, status === "progress" ? msg.text : undefined);
     const json = JSON.stringify(data);
-    if (ws.readyState === 1) {
-        ws.send(json);
+    // The turn's socket died (overlay hidden, reconnected): the same chat bar, back on a
+    // new socket, announces its chat id on open; deliver there.
+    const live = liveSocket(ws, chatOf(ws));
+    if (live) {
+        live.send(json);
     } else if (wsIsOwner(ws)) {
-        // The turn's socket died (overlay hidden, reconnected): the same chat bar, back on a
-        // new socket, announces its chat id on open; deliver there.
-        const chat = chatIds.get(ws);
-        const same = ownerClients().find((c) => c !== ws && c.readyState === 1 && chatIds.get(c) === chat);
-        if (same) {
-            same.send(json);
-            return;
-        }
         if (ownerClients().length !== 1) return;
         // Fallback: original ws died (overlay hidden/refocused) and there is exactly
         // one owner client connected — the reconnected native overlay. Never a
@@ -1518,30 +1856,34 @@ function humanizeForOverlay(msg: string): string {
 
 // ── Send proactive message to overlay ─────────
 
-/** False when Smart DND held it or no owner overlay is connected, so a proactive sender can retry. */
-export async function sendOverlayNotification(message: string): Promise<boolean> {
-    // Gate proactive overlay notifications through Smart DND
+/**
+ * False when Smart DND held it or no owner overlay is connected, so a proactive sender can retry.
+ * `requested`: the owner asked for this (a reminder, a scheduled task), so DND doesn't hold it.
+ */
+async function dndSuppresses(message: string): Promise<boolean> {
     try {
         const { shouldSuppressMessage } = await import("../proactive/dnd.js");
-        const suppress = await shouldSuppressMessage(message);
-        if (suppress) {
+        if (await shouldSuppressMessage(message)) {
             console.log("🔕 Proactive overlay notification suppressed by DND");
-            return false;
+            return true;
         }
     } catch { /* DND check failed — deliver anyway */ }
+    return false;
+}
+
+export async function sendOverlayNotification(message: string, opts: { requested?: boolean } = {}): Promise<boolean> {
+    // Gate proactive overlay notifications through Smart DND
+    if (!opts.requested && (await dndSuppresses(message))) return false;
 
     const clients = ownerClients();
-    if (clients.length === 0) return false;
-    const isResearchComplete =
-        message.includes("Deep research complete") ||
-        message.includes("research complete") ||
-        (message.includes("✅") && message.includes("sources"));
-    for (const client of clients) {
-        sendToClient(client, { type: "notification", text: message });
-        if (isResearchComplete) {
-            sendToClient(client, { type: "research_complete", text: message });
-        }
+    // Something the owner asked for (a reminder, a scheduled task) shows even with no chat window open.
+    if (clients.length === 0) {
+        if (opts.requested) notifyDesktop("reminder", "Bhai", message);
+        return false;
     }
+    // A finished research has its own event (setOverlayResearchResult); this is only a notification.
+    for (const client of clients) sendToClient(client, { type: "notification", text: message });
+    notifyDesktop(opts.requested ? "reminder" : "proactive", "Bhai", message);
 
     // Record notification for engagement tracking
     try {
@@ -1551,13 +1893,114 @@ export async function sendOverlayNotification(message: string): Promise<boolean>
     return true;
 }
 
-// ── Send image to overlay ─────────────────────
+// ── Images in a reply ─────────────────────────
 
-export function sendOverlayImage(base64: string, mimeType: string, caption?: string): void {
-    const dataUrl = `data:${mimeType};base64,${base64}`;
-    for (const client of ownerClients()) {
-        sendToClient(client, { type: "image", url: dataUrl, caption: caption || "" });
+const imagePaths = (result: AgentResponse) => result.images?.map((i) => i.path);
+
+/** A ≤1600px data-URL thumbnail of an image file; a PNG with alpha stays PNG so transparency shows. */
+export async function imageThumb(file: string): Promise<string | undefined> {
+    try {
+        const sharp = (await import("sharp")).default;
+        const { hasAlpha } = await sharp(file).metadata();
+        const img = sharp(file).rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true });
+        const buf = hasAlpha ? await img.png().toBuffer() : await img.jpeg({ quality: 85 }).toBuffer();
+        return `data:image/${hasAlpha ? "png" : "jpeg"};base64,${buf.toString("base64")}`;
+    } catch {
+        return undefined; // gone or unreadable: the reply goes without it
     }
+}
+
+export type OverlayImage = {
+    url: string;
+    name: string;
+    path?: string;
+    before?: string;
+    kind: GeneratedImage["kind"];
+    prompt?: string;
+};
+
+/** The reply's images as the surfaces show them. The file path only goes to the owner's sockets. */
+export async function overlayImages(result: AgentResponse, owner: boolean): Promise<OverlayImage[]> {
+    const thumbs = new Map<string, Promise<string | undefined>>(); // variations share one "before"
+    const thumb = (f: string) => {
+        const t = thumbs.get(f) ?? imageThumb(f);
+        thumbs.set(f, t);
+        return t;
+    };
+    const out: OverlayImage[] = [];
+    for (const im of result.images ?? []) {
+        const url = await thumb(im.path);
+        if (!url) continue;
+        const before = im.sourcePath && im.kind !== "generated" ? await thumb(im.sourcePath) : undefined;
+        out.push({
+            url,
+            name: basename(im.path),
+            kind: im.kind,
+            ...(im.prompt ? { prompt: im.prompt.slice(0, 300) } : {}),
+            ...(owner ? { path: im.path } : {}),
+            ...(before ? { before } : {}),
+        });
+    }
+    return out;
+}
+
+const IMAGE_FOLLOWUPS = ["Make another version", "Make it higher quality", "Undo that edit"];
+
+/** The owner's photo with no words gets "What should I do with it?" and these; the first one describes it. */
+// "Take out", not "Remove": the chat bar paints remove/erase/delete chips red as destructive.
+const PHOTO_CHIPS = ["Describe it", "Take out the background", "Improve the lighting", "Make it a cartoon"];
+// agent.ts's key for the owner's overlay turns, so a chip's source "attached" is that photo.
+const OVERLAY_PHOTO_KEY = conversationKey("overlay", "local");
+
+/**
+ * Follow-ups under an image reply; sent back as plain chat text. Undo only when there is a
+ * version to go back to (`before`): a photo combine has none.
+ */
+export function imageQuickActions(images: Array<{ kind: string; before?: string }>): string[] {
+    if (!images.length) return [];
+    return IMAGE_FOLLOWUPS.slice(0, images.some((i) => i.kind !== "generated" && i.before) ? 3 : 2);
+}
+
+/** A path the owner's "Show in Finder" may open: an existing file under the images or workspace dir. */
+export function revealablePath(p: unknown): string | null {
+    if (typeof p !== "string" || !p) return null;
+    try {
+        const real = realpathSync(p);
+        const roots = [getImagesDir(), getWorkspaceDir()].map((root) => realpathSync(root) + pathSep);
+        return roots.some((root) => real.startsWith(root)) ? real : null;
+    } catch {
+        return null;
+    }
+}
+
+/** The owner's "Download": copies a revealable file into Downloads as "name (1).png" etc., never over one. */
+export function saveImageToDownloads(p: unknown): string | null {
+    const src = revealablePath(p);
+    if (!src) return null;
+    const ext = extname(src);
+    const stem = basename(src, ext);
+    for (let i = 0; i < 100; i++) {
+        const name = i ? `${stem} (${i})${ext}` : `${stem}${ext}`;
+        try {
+            copyFileSync(src, join(getDownloadsDir(), name), fsConstants.COPYFILE_EXCL);
+            return name;
+        } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "EEXIST") return null;
+        }
+    }
+    return null;
+}
+
+/** An image file sent to the overlay channel (send_file, a scheduled task): it shows as a reply. */
+export async function sendOverlayImage(filePath: string, caption: string, opts: { requested?: boolean } = {}): Promise<boolean> {
+    const clients = ownerClients();
+    if (clients.length === 0 || (!opts.requested && (await dndSuppresses(caption)))) return false;
+    const url = await imageThumb(filePath);
+    if (!url) return false;
+    const images: OverlayImage[] = [{ url, name: basename(filePath), path: filePath, kind: "generated" }];
+    for (const client of clients) sendToClient(client, { type: "image", text: caption, images });
+    logChatMessage(chatOf(clients[0]), "assistant", caption, "overlay", [filePath]);
+    return true;
 }
 
 // ── Context-Aware Placeholder ─────────────────
@@ -1601,9 +2044,9 @@ function startPlaceholderBroadcast(): void {
     if (placeholderInterval) clearInterval(placeholderInterval);
 
     // Cache the last presence lookup. The broadcast runs every 15s, but
-    // getUserPresence() spawns 3 child processes (ioreg + 2× osascript on
-    // macOS, powershell w/ inline C# compile on Windows) just to learn the
-    // frontmost app. We only need the frontmost app for placeholder text.
+    // getUserPresence() spawns child processes (ioreg + lsappinfo on macOS,
+    // powershell w/ inline C# compile on Windows; shared for 25 s with the
+    // observer) just to learn the frontmost app, all the placeholder needs.
     // - On app-switch: the boundary bus tells us instantly, no spawn needed.
     // - Otherwise: re-fetch only when the cache is older than 60s.
     let cachedFrontmost: string | null = null;
@@ -1611,9 +2054,13 @@ function startPlaceholderBroadcast(): void {
     const FRONTMOST_TTL_MS = 60_000;
     let unsubAppSwitch: (() => void) | null = null;
 
+    // Each socket gets the text only when it differs from what it last got (a new socket gets it once).
+    const lastSent = new WeakMap<WebSocket, string>();
     const sendPlaceholder = (frontmost: string) => {
         const placeholder = getPlaceholderForApp(frontmost);
         for (const client of ownerClients()) {
+            if (lastSent.get(client) === placeholder) continue;
+            lastSent.set(client, placeholder);
             sendToClient(client, { type: "placeholder", text: placeholder });
         }
     };
@@ -1667,7 +2114,7 @@ async function startVoiceCapture(ws: WebSocket): Promise<void> {
         activeRecording = null;
     }
 
-    recordingPath = join(tmpdir(), `atlas_voice_${Date.now()}.wav`);
+    recordingPath = join(tmpdir(), `bhai_voice_${Date.now()}.wav`);
     console.log("[OVERLAY] 🎤 Starting voice capture...");
 
     // Auto-install sox if missing before attempting capture
@@ -1927,6 +2374,7 @@ async function handleLiveVoiceMute(ws: WebSocket, muted: boolean): Promise<void>
 export function closeOverlayChat(): void {
     if (activeRecording) { try { activeRecording.kill(); } catch { /* */ } activeRecording = null; }
     if (placeholderInterval) { clearInterval(placeholderInterval); placeholderInterval = null; }
+    if (drawerTimer) { clearInterval(drawerTimer); drawerTimer = null; }
     if (wss) { wss.close(); wss = null; }
     if (httpServer) { httpServer.close(); httpServer = null; }
     overlayClients.clear();

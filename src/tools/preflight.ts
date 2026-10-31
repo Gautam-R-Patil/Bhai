@@ -19,7 +19,8 @@
 // evidence the call would fail.
 
 import { accessSync, existsSync, constants as fsC } from "node:fs";
-import { dirname, isAbsolute } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 
 export interface PreflightHint {
     /** Why the tool call would fail. Passed back to the LLM as an error hint. */
@@ -39,6 +40,14 @@ export function preflight(toolName: string, args: Record<string, unknown>): Pref
         // read / edit / write / append_file / notebook_edit / delete_file
         // all take a `file_path` or `path` and fail if the parent dir is
         // missing (write/append), or the file is missing (read/edit).
+        // "~/Library/…" is what the model writes: expand it in place (the tool gets the same
+        // args) instead of refusing it as relative and costing a step.
+        if (REQUIRES_ABSOLUTE_PATH.has(toolName) || READS_EXISTING_FILE.has(toolName) || WRITES_FILE.has(toolName)) {
+            for (const key of ["file_path", "path", "filepath"]) {
+                const v = args[key];
+                if (typeof v === "string" && v.startsWith("~/")) args[key] = join(homedir(), v.slice(2)); // not a bare "~": the whole home
+            }
+        }
         const filePath = pickStringArg(args, ["file_path", "path", "filepath"]);
         if (filePath) {
             // Absolute-path requirement for several tools

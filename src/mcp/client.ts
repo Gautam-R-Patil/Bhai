@@ -2,11 +2,10 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import fs from "node:fs";
 import path from "node:path";
-import { homedir } from "node:os";
+import { getBhaiHome, LEGACY_HOME } from "../config/paths.js";
 import { checkPackageForMalware } from "../security/osv-check.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
 
@@ -58,7 +57,7 @@ export function buildMcpEnv(serverEnv?: Record<string, string>): Record<string, 
 
 // ── Types ─────────────────────────────────────
 
-interface MCPServerConfig {
+export interface MCPServerConfig {
     command: string;
     args?: string[];
     env?: Record<string, string>;
@@ -73,13 +72,28 @@ interface ConnectedServer {
 
 // ── Store MCP config path ─────────────────────
 
-const STORE_MCP_CONFIG_PATH = path.join(homedir(), ".atlas", "store", "mcp-servers.json");
+const STORE_MCP_CONFIG_PATH = path.join(getBhaiHome(), "store", "mcp-servers.json");
 
 // ── State ─────────────────────────────────────
 
 const connectedServers = new Map<string, ConnectedServer>();
 
 // ── Initialize MCP Servers ────────────────────
+
+/**
+ * Store servers installed before the ATLAS → Bhai rename point at absolute ~/.atlas paths;
+ * the copied ~/.bhai holds the same files, so run those instead of the legacy tree.
+ */
+export function withCurrentHome(
+    config: Record<string, MCPServerConfig>,
+    home = getBhaiHome(),
+): Record<string, MCPServerConfig> {
+    if (home === LEGACY_HOME) return config;
+    const fix = (s: string) => (s.startsWith(LEGACY_HOME + path.sep) ? home + s.slice(LEGACY_HOME.length) : s);
+    return Object.fromEntries(
+        Object.entries(config).map(([name, c]) => [name, { ...c, command: fix(c.command), args: c.args?.map(fix) }]),
+    );
+}
 
 export async function initMCPServers(configPath = "mcp-servers.json"): Promise<void> {
     // 1. Load project-level MCP config
@@ -99,7 +113,9 @@ export async function initMCPServers(configPath = "mcp-servers.json"): Promise<v
     // 2. Load store-installed MCP servers
     if (fs.existsSync(STORE_MCP_CONFIG_PATH)) {
         try {
-            const storeConfig = JSON.parse(fs.readFileSync(STORE_MCP_CONFIG_PATH, "utf-8")) as Record<string, MCPServerConfig>;
+            const storeConfig = withCurrentHome(
+                JSON.parse(fs.readFileSync(STORE_MCP_CONFIG_PATH, "utf-8")) as Record<string, MCPServerConfig>,
+            );
             // Merge store config (store servers override project servers with same name)
             config = { ...config, ...storeConfig };
             console.log(`🔌 Found ${Object.keys(storeConfig).length} store MCP server(s)`);
@@ -130,6 +146,11 @@ async function connectServer(name: string, config: MCPServerConfig, isStoreItem 
         throw new Error(`OSV malware check blocked "${name}": ${ids}`);
     }
 
+    // The MCP SDK loads when the first server connects, not at boot.
+    const [{ Client }, { StdioClientTransport }] = await Promise.all([
+        import("@modelcontextprotocol/sdk/client/index.js"),
+        import("@modelcontextprotocol/sdk/client/stdio.js"),
+    ]);
     const transport = new StdioClientTransport({
         command: config.command,
         args: config.args || [],
@@ -137,7 +158,7 @@ async function connectServer(name: string, config: MCPServerConfig, isStoreItem 
     });
 
     const client = new Client({
-        name: "atlas",
+        name: "bhai",
         version: "0.2.0",
     });
 

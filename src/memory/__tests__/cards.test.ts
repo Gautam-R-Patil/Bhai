@@ -8,7 +8,7 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { MemoryRecord } from "../sqlite.js";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-cards-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-cards-"));
 
 let sqlite: typeof import("../sqlite.js");
 let cards: typeof import("../cards.js");
@@ -33,8 +33,8 @@ const rec = (id: number): MemoryRecord =>
 
 describe("memory cards", () => {
     it("normalizes person:/project: tags and leaves the rest", () => {
-        expect(cards.normalizeTags(" Person: Riya  Sharma ,work, PROJECT:Atlas")).toBe(
-            "person:riya sharma,work,project:atlas",
+        expect(cards.normalizeTags(" Person: Riya  Sharma ,work, PROJECT:Bhai")).toBe(
+            "person:riya sharma,work,project:bhai",
         );
     });
 
@@ -42,7 +42,7 @@ describe("memory cards", () => {
         const riya = row("Riya is the owner's sister", "person", "person:riya");
         const riya2 = row("Riya moved to Pune", "fact", "family,person:riya");
         const mom = row("Mom prefers calls after 7pm", "preference", "person:mom");
-        const atlas = row("Atlas launch is in December", "fact", "project:atlas");
+        const bhai = row("Bhai launch is in December", "fact", "project:bhai");
         const arjun = row("Arjun plays the guitar", "person"); // untagged, matched by capitalized name
         const promise = row("Send Riya the wedding photos by Friday", "commitment", "person:riya");
         row("Kabir likes cricket", "fact", "person:kabir"); // not mentioned
@@ -52,9 +52,9 @@ describe("memory cards", () => {
         const plain = row("Owner's wifi is slow at night");
 
         const out = cards.buildMemoryCards(
-            "Can you ask Riya and Arjun about the atlas plan? Also ping mom",
+            "Can you ask Riya and Arjun about the bhai plan? Also ping mom",
             [rec(pref), rec(plain), rec(riya)],
-            new Set([atlas]), // already in core memory
+            new Set([bhai]), // already in core memory
         );
         const lines = out.cards.split("\n");
         expect(lines.find((l) => l.startsWith("PEOPLE — Riya:"))).toMatch(

@@ -3,8 +3,8 @@
 // blocks inline onclick handlers, so the buttons are wired here instead.
 document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-window-action]");
-    if (!btn || !window.atlas) return;
+    if (!btn || !window.bhai) return;
     const action = btn.getAttribute("data-window-action");
-    if (action === "minimize") window.atlas.minimize();
-    else if (action === "close") window.atlas.close();
+    if (action === "minimize") window.bhai.minimize();
+    else if (action === "close") window.bhai.close();
 });

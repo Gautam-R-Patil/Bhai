@@ -8,7 +8,7 @@ import { jitteredBackoff } from "./error-recovery.js";
 const BACKOFF_MS = 2000;
 
 afterEach(() => {
-    delete process.env.ATLAS_NO_RECOVERY_JITTER;
+    delete process.env.BHAI_NO_RECOVERY_JITTER;
     vi.restoreAllMocks();
 });
 
@@ -66,8 +66,8 @@ describe("jitteredBackoff — Math.random extremes", () => {
 });
 
 describe("jitteredBackoff — kill-switch", () => {
-    it("ATLAS_NO_RECOVERY_JITTER=true returns bare base (no randomness)", () => {
-        process.env.ATLAS_NO_RECOVERY_JITTER = "true";
+    it("BHAI_NO_RECOVERY_JITTER=true returns bare base (no randomness)", () => {
+        process.env.BHAI_NO_RECOVERY_JITTER = "true";
         expect(jitteredBackoff(BACKOFF_MS, 0)).toBe(2000);
         expect(jitteredBackoff(BACKOFF_MS, 1)).toBe(4000);
         expect(jitteredBackoff(BACKOFF_MS, 2)).toBe(8000);

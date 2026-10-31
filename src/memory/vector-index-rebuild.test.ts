@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-hnsw-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-hnsw-"));
 const { buildIndexFromDB, getHNSWIndex, resetIndex } = await import("./vector-index.js");
 
 const vec = (seed: number) => Buffer.from(new Float32Array([seed, 1, 0.5, 0.25]).buffer);

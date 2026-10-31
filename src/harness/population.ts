@@ -13,7 +13,7 @@ import { evaluateCandidate } from "./evaluator.js";
 import { snapshotConfig, resetToDefaults } from "./registry.js";
 import { setActiveCandidate, clearActiveCandidate, flushTracesToCandidate, clearTraceBuffer } from "./trace-store.js";
 
-export const ATLAS_SEED_CONFIGS: SeedConfig[] = [
+export const BHAI_SEED_CONFIGS: SeedConfig[] = [
     {
         id: "baseline-defaults",
         description: "Current hardcoded defaults — reference point",
@@ -59,7 +59,7 @@ export async function initializePopulation(
     fastMode: boolean,
     onProgress?: (msg: string) => Promise<void>,
 ): Promise<CandidateManifest[]> {
-    await onProgress?.(`🌱 Population: materializing ${ATLAS_SEED_CONFIGS.length} seed candidates…`).catch(() => {});
+    await onProgress?.(`🌱 Population: materializing ${BHAI_SEED_CONFIGS.length} seed candidates…`).catch(() => {});
 
     // Reset to hardcoded defaults before snapshotting, so baseline-defaults seed
     // always reflects the true factory defaults rather than a previous run's persisted config.
@@ -67,7 +67,7 @@ export async function initializePopulation(
 
     // Materialize all candidate directories first (sequential, assigns c0000-c0003)
     const entries: Array<{ manifest: CandidateManifest; seed: SeedConfig; config: HarnessConfig }> = [];
-    for (const seed of ATLAS_SEED_CONFIGS) {
+    for (const seed of BHAI_SEED_CONFIGS) {
         const baseConfig = snapshotConfig("__seed__");
         const seedConfig: HarnessConfig = {
             candidateId: "__pending__",
@@ -118,6 +118,6 @@ export async function initializePopulation(
         }
     }
 
-    await onProgress?.(`🌱 Population initialized: ${valid.length}/${ATLAS_SEED_CONFIGS.length} seeds valid.`).catch(() => {});
+    await onProgress?.(`🌱 Population initialized: ${valid.length}/${BHAI_SEED_CONFIGS.length} seeds valid.`).catch(() => {});
     return valid;
 }

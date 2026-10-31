@@ -156,8 +156,28 @@ lazy_static! {
 // ── Helpers ──────────────────────────────────
 
 fn analytics_file_path() -> PathBuf {
-    let home = dirs_next().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".atlas").join("data").join("tool-analytics.json")
+    bhai_home().join("data").join("tool-analytics.json")
+}
+
+/// Same rule as getBhaiHome() in src/config/paths.ts: $BHAI_HOME, else ~/.bhai,
+/// else the pre-rename ~/.atlas when only that exists (the copy to ~/.bhai failed).
+fn bhai_home() -> PathBuf {
+    resolve_bhai_home(
+        std::env::var_os("BHAI_HOME"),
+        dirs_next().unwrap_or_else(|| PathBuf::from(".")),
+    )
+}
+
+fn resolve_bhai_home(env_home: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf {
+    if let Some(dir) = env_home.filter(|v| !v.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    let (current, legacy) = (home.join(".bhai"), home.join(".atlas"));
+    if !current.exists() && legacy.exists() {
+        legacy
+    } else {
+        current
+    }
 }
 
 fn dirs_next() -> Option<PathBuf> {
@@ -521,4 +541,27 @@ pub fn get_categories_for_chain(chain_name: String) -> Vec<String> {
         .get(chain_name.as_str())
         .map(|cats| cats.iter().map(|c| c.to_string()).collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::resolve_bhai_home;
+    use std::fs;
+
+    #[test]
+    fn bhai_home_prefers_env_then_bhai_then_old_atlas() {
+        let tmp = std::env::temp_dir().join(format!("bhai-home-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        assert_eq!(
+            resolve_bhai_home(Some("/x".into()), tmp.clone()),
+            std::path::PathBuf::from("/x")
+        );
+        assert_eq!(resolve_bhai_home(None, tmp.clone()), tmp.join(".bhai"));
+        fs::create_dir(tmp.join(".atlas")).unwrap();
+        assert_eq!(resolve_bhai_home(None, tmp.clone()), tmp.join(".atlas"));
+        fs::create_dir(tmp.join(".bhai")).unwrap();
+        assert_eq!(resolve_bhai_home(None, tmp.clone()), tmp.join(".bhai"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

@@ -11,8 +11,8 @@
         "test": "vitest run",
         "prebuild": "echo 'Source protection will run after pack...'",
         "build:win": "cd .. && npm run build && cd desktop && node build/patch-nsis.js && electron-builder --win --x64",
-        "build:mac": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac --dir --arm64 && bash build/resign-local.sh && ARCH=arm64 bash build/create-dmg.sh",
-        "build:mac:release": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac dmg",
+        "build:mac": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac --dir --arm64 && ARCH=arm64 bash build/create-dmg.sh",
+        "build:mac:release": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && electron-builder --mac dmg zip",
         "build:mac:protected": "cd .. && npm run build:helpers && test -x scripts/dump_ax_bin -a -x scripts/ocr_screen_bin -a -x scripts/get_location_bin && npm run build && cd desktop && npm run prebuild && electron-builder --mac",
         "build:linux": "cd .. && npm run build && cd desktop && electron-builder --linux",
         "build:win:protected": "cd .. && npm run build && cd desktop && node build/patch-nsis.js && npm run prebuild && electron-builder --win --x64",
@@ -20,12 +20,10 @@
         "protect:standalone": "node build/obfuscate.js ../dist ../dist-obfuscated && node build/compile-bytecode.js --in-place ../dist-obfuscated"
     },
     "dependencies": {
-        "@whiskeysockets/baileys": "^7.0.0-rc14",
         "adm-zip": "^0.6.1",
         "better-sqlite3": "^12.11.1",
         "electron-store": "^8.2.0",
         "electron-updater": "^6.1.7",
-        "imapflow": "^1.3.2",
         "qrcode": "^1.5.4"
     },
     "devDependencies": {
@@ -58,12 +56,23 @@
             "!build/**",
             "!tests/**",
             "!demo/**",
+            "!onboarding-demo/**",
             "!**/*.test.js",
             "!**/*.spec.js",
             "!**/*.test.ts",
             "!**/*.spec.ts",
             "!vitest.config.js",
-            "!vitest.config.ts"
+            "!vitest.config.ts",
+            "!**/*.map",
+            "!**/*.d.ts",
+            "!**/*.d.mts",
+            "!**/*.d.cts",
+            "!**/_smoke.html",
+            "!assets/mascot/bhai-ai-rigged.glb",
+            "!assets/mascot/bhai.glb",
+            "!assets/mascot/bhai-glb-preview.png",
+            "!node_modules/better-sqlite3/deps/**",
+            "!node_modules/better-sqlite3/src/**"
         ],
         "extraResources": [
             {
@@ -76,10 +85,6 @@
             {
                 "from": "../package.json",
                 "to": "bot/package.json"
-            },
-            {
-                "from": "../package-lock.json",
-                "to": "bot/package-lock.json"
             },
             {
                 "from": "../scripts",
@@ -161,6 +166,7 @@
                     "!**/.github/**",
                     "!**/examples/**",
                     "!**/example/**",
+                    "!**/ort-wasm*.wasm",
                     "!ffprobe-static/bin/**",
                     "!onnxruntime-node/bin/**",
                     "!**/onnxruntime-node/bin/**"
@@ -205,7 +211,8 @@
             "gatekeeperAssess": false,
             "notarize": false,
             "target": [
-                "dir"
+                "dir",
+                "zip"
             ],
             "icon": "build/icon-mac.png",
             "entitlements": "build/entitlements.mac.plist",
@@ -217,16 +224,16 @@
             },
             "extraResources": [
                 {
-                    "from": "../node_modules/ffprobe-static/bin/darwin",
-                    "to": "bot/node_modules/ffprobe-static/bin/darwin"
+                    "from": "../node_modules/ffprobe-static/bin/darwin/${arch}",
+                    "to": "bot/node_modules/ffprobe-static/bin/darwin/${arch}"
                 },
                 {
-                    "from": "../node_modules/onnxruntime-node/bin/napi-v3/darwin",
-                    "to": "bot/node_modules/onnxruntime-node/bin/napi-v3/darwin"
+                    "from": "../node_modules/onnxruntime-node/bin/napi-v3/darwin/${arch}",
+                    "to": "bot/node_modules/onnxruntime-node/bin/napi-v3/darwin/${arch}"
                 },
                 {
-                    "from": "../node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/darwin",
-                    "to": "bot/node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/darwin"
+                    "from": "../node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/darwin/${arch}",
+                    "to": "bot/node_modules/@huggingface/transformers/node_modules/onnxruntime-node/bin/napi-v3/darwin/${arch}"
                 }
             ]
         },
@@ -235,7 +242,7 @@
             "icon": "build/icon-mac.png",
             "background": "build/dmg-background@2x.png",
             "sign": true,
-            "writeUpdateInfo": true,
+            "writeUpdateInfo": false,
             "window": {
                 "width": 540,
                 "height": 380
@@ -318,6 +325,7 @@
         "appImage": {
             "license": "../LICENSE.txt"
         },
-        "afterPack": "./build/protect-source.js"
+        "afterPack": "./build/protect-source.js",
+        "afterSign": "./build/after-sign.js"
     }
 }

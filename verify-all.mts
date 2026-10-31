@@ -116,7 +116,7 @@ await activate("Finder");
 {
     const { osComputerAction: ca } = await import("./src/tools/os-computer-action.js");
     // Seed clipboard with a sentinel so we can prove we did NOT clobber it
-    const sentinel = "ATLAS_CLIPBOARD_SENTINEL_123";
+    const sentinel = "BHAI_CLIPBOARD_SENTINEL_123";
     await execFileAsync("osascript", ["-e", `set the clipboard to "${sentinel}"`], { timeout: 5000 });
     // Open a fresh TextEdit doc
     await execFileAsync("osascript", ["-e", 'tell application "TextEdit" to make new document'], { timeout: 8000 }).catch(() => {});
@@ -142,12 +142,12 @@ await activate("Finder");
     const { blenderScript } = await import("./src/tools/blender.js");
     const t0 = Date.now();
     const r = JSON.parse((await blenderScript.handler({
-        script: "import bpy\nbpy.ops.mesh.primitive_cube_add(size=2)\nprint('ATLAS_BLENDER_OK objects=' + str(len(bpy.data.objects)))",
+        script: "import bpy\nbpy.ops.mesh.primitive_cube_add(size=2)\nprint('BHAI_BLENDER_OK objects=' + str(len(bpy.data.objects)))",
         timeout: 60000,
     })) as string);
     const ms = Date.now() - t0;
-    const ok = r.success === true && /ATLAS_BLENDER_OK/.test(r.stdout || "");
-    rec("blender_script runs bpy (cross-OS resolve)", ok, ok ? `stdout had marker; ${(r.stdout||"").match(/ATLAS_BLENDER_OK[^\n]*/)?.[0]}` : `success=${r.success} err=${r.error}`, ms);
+    const ok = r.success === true && /BHAI_BLENDER_OK/.test(r.stdout || "");
+    rec("blender_script runs bpy (cross-OS resolve)", ok, ok ? `stdout had marker; ${(r.stdout||"").match(/BHAI_BLENDER_OK[^\n]*/)?.[0]}` : `success=${r.success} err=${r.error}`, ms);
 }
 
 // ── SUMMARY ──

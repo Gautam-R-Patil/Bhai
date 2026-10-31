@@ -12,12 +12,16 @@
 
 const AFFIRMATIVE =
     /\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|confirm(?:ed)?|proceed|approved?|haan?|haanji|kar do|karo)\b/i;
-const NEGATIVE = /\b(no|nope|don'?t|do not|stop|cancel|wait|hold on|nahi|mat)\b/i;
+// "not": "not sure", "not yet", "ok not now" are not a yes.
+const NEGATIVE = /\b(no|not|nope|don'?t|do not|stop|cancel|wait|hold on|later|nahi|mat)\b/i;
+// An ask is answerable for 10 minutes: an "ok thanks" hours later about something else must
+// not grant a call that was refused back then.
+const ASK_TTL_MS = 10 * 60_000;
 
 let ownerTurn = 0;
 let lastOwnerMessage = "";
 const ownerMessages: Array<{ at: number; text: string }> = []; // recent, newest last
-const pending = new Map<string, number>(); // action key → owner turn when it was asked
+const pending = new Map<string, { turn: number; at: number }>(); // action key → when it was asked
 
 /** Call once per message the owner actually sent (not for autonomous runs). */
 export function noteOwnerMessage(text: string): void {
@@ -68,7 +72,8 @@ export type ConsentResult = "granted" | "needs_consent";
  * for a confirmed repeat of an action the owner was asked about and said yes to.
  */
 export function checkConsent(key: string, confirmed: boolean, opts: { nextTurnOnly?: boolean } = {}): ConsentResult {
-    const askedAt = pending.get(key);
+    const asked = pending.get(key);
+    const askedAt = asked && Date.now() - asked.at < ASK_TTL_MS ? asked.turn : undefined;
     // nextTurnOnly: the yes must be the owner's very next message after the ask,
     // not a later "ok" that answered something else.
     const ownerSpokeSince =
@@ -78,8 +83,13 @@ export function checkConsent(key: string, confirmed: boolean, opts: { nextTurnOn
         pending.delete(key);
         return "granted";
     }
-    pending.set(key, ownerTurn);
+    pending.set(key, { turn: ownerTurn, at: Date.now() });
     return "needs_consent";
+}
+
+/** True when an action was refused for consent at or after `since` (ms): the turn ended asking for a yes. */
+export function consentAskedSince(since: number): boolean {
+    return [...pending.values()].some((p) => p.at >= since);
 }
 
 /** @internal — tests only. */

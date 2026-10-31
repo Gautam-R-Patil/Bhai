@@ -3,7 +3,7 @@
 # Dumps the Windows UI Automation tree for the foreground (or specified) process to JSON.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File dump_uia.ps1 [-Pid <pid>] [-MaxDepth N] [-BboxOnly]
+#   powershell -ExecutionPolicy Bypass -File dump_uia.ps1 [-TargetPid <pid>] [-MaxDepth N] [-BboxOnly]
 #
 # Output (stdout): JSON tree, same schema as scripts/dump_ax.swift:
 #   { "app": "...", "pid": N, "root": {role, label, value, x, y, w, h, focusable, enabled, children: []}, "trusted": true, "depth": N }
@@ -11,7 +11,9 @@
 # On error: writes "error|<reason>" and exits 1.
 
 param(
-    [int]$Pid = 0,
+    # Not -Pid: $Pid is PowerShell's read-only automatic $PID, and a parameter of that name
+    # fails with "Cannot overwrite variable PID", so every app-targeted dump errored.
+    [int]$TargetPid = 0,
     [int]$MaxDepth = 20,  # raised from 12 — modern apps can be 25-40 deep
     [switch]$BboxOnly
 )
@@ -32,17 +34,17 @@ $rootElement = $null
 $pickedPid = 0
 $appName = "unknown"
 
-if ($Pid -gt 0) {
+if ($TargetPid -gt 0) {
     try {
-        $proc = Get-Process -Id $Pid -ErrorAction Stop
+        $proc = Get-Process -Id $TargetPid -ErrorAction Stop
         $appName = $proc.ProcessName
-        $pickedPid = $Pid
+        $pickedPid = $TargetPid
         $rootElement = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
             [System.Windows.Automation.TreeScope]::Children,
             (New-Object System.Windows.Automation.PropertyCondition(
-                [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $Pid)))
+                [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $TargetPid)))
     } catch {
-        [Console]::Out.Write("error|pid_not_found:$Pid`n")
+        [Console]::Out.Write("error|pid_not_found:$TargetPid`n")
         exit 1
     }
 } else {

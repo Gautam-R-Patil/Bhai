@@ -1,6 +1,6 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { describe, expect, it } from "vitest";
-import { assembleToolNames } from "./tool-router.js";
+import { assembleToolNames, asksChangingFact, KEYWORD_BOOSTS, needsTools } from "./tool-router.js";
 
 const OS = ["os_smart_click", "os_inspect", "os_click_id", "os_type", "os_screenshot", "os_click", "os_visual_verify",
     "os_keyboard_shortcuts", "os_context", "apple_script", "os_computer_action", "os_zoom_region", "os_ocr_click", "os_nav"];
@@ -27,8 +27,55 @@ describe("assembleToolNames", () => {
         expect(got.has("os_smart_click")).toBe(true);
     });
 
+    it("fills round-robin: a first category's tail can't take a tied one's next tool", () => {
+        // "Use Calculator to work out 42×3, copy the result to my clipboard": system_controls'
+        // tail took the slots and os_control lost os_type.
+        const SYS = ["set_volume", "clipboard", "system_info", "wifi_control", "dark_mode", "lock_screen", "sleep_display"];
+        const all = new Set([...ALL, ...SYS]);
+        // As in the real list: app_manager second, so os_type is os_control's fifth.
+        const os = ["os_smart_click", "app_manager", "os_inspect", "os_click_id", "os_type", "os_screenshot"];
+        // 2 always-on + a floor of 4 each + 2 more: one more per category.
+        const got = assembleToolNames(["system_controls", "os_control"], [...SYS, ...os], all, 12);
+        expect(got.size).toBe(12);
+        expect(got.has("os_type")).toBe(true);
+    });
+
     it("never exceeds the total cap", () => {
         const got = assembleToolNames(["os_control", "communication"], [...OS, ...COMM], ALL, 8);
         expect(got.size).toBe(8);
+    });
+
+    it("a browser turn also gets web_read: reading a page needs no tab", () => {
+        const all = new Set(["browser_navigate", "browser_click", "web_read", "memory_store", "memory_search"]);
+        expect(assembleToolNames(["browser"], ["browser_click"], all, 36).has("web_read")).toBe(true);
+    });
+
+    it("a question about something that changes brings web search", () => {
+        const boosts = (m: string) => KEYWORD_BOOSTS.filter((b) => b.minScore >= 0.7 && b.pattern.test(m)).map((b) => b.category);
+        expect(boosts("Has Node.js 26 become an LTS release yet?")).toContain("web_search");
+        expect(boosts("what's the latest on the Artemis launch")).toContain("web_search");
+        expect(boosts("thanks bhai, good night")).not.toContain("web_search");
+        expect(asksChangingFact("Has Node.js 26 become an LTS release yet?")).toBe(true);
+        expect(asksChangingFact("I haven't slept yet")).toBe(false); // not a question
+        expect(asksChangingFact("What's the latest stable version of Python right now? one line")).toBe(true);
+        expect(asksChangingFact("what is the latest iPhone")).toBe(true); // no "?" typed
+        expect(asksChangingFact("how are you doing right now?")).toBe(false); // small talk
+        expect(asksChangingFact("what are you up to currently?")).toBe(false);
+        expect(asksChangingFact("do you know the latest iPhone right now?")).toBe(true);
+        expect(boosts("which app is in front right now, and which other apps are running?")).toContain("app_management");
+        expect(boosts("what is an app store review?")).not.toContain("app_management");
+        expect(boosts("Without switching apps: what's the Finder window called?")).toContain("os_control");
+        expect(boosts("I'd like a window seat on the flight")).not.toContain("os_control");
+        expect(needsTools("Without switching apps: what's the Finder window called?")).toBe(true);
+        expect(needsTools("I haven't slept yet")).toBe(false); // chat, not a changing fact
+        // Ordinary chat keeps the chat lane even when a broad keyword boost matches a word in it.
+        for (const chat of ["what's another word for happy?", "I have an issue with my boss, any advice?", "Windows or Mac, which is better?",
+            "I went to the gym yesterday", "I love rain", "my new year's resolution is to read more", "tell me a joke about numbers"])
+            expect(needsTools(chat), chat).toBe(false);
+        expect(needsTools("thanks bhai, good night")).toBe(false);
+        expect(needsTools("bhai aaj Bengaluru mein mausam kaisa hai? chhata le jaun kya?")).toBe(true);
+        expect(boosts("Earlier tonight I asked you about keyboard layouts. Which ones?")).toContain("memory");
+        expect(boosts("what did we talk about yesterday?")).toContain("memory");
+        expect(boosts("I'll do it later today")).not.toContain("memory");
     });
 });

@@ -9,7 +9,7 @@
  * (`##BHAI_CURSOR_ACK##<id>`), the same pipe the companion uses.
  *
  * Every call is a no-op unless the desktop app spawned the bot
- * (ATLAS_AGENT_CURSOR_IPC=1) and ATLAS_NO_AGENT_CURSOR is not "true". Waits are
+ * (BHAI_AGENT_CURSOR_IPC=1) and BHAI_NO_AGENT_CURSOR is not "true". Waits are
  * bounded (glide ≤300ms, hide ≤150ms), so a missing or stuck app never stalls
  * a click or a screenshot. Coordinates are global screen points, as posted to
  * CGEvent / SetCursorPos.
@@ -26,7 +26,8 @@ type CursorEvent =
     | { t: "type"; on: boolean }
     | { t: "session"; on: boolean }
     | { t: "hide" }
-    | { t: "show" };
+    | { t: "show" }
+    | { t: "warm" };
 
 const GLIDE_WAIT_MS = 300;
 const HIDE_WAIT_MS = 150;
@@ -48,7 +49,7 @@ let drivers = 0;
 const turnStore = new AsyncLocalStorage<{ drove: boolean; done: boolean }>();
 
 export function agentCursorEnabled(): boolean {
-    return process.env.ATLAS_NO_AGENT_CURSOR !== "true" && process.env.ATLAS_AGENT_CURSOR_IPC === "1";
+    return process.env.BHAI_NO_AGENT_CURSOR !== "true" && process.env.BHAI_AGENT_CURSOR_IPC === "1";
 }
 
 function send(evt: CursorEvent & { id?: number }): void {
@@ -109,6 +110,34 @@ function touch(): void {
 }
 
 const r = (n: number) => Math.round(n);
+
+/**
+ * A model call is about to be offered these tools: if any can drive the screen
+ * (os_*), have the app load its cursor windows now, a model call ahead of the
+ * first click, so the ghost leads it even on a cold start. Sent mid-session too:
+ * the app ends an idle session after 90 s and frees its windows 10 minutes later.
+ */
+export function warmCursorForTools(
+    tools: ReadonlyArray<{ type?: string; function?: { name?: string } }> | undefined,
+): void {
+    if (!tools?.length || !agentCursorEnabled()) return;
+    if (tools.some((t) => t.function?.name?.startsWith("os_"))) send({ t: "warm" });
+}
+
+// Under the app's 10-minute free of unused cursor windows.
+const REWARM_MS = 5 * 60_000;
+
+/**
+ * Live voice can click any moment with no model call first: keep the cursor
+ * windows loaded until the returned release is called.
+ */
+export function holdCursorWarm(): () => void {
+    if (!agentCursorEnabled()) return () => {};
+    send({ t: "warm" });
+    const timer = setInterval(() => send({ t: "warm" }), REWARM_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
+}
 
 /** Glide the ghost cursor to (x, y) before a real move. */
 export async function cursorMove(x: number, y: number): Promise<void> {

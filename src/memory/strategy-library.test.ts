@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getStrategy, saveStrategy } from "./strategy-library.js";
 
-// Fake timers so saveStrategy's debounced writeFileSync never touches ~/.atlas.
+// Fake timers so saveStrategy's debounced writeFileSync never touches ~/.bhai.
 beforeAll(() => vi.useFakeTimers());
 afterAll(() => vi.useRealTimers());
 

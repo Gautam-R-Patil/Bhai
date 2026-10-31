@@ -5,7 +5,6 @@
 #![allow(dead_code, unused_variables, unused_imports, unused_mut)]
 
 mod active_inference;
-mod agent_core;
 mod ax_walker;
 mod batch;
 mod browser_agent;
@@ -29,13 +28,11 @@ mod knowledge_graph;
 mod logic_engine;
 mod long_task;
 mod mcts_engine;
-mod memory_state;
 mod memory_tiers;
 mod mesh;
 mod metacognition;
 mod model_router;
 mod notification_tracker;
-mod pattern_speculator;
 mod pii_protect;
 mod proactive_calendar;
 mod proactive_intent;
@@ -77,7 +74,6 @@ use napi_derive::napi;
 
 // Re-export all public functions
 pub use active_inference::*;
-pub use agent_core::*;
 pub use ax_walker::*;
 pub use batch::*;
 pub use browser_agent::*;
@@ -101,13 +97,11 @@ pub use knowledge_graph::*;
 pub use logic_engine::*;
 pub use long_task::*;
 pub use mcts_engine::*;
-pub use memory_state::*;
 pub use memory_tiers::*;
 pub use mesh::*;
 pub use metacognition::*;
 pub use model_router::*;
 pub use notification_tracker::*;
-pub use pattern_speculator::*;
 pub use proactive_calendar::*;
 pub use proactive_intent::*;
 pub use proactive_monitor::*;

@@ -46,13 +46,27 @@ export async function waitBridgeReady(maxMs = 3000, quietMs = 300, since = 0): P
     let errors = 0;
     while (Date.now() < deadline) {
         const left = deadline - Date.now();
-        const r = await sendBridgeCommand("execute_js", { code: readyJs(left, quietMs, since) }, left + 2000).catch(
-            () => null,
-        );
+        const r = await sendBridgeCommand(
+            "execute_js",
+            { code: readyJs(left, quietMs, since) },
+            left + 2000,
+            true, // a navigation mid-wait fails this probe: expected, not a bridge failure
+        ).catch(() => null);
         if (r === "ready" || r === "stale") return; // stale = settled on the same document
         if (++errors >= 3) return; // the bridge keeps failing: don't spin, let the caller carry on
-        await new Promise((res) => setTimeout(res, 150));
+        await new Promise((res) => setTimeout(res, 150)); // poll
     }
+}
+
+// Modifier keys held with keyboard.down(): CDP doesn't carry key state into a mouse event, so
+// clicks send them along (a ctrl/cmd-click was a plain click in the owner's Chrome).
+const heldModifiers = new Set<string>();
+const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
+
+// Playwright's selectOption also takes { label } / { value }; the extension matches plain strings.
+type SelectValue = string | { value?: string; label?: string };
+function selectValues(value: SelectValue | SelectValue[]): string[] {
+    return (Array.isArray(value) ? value : [value]).map((v) => (typeof v === "string" ? v : (v.label ?? v.value ?? "")));
 }
 
 export class ChromePageProxy {
@@ -76,7 +90,7 @@ export class ChromePageProxy {
      * navigation starts a beat after the click, so look again shortly after and, while
      * the tab is loading, wait for it (up to 8s) instead of reporting the old page.
      */
-    private async syncTab(): Promise<void> {
+    async syncTab(): Promise<void> {
         const read = () =>
             getActiveExtensionTab().catch(() => null) as Promise<{
                 url: string;
@@ -85,15 +99,22 @@ export class ChromePageProxy {
                 pendingUrl?: string;
             } | null>;
         const before = this._url;
-        await new Promise((r) => setTimeout(r, 250));
+        // A click or Enter may start a navigation a moment later: give it up to
+        // 250 ms to show, and carry on as soon as it does.
         let tab = await read();
+        const first = tab?.url;
+        const grace = Date.now() + 250;
+        while (tab && tab.status !== "loading" && tab.url === first && Date.now() < grace) {
+            await new Promise((r) => setTimeout(r, 50)); // poll
+            tab = await read();
+        }
         const end = Date.now() + 8000;
         while (
             tab &&
             (tab.status === "loading" || (tab.pendingUrl && tab.pendingUrl !== tab.url)) &&
             Date.now() < end
         ) {
-            await new Promise((r) => setTimeout(r, 200));
+            await new Promise((r) => setTimeout(r, 200)); // poll
             tab = await read();
         }
         if (tab?.url) {
@@ -222,12 +243,17 @@ export class ChromePageProxy {
     mouse = {
         click: async (x: number, y: number, opts?: { button?: string }) => {
             const [cx, cy] = await this.intoView(x, y);
-            await sendBridgeCommand("click_at", { x: cx, y: cy, button: opts?.button || "left" });
+            await sendBridgeCommand("click_at", {
+                x: cx,
+                y: cy,
+                button: opts?.button || "left",
+                modifiers: [...heldModifiers],
+            });
             await this.syncTab();
         },
         dblclick: async (x: number, y: number) => {
             const [cx, cy] = await this.intoView(x, y);
-            await sendBridgeCommand("click_at", { x: cx, y: cy, doubleClick: true });
+            await sendBridgeCommand("click_at", { x: cx, y: cy, doubleClick: true, modifiers: [...heldModifiers] });
             await this.syncTab();
         },
         // wheel() — maps deltaX/deltaY to the Chrome extension's scroll command.
@@ -269,8 +295,10 @@ export class ChromePageProxy {
         },
         down: async (key: string) => {
             await sendBridgeCommand("keyboard", { key, action: "down" });
+            if (MODIFIER_KEYS.has(key)) heldModifiers.add(key);
         },
         up: async (key: string) => {
+            heldModifiers.delete(key);
             await sendBridgeCommand("keyboard", { key, action: "up" });
         },
         // vaultRules: the text holds a saved secret; the extension types it only
@@ -338,9 +366,8 @@ export class ChromePageProxy {
         );
     }
 
-    async selectOption(selector: string, value: string | string[]): Promise<void> {
-        const values = Array.isArray(value) ? value : [value];
-        await sendBridgeCommand("select_option", { selector, values });
+    async selectOption(selector: string, value: SelectValue | SelectValue[]): Promise<void> {
+        await sendBridgeCommand("select_option", { selector, values: selectValues(value) });
     }
 
     // Element query shorthand ($ operator)
@@ -378,14 +405,35 @@ async function chromeScreenshot(format: "png" | "jpeg", quality?: number): Promi
     return Buffer.from(result.base64, "base64");
 }
 
+/** A scan label's handle: its scanned point, and the page proxy's sync to run after a click. */
+type ScanLabel = { x: number; y: number; afterClick: () => Promise<void> };
+
+/** In-page: rect `r` has a box (display:none and a collapsed item have none, their centre is the viewport's corner). */
+const HAS_BOX_JS = (r: string) => `(${r}.width > 0 && ${r}.height > 0)`;
+/** In-page: rect `r`'s centre, where a click lands, is off-screen (a tall editor or card whose centre shows isn't). */
+const CENTRE_OFF_SCREEN_JS = (r: string) =>
+    `(${r}.top + ${r}.height / 2 < 0 || ${r}.left + ${r}.width / 2 < 0 || ${r}.top + ${r}.height / 2 >= innerHeight || ${r}.left + ${r}.width / 2 >= innerWidth)`;
+
 export class ChromeLocatorProxy {
     private selector: string;
     /** Which match: 0 = first (the first visible one), -1 = last, n = nth. */
     private index: number;
+    private label?: ScanLabel;
 
-    constructor(selector: string, index = 0) {
+    constructor(selector: string, index = 0, label?: ScanLabel) {
         this.selector = selector;
         this.index = index;
+        this.label = label;
+    }
+
+    /**
+     * execute_js failed (the debugger can't attach, CSP blocks the fallback, a bridge error): a scan
+     * label acts at its scanned point, as before it had a handle, and a real bridge error then surfaces
+     * from that click. Any other locator throws.
+     */
+    private orScanned<T>(e: unknown, value: T): T {
+        if (!this.label) throw e;
+        return value;
     }
 
     /** A JS expression for every element the selector (CSS or xpath=) matches. */
@@ -416,32 +464,57 @@ export class ChromeLocatorProxy {
         return sendBridgeCommand("execute_js", { code: this.withEl(body) }, timeoutMs) as Promise<T>;
     }
 
-    private async findElement(): Promise<{ x: number; y: number; found: boolean }> {
-        const r = await this.run<{ x: number; y: number; found: boolean } | null>(
-            `if (!el) return { found: false, x: 0, y: 0 };
-            el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
-            const rect = el.getBoundingClientRect();
-            return { found: true, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };`,
+    /**
+     * The element's centre, scrolled to only when that point is off-screen; throws when the element is
+     * gone or has no box. A visibility:hidden element that has a box (a row's Delete button shown on
+     * :hover) is clicked there: the click's mouse move shows it first. Only a scan label's handle does
+     * this; any other locator is scrolled to centre and clicked at its centre, as it always was.
+     */
+    private async findElement(): Promise<{ x: number; y: number }> {
+        if (!this.label) {
+            const r = await this.run<{ x: number; y: number } | null>(
+                `if (!el) return null;
+                el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+                const rect = el.getBoundingClientRect();
+                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };`,
+                10000,
+            );
+            if (!r) throw new Error(`Element not found: ${this.selector}`);
+            return r;
+        }
+        const l = this.label;
+        type Found = { x: number; y: number; hidden?: boolean } | null;
+        const r = await this.run<Found>(
+            `if (!el) return null;
+            let rect = el.getBoundingClientRect();
+            if (!${HAS_BOX_JS("rect")}) return { hidden: true, x: 0, y: 0 };
+            if (${CENTRE_OFF_SCREEN_JS("rect")}) {
+                el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+                rect = el.getBoundingClientRect();
+            }
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };`,
             10000,
-        );
-        return r || { found: false, x: 0, y: 0 };
+        ).catch((e) => this.orScanned<Found>(e, { x: l.x, y: l.y }));
+        if (!r) throw new Error(`Element not found: ${this.selector}`);
+        // A zero box (display:none dropdown item or tab panel) has its centre at the viewport's corner: never click there.
+        if (r.hidden) throw new Error(`Element is not visible: ${this.selector}`);
+        return r;
     }
 
     async click(opts?: { timeout?: number }): Promise<void> {
         const el = await this.findElement();
-        if (!el.found) throw new Error(`Element not found: ${this.selector}`);
-        await sendBridgeCommand("click_at", { x: el.x, y: el.y });
+        await sendBridgeCommand("click_at", { x: el.x, y: el.y, modifiers: [...heldModifiers] });
+        await this.label?.afterClick();
     }
 
     async dblclick(): Promise<void> {
         const el = await this.findElement();
-        if (!el.found) throw new Error(`Element not found: ${this.selector}`);
-        await sendBridgeCommand("click_at", { x: el.x, y: el.y, doubleClick: true });
+        await sendBridgeCommand("click_at", { x: el.x, y: el.y, doubleClick: true, modifiers: [...heldModifiers] });
+        await this.label?.afterClick();
     }
 
     async fill(text: string): Promise<void> {
         const el = await this.findElement();
-        if (!el.found) throw new Error(`Element not found: ${this.selector}`);
         await sendBridgeCommand("click_at", { x: el.x, y: el.y }); // focus
         await sendBridgeCommand("type_text", { text, clear: true }); // replace, like Playwright fill()
     }
@@ -450,15 +523,30 @@ export class ChromeLocatorProxy {
         await this.fill(text);
     }
 
+    /** Playwright's waitFor (state "visible"): until the element is shown, or throws after `timeout`. */
+    async waitFor(opts?: { timeout?: number }): Promise<void> {
+        const timeout = opts?.timeout ?? 5000;
+        const deadline = Date.now() + timeout;
+        for (;;) {
+            const shown = await this.run<boolean>(
+                "if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;",
+            ).catch(() => false); // mid-navigation: not yet
+            if (shown) return;
+            if (Date.now() >= deadline) throw new Error(`waitFor: timeout ${timeout}ms exceeded (${this.selector})`);
+            await new Promise((r) => setTimeout(r, 100)); // poll
+        }
+    }
+
     async count(): Promise<number> {
         const n = await sendBridgeCommand("execute_js", { code: `${this.allJs()}.length` }, 5000);
         return (n as number) || 0;
     }
 
     boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> {
-        return this.run(
+        const l = this.label;
+        return this.run<{ x: number; y: number; width: number; height: number } | null>(
             "if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height };",
-        );
+        ).catch((e) => this.orScanned(e, l ? { x: l.x - 1, y: l.y - 1, width: 2, height: 2 } : null));
     }
 
     textContent(): Promise<string | null> {
@@ -480,12 +568,12 @@ export class ChromeLocatorProxy {
     async scrollIntoViewIfNeeded(): Promise<void> {
         // Instant, and only when needed: callers measure the box right after.
         await this.run(
-            "if (!el) return; const r = el.getBoundingClientRect(); if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });",
-        );
+            `if (!el) return; const r = el.getBoundingClientRect(); if (${this.label ? CENTRE_OFF_SCREEN_JS("r") : "r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth"}) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });`,
+        ).catch((e) => this.orScanned(e, undefined));
     }
 
-    async selectOption(value: string | string[]): Promise<string[]> {
-        const values = Array.isArray(value) ? value : [value];
+    async selectOption(value: SelectValue | SelectValue[]): Promise<string[]> {
+        const values = selectValues(value);
         await sendBridgeCommand("select_option", { selector: this.selector, values });
         return values;
     }
@@ -501,25 +589,34 @@ export class ChromeLocatorProxy {
 
     async hover(): Promise<void> {
         const el = await this.findElement();
-        if (!el.found) throw new Error(`Element not found: ${this.selector}`);
         await sendBridgeCommand("hover", { x: el.x, y: el.y });
     }
 
     async focus(): Promise<void> {
-        await this.run("if (el && el.focus) el.focus();");
+        if (!this.label) {
+            await this.run("if (el && el.focus) el.focus();");
+            return;
+        }
+        // A scan label's handle throws when the element is gone or hidden (focus() on it does nothing), so callers don't type
+        // into whatever has focus; browser_type then clicks its live box, if it has one.
+        const r = await this.run<string>(
+            `if (!el) return "missing"; if (!${HAS_BOX_JS("el.getBoundingClientRect()")} || el.checkVisibility?.({ visibilityProperty: true }) === false) return "hidden"; el.focus?.(); return "ok";`,
+        );
+        if (r === "hidden") throw new Error(`Element is not visible: ${this.selector}`);
+        if (r !== "ok") throw new Error(`Element not found: ${this.selector}`);
     }
 
     // Playwright semantics: the first / last / index-th MATCH (not :first-of-type).
     first(): ChromeLocatorProxy {
-        return new ChromeLocatorProxy(this.selector, 0);
+        return new ChromeLocatorProxy(this.selector, 0, this.label);
     }
 
     last(): ChromeLocatorProxy {
-        return new ChromeLocatorProxy(this.selector, -1);
+        return new ChromeLocatorProxy(this.selector, -1, this.label);
     }
 
     nth(index: number): ChromeLocatorProxy {
-        return new ChromeLocatorProxy(this.selector, index);
+        return new ChromeLocatorProxy(this.selector, index, this.label);
     }
 }
 
@@ -636,22 +733,41 @@ export class ChromeExtensionBackend implements BrowserBackend {
                 y: number;
                 tag: string;
                 text: string;
-                atlasId: string;
+                bhaiId?: string;
+                atlasId?: string; // an extension from before the rename sends this instead
                 editorType?: string;
+                frameId?: number;
             }>;
         };
 
-        // Map to InteractiveElement format (no handle for Chrome mode)
-        return (result.elements || []).map((e, i) => ({
-            label: i + 1,
-            x: e.x,
-            y: e.y,
-            tag: e.tag,
-            text: e.text,
-            atlasId: e.atlasId,
-            handle: undefined, // No Playwright handles in Chrome mode
-            editorType: e.editorType as InteractiveElement["editorType"],
-        }));
+        // Top-page light-DOM elements get a live handle by their stamped id, so a label acts where the
+        // element is now (or fails as gone or hidden), not at the scan's coordinates; where page scripts
+        // can't run, it acts at the scanned point as before. Shadow controls (the top
+        // document can't query them, and one host's controls share an id), iframe elements and scans
+        // from older extensions keep coordinates.
+        const syncPage = async () => {
+            await this.pageProxy?.syncTab();
+        };
+        return (result.elements || []).map((e, i) => {
+            const bhaiId = e.bhaiId ?? e.atlasId ?? "";
+            return {
+                label: i + 1,
+                x: e.x,
+                y: e.y,
+                tag: e.tag,
+                text: e.text,
+                bhaiId,
+                handle:
+                    e.frameId === 0 && /^bhai-(el|editor)-/.test(bhaiId)
+                        ? new ChromeLocatorProxy(`[data-bhai-id="${bhaiId}"]`, 0, {
+                              x: e.x,
+                              y: e.y,
+                              afterClick: syncPage,
+                          })
+                        : undefined,
+                editorType: e.editorType as InteractiveElement["editorType"],
+            };
+        });
     }
 
     // ── Interaction ──

@@ -17,6 +17,7 @@ import path from "node:path";
 import { resolveScript } from "../config/paths.js";
 import type { LLMClient } from "../llm.js";
 import { MODELS } from "../llm.js";
+import { setBounded } from "../utils/bounded-map.js";
 import { extractJSON } from "../utils/json-extract.js";
 import {
     type DocumentType,
@@ -35,7 +36,8 @@ export function setIngestLLM(client: LLMClient): void {
     llm = client;
 }
 
-// ── Cache for identical inputs (keyed by SHA-256) ─
+// ── Cache for identical inputs (keyed by SHA-256; the 50 most recent) ─
+const EXTRACTION_CACHE_MAX = 50;
 const extractionCache = new Map<string, { resume?: Resume; general?: GeneralDocument; confidence: number }>();
 
 // ── Tier 1: text extraction ─────────────────────
@@ -67,12 +69,13 @@ function readPdf(filePath: string): Buffer {
     }
 }
 
-function extractText(data: Buffer): Promise<string> {
+/** PDF bytes to text in a separate, memory-capped process with a deadline (untrusted PDFs too). */
+export function extractText(data: Buffer): Promise<string> {
     // unpdf ships a current pdf.js; the old pdf-parse fallback (pdf.js 2018) never
     // rescued a PDF the modern parser rejected, so it was dropped.
     const script = resolveScript("pdf-text.cjs");
     if (!script) return Promise.reject(new Error("The PDF reader (scripts/pdf-text.cjs) is missing."));
-    const envMs = Number(process.env.ATLAS_PDF_PARSE_DEADLINE_MS); // tests only; "" or "60s" must not mean 0
+    const envMs = Number(process.env.BHAI_PDF_PARSE_DEADLINE_MS); // tests only; "" or "60s" must not mean 0
     const ms = Number.isFinite(envMs) && envMs > 0 ? envMs : PARSE_DEADLINE_MS;
     const child = fork(script, [], {
         execPath: process.execPath,
@@ -414,11 +417,12 @@ export async function ingestPdfToDocument(
         }
     }
 
-    extractionCache.set(cacheKey, {
-        resume: resume ?? undefined,
-        general: general ?? undefined,
-        confidence,
-    });
+    setBounded(
+        extractionCache,
+        cacheKey,
+        { resume: resume ?? undefined, general: general ?? undefined, confidence },
+        EXTRACTION_CACHE_MAX,
+    );
 
     const data = type === "resume" ? resume! : general!;
     const stored = saveDocument({

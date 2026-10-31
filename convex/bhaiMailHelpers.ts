@@ -42,6 +42,11 @@ export function pickBhaiRecipient(addresses: string[], domain: string): string |
     return null;
 }
 
+// Written to this Bhai address alone: no one else on To/Cc saw it.
+export function sentOnlyTo(addresses: string[], address: string): boolean {
+    return addresses.length > 0 && addresses.every((a) => a.trim().toLowerCase() === address);
+}
+
 // Keep what the owner wrote, not the thread quoted under it.
 export function stripQuoted(text: string): string {
     const lines = text.replace(/\r\n/g, "\n").split("\n");

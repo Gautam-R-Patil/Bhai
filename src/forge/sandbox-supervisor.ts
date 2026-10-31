@@ -16,6 +16,7 @@ import path from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 
+import { SANDBOX_API } from "../tools/create-tool.js";
 import { asJSON, type Capabilities } from "./capabilities.js";
 import { manifestDir, readManifest, writeManifest } from "./manifest.js";
 import type { PersistedToolManifest } from "./types.js";
@@ -144,7 +145,7 @@ export async function invokePersistedTool(
     const dir = manifestDir(slug);
     // Verify on-disk handler.js matches the manifest's handlerHash. Defeats
     // post-approval handler swap: agent's `edit`/`write` tools could
-    // theoretically rewrite handler.js under ~/.atlas/store/dynamic/<slug>/.
+    // theoretically rewrite handler.js under ~/.bhai/store/dynamic/<slug>/.
     try {
         const handlerPath = path.join(dir, "handler.js");
         if (!existsSync(handlerPath)) {
@@ -187,6 +188,37 @@ export async function invokePersistedTool(
     return parseNativeResponse(raw);
 }
 
+// handler.js: the handler body under the same (input, utils, console)
+// contract as session tools (create-tool's SANDBOX_API), with callSync done
+// in-process like create-tool's sandboxBridge; the kernel caps fence the reads.
+// console is a no-op: stdout is the shim's IPC channel and stderr is not drained.
+// These are the exact bytes of handler.js, so the manifest's handlerHash is taken
+// over them (a hash of the bare code failed every tamper check).
+export function wrapHandler(handlerCode: string): string {
+    return `const __fs = require("fs"), __path = require("path");
+const callSync = (name, a) => {
+    const [op, fn] = name.split(".");
+    if (op === "path") return __path[fn](...a.map(String));
+    const t = __path.resolve(String(a[0] ?? ""));
+    if (/^readFile/.test(fn)) return __fs.readFileSync(t, "utf8");
+    if (/^readdir/.test(fn)) return a[1] && a[1].withFileTypes === true
+        ? __fs.readdirSync(t, { withFileTypes: true }).map((d) => ({ name: d.name, isFile: d.isFile(), isDirectory: d.isDirectory() }))
+        : __fs.readdirSync(t);
+    if (fn === "existsSync") return __fs.existsSync(t);
+    const st = __fs.statSync(t);
+    return { size: st.size, isFile: st.isFile(), isDirectory: st.isDirectory(), mtimeMs: st.mtimeMs };
+};
+const __noop = () => {};
+const __console = Object.freeze({ log: __noop, info: __noop, debug: __noop, warn: __noop, error: __noop });
+const __utils = Object.freeze({ ...${SANDBOX_API}, console: __console, setTimeout });
+const __handler = async function (input, utils, console) {
+const require = utils.require;
+${handlerCode}
+};
+module.exports = (input) => __handler(input, __utils, __console);
+`;
+}
+
 export async function installPersistedTool(
     slug: string,
     handlerCode: string,
@@ -195,7 +227,7 @@ export async function installPersistedTool(
     const dir = manifestDir(slug);
     if (existsSync(dir)) {
         // Refuse to follow symlinks at the slug-dir level. An attacker who
-        // can drop a symlink at ~/.atlas/store/dynamic/<slug>/ before install
+        // can drop a symlink at ~/.bhai/store/dynamic/<slug>/ before install
         // could otherwise divert handler.js writes anywhere user-writable.
         const stat = lstatSync(dir);
         if (stat.isSymbolicLink()) {
@@ -206,8 +238,11 @@ export async function installPersistedTool(
     } else {
         mkdirSync(dir, { recursive: true });
     }
-    // Write handler.js. Wrapped in the synthesizer's canonical form.
-    const wrappedHandler = `module.exports = async function(input) {\n${handlerCode}\n};\n`;
+    // Write handler.js: the handler body gets the same (input, utils, console)
+    // contract as session tools; the kernel sandbox enforces the capabilities.
+    const wrappedHandler = wrapHandler(handlerCode);
+    // The manifest pins the bytes actually written (invoke and boot re-hash them).
+    manifest = { ...manifest, handlerHash: createHash("sha256").update(wrappedHandler).digest("hex").substring(0, 16) };
     const handlerPath = path.join(dir, "handler.js");
     let handlerWritten = false;
     try {

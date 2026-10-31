@@ -6,8 +6,8 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
-    process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS = "200";
-    process.env.ATLAS_NO_PERSONA_BIAS = "true";
+    process.env.BHAI_TOOL_ROUTER_TIMEOUT_MS = "200";
+    process.env.BHAI_NO_PERSONA_BIAS = "true";
     return { embedDelayMs: 0, embedded: [] as string[], mcp: [] as unknown[], noSignal: false };
 });
 
@@ -42,8 +42,6 @@ vi.mock("./tool-router-analytics.js", () => ({
     getLikelyCategories: () => [],
     getPreferredTools: (_i: string, t: string[]) => t,
     initAnalytics: () => {},
-    recordToolUsage: () => {},
-    updateCategoryAffinity: () => {},
 }));
 vi.mock("./tools/index.js", () => ({
     getToolSchemas: () =>
@@ -63,6 +61,9 @@ vi.mock("./tools/index.js", () => ({
             "music_control",
             "whatsapp_send",
             "send_message_on_channel",
+            "memory_store",
+            "memory_search",
+            "session_search",
         ].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } })),
 }));
 
@@ -142,6 +143,15 @@ describe("selectTools with the classifier timing out", () => {
         expect(sel.categories).not.toContain("chat_only");
     });
 
+    it("doesn't narrow a Finder request to one simple step without a classifier answer", async () => {
+        const sel = await selectTools({
+            message: "Open Finder, find the latest invoice PDF in Downloads and send it to mom on whatsapp",
+            iteration: 1,
+        });
+        expect(sel.categories).not.toEqual(["os_control"]);
+        expect(sel.classification?.tier).not.toBe("simple");
+    });
+
     it("still scores with the message embedding after the classifier used the budget", async () => {
         h.embedded.length = 0;
         h.embedDelayMs = 50;
@@ -203,5 +213,25 @@ describe("selectTools when the classifier answers with no categories", () => {
         const sel = await selectTools({ message: "lmao roast me, 40 tabs open and the code still won't build", iteration: 1 });
         expect(sel.categories).toEqual(["chat_only"]);
         expect(sel.tools.map((t) => t.function.name)).toEqual(["request_tools"]);
+    });
+});
+
+describe("a chat-sounding message that needs one kind of tool", () => {
+    const chatLLM = {
+        chat: async () => ({
+            choices: [{ message: { content: JSON.stringify({ intent: "recall", categories: [], tools: [], confidence: 0.73, tier: "chat" }) } }],
+        }),
+    } as never;
+    beforeAll(async () => {
+        await initToolRouter();
+        setToolRouterLLM(chatLLM);
+    });
+
+    it("asking what was said earlier gets the memory tools as a simple step (no plan)", async () => {
+        const sel = await selectTools({ message: "Earlier tonight I asked you to read some keyboard layout articles on Wikipedia. Which ones?", iteration: 1 });
+        expect(sel.categories).toEqual(["memory"]);
+        expect(sel.tools.map((t) => t.function.name)).toContain("session_search");
+        expect(sel.tools.map((t) => t.function.name)).not.toContain("browser_navigate");
+        expect(sel.classification).toMatchObject({ tier: "simple", multi_step: false });
     });
 });

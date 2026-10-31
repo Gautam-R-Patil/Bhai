@@ -12,6 +12,11 @@
 //     no click: on Finder's sidebar it moves the highlight but doesn't open the folder.) Prints "ok|x,y,w,h" (its frame afterwards) or
 //     "error|<reason>"; focus adds "|<pid>", the app whose UI is now at the element's
 //     centre (another pid = something still covers it).
+//   dump_ax_bin --pid <pid> --action insert   (text on stdin)
+//     Inserts the text at the cursor of the app's focused text field without raising the
+//     app (AXSelectedText, as trycua/cua types in the background), then reads the field
+//     back. Prints "ok|<role>" once the field shows the text, or "error|<reason>"
+//     (no_focused_field, secure_field, not_text:<role>, unsupported, not_applied).
 //
 // Output (stdout): JSON tree
 //   {
@@ -28,12 +33,12 @@
 //   hit the messaging timeout, or the walk ran out of its total time budget.
 //
 // Environment switches:
-//   ATLAS_NO_AX_BATCH=true         the old per-attribute walk (one IPC per attribute)
+//   BHAI_NO_AX_BATCH=true         the old per-attribute walk (one IPC per attribute)
 //                                  instead of one AXUIElementCopyMultipleAttributeValues
 //                                  per node, the default since parity passed on the owner's Mac
-//   ATLAS_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (clamped 100-5000). Two
+//   BHAI_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (clamped 100-5000). Two
 //                                  timeouts in a row count as a hung app and end the walk.
-//   ATLAS_AX_BUDGET_MS=N           whole-walk budget (default 3000, min 500)
+//   BHAI_AX_BUDGET_MS=N           whole-walk budget (default 3000, min 500)
 // Either way the whole walk stops after budgetMs (below), so a slow app gets a partial dump
 // instead of ax-dump.ts's 5 s exec kill, which loses all of it.
 //
@@ -106,10 +111,10 @@ if pid == 0 {
 // ── AX helpers ───────────────────────────────────
 
 let env = ProcessInfo.processInfo.environment
-let useBatch = env["ATLAS_NO_AX_BATCH"] != "true"
+let useBatch = env["BHAI_NO_AX_BATCH"] != "true"
 /// nil = timeout off: the system default (~6s) applies and no hang tracking runs,
 /// exactly the walk this helper had before the timeout existed.
-let msgTimeoutMs: Int? = Int(env["ATLAS_AX_MSG_TIMEOUT_MS"] ?? "").flatMap { $0 > 0 ? max(100, min(5000, $0)) : nil }
+let msgTimeoutMs: Int? = Int(env["BHAI_AX_MSG_TIMEOUT_MS"] ?? "").flatMap { $0 > 0 ? max(100, min(5000, $0)) : nil }
 // A kAXErrorCannotComplete that comes back fast is an app quirk, not a timeout: only a
 // call that ran for at least half the timeout counts.
 let hangNs: UInt64? = msgTimeoutMs.map { UInt64($0) * 500_000 }
@@ -121,8 +126,8 @@ func now() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
 
 /// Whole-walk budget, well under ax-dump.ts's 5 s exec timeout (launch and JSON encode
 /// fit in the rest, even on a loaded machine). Past it every read is skipped and the dump
-/// is partial. ATLAS_AX_BUDGET_MS overrides it (parity runs lift it to compare whole trees).
-let budgetMs: UInt64 = UInt64(env["ATLAS_AX_BUDGET_MS"] ?? "").map { max(500, $0) } ?? 3000
+/// is partial. BHAI_AX_BUDGET_MS overrides it (parity runs lift it to compare whole trees).
+let budgetMs: UInt64 = UInt64(env["BHAI_AX_BUDGET_MS"] ?? "").map { max(500, $0) } ?? 3000
 let deadline = now() + budgetMs * 1_000_000
 let app = AXUIElementCreateApplication(pid)
 let systemWide = AXUIElementCreateSystemWide()
@@ -402,6 +407,26 @@ if callAllowed() { note(AXUIElementSetAttributeValue(app, "AXManualAccessibility
 func fail(_ reason: String) -> Never {
     FileHandle.standardOutput.write("error|\(reason)\n".data(using: .utf8)!)
     exit(1)
+}
+
+if actionName == "insert" {
+    let text = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    guard !text.isEmpty else { fail("no_text") }
+    guard let ref = axCopy(app, kAXFocusedUIElementAttribute), CFGetTypeID(ref) == AXUIElementGetTypeID()
+    else { fail("no_focused_field") }
+    let field = ref as! AXUIElement
+    let role = cfString(axCopy(field, kAXRoleAttribute)) ?? "?"
+    // A password field is typed for real or not at all, never read back.
+    if role == "AXSecureTextField" || cfString(axCopy(field, kAXSubroleAttribute)) == "AXSecureTextField" { fail("secure_field") }
+    guard ["AXTextField", "AXTextArea", "AXComboBox"].contains(role) else { fail("not_text:\(role)") }
+    let before = cfString(axCopy(field, kAXValueAttribute)) ?? ""
+    guard AXUIElementSetAttributeValue(field, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success
+    else { fail("unsupported") }
+    // Some fields accept the write and drop it (web content): believe the field, not the call.
+    let after = cfString(axCopy(field, kAXValueAttribute)) ?? ""
+    guard after.count >= before.count + text.count || (after != before && after.contains(text)) else { fail("not_applied") }
+    FileHandle.standardOutput.write("ok|\(role)\n".data(using: .utf8)!)
+    exit(0)
 }
 
 if let act = actionName {

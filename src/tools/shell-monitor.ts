@@ -9,8 +9,10 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { basename, join } from "node:path";
-import { isShellBypass, isSystemDestructive, shellArgsTargetProtectedPath } from "../security/allowlist.js";
+import { join } from "node:path";
+import { isShellBypass, isSystemDestructive } from "../security/allowlist.js";
+import { shellNamesBhaiState } from "../security/sensitive-paths.js";
+import { hasGitConfigEnvOverride, isGitConfigCall, posixCommandLine, shellWriteTargetsProtected } from "./shell.js";
 import { auditLog } from "../security/audit-log.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
@@ -62,7 +64,7 @@ function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 
 // ── Constants ─────────────────────────────────
 
-const LOG_DIR = join(process.env.ATLAS_DATA_DIR || join(process.cwd(), "data"), "process-logs");
+const LOG_DIR = join(process.env.BHAI_DATA_DIR || join(process.cwd(), "data"), "process-logs");
 const MAX_OUTPUT_PREVIEW = 5000; // chars in status preview
 const MAX_WAIT_MS = 86_400_000; // 24 hours max wait
 
@@ -155,10 +157,15 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
 
         auditLog("shell_exec_background", { command, args, cwd });
 
-        // Mirror shell.ts's triple-check: system-destructive base command,
-        // shell-bypass for destructive inline command, and protected-path
-        // codebase targeting via destructive utilities.
+        // Same guards as shell_exec: system-destructive, shell bypass, git config, codebase writes.
         const fullCommand = args.length > 0 ? `${command} ${args.join(" ")}` : command;
+        // Same rule as shell_exec: Bhai's own state never goes through a shell (its output is read back).
+        const ownState = shellNamesBhaiState(fullCommand, cwd);
+        if (ownState) {
+            return JSON.stringify({
+                error: `Blocked: the command reaches into Bhai's own data (${ownState}). Its memory, chats and sessions never go through the shell; the owner can run it in Terminal.`,
+            });
+        }
         if (isSystemDestructive(fullCommand)) {
             return JSON.stringify({
                 error: `Blocked: command would cause irreversible damage to the operating system.`,
@@ -169,15 +176,16 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
                 error: `Blocked: inline command contains a system-destructive operation.`,
             });
         }
-        const DESTRUCTIVE_CMDS = new Set(["rm", "mv", "cp", "rsync", "dd"]);
-        const baseCmd = basename(command).replace(/\.exe$/i, "");
-        if (DESTRUCTIVE_CMDS.has(baseCmd)) {
-            const hit = shellArgsTargetProtectedPath([command, ...args]);
-            if (hit) {
-                return JSON.stringify({
-                    error: `Blocked: command "${command}" targets the bot's own codebase path "${hit}".`,
-                });
-            }
+        if (isGitConfigCall(command, args) || hasGitConfigEnvOverride(process.env)) {
+            return JSON.stringify({
+                error: `Blocked: git config / -c flag / GIT_CONFIG_* env overrides are not permitted.`,
+            });
+        }
+        const hit = shellWriteTargetsProtected(fullCommand, cwd);
+        if (hit) {
+            return JSON.stringify({
+                error: `Blocked: command "${command}" writes to the bot's own codebase path "${hit}".`,
+            });
         }
 
         await ensureLogDir();
@@ -187,8 +195,10 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
 
         try {
             // Before spawn, resolve shell on Windows
-            let spawnCmd = command;
-            let spawnArgs = args;
+            // On POSIX one quoted line: spawn with shell: true joins args with bare spaces, so
+            // sh -c "sleep 2; echo done" ran as \`sh -c sleep 2; …\` (see shell.ts).
+            let spawnCmd = IS_WIN ? command : posixCommandLine(command, args);
+            let spawnArgs = IS_WIN ? args : [];
             if (IS_WIN) {
                 const shell = await resolveWindowsShell();
                 const wrapped = wrapForShell(shell, command, args);
@@ -262,7 +272,7 @@ Returns a process_id that you can use with shell_check_process and shell_wait_pr
                 success: true,
                 process_id: id,
                 pid: child.pid,
-                command: `${command} ${args.join(" ")}`,
+                command: posixCommandLine(command, args), // as it ran
                 message: `Process started in background. Use shell_check_process with process_id "${id}" to monitor, or shell_wait_process to wait for completion.`,
             });
         } catch (err) {
@@ -320,7 +330,7 @@ export const shellCheckProcess: ToolDefinition = {
 
         return JSON.stringify({
             process_id: bp.id,
-            command: `${bp.command} ${bp.args.join(" ")}`,
+            command: posixCommandLine(bp.command, bp.args),
             status: bp.status,
             pid: bp.pid,
             exit_code: bp.exitCode,
@@ -432,7 +442,7 @@ export const shellKillProcess: ToolDefinition = {
                 properties: {
                     process_id: {
                         type: "string",
-                        description: "Process ID to kill",
+                        description: "Process ID to kill (proc_N_… id, or the OS pid of a process started here)",
                     },
                 },
                 required: ["process_id"],
@@ -441,8 +451,11 @@ export const shellKillProcess: ToolDefinition = {
     },
 
     async handler(input) {
-        const processId = input.process_id as string;
-        const bp = processes.get(processId);
+        const processId = String(input.process_id ?? "");
+        // The OS pid of a process started here works too (demo_project reports
+        // one); a pid this monitor did not start is never killed.
+        const bp =
+            processes.get(processId) ?? [...processes.values()].find((p) => p.pid > 0 && String(p.pid) === processId);
         if (!bp) {
             return JSON.stringify({ error: `Process "${processId}" not found` });
         }
@@ -468,7 +481,7 @@ export const shellKillProcess: ToolDefinition = {
 
             return JSON.stringify({
                 success: true,
-                process_id: processId,
+                process_id: bp.id,
                 message: "Process killed.",
             });
         } catch (err) {

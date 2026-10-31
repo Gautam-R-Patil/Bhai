@@ -5,9 +5,9 @@
 // skill.json + skill.cjs, replays it offline (replay.ts) until it passes, and
 // finishes. Finish runs the static gate (checks.ts), the full replay and one
 // review call; a pass installs the skill as awaiting_approval, which the
-// registry skips until the owner approves it (approveSiteSkill, ownerSaid).
+// registry skips until the owner approves it (approveSiteSkill, ownerApproved).
 //
-// Budgets: 12 model turns (ATLAS_SITE_MINT_MAX_TURNS), 10 minutes, 2 review
+// Budgets: 12 model turns (BHAI_SITE_MINT_MAX_TURNS), 10 minutes, 2 review
 // rounds, 2 replies in a row with no tool call. Sonnet throughout; Opus for at
 // most 2 turns once 2 replays failed at turn ≥6. So a mint never costs more than
 // maxMintCredits(): with 12 turns, 16 credits.
@@ -36,13 +36,12 @@
 // a row archives it.
 
 import { randomBytes } from "node:crypto";
-import * as acorn from "acorn";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { getDataDir } from "../../../config/paths.js";
+import { getBhaiHome, getDataDir } from "../../../config/paths.js";
 import { type ChatCompletionMessageParam, type ChatCompletionTool, type LLMClient, MODELS } from "../../../llm.js";
-import { ownerSaid } from "../../../security/consent.js";
+import { ownerApproved } from "../../../security/consent.js";
 import { maskCredentials } from "../../../security/credential-mask.js";
 import { redactPii } from "../../../security/pii-redactor.js";
 import { knownForms } from "../../../security/value-forms.js";
@@ -52,7 +51,11 @@ import { checkSkill, type Finding, type MintedManifest, type RecordedValue } fro
 import { commitEvent, type Descriptor, type LoadedTrace, loadTrace } from "./recorder.js";
 import { type PhaseName, type ReplayReport, replaySkill, type Verdict } from "./replay.js";
 
-export const maxTurns = () => Math.max(1, Number(process.env.ATLAS_SITE_MINT_MAX_TURNS) || 12);
+// acorn loads synchronously on first parse, not at boot.
+let acornMod: typeof import("acorn") | undefined;
+const acorn = (): typeof import("acorn") => (acornMod ??= createRequire(import.meta.url)("acorn"));
+
+export const maxTurns = () => Math.max(1, Number(process.env.BHAI_SITE_MINT_MAX_TURNS) || 12);
 const WALL_MS = 10 * 60_000;
 const REPAIR_TURNS = 6;
 const REPAIR_WALL_MS = 5 * 60_000;
@@ -65,7 +68,7 @@ export const maxMintCredits = (turns = maxTurns()) => turns + MAX_OPUS_TURNS + M
 // Mirrors convex/credit_cost.ts for the three ids used here.
 export const creditCost = (model: string) => (/opus/i.test(model) ? 2 : /haiku/i.test(model) ? 0.25 : 1);
 
-export const siteSkillStore = () => path.join(homedir(), ".atlas", "store", "site-skills");
+export const siteSkillStore = () => path.join(getBhaiHome(), "store", "site-skills");
 export const mintJobsDir = () => path.join(getDataDir(), "site-mint", "jobs");
 /** Sessions a skill was verified on, kept past trace retention for its repairs' regression replays (never in the store). */
 export const fixturesDir = () => path.join(getDataDir(), "site-mint", "fixtures");
@@ -317,7 +320,7 @@ export function buildDigest(t: LoadedTrace, redact: (s: string) => string, input
 
 // biome-ignore lint/suspicious/noExplicitAny: ESTree nodes
 type N = any;
-const parse = (src: string) => acorn.parse(src, { ecmaVersion: "latest", sourceType: "script" }) as N;
+const parse = (src: string) => acorn().parse(src, { ecmaVersion: "latest", sourceType: "script" }) as N;
 const keyOf = (p: N) => (p?.type === "Property" && !p.computed ? (p.key.name ?? p.key.value) : undefined);
 
 // [start, end) of phases.<name> (the `name(ctx, lib) {…}` member of the
@@ -563,7 +566,7 @@ function install(stage: string, storeDir: string, slug: string): string {
 
 /**
  * The owner's approval: `userQuote` must be words the owner actually sent after
- * the skill was installed (ownerSaid). The newest waiting version becomes the
+ * the skill was installed (ownerApproved). The newest waiting version becomes the
  * live skill; the one it replaces is kept in _prev/.
  */
 export function approveSiteSkill(opts: { slug: string; userQuote: string; storeDir?: string }): {
@@ -581,7 +584,7 @@ export function approveSiteSkill(opts: { slug: string; userQuote: string; storeD
         .filter((x) => x.m?.status === "awaiting_approval")
         .sort((a, b) => (Number(b.m.version) || 1) - (Number(a.m.version) || 1))[0];
     if (!waiting) return { ok: false, error: `No site skill "${slug}" is waiting for approval.` };
-    if (!ownerSaid(opts.userQuote, Date.parse(waiting.m.minted?.at ?? "") || Date.now()))
+    if (!ownerApproved(opts.userQuote, Date.parse(waiting.m.minted?.at ?? "") || Date.now()))
         return {
             ok: false,
             error: "user_quote must be the user's own words from a message sent after the skill was ready. Show them the card and ask first.",
@@ -763,7 +766,7 @@ export async function mintSiteSkill(job: MintJob): Promise<MintResult> {
     const replay = async (): Promise<ReplayReport> => {
         if (!written) throw new Error("nothing written");
         if (replayed?.seq === written.seq) return replayed.report;
-        browser ??= await (await import("playwright")).chromium.launch({ headless: true });
+        browser ??= await (await import("playwright-core")).chromium.launch({ headless: true });
         const run = (trace: LoadedTrace, input: Record<string, unknown>, phase?: "search" | "select") =>
             replaySkill(path.join(stage, "skill.cjs"), trace, {
                 input,
@@ -833,7 +836,7 @@ export async function mintSiteSkill(job: MintJob): Promise<MintResult> {
             safetyOf(m) === safetyOf(r.manifest) &&
             r.olds.length > 0 &&
             kept &&
-            process.env.ATLAS_SITE_REPAIR_REQUIRE_APPROVAL !== "true";
+            process.env.BHAI_SITE_REPAIR_REQUIRE_APPROVAL !== "true";
         if (auto) m.status = "active";
         writeFileSync(path.join(stage, "skill.json"), JSON.stringify(m, null, 2));
         if (!auto) return { status: "installed", slug, dir: install(stage, path.dirname(r.dir), slug) };

@@ -92,6 +92,15 @@ export function isUntrustedToolResult(toolName: string): boolean {
     return !TRUSTED_PREFIXES.some((p) => toolName.startsWith(p));
 }
 
+/**
+ * What the model sees of a tool result: attacker-influenceable output fenced as
+ * data (agent, sub-agents and live voice all call this). BHAI_NO_UNTRUSTED_WRAP=true turns it off.
+ */
+export function fenceToolResult(toolName: string, result: string): string {
+    if (process.env.BHAI_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(toolName)) return result;
+    return wrapUntrustedToolResult(toolName, result);
+}
+
 // ── Wrapping ───────────────────────────────────
 
 export function fenceMemoryContext(body: string): string {

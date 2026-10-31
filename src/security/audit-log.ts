@@ -12,7 +12,7 @@ import path from "node:path";
 import { registerProtectedPath } from "./allowlist.js";
 import { getDataDir } from "../config/paths.js";
 
-// Honour ATLAS_DATA_DIR: in the packaged app the working directory is inside
+// Honour BHAI_DATA_DIR: in the packaged app the working directory is inside
 // the (read-only, signed) app bundle.
 const AUDIT_PATH = path.join(getDataDir(), "audit.jsonl");
 

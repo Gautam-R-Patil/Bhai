@@ -7,9 +7,9 @@
   <title>Bhai</title>
   <script>
     // Loopback auth token, injected server-side when this page is served (the
-    // server replaces %%ATLAS_LOCAL_TOKEN%% with the real token). The WebSocket
+    // server replaces %%BHAI_LOCAL_TOKEN%% with the real token). The WebSocket
     // handshake below sends it as ?localToken= so the server accepts the connection.
-    window.__ATLAS_LOCAL_TOKEN__ = "%%ATLAS_LOCAL_TOKEN%%";
+    window.__BHAI_LOCAL_TOKEN__ = "%%BHAI_LOCAL_TOKEN%%";
   </script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
@@ -327,6 +327,69 @@
       overflow-y: auto;
     }
 
+    .past-turn { opacity: 0.6; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px; }
+    .past-q { font-weight: 600; }
+
+    /* ── Live turn: one line while Bhai works; Notes and Steps one click away ── */
+    .turn-view { margin-bottom: 8px; }
+    .turn-live {
+      display: flex; align-items: center; gap: 10px; width: calc(100% + 12px); margin: 0 -6px; padding: 4px 6px;
+      border: 0; border-radius: 10px; background: none; font: inherit; font-size: 13.5px; line-height: 1.5;
+      color: var(--text-secondary); text-align: left; cursor: pointer; user-select: none;
+    }
+    .turn-live:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+    .turn-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .turn-live:disabled { cursor: default; background: none; }
+    .turn-live:disabled .turn-chev { display: none; }
+    .turn-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--accent); animation: turnPulse 1.2s ease-in-out infinite; }
+    .turn-now {
+      flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      background: linear-gradient(90deg, var(--text-secondary) 0 40%, var(--accent) 50%, var(--text-secondary) 60% 100%);
+      background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+      animation: turnShimmer 2.2s linear infinite;
+    }
+    .turn-meta { flex: none; display: flex; align-items: center; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .turn-chev { display: inline-block; margin-left: 4px; font-size: 14px; line-height: 1; transition: transform 0.25s var(--ease); }
+    .turn-view.open .turn-chev { transform: rotate(180deg); }
+    .turn-bar { height: 3px; margin-top: 6px; border-radius: 2px; background: var(--border); overflow: hidden; }
+    .turn-bar i { display: block; width: 40%; height: 100%; border-radius: 2px; background: var(--accent); animation: turnSlide 1.6s ease-in-out infinite; }
+    .turn-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.3s var(--ease), margin 0.3s var(--ease); }
+    .turn-panel > div { overflow: hidden; }
+    .turn-view.open .turn-panel { grid-template-rows: 1fr; margin-top: 8px; }
+    .turn-inner { padding: 4px 10px 8px; border-radius: 10px; background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+    .turn-lbl { margin: 6px 0 2px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+    .turn-empty { margin: 6px 0 2px; font-size: 12.5px; color: var(--text-muted); }
+    .turn-notes { max-height: 96px; overflow-y: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; color: var(--text-secondary); }
+    .turn-step { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+    .turn-step::before { content: ""; flex: none; width: 14px; text-align: center; }
+    .turn-step.done::before { content: "✓"; color: var(--success); }
+    .turn-step.failed::before { content: "✕"; color: var(--danger); }
+    .turn-step.running { font-weight: 500; color: var(--text-primary); }
+    .turn-step.running::before { width: 8px; height: 8px; margin: 0 3px; border-radius: 50%; background: var(--accent); animation: turnPulse 1.2s ease-in-out infinite; }
+    .turn-caret { display: inline-block; width: 2px; height: 1em; margin-left: 1px; vertical-align: -2px; background: var(--accent); animation: turnBlink 1s steps(2) infinite; }
+    .turn-view.done .turn-dot, .turn-view.done .turn-bar { display: none; }
+    /* A quick turn shows no working line or ripple (SHOW_LIVE_AFTER_MS): just its answer */
+    .turn-view.quiet, .icon.thinking.quiet::after { display: none; }
+    .turn-view.done .turn-live { font-size: 12.5px; }
+    .turn-view.done .turn-now { animation: none; background: none; color: var(--text-muted); }
+    /* Bhai busy: a soft ripple around the mascot */
+    .icon.thinking::after {
+      content: ""; position: absolute; inset: 4px; border-radius: 50%; border: 1.5px solid var(--accent-strong);
+      pointer-events: none; animation: turnRipple 1.6s ease-out infinite;
+    }
+    @keyframes turnPulse { 0%, 100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.15); } }
+    @keyframes turnShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+    @keyframes turnSlide { from { margin-left: -40%; } to { margin-left: 100%; } }
+    @keyframes turnBlink { 50% { opacity: 0; } }
+    @keyframes turnRipple { from { opacity: 0.9; transform: scale(0.85); } to { opacity: 0; transform: scale(1.3); } }
+    @media (prefers-reduced-motion: reduce) {
+      .turn-dot, .turn-step.running::before, .turn-caret { animation: none; }
+      .turn-now { animation: none; background: none; color: var(--text-secondary); }
+      .turn-bar i { width: 100%; opacity: 0.4; animation: none; }
+      .turn-panel, .turn-chev { transition: none; }
+      .icon.thinking::after { display: none; }
+    }
+
     #reply-box.visible {
       display: block;
       animation: bubbleSpring 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.08);
@@ -395,7 +458,7 @@
       mix-blend-mode: screen;
     }
 
-    #reply-text {
+    #reply-text, #reply-history {
       position: relative;
       z-index: 1;
       color: var(--text-primary);
@@ -403,7 +466,7 @@
       font-variant-numeric: tabular-nums;
     }
 
-    #reply-text code {
+    :is(#reply-text, #reply-history) code {
       background: var(--accent-soft);
       color: #c7d2fe;
       padding: 2px 6px;
@@ -412,7 +475,7 @@
       font-size: 12.5px;
     }
 
-    #reply-text pre {
+    :is(#reply-text, #reply-history) pre {
       background: rgba(10, 10, 26, 0.6);
       padding: 12px 14px;
       border-radius: 10px;
@@ -424,29 +487,61 @@
       border: 1px solid var(--border);
     }
 
-    #reply-text pre code {
+    :is(#reply-text, #reply-history) pre code {
       background: none;
       color: rgba(255, 255, 255, 0.92);
       padding: 0;
     }
 
-    #reply-text strong {
+    :is(#reply-text, #reply-history) strong {
       color: var(--accent-hover);
       font-weight: 600;
     }
 
-    #reply-text img {
+    :is(#reply-text, #reply-history) img {
       max-width: 100%;
       border-radius: 10px;
       margin: 6px 0;
       display: block;
     }
 
-    #reply-text .img-caption {
+    :is(#reply-text, #reply-history) .img-caption {
       font-size: 11px;
       color: rgba(255, 255, 255, 0.4);
       margin-top: 2px;
     }
+
+    /* Images Bhai made: one full width, 2-4 in two columns; a click opens the lightbox. */
+    .img-grid { display: grid; gap: 6px; margin: 8px 0 4px; }
+    .img-grid.multi { grid-template-columns: 1fr 1fr; }
+    .img-thumb {
+      padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, 0.18); overflow: hidden; cursor: zoom-in; display: block;
+    }
+    .img-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    :is(#reply-text, #reply-history) .img-thumb img {
+      margin: 0; border-radius: 0; width: 100%; max-height: 320px; object-fit: contain;
+      opacity: 0; transition: opacity 0.35s ease;
+    }
+    :is(#reply-text, #reply-history) .img-grid.multi .img-thumb img { height: 140px; object-fit: cover; }
+    :is(#reply-text, #reply-history) .img-thumb img.loaded { opacity: 1; }
+    .img-lightbox {
+      position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, 0.86);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px;
+    }
+    .img-lightbox .lb-img { max-width: 100%; max-height: calc(100vh - 90px); object-fit: contain; border-radius: 8px; }
+    /* A checkerboard behind a PNG (the only thumbnails that keep alpha) so transparency shows. */
+    .img-lightbox .lb-img[src^="data:image/png"] { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+    .img-lightbox .lb-close { position: absolute; top: 12px; right: 12px; font-size: 16px; line-height: 1; padding: 5px 9px; }
+    .img-lightbox .lb-bar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; }
+    .img-lightbox .lb-btn {
+      font: inherit; font-size: 12px; color: #fff; text-decoration: none; cursor: pointer;
+      background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px; padding: 5px 12px;
+    }
+    .img-lightbox .lb-btn:hover, .img-lightbox .lb-btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.24); }
+    .img-lightbox .lb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .img-lightbox .lb-count { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
 
     /* Progress */
     #progress {
@@ -2129,7 +2224,7 @@
     body.theme-light :where(.quick-action-btn, .md-table td, .collapse-header, .collapse-content,
       .inbox-item-topic, .inbox-item-body, .inbox-action-btn, .inbox-edit-input) { color: var(--text-primary); }
     body.theme-light #progress:not(:has(.progress-card)),
-    body.theme-light #reply-text .img-caption,
+    body.theme-light :is(#reply-text, #reply-history) .img-caption,
     body.theme-light .notif-action-btn.dismiss,
     body.theme-light .widget-clock .widget-date,
     body.theme-light :where(.collapse-arrow, .copy-response-btn, .thinking-block, .inbox-header,
@@ -2340,7 +2435,12 @@
     const reduceMotion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : { matches: false };
     const live = new Set();
     let rafId = 0;
+    let timerId = 0;
     let injected = false;
+    // Only breathing and the slow sway: a 50 ms step moves Bhai under a pixel,
+    // so skip the 60/120 Hz frames until something lively happens.
+    const CALM_MS = 50;
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(() => startLoop()) : null;
 
     function inject() {
         if (injected) return;
@@ -2404,6 +2504,7 @@
     function play(m, name) {
         const def = ACTS[name];
         if (!def) return;
+        wake(m);
         // Limb-only acts fall back to something the current pose can do.
         if (def.roles && !m.limbs.some((l) => def.roles.includes(l.role))) {
             if (name === "wave") return play(m, m.limbs.some((l) => l.role === "point") ? "point" : "look");
@@ -2454,6 +2555,7 @@
         if (!animate || reduceMotion.matches || document.hidden || !m.host.offsetWidth) { buildPose(m, name); return; }
         // Anticipation: squash down, swap at the bottom, then pop up into the new pose.
         m.sqV -= 2.6;
+        wake(m);
         m.swapTimer = setTimeout(() => {
             buildPose(m, name);
             m.sqV += 3;
@@ -2495,12 +2597,13 @@
             m.lookX = clamp((e.clientX - (r.left + r.width / 2)) / reach, -1, 1);
             m.lookY = clamp((e.clientY - (r.top + r.height / 2)) / reach, -1, 1);
             m.lookT = m.t;
+            wake(m);
         }
     }
 
     // ── The frame loop: springs + actions → transforms ──────────────────
-    function step(m, now) {
-        const dt = Math.min(0.05, (now - (m.last || now)) / 1000);
+    function step(m, now, maxDt) {
+        const dt = clamp((now - (m.last || now)) / 1000, 0, maxDt);
         m.last = now;
         m.t += dt;
         const t = m.t;
@@ -2553,6 +2656,9 @@
         m.turn += (turn - m.turn) * k;
         m.sqV += (-230 * (m.sq - sb) - 9 * m.sqV) * dt;
         m.sq += m.sqV * dt;
+        // Springs close to their targets: a 50 ms step moves Bhai under a pixel.
+        m.settled = Math.abs(tilt - m.tilt) < 1 && Math.abs(turn - m.turn) < 1 && Math.abs(lean - m.lean) < 0.004 &&
+            Math.abs(m.sq - sb) < 0.006 && Math.abs(m.sqV) < 0.05;
 
         // Hops: ballistic, then a squashy landing.
         if (cfg.hover) {
@@ -2590,25 +2696,55 @@
         }
     }
 
-    function frame(now) {
-        rafId = 0;
+    // Anything beyond breathing and the slow sway: acts (the glint is pure CSS),
+    // hops, gaze, flapping, scanning, hovering, fast (working) breathing, or
+    // springs still easing back.
+    function lively(m) {
+        const c = m.cfg;
+        return m.acts.some((a) => a.name !== "glint") || m.y > 0 || m.vy > 0 || c.flap || c.scan || c.hover || c.br > 1 ||
+            (m.lookT !== undefined && m.t - m.lookT < 2.5) || !m.settled;
+    }
+
+    // maxDt: a late 50 ms tick shouldn't slow the breathing down.
+    function frame(now, maxDt = 0.05) {
+        rafId = timerId = 0;
         if (reduceMotion.matches) return;
+        let shown = false;
+        let calm = true;
         for (const m of live) {
-            if (!m.host.isConnected) { live.delete(m); continue; }
-            if (m.host.offsetWidth) step(m, now);
-            else m.last = now;
+            if (!m.host.isConnected) { live.delete(m); resize?.unobserve(m.host); continue; }
+            if (!m.host.offsetWidth) { m.last = now; continue; }
+            shown = true;
+            // A calm Bhai next to a lively one still steps only every ~50 ms.
+            if (m.calm && now - m.last < CALM_MS - 5) continue;
+            step(m, now, maxDt);
+            m.calm = !lively(m);
+            if (!m.calm) calm = false;
         }
-        if (live.size) rafId = requestAnimationFrame(frame);
+        // Every Bhai hidden: stop; the ResizeObserver restarts us when one shows.
+        if (!shown && resize) return;
+        if (calm && shown && !document.hidden) timerId = setTimeout(() => frame(performance.now(), 0.1), CALM_MS);
+        else if (live.size) rafId = requestAnimationFrame(frame);
     }
 
     function startLoop() {
-        if (!rafId && live.size && !reduceMotion.matches) rafId = requestAnimationFrame(frame);
+        if (!rafId && !timerId && live.size && !reduceMotion.matches) rafId = requestAnimationFrame(frame);
+    }
+
+    // Something lively started: back to full frame rate right away.
+    function wake(m) {
+        m.calm = false;
+        if (!timerId) return;
+        clearTimeout(timerId);
+        timerId = 0;
+        startLoop();
     }
 
     /** Render Bhai into `host`; afterwards just set `host.dataset.mood`. */
     function mount(host, mood) {
         inject();
         if (host._bm) { live.delete(host._bm); host._bm.observer.disconnect(); clearTimeout(host._bm.rotateTimer); }
+        resize?.observe(host);
         host.classList.add("bm-host");
         host.innerHTML = '<span class="bm-shadow"></span><div class="bm-rig"><div class="bm-pose"></div></div><span class="bm-fx" aria-hidden="true"></span>';
         const m = {
@@ -2771,10 +2907,12 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         <button class="notif-action-btn dismiss" onclick="dismissNotification()" aria-label="Dismiss notification" tabindex="0">Dismiss</button>
       </div>
     </div>
-    <div id="reply-box" role="log" aria-live="polite" aria-label="Agent response" aria-busy="false">
+    <div id="reply-box">
       <button class="copy-response-btn" id="copy-response-btn" onclick="copyResponse()" aria-label="Copy response" tabindex="0">⧉</button>
       <div class="reply-blob" aria-hidden="true"></div>
-      <div id="reply-text"></div>
+      <div id="reply-history"></div>
+      <!-- The live region is the reply alone: a past turn moving into the history above isn't re-read. -->
+      <div id="reply-text" role="log" aria-live="polite" aria-label="Agent response" aria-busy="false"></div>
       <div id="widgets-container" class="widgets-container"></div>
       <div id="quick-actions" class="quick-actions"></div>
       <div id="interactive-cards" class="interactive-cards"></div>
@@ -2791,12 +2929,22 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
   <script>
     (() => {
       const input = document.getElementById('input');
+      // The server sends the app-aware placeholder only when it changes. A voice step shows its
+      // own text for a while; the server's text comes back within 15 s (as the old 15 s resend did).
+      let serverPlaceholder = 'Tell Bhai what needs sorting…';
+      let placeholderTimer = null;
+      const showPlaceholder = (text) => {
+        input.placeholder = text;
+        clearTimeout(placeholderTimer);
+        placeholderTimer = setTimeout(() => { input.placeholder = serverPlaceholder; }, 15000);
+      };
       const icon = document.getElementById('icon');
       if (window.BhaiMascot) window.BhaiMascot.mount(icon, 'idle');
       const progress = document.getElementById('progress');
       const contract = document.getElementById('contract');
       const replyBox = document.getElementById('reply-box');
       const replyText = document.getElementById('reply-text');
+      const replyHistory = document.getElementById('reply-history');
       const notifBox = document.getElementById('notification-box');
       const notifText = document.getElementById('notification-text');
       const widgetsBox = document.getElementById('widgets-container');
@@ -2828,6 +2976,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (!idleAtHide) return false;
         replyBox.classList.remove('visible');
         replyText.innerHTML = '';
+        replyHistory.innerHTML = '';
         progress.classList.remove('visible');
         progress.innerHTML = '';
         contract.textContent = '';
@@ -2843,7 +2992,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       const MOOD_LABELS = {
         idle: 'Bhai is idle', listening: 'Bhai is listening', thinking: 'Bhai is thinking',
         looking: 'Bhai is looking at your screen', working: 'Bhai is working on it',
-        happy: 'Bhai is done', oops: 'Bhai hit a problem',
+        happy: 'Bhai is done', oops: 'Bhai hit a problem', typing: 'Bhai is writing the answer',
       };
       let moodTimer = null;
       function restingMood() {
@@ -2861,8 +3010,88 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (/📸|screen|screenshot|look|see|vision|brows|🌐|🔍|search|web|page|read/.test(t)) return 'looking';
         return 'working';
       }
+
+      // One turn's live view as plain data, from the bot's turn_* messages (pure; turn-view.test.ts):
+      // {turn, seq, status, steps, notes, answer, attempt, open}. A message whose seq isn't newer
+      // changes nothing; another turn's message starts a fresh view. attempt null = unknown (a
+      // snapshot doesn't say which attempt its answer is), so the next delta just carries on.
+      function turnView(state, msg) {
+        if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('turn_')) return state;
+        const same = !!state && state.turn === msg.turn;
+        if (same && typeof msg.seq === 'number' && msg.seq <= state.seq) return state;
+        const s = same ? { ...state }
+          : { turn: msg.turn, seq: 0, status: null, steps: [], notes: [], answer: '', attempt: 0, open: !!(state && state.open) };
+        if (typeof msg.seq === 'number') s.seq = msg.seq;
+        switch (msg.type) {
+          case 'turn_snapshot':
+            s.status = msg.status || null;
+            s.steps = Array.isArray(msg.steps) ? msg.steps.map((x) => ({ id: x.id, text: x.text, state: x.state })) : [];
+            s.notes = Array.isArray(msg.notes) ? msg.notes.slice() : [];
+            s.answer = typeof msg.answer === 'string' ? msg.answer : '';
+            s.attempt = null;
+            break;
+          case 'turn_status':
+            s.status = { text: msg.text || '', step: msg.step || 0, elapsed: msg.elapsed || 0 };
+            break;
+          case 'turn_step': {
+            const step = { id: msg.id, text: msg.text || '', state: msg.state };
+            const i = s.steps.findIndex((x) => x.id === msg.id);
+            s.steps = i < 0 ? [...s.steps, step] : s.steps.map((x, j) => (j === i ? step : x));
+            break;
+          }
+          case 'turn_note':
+            s.notes = [...s.notes, msg.text || ''];
+            break;
+          case 'turn_answer':
+            if (s.attempt === null) s.attempt = msg.attempt;
+            if (msg.attempt < s.attempt) return state; // a withdrawn attempt's late text
+            if (msg.attempt > s.attempt) { s.attempt = msg.attempt; s.answer = ''; }
+            s.answer += msg.text || '';
+            break;
+          case 'turn_answer_reset':
+            s.answer = '';
+            s.attempt = Math.max(s.attempt || 0, (msg.attempt || 0) + 1);
+            break;
+          default:
+            return state;
+        }
+        return s;
+      }
+
+      // Where a message goes while a live view may be on screen (pure; turn-view.test.ts).
+      // liveTurn = the view's turn or null, running = it hasn't finished. Returns:
+      // 'apply' (to the view), 'start' (a new view first), 'finish' (the view's reply),
+      // 'plain' (today's handling) or 'ignore'. While a turn runs, another turn's events
+      // don't take it over; only a snapshot (a rejoin) may replace it.
+      function turnRoute(liveTurn, running, msg) {
+        if (msg.type === 'response' || msg.type === 'error') {
+          if (!running) return 'plain';
+          return msg.type === 'error' || !msg.turn || msg.turn === liveTurn ? 'finish' : 'ignore';
+        }
+        if (liveTurn !== null && msg.turn === liveTurn) return 'apply';
+        return running && msg.type !== 'turn_snapshot' ? 'ignore' : 'start';
+      }
       let activeTasks = new Map(); // taskId -> { name, type, progress, phase }
       let inboxItems = new Map();  // intentId -> wire item (status "pending" only)
+      const turnRunning = () => waiting || icon.classList.contains('thinking');
+      // A background research's round, on the card only while no turn uses it and it isn't
+      // holding something the owner still has to read (a lost-reply notice). A research that
+      // fails before the task drawer lists it gets no end event, so the card also hides itself.
+      let researchStatusTimer = null;
+      function showResearchStatus(text) {
+        if (!text || turnRunning()) return;
+        if (progress.classList.contains('visible') && !progress.querySelector('.research-status')) return;
+        progress.innerHTML = `<div class="progress-card research-status"><span class="progress-label">${esc(text)}</span><div class="progress-dots"><span></span><span></span><span></span></div></div>`;
+        progress.classList.add('visible');
+        clearTimeout(researchStatusTimer);
+        researchStatusTimer = setTimeout(clearResearchStatus, 60000);
+      }
+      // Clears the card only if it still holds a research's status.
+      function clearResearchStatus() {
+        if (turnRunning() || !progress.querySelector('.research-status')) return;
+        progress.classList.remove('visible');
+        progress.innerHTML = '';
+      }
 
       // ── Screen Reader Announcement ──
       function announceToSR(text) {
@@ -2876,6 +3105,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (!waiting || !ws || ws.readyState !== 1) return;
         ws.send(JSON.stringify({ type: 'stop', chat: chatId }));
         progress.textContent = 'Stopping…';
+        if (live && !live.done) { live.stopping = true; renderLive(); }
       }
       stopBtn.addEventListener('click', stopTask);
       document.addEventListener('keydown', (e) => {
@@ -2883,10 +3113,200 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       });
 
       function setAgentBusy(busy) {
+        // Announce only on the way in: thinking and liveStart both set it for one turn.
+        const was = replyText.getAttribute('aria-busy') === 'true';
         stopBtn.hidden = !busy;
-        replyBox.setAttribute('aria-busy', busy ? 'true' : 'false');
-        if (busy) announceToSR('Bhai is processing your request');
+        replyText.setAttribute('aria-busy', busy ? 'true' : 'false');
+        if (busy && !was) announceToSR('Bhai is processing your request');
       }
+
+      // ── Live turn (turn_* from the bot): the live line, its Notes/Steps panel, the typed answer ──
+      // Old bots send no turn_*, and then none of this runs. The view lives in #reply-text, so
+      // keepTurn() files it with its turn in #reply-history ("Worked for…" still opens the panel).
+      const PANEL_KEY = 'bhai.turnPanelOpen';
+      function panelPref() { try { return localStorage.getItem(PANEL_KEY) === '1'; } catch { return false; } }
+      function savePanelPref(open) { try { localStorage.setItem(PANEL_KEY, open ? '1' : '0'); } catch { /* storage off */ } }
+      const plainStatus = (t) => String(t || '').replace(/^[\p{Extended_Pictographic}\u200d\ufe0f\s]+/u, '');
+      // A turn quicker than this shows no live line, mood or ripple and leaves no "Worked for" line.
+      const SHOW_LIVE_AFTER_MS = 15000;
+      // { state (turnView), el, start, statusAt, fallback, shown, frame, tick, stopping, quiet, done, boxUp }
+      let live = null;
+
+      function liveStart(turn, text) {
+        if (live) { cancelAnimationFrame(live.frame); clearInterval(live.tick); }
+        replyArriving('Message from Bhai'); // once per turn; the final response won't call it again
+        const root = document.createElement('div');
+        const open = panelPref();
+        root.className = open ? 'turn-view quiet open' : 'turn-view quiet';
+        root.innerHTML = '<button type="button" class="turn-live" aria-expanded="false" title="Show what Bhai is doing">'
+          + '<span class="turn-dot" aria-hidden="true"></span><span class="turn-now"></span>'
+          + '<span class="turn-meta"><span class="turn-count"></span><span class="turn-chev" aria-hidden="true">▾</span></span></button>'
+          + '<div class="turn-bar" aria-hidden="true"><i></i></div>'
+          + '<div class="turn-panel"><div><div class="turn-inner">'
+          + '<div class="turn-empty">Nothing to show yet.</div>'
+          + '<div class="turn-notes-wrap" hidden><div class="turn-lbl">Notes</div><div class="turn-notes"></div></div>'
+          + '<div class="turn-steps-wrap" hidden><div class="turn-lbl">Steps</div><div class="turn-steps"></div></div>'
+          + '</div></div></div>';
+        const answer = document.createElement('div');
+        answer.className = 'turn-answer';
+        replyText.replaceChildren(root, answer);
+        const q = (sel) => root.querySelector(sel);
+        live = {
+          state: { turn, seq: 0, status: null, steps: [], notes: [], answer: '', attempt: 0, open },
+          el: { root, answer, now: q('.turn-now'), count: q('.turn-count'), empty: q('.turn-empty'), notes: q('.turn-notes'), steps: q('.turn-steps') },
+          start: Date.now(), statusAt: 0, fallback: plainStatus(text) || 'Thinking…', shown: '', stepsShown: null, frame: 0, tick: 0, stopping: false, quiet: true, done: false,
+          boxUp: replyBox.classList.contains('visible'), // the box was already up when the turn began
+        };
+        setPanelOpen(root, open);
+        live.tick = setInterval(liveCount, 1000);
+        icon.classList.add('thinking', 'quiet');
+        setAgentBusy(true);
+        waiting = true;
+        input.disabled = true;
+        progress.classList.remove('visible');
+        progress.innerHTML = '';
+        renderLive();
+      }
+
+      // The reply box comes up with the first answer text, or with the live line.
+      function showLiveBox() {
+        if (replyBox.classList.contains('visible')) return;
+        replyBox.classList.add('visible');
+        replyBox.scrollTop = Math.max(0, replyText.offsetTop - 16);
+      }
+
+      // Bhai's face for where the turn is now.
+      function liveMood() {
+        const running = live.state.steps.filter((x) => x.state === 'running').pop();
+        return live.state.answer ? 'typing' : running ? moodFromProgress(running.text) : 'thinking';
+      }
+
+      // The turn ran long: its line shows with everything it has by now.
+      function liveReveal() {
+        live.quiet = false;
+        live.el.root.classList.remove('quiet');
+        icon.classList.remove('quiet');
+        setMood(liveMood());
+        showLiveBox();
+      }
+
+      function flatLine(btn) {
+        btn.disabled = true;
+        btn.removeAttribute('aria-expanded');
+        btn.removeAttribute('title');
+      }
+
+      function setPanelOpen(root, open) {
+        root.classList.toggle('open', open);
+        root.querySelector('.turn-live').setAttribute('aria-expanded', open ? 'true' : 'false');
+        root.querySelector('.turn-panel').setAttribute('aria-hidden', open ? 'false' : 'true');
+      }
+      // One handler for the live view and every finished one kept in the history.
+      replyBox.addEventListener('click', (e) => {
+        const btn = e.target.closest('.turn-live');
+        if (!btn) return;
+        const root = btn.parentElement;
+        const open = !root.classList.contains('open');
+        setPanelOpen(root, open);
+        savePanelPref(open);
+        if (live && root === live.el.root) live.state = { ...live.state, open };
+      });
+
+      // Anything behind the live line yet: a step, or a note with words in it.
+      function turnHasDetail(s) {
+        return s.steps.length > 0 || !!s.notes.join('').trim();
+      }
+
+      // The line a finished turn leaves; a toggle only when there's something to open.
+      function workedLine(s, worked, start) {
+        const w = worked || { secs: Math.round((Date.now() - start) / 1000), steps: s.steps.length };
+        const steps = w.steps ? ` · ${w.steps} step${w.steps === 1 ? '' : 's'}` : '';
+        return { text: `Worked for ${w.secs}s${steps}`, toggle: turnHasDetail(s) };
+      }
+
+      function liveCount() {
+        if (!live || live.done) return;
+        const s = live.state.status;
+        const secs = s ? s.elapsed + (Date.now() - live.statusAt) / 1000 : (Date.now() - live.start) / 1000;
+        if (live.quiet && secs * 1000 >= SHOW_LIVE_AFTER_MS) liveReveal();
+        live.el.count.textContent = (s && s.step > 0 ? `step ${s.step} · ` : '') + `${Math.floor(secs)}s`;
+      }
+
+      function renderLive() {
+        if (!live) return;
+        cancelAnimationFrame(live.frame);
+        live.frame = 0;
+        const s = live.state, el = live.el;
+        if (!live.done) {
+          el.now.textContent = live.stopping ? 'Stopping…' : s.status?.text || live.fallback;
+          liveCount();
+        }
+        const notes = s.notes.join('');
+        el.notes.parentElement.hidden = !notes.trim();
+        if (el.notes.textContent !== notes) { el.notes.textContent = notes; el.notes.scrollTop = el.notes.scrollHeight; }
+        if (s.steps !== live.stepsShown) { // only on change: a rebuild restarts the running step's pulse
+          live.stepsShown = s.steps;
+          el.steps.parentElement.hidden = !s.steps.length;
+          el.steps.innerHTML = s.steps.map((x) => `<div class="turn-step ${esc(String(x.state))}">${esc(String(x.text))}</div>`).join('');
+        }
+        el.empty.hidden = turnHasDetail(s);
+        if (!live.done && s.answer !== live.shown) {
+          live.shown = s.answer;
+          el.answer.innerHTML = s.answer ? `${renderStreamingMd(s.answer)}<span class="turn-caret" aria-hidden="true"></span>` : '';
+          if (s.answer) showLiveBox();
+          // A retry withdrew a quiet turn's words: the box goes back to how the turn found it
+          // instead of standing empty until the new words (or the 15 s line) bring it back.
+          else if (live.quiet && !live.boxUp) replyBox.classList.remove('visible');
+        }
+      }
+
+      function onTurnEvent(msg) {
+        const route = turnRoute(live ? live.state.turn : null, liveRunning(), msg);
+        if (route === 'ignore') return; // a stray event of another turn
+        if (route === 'start') liveStart(msg.turn);
+        if (live.done) return; // the turn already ended here
+        const prev = live.state;
+        live.state = turnView(prev, msg);
+        if (live.state === prev) return;
+        if (msg.type === 'turn_status' || (msg.type === 'turn_snapshot' && msg.status)) live.statusAt = Date.now();
+        if (live.quiet) liveCount(); // a rejoin already past SHOW_LIVE_AFTER_MS shows the line at once
+        // Once the line shows, Bhai's face follows the work: thinking on notes, looking/working on
+        // steps, typing on the answer. A quick turn leaves the face as it is.
+        if (!live.quiet) {
+          if (msg.type === 'turn_note') setMood('thinking');
+          else if (msg.type === 'turn_answer') setMood('typing');
+          else if (msg.type === 'turn_step' && msg.state === 'running') setMood(moodFromProgress(msg.text));
+          else if (msg.type === 'turn_step' && msg.state === 'done' && window.BhaiMascot) window.BhaiMascot.react(icon, 'nod');
+          else if (msg.type === 'turn_snapshot') setMood(liveMood());
+        }
+        // At most one render per frame, however fast the deltas come.
+        if (!live.frame) live.frame = requestAnimationFrame(renderLive);
+      }
+
+      // The turn ended: the live line becomes "Worked for {N}s · {K} steps ▾" (just "Worked for
+      // {N}s", not a toggle, when there's nothing behind it); a quick turn whose line never showed
+      // leaves just its reply. Returns the element the reply goes into.
+      function liveFinish(worked) {
+        renderLive();
+        clearInterval(live.tick);
+        live.done = true;
+        const { root, now, count, answer } = live.el;
+        icon.classList.remove('quiet');
+        if (live.quiet) {
+          root.remove();
+          answer.querySelectorAll('.turn-caret').forEach((c) => c.remove());
+          return answer;
+        }
+        const line = workedLine(live.state, worked, live.start);
+        root.classList.add('done');
+        setPanelOpen(root, false);
+        now.textContent = line.text;
+        count.textContent = '';
+        if (!line.toggle) flatLine(root.querySelector('.turn-live'));
+        answer.querySelectorAll('.turn-caret').forEach((c) => c.remove());
+        return answer;
+      }
+      const liveRunning = () => !!live && !live.done;
 
       // ── Task Drawer ──
       taskDrawerToggle.addEventListener('click', () => {
@@ -3056,20 +3476,27 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         progress.innerHTML = '';
       }
 
+      function localToken() {
+        const placeholder = window.__BHAI_LOCAL_TOKEN__;
+        return (placeholder && placeholder.indexOf('%%') === -1) ? placeholder : (window.__bhaiLocalToken || '');
+      }
+      // The file picker's /api/browse and /api/file refuse requests without the token.
+      function authFetch(url) {
+        const tok = localToken();
+        return fetch(url, tok ? { headers: { Authorization: `Bearer ${tok}` } } : {});
+      }
+
       function connect() {
         // Authenticate the WS handshake with the server-injected loopback token.
         // The server rejects token-less connections (4001), which previously left
         // the overlay connected-but-mute. overlay-chat.ts injects the token two
-        // ways: the %%ATLAS_LOCAL_TOKEN%% placeholder (→ window.__ATLAS_LOCAL_TOKEN__)
-        // and window.__atlasLocalToken. Prefer either; fall back to token-less in
+        // ways: the %%BHAI_LOCAL_TOKEN%% placeholder (→ window.__BHAI_LOCAL_TOKEN__)
+        // and window.__bhaiLocalToken. Prefer either; fall back to token-less in
         // dev so the failure mode is visible, not silent.
-        const _placeholder = window.__ATLAS_LOCAL_TOKEN__;
-        const _tok = (_placeholder && _placeholder.indexOf('%%') === -1)
-          ? _placeholder
-          : (window.__atlasLocalToken || '');
+        const _tok = localToken();
         const qs = _tok ? `?localToken=${encodeURIComponent(_tok)}` : '';
         ws = new WebSocket(`ws://${location.host}${qs}`);
-        window._atlasWS = ws; // Expose for Electron IPC (live voice shortcut)
+        window._bhaiWS = ws; // Expose for Electron IPC (live voice shortcut)
         ws.onopen = () => {
           connRefused = false; clearConnNotice(); blobs.forEach(b => b.classList.add('on')); grabFocus();
           // Name this chat on the new socket, so a reply to a turn that started before a
@@ -3126,6 +3553,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const tid = msg.taskId || msg.id;
           if (tid) {
             const taskName = (activeTasks.get(tid) || {}).name || 'Task';
+            // A stopped or failed research gets no research_complete: its last status goes here.
+            if ((activeTasks.get(tid) || {}).type === 'research') clearResearchStatus();
             activeTasks.delete(tid);
             updateTaskDrawer();
             announceToSR(msg.type === 'task_complete' ? `${taskName} completed` : `${taskName} cancelled`);
@@ -3187,15 +3616,20 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
         if (msg.type === 'thinking') {
           icon.classList.add('thinking');
-          setMood('thinking');
+          if (!msg.turn) setMood('thinking'); // a live turn's face follows its line
           setAgentBusy(true);
           replyBox.classList.remove('visible');
           progress.classList.remove('visible');
           progress.innerHTML = '';
           contract.textContent = ''; // a new turn: the last turn's contract no longer applies
           clearInteractive();
+          if (msg.turn) liveStart(msg.turn, msg.text); // a bot that streams: the live line shows once the turn runs long
+        }
+        else if (typeof msg.type === 'string' && msg.type.startsWith('turn_')) {
+          onTurnEvent(msg);
         }
         else if (msg.type === 'thinking_content') {
+          if (liveRunning()) return; // the live view's Notes carry this now
           // Live thinking display — show model reasoning as it arrives
           const thinkingText = (msg.text || '').trim();
           if (thinkingText) {
@@ -3208,7 +3642,16 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           // Kept for the whole turn (cleared when the next one starts), unlike the progress card.
           contract.textContent = msg.text || '';
         }
+        else if (msg.type === 'research_status') {
+          showResearchStatus(msg.text);
+        }
         else if (msg.type === 'progress') {
+          // During a live turn its line says what's happening; a progress line only fills in
+          // before the first status, and background research never takes it over.
+          if (liveRunning()) {
+            if (!msg.background) { live.fallback = plainStatus(msg.text) || live.fallback; renderLive(); }
+            return;
+          }
           if (waiting || icon.classList.contains('thinking')) setMood(moodFromProgress(msg.text));
           // Render as enhanced progress card
           const progressIcon = extractProgressIcon(msg.text);
@@ -3217,18 +3660,23 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           progress.classList.add('visible');
         }
         else if (msg.type === 'response' || msg.type === 'error') {
+          const route = turnRoute(live ? live.state.turn : null, liveRunning(), msg);
+          if (route === 'ignore') return; // another turn's reply: the running view stays as it is
           icon.classList.remove('thinking');
           setMood(msg.type === 'error' ? 'oops' : 'happy', msg.type === 'error' ? 3200 : 1600);
           setAgentBusy(false);
           progress.classList.remove('visible');
           progress.innerHTML = '';
 
-          if (msg.newChat) chatId = newChatId(); // "/new": later messages file under a fresh chat
-          const rawText = msg.text || '(no response)';
+          if (msg.newChat) { chatId = newChatId(); replyHistory.innerHTML = ''; } // "/new": later messages file under a fresh chat
+          // The live turn's reply (errors carry no turn): it lands under its "Worked for…" line.
+          const streamed = route === 'finish';
+          if (!streamed) replyArriving('Message from Bhai');
+          const rawText = msg.text || (Array.isArray(msg.images) && msg.images.length ? '' : '(no response)'); // an image-only reply
           console.log('[OVERLAY] Response text length:', rawText.length, 'preview:', rawText.substring(0, 100));
           const renderedText = msg.type === 'error' ? `⚠️ ${esc(rawText)}` : renderMd(rawText);
           console.log('[OVERLAY] Rendered HTML length:', renderedText.length);
-          replyText.innerHTML = renderedText;
+          (streamed ? liveFinish(msg.worked) : replyText).innerHTML = renderedText;
           // Only the data:image receipt overlay-chat builds; never a navigable URL.
           if (typeof msg.receipt === 'string' && msg.receipt.startsWith('data:image/')) {
             const receiptImg = document.createElement('img');
@@ -3236,10 +3684,15 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             receiptImg.alt = 'Screen after the task';
             replyText.appendChild(receiptImg);
           }
-          replyBox.classList.remove('visible');
-          replyBox.offsetHeight;
+          const grid = imageGrid(msg.images);
+          if (grid) replyText.appendChild(grid);
+          if (!streamed) { // a streamed reply's box is already up: no second spring
+            replyBox.classList.remove('visible');
+            replyBox.offsetHeight;
+          }
           replyBox.classList.add('visible');
-          input.value = '';
+          replyBox.scrollTop = Math.max(0, replyText.offsetTop - 16); // the new reply, not the turns above it
+          if (msg.type !== 'error') input.value = ''; // after an error the prompt stays: Enter retries it
           input.disabled = false;
           waiting = false;
           announceToSR(msg.type === 'error' ? 'Error received from Bhai' : 'Response received from Bhai');
@@ -3262,6 +3715,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           // Reconnected while waiting, and no turn is running any more: its reply was lost.
           // Unlock instead of showing "thinking" forever.
           if (waiting && !msg.busy) {
+            if (liveRunning()) liveFinish(null);
             icon.classList.remove('thinking');
             setMood('idle');
             setAgentBusy(false);
@@ -3275,6 +3729,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           }
         }
         else if (msg.type === 'silent') {
+          if (liveRunning()) { liveFinish(null); replyText.innerHTML = ''; } // no reply: nothing to keep
           icon.classList.remove('thinking');
           setMood('idle');
           setAgentBusy(false);
@@ -3285,22 +3740,36 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           input.value = '';
           input.disabled = false;
           waiting = false;
+          turnKept = false; // no reply came; the next one starts its own turn
           grabFocus();
         }
         else if (msg.type === 'image') {
-          icon.classList.remove('thinking');
+          // An image file sent to this channel (send_file, a scheduled task). A running turn keeps its view.
+          const grid = imageGrid(msg.images);
+          if (!grid) return;
+          if (liveRunning()) { replyText.appendChild(grid); return; }
           setMood('happy', 1600);
-          progress.classList.remove('visible');
-          progress.innerHTML = '';
-          let imgHtml = `<img src="${esc(msg.url)}" alt="Generated image" />`;
-          if (msg.caption) imgHtml += `<div class="img-caption">${esc(msg.caption)}</div>`;
-          replyText.innerHTML = imgHtml;
+          replyArriving('Image from Bhai');
+          replyText.innerHTML = msg.text ? `<div class="img-caption">${esc(msg.text)}</div>` : '';
+          replyText.appendChild(grid);
           replyBox.classList.remove('visible');
           replyBox.offsetHeight;
           replyBox.classList.add('visible');
         }
+        else if (msg.type === 'saved_image') {
+          const pending = savingImages.get(msg.id);
+          savingImages.delete(msg.id);
+          if (!pending) return;
+          // Not saved (a file outside Bhai Files, or moved since): the preview downloads instead, as it used to.
+          if (!msg.ok) pending.fallback();
+          pending.btn.textContent = msg.ok ? 'Saved' : 'Downloaded preview';
+          pending.btn.title = msg.ok ? `Saved to Bhai Files › Downloads as ${msg.name}` : 'Download image';
+          setTimeout(() => { pending.btn.textContent = 'Download'; }, 1800);
+        }
         else if (msg.type === 'placeholder') {
-          input.placeholder = msg.text || 'Tell Bhai what needs sorting…';
+          serverPlaceholder = msg.text || 'Tell Bhai what needs sorting…';
+          clearTimeout(placeholderTimer);
+          input.placeholder = serverPlaceholder;
         }
         else if (msg.type === 'notification') {
           if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
@@ -3322,18 +3791,20 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const rid = msg.taskId || msg.id || 'research';
           activeTasks.delete(rid);
           updateTaskDrawer();
+          clearResearchStatus();
           announceToSR('Deep research completed');
-          // Auto-show overlay window when research completes
-          if (window.atlasOverlay && window.atlasOverlay.showWindow) {
-            window.atlasOverlay.showWindow();
-          }
-          // Also send a native notification
-          if (window.atlasOverlay && window.atlasOverlay.notify) {
-            window.atlasOverlay.notify('Research Complete', msg.text || 'Your deep research has finished.');
-          }
+          // The bot's native notification says it's done; clicking it opens this window.
           // Show the result in the overlay as a persistent notification (no auto-dismiss)
           if (notifTimer) { clearTimeout(notifTimer); notifTimer = null; }
           notifText.innerHTML = renderMd(msg.text);
+          if (msg.reportFile && window.bhaiOverlay && window.bhaiOverlay.openReport) {
+            const open = document.createElement('button');
+            open.className = 'notif-action-btn';
+            open.style.marginTop = '8px';
+            open.textContent = 'Open full report';
+            open.onclick = () => window.bhaiOverlay.openReport(msg.reportFile);
+            notifText.appendChild(open);
+          }
           notifBox.classList.remove('visible', 'dismissing');
           notifBox.offsetHeight;
           notifBox.classList.add('visible');
@@ -3343,12 +3814,14 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           micBtn.classList.remove('listening');
           isListening = false;
           if (msg.text) {
-            input.placeholder = 'Tell Bhai what needs sorting…';
+            clearTimeout(placeholderTimer);
+            input.placeholder = serverPlaceholder;
             input.value = msg.text;
             send();
           } else {
-            input.placeholder = 'Analyzing audio…';
+            showPlaceholder('Analyzing audio…');
             icon.classList.add('thinking');
+            keepTurn('🎤 Voice message');
             waiting = true;
             input.disabled = true;
           }
@@ -3356,15 +3829,15 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         else if (msg.type === 'voice_status') {
           if (msg.status === 'listening') {
             micBtn.classList.add('listening');
-            input.placeholder = 'Listening…';
+            showPlaceholder('Listening…');
           } else if (msg.status === 'processing') {
             micBtn.classList.remove('listening');
-            input.placeholder = 'Analyzing audio…';
+            showPlaceholder('Analyzing audio…');
           } else if (msg.status === 'error') {
             micBtn.classList.remove('listening');
             isListening = false;
-            input.placeholder = msg.error || 'Voice error';
-            setTimeout(() => { input.placeholder = 'Tell Bhai what needs sorting…'; }, 2000);
+            showPlaceholder(msg.error || 'Voice error');
+            setTimeout(() => { input.placeholder = serverPlaceholder; }, 2000);
           }
         }
         // ── Live Voice Mode status ──
@@ -3397,11 +3870,19 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
             const timeEl = card.querySelector('#live-time');
             const dateEl = card.querySelector('#live-date');
+            // Another place's time ("what time is it in Tokyo"): {"tz": "Asia/Tokyo", "label": "Tokyo"}.
+            // An unknown zone falls back to this Mac's time rather than throwing every second.
+            let zone = {};
+            if (typeof w.tz === 'string') {
+              try { new Intl.DateTimeFormat('en-US', { timeZone: w.tz }); zone = { timeZone: w.tz }; } catch { /* local */ }
+            }
+            const place = zone.timeZone && typeof w.label === 'string' ? w.label.slice(0, 40) : '';
 
             const updateClock = () => {
               const now = new Date();
-              timeEl.textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
-              dateEl.textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+              timeEl.textContent = now.toLocaleTimeString('en-US', { ...zone, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+              const date = now.toLocaleDateString('en-US', { ...zone, weekday: 'long', month: 'long', day: 'numeric' });
+              dateEl.textContent = place ? `${place} · ${date}` : date;
             };
 
             updateClock();
@@ -3412,6 +3893,143 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       }
 
       // ── Quick Action Buttons ──
+      // ── Images Bhai made: thumbnails under the reply, a lightbox on click ──
+      // Only data:image/ URLs (thumbnails overlay-chat builds); never a navigable URL.
+      function imageGrid(images) {
+        const ok = (Array.isArray(images) ? images : []).filter((im) => im && typeof im.url === 'string' && im.url.startsWith('data:image/'));
+        if (!ok.length) return null;
+        const grid = document.createElement('div');
+        grid.className = ok.length > 1 ? 'img-grid multi' : 'img-grid';
+        ok.forEach((im, i) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'img-thumb';
+          btn.setAttribute('aria-label', `Open image ${i + 1} of ${ok.length}`);
+          const img = document.createElement('img');
+          img.alt = typeof im.prompt === 'string' && im.prompt ? im.prompt : 'Image from Bhai';
+          img.onload = () => img.classList.add('loaded');
+          img.src = im.url;
+          btn.appendChild(img);
+          btn.onclick = () => openLightbox(ok, i);
+          grid.appendChild(btn);
+        });
+        return grid;
+      }
+
+      async function copyImage(url) {
+        const img = new Image();
+        img.src = url;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      }
+
+      const SHOW_IN_FOLDER = /win/i.test(navigator.platform) ? 'Show in Explorer' : /mac/i.test(navigator.platform) ? 'Show in Finder' : 'Show in folder';
+      const savingImages = new Map(); // save_image id → the Download waiting for the bot's saved_image
+      let saveImageSeq = 0;
+      let closeLightbox = () => {};
+      function openLightbox(images, start) {
+        closeLightbox();
+        const back = document.activeElement;
+        const box = document.createElement('div');
+        box.className = 'img-lightbox';
+        box.setAttribute('role', 'dialog');
+        box.setAttribute('aria-modal', 'true');
+        box.setAttribute('aria-label', 'Image viewer');
+        const img = document.createElement('img');
+        img.className = 'lb-img';
+        const bar = document.createElement('div');
+        bar.className = 'lb-bar';
+        box.append(img, bar);
+        let i = start;
+        const button = (label, aria, fn) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'lb-btn';
+          b.textContent = label;
+          b.setAttribute('aria-label', aria);
+          b.onclick = () => fn(b);
+          return b;
+        };
+        const close = button('×', 'Close', () => closeLightbox());
+        close.classList.add('lb-close');
+        box.append(close);
+        function show() {
+          const im = images[i];
+          img.src = im.url;
+          img.alt = im.prompt || 'Image from Bhai';
+          bar.replaceChildren();
+          if (images.length > 1) {
+            const n = document.createElement('span');
+            n.className = 'lb-count';
+            n.textContent = `${i + 1} / ${images.length}`;
+            bar.append(n);
+          }
+          // The owner's saved file (im.path): the bot copies the original into Downloads. Otherwise the thumbnail.
+          const file = typeof im.path === 'string' && im.path ? im.path : null;
+          const downloadPreview = () => {
+            const dl = document.createElement('a');
+            dl.href = im.url;
+            dl.download = String(im.name || 'bhai-image').replace(/\.\w+$/, '') + (im.url.startsWith('data:image/png') ? '.png' : '.jpg');
+            dl.click();
+          };
+          bar.append(button('Download', 'Download image', (b) => {
+            if (file && ws && ws.readyState === 1) {
+              const id = ++saveImageSeq;
+              savingImages.set(id, { btn: b, fallback: downloadPreview });
+              ws.send(JSON.stringify({ type: 'save_image', path: file, id }));
+            } else downloadPreview();
+          }));
+          bar.append(button('Copy', 'Copy image', async (b) => {
+            try { await copyImage(im.url); b.textContent = 'Copied'; } catch { b.textContent = "Couldn't copy"; }
+            setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+          }));
+          if (file) {
+            bar.append(button(SHOW_IN_FOLDER, SHOW_IN_FOLDER, () => {
+              if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'reveal_file', path: file }));
+            }));
+          }
+          if (typeof im.before === 'string' && im.before.startsWith('data:image/')) {
+            bar.append(button('Compare', 'Show the original', (b) => {
+              const on = b.getAttribute('aria-pressed') !== 'true';
+              b.setAttribute('aria-pressed', String(on));
+              b.textContent = on ? 'Original' : 'Compare';
+              img.src = on ? im.before : im.url;
+            }));
+          }
+        }
+        const onKey = (e) => {
+          if (e.key === 'Escape') closeLightbox();
+          else if (e.key === 'ArrowRight' && images.length > 1) { i = (i + 1) % images.length; show(); }
+          else if (e.key === 'ArrowLeft' && images.length > 1) { i = (i - 1 + images.length) % images.length; show(); }
+          else if (e.key === 'Tab') {
+            // Focus stays in the viewer while it's open.
+            const f = [...box.querySelectorAll('button, a[href]')];
+            const at = f.indexOf(document.activeElement);
+            f[e.shiftKey ? (at <= 0 ? f.length - 1 : at - 1) : (at + 1) % f.length].focus();
+          }
+          else return;
+          e.preventDefault();
+          e.stopImmediatePropagation(); // Esc here closes the viewer, never stops the task
+        };
+        closeLightbox = () => {
+          window.removeEventListener('keydown', onKey, true);
+          box.remove();
+          closeLightbox = () => {};
+          if (back && back.focus) back.focus();
+        };
+        box.addEventListener('click', (e) => { if (e.target === box) closeLightbox(); });
+        window.addEventListener('keydown', onKey, true);
+        show();
+        document.body.appendChild(box);
+        const first = bar.querySelector('.lb-btn');
+        if (first) first.focus();
+      }
+
       function renderQuickActions(actions) {
         quickActionsBox.innerHTML = '';
         const DANGER_WORDS = ['delete', 'remove', 'destroy', 'drop', 'erase', 'nuke', 'wipe', 'uninstall'];
@@ -3432,6 +4050,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
             if (!ws || ws.readyState !== 1 || waiting) return;
             waiting = true;
             input.disabled = true;
+            keepTurn(label);
             replyBox.classList.remove('visible');
             clearInteractive();
             ws.send(JSON.stringify({ type: 'quick_action', text: typeof a === 'string' ? a : a.action, chat: chatId }));
@@ -3454,9 +4073,13 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           card.innerHTML = `<span class="card-icon">${icon}</span><span class="card-label" title="${esc(filePath)}">${esc(basename)}</span>`;
           card.onclick = (e) => {
             e.preventDefault();
-            if (ws && ws.readyState === 1) {
-              ws.send(JSON.stringify({ type: 'chat', text: `open ${filePath}`, chat: chatId }));
-            }
+            if (!ws || ws.readyState !== 1 || waiting) return;
+            waiting = true;
+            input.disabled = true;
+            keepTurn(`open ${basename}`);
+            replyBox.classList.remove('visible');
+            clearInteractive();
+            ws.send(JSON.stringify({ type: 'chat', text: `open ${filePath}`, chat: chatId }));
           };
           cardsBox.appendChild(card);
         });
@@ -3506,12 +4129,16 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
       function renderMd(text) {
         let h = esc(text);
+        // Code is parked behind \0n\0 placeholders so the rules below never rewrite it.
+        const codes = [];
+        const park = (html) => `\u0000${codes.push(html) - 1}\u0000`;
         // Code blocks with copy button
         h = h.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, l, c) => {
           const code = c.trim();
           const id = 'cb' + Math.random().toString(36).substr(2, 6);
-          return `<div class="code-wrap"><button class="copy-btn" onclick="copyCode('${id}')">Copy</button><pre><code id="${id}">${code}</code></pre></div>`;
+          return park(`<div class="code-wrap"><button class="copy-btn" onclick="copyCode('${id}')">Copy</button><pre><code id="${id}">${code}</code></pre></div>`);
         });
+        h = h.replace(/`([^`\n]+)`/g, (_, c) => park(`<code>${c}</code>`));
         // Collapsible sections: <!--COLLAPSE:Title-->content<!--/COLLAPSE-->
         h = h.replace(/&lt;!--COLLAPSE:(.*?)--&gt;([\s\S]*?)&lt;!--\/COLLAPSE--&gt;/g, (_, title, content) => {
           const id = 'cl' + Math.random().toString(36).substr(2, 6);
@@ -3530,14 +4157,20 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           return `<div class="table-wrapper"><table class="md-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
         });
 
-        h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-        h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        h = h.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, '<em>$1</em>');
+        h = h.replace(/^#{1,4} (.+)$/gm, '<strong>$1</strong>');
+        h = h.replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, '<strong>$1</strong>');
+        h = h.replace(/(?<!\w)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\w)/g, '<em>$1</em>'); // "5 * 3 * 2" stays arithmetic
         // Only http(s) links — never javascript: or other schemes.
         h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => /^https?:\/\//i.test(url) ? `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:#818cf8">${label}</a>` : label);
         h = h.replace(/^[\s]*[*\-]\s+/gm, '• ');
         h = h.replace(/\n/g, '<br>');
-        return h;
+        return h.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[i]);
+      }
+
+      // renderMd for an answer still streaming in: an unclosed ``` fence stays a code block
+      // instead of flashing as plain text until its closing fence arrives.
+      function renderStreamingMd(text) {
+        return renderMd((text.match(/```/g) || []).length % 2 ? `${text}\n\`\`\`` : text);
       }
 
       function copyCode(id) {
@@ -3551,7 +4184,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
       // ── Copy Response ──
       function copyResponse() {
-        const text = replyText.textContent || replyText.innerText || '';
+        const answer = replyText.querySelector('.turn-answer') || replyText; // not the "Worked for…" line
+        const text = answer.textContent || answer.innerText || '';
         navigator.clipboard.writeText(text);
         const btn = document.getElementById('copy-response-btn');
         if (btn) { btn.textContent = '✓'; setTimeout(() => btn.textContent = '⧉', 1500); }
@@ -3596,13 +4230,13 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           ws.send(JSON.stringify({ type: 'voice_stop' }));
           isListening = false;
           micBtn.classList.remove('listening');
-          input.placeholder = 'Processing…';
+          showPlaceholder('Processing…');
         } else {
           ws.send(JSON.stringify({ type: 'voice_start', chat: chatId }));
           isListening = true;
           micBtn.classList.add('listening');
           input.value = '';
-          input.placeholder = 'Listening…';
+          showPlaceholder('Listening…');
         }
       });
 
@@ -3835,22 +4469,25 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       let allTools = [];
       let allSkills = [];
       let currentDir = '/';
-      let homeDir = '/';
+      let rootDir = '/'; // the workspace: the only folder the server lists and serves
+      let previewPath = null;
+      let previewUrl = null;
+      const atPickerRoot = () => currentDir === rootDir || currentDir === '/' || currentDir === '';
       let browseCache = {};
       let pickerItems = [];
       let pickerSelectedIdx = -1;
       let mentionChips = []; // [{ type, name, value }]
       let mentionTriggerPos = -1; // caret pos when @ was typed
 
-      // Fetch tools and home dir from server once
+      // Fetch tools and the picker's root folder from server once
       async function loadMentionData() {
         try {
-          const r = await fetch('/api/mentions');
+          const r = await authFetch('/api/mentions');
           const d = await r.json();
           allTools = d.tools || [];
           allSkills = d.skills || [];
-          homeDir = d.homeDir || '/';
-          currentDir = homeDir;
+          rootDir = d.rootDir || '/';
+          currentDir = rootDir;
         } catch { allTools = []; allSkills = []; }
       }
       loadMentionData();
@@ -3858,7 +4495,8 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
       async function browseDir(dir) {
         if (browseCache[dir]) return browseCache[dir];
         try {
-          const r = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}`);
+          const r = await authFetch(`/api/browse?dir=${encodeURIComponent(dir)}`);
+          if (!r.ok) return []; // don't cache a refusal
           const d = await r.json();
           browseCache[dir] = d.entries || [];
           return browseCache[dir];
@@ -3945,7 +4583,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         } else {
           // Files or Folders
           pickerPathBar.style.display = 'block';
-          pickerPathBar.textContent = `← ${currentDir === '/' || currentDir === '' ? 'Categories' : currentDir}`;
+          pickerPathBar.textContent = `← ${atPickerRoot() ? 'Categories' : currentDir}`;
           const entries = await browseDir(currentDir);
           const filtered = entries.filter(e => {
             if (activeTab === 'folders' && !e.isDir) return false;
@@ -4018,17 +4656,27 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const isVideo = ['mp4', 'webm', 'mov'].includes(ext);
           
           if (isImage || isVideo) {
-            const src = `/api/file?path=${encodeURIComponent(item.path)}`;
+            // An <img src> can't send the token, so the file comes through authFetch.
+            const path = item.path;
+            previewPath = path;
             pickerPreview.style.display = 'flex';
-            if (isVideo) {
-              pickerPreview.innerHTML = `<video src="${src}" autoplay loop muted style="max-width: 100%; max-height: 160px; border-radius: 8px;"></video>`;
-            } else {
-              pickerPreview.innerHTML = `<img src="${src}" style="max-width: 100%; max-height: 160px; border-radius: 8px; object-fit: contain;" />`;
-            }
+            pickerPreview.innerHTML = '';
+            authFetch(`/api/file?path=${encodeURIComponent(path)}`)
+              .then((r) => (r.ok ? r.blob() : null))
+              .then((blob) => {
+                if (!blob || previewPath !== path) return; // moved on meanwhile
+                if (previewUrl) URL.revokeObjectURL(previewUrl);
+                previewUrl = URL.createObjectURL(blob);
+                pickerPreview.innerHTML = isVideo
+                  ? `<video src="${previewUrl}" autoplay loop muted style="max-width: 100%; max-height: 160px; border-radius: 8px;"></video>`
+                  : `<img src="${previewUrl}" style="max-width: 100%; max-height: 160px; border-radius: 8px; object-fit: contain;" />`;
+              })
+              .catch(() => {});
             return;
           }
         }
-        
+
+        previewPath = null;
         pickerPreview.style.display = 'none';
         pickerPreview.innerHTML = '';
       }
@@ -4040,7 +4688,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         if (activeTab === 'categories') {
           activeTab = item.id;
           pickerSearch.value = '';
-          currentDir = homeDir;
+          currentDir = rootDir;
           pickerSelectedIdx = -1;
           renderPicker();
           pickerSearch.focus();
@@ -4149,7 +4797,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           renderPicker();
           return;
         }
-        if (currentDir === '/' || currentDir === '') {
+        if (atPickerRoot()) {
           activeTab = 'categories';
           pickerSearch.value = '';
           renderPicker();
@@ -4208,6 +4856,27 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         }
       });
 
+      // In-session scrollback: the reply on screen moves into #reply-history (last 10) when the next turn starts.
+      let lastAsked = '', turnKept = false;
+      function keepTurn(asked) {
+        if (replyText.childNodes.length) {
+          const turn = document.createElement('div');
+          turn.className = 'past-turn';
+          turn.innerHTML = `<div class="past-q">${esc(lastAsked)}</div>`;
+          turn.append(...replyText.childNodes);
+          replyHistory.appendChild(turn);
+          while (replyHistory.children.length > 10) replyHistory.firstElementChild.remove();
+        }
+        lastAsked = asked;
+        turnKept = true;
+      }
+      // A reply whose turn didn't start here (a pushed image, a voice turn) files the one on
+      // screen under its own question first, so the next keepTurn doesn't mislabel it.
+      function replyArriving(fallback) {
+        if (!turnKept) keepTurn(fallback);
+        turnKept = false;
+      }
+
       // Override send to include chip context
       function send() {
         const text = buildFullMessage();
@@ -4219,6 +4888,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
         announceToSR('Message sent, waiting for response');
         // Clear chips
         inputWrapper.querySelectorAll('.mention-chip').forEach(c => c.remove());
+        keepTurn(input.value.trim());
         replyBox.classList.remove('visible');
         progress.classList.remove('visible');
         progress.innerHTML = '';
@@ -4284,6 +4954,7 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
           const mimeType = file.type || 'application/octet-stream';
           waiting = true;
           input.disabled = true;
+          keepTurn(file.name);
           replyBox.classList.remove('visible');
           clearInteractive();
           ws.send(JSON.stringify({
@@ -4300,6 +4971,41 @@ window.BhaiMascot.setSprites({"hello":"data:image/png;base64,iVBORw0KGgoAAAANSUh
 
       connect();
       grabFocus();
+    })();
+  </script>
+  <script>
+    // The desktop app sizes its window to this page's content: report the
+    // bottom of the last shown section whenever something changes size (or a
+    // transition/animation ends), once per frame. Absolutely positioned
+    // popovers are ignored, so the window can shrink back.
+    (function () {
+      const bridge = window.bhaiOverlay;
+      const c = document.getElementById('container');
+      if (!bridge || !bridge.setHeight || !c || typeof ResizeObserver !== 'function') return;
+      let queued = false;
+      function report() {
+        queued = false;
+        // Layout bottom too, so a section springing in (scaled down) gets its
+        // full height at once instead of when its animation ends.
+        const top = c.getBoundingClientRect().top + c.clientTop;
+        let bottom = 0;
+        for (const k of c.children) {
+          if (getComputedStyle(k).display === 'none') continue;
+          bottom = Math.max(bottom, k.getBoundingClientRect().bottom);
+          if (k.offsetParent === c) bottom = Math.max(bottom, top + k.offsetTop + k.offsetHeight);
+        }
+        bridge.setHeight(Math.ceil(bottom));
+      }
+      function queue() {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(report);
+      }
+      const ro = new ResizeObserver(queue);
+      ro.observe(c);
+      for (const k of c.children) ro.observe(k);
+      c.addEventListener('transitionend', queue);
+      c.addEventListener('animationend', queue);
     })();
   </script>
 </body>

@@ -8,8 +8,8 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 // Hermetic: point the memory DB at a throwaway temp dir BEFORE importing sqlite
-// (its DATA_DIR const reads process.env.ATLAS_DATA_DIR at load).
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-recall-ranking-"));
+// (its DATA_DIR const reads process.env.BHAI_DATA_DIR at load).
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-recall-ranking-"));
 
 type SqliteModule = typeof import("./sqlite.js");
 let sqlite: SqliteModule;
@@ -145,5 +145,15 @@ describe("recall with non-Latin queries", () => {
         expect((await sqlite.recall("जन्मदिन कब है", 5)).map((m) => m.content)).toContain("माँ का जन्मदिन बारह मार्च को है");
         expect(await sqlite.recall("привет мир", 5)).toEqual([]);
         expect(await sqlite.recall("?!", 5)).toEqual([]);
+    });
+});
+
+describe("what never becomes a memory", () => {
+    it("a spoken card number or OTP is masked; a phone number stays", async () => {
+        await sqlite.remember("my card number is 4111 1111 1111 1111 and the otp is 482913", "voice", "", 9, "user");
+        await sqlite.remember("mom's phone is +91 98111 11111", "personal", "", 9, "user");
+        const all = JSON.stringify(sqlite.getRawDb()?.prepare("SELECT content FROM memories").all());
+        expect(all).not.toContain("4111 1111 1111 1111");
+        expect(all).toContain("+91 98111 11111");
     });
 });

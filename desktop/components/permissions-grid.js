@@ -63,8 +63,8 @@
 
     PermissionsGrid.prototype._setSkipped = function (key, skipped) {
         this._skipped[key] = !!skipped;
-        if (window.atlas && window.atlas.setupMarkPermissionSkipped) {
-            window.atlas.setupMarkPermissionSkipped(key, !!skipped).catch(function(){});
+        if (window.bhai && window.bhai.setupMarkPermissionSkipped) {
+            window.bhai.setupMarkPermissionSkipped(key, !!skipped).catch(function(){});
         }
         // Rebuild card for this key
         const card = this._cards[key];
@@ -99,8 +99,8 @@
         grant.className = "sp-btn"; grant.setAttribute("data-sp-grant", "");
         grant.textContent = "Grant";
         grant.addEventListener("click", function () {
-            if (window.atlas && window.atlas.setupRequestPermission) {
-                window.atlas.setupRequestPermission(key).catch(function(){});
+            if (window.bhai && window.bhai.setupRequestPermission) {
+                window.bhai.setupRequestPermission(key).catch(function(){});
             }
         });
         const skip = document.createElement("button");
@@ -153,9 +153,9 @@
     };
 
     PermissionsGrid.prototype._refresh = async function () {
-        if (!window.atlas || !window.atlas.setupPollPermissions) return;
+        if (!window.bhai || !window.bhai.setupPollPermissions) return;
         let next;
-        try { next = await window.atlas.setupPollPermissions(); } catch { return; }
+        try { next = await window.bhai.setupPollPermissions(); } catch { return; }
         if (!next) return;
         const prev = this._state;
         this._state = next;

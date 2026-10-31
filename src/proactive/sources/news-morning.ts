@@ -8,6 +8,7 @@ import type { LLMClient } from "../../llm.js";
 import * as native from "../../../native/index.js";
 import { fetchNews } from "./_shared/news-fetch.js";
 import { buildIntent } from "./_shared/build-intent.js";
+import { doneToday, markDoneToday } from "./_shared/daily-done.js";
 import { debugProactive } from "../kill-switches.js";
 
 const GATE_SEC = 3600;
@@ -19,6 +20,7 @@ export function makeNewsMorningSource(deps: {
     return {
         name: "news_morning",
         async collectIntents(ctx: SourceCtx): Promise<ProactiveIntent[]> {
+            if (doneToday("news_morning", ctx.now)) return [];
             const gate = native.sourceGateCheck("news_morning", GATE_SEC);
             if (!gate.mayRun) return [];
 
@@ -31,6 +33,7 @@ export function makeNewsMorningSource(deps: {
             }
             const { headlines } = newsResult;
             if (headlines.length === 0) return [];
+            markDoneToday("news_morning", ctx.now); // one news note a day: later fetches only dedup
 
             const dateStr = new Date(ctx.now).toISOString().slice(0, 10);
             const intent = await buildIntent({

@@ -9,9 +9,10 @@
 //       500 values in the vault.
 //
 //   npx tsx scripts/bench-protect.ts            # all
-//   ATLAS_NO_PROTECT_CACHE=true npx tsx …       # memo off (S3 kill switch)
+//   BHAI_NO_PROTECT_CACHE=true npx tsx …       # memo off (S3 kill switch)
 // Times are CPU time (process.cpuUsage), median of the runs.
 
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { protect, protectMessages } from "../src/security/pii-vault.js";
 import { sanitizeSecrets } from "../src/security/secrets-sanitizer.js";
 

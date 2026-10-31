@@ -14,7 +14,7 @@ import { createRequire as _bridgeCreateRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
-import { getDataDir, getScriptsDir } from "../../config/paths.js";
+import { getBhaiHome, getDataDir, getScriptsDir } from "../../config/paths.js";
 import { getOverlayLocalToken } from "../../overlay/overlay-chat.js";
 import { bhaiExtensionIds, isForeignExtensionOrigin } from "../../security/extension-origin.js";
 import { isBrowserPageLoad, isLoopbackHost, isWebOrigin } from "../../security/loopback.js";
@@ -52,12 +52,12 @@ try {
 
 const BRIDGE_PORT = 18800;
 const TOKEN_FILE = path.join(getDataDir(), "chrome-bridge-token.txt");
-const DISCOVERY_FILE = path.join(homedir(), ".atlas", "chrome-bridge.json");
+const DISCOVERY_FILE = path.join(getBhaiHome(), "chrome-bridge.json");
 // F10: local-only access token for CLI/native callers. Lives at 0o600 and
 // is required to call /discover-local. The chrome-extension /discover path
 // uses browser-set Origin instead (chrome-extension://...) which can't be
 // forged from a non-browser context.
-const LOCAL_TOKEN_FILE = path.join(homedir(), ".atlas", "data", "chrome-bridge-local-token");
+const LOCAL_TOKEN_FILE = path.join(getBhaiHome(), "data", "chrome-bridge-local-token");
 const AUTH_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 const OPERATION_TIMEOUTS: Record<string, number> = {
@@ -233,6 +233,19 @@ function writeDiscoveryFile(port: number): void {
     } catch (err) {
         console.warn("⚠️  Could not write discovery file:", (err as Error).message);
     }
+    removeLegacyDiscoveryFile();
+}
+
+// The pre-rename ~/.atlas/chrome-bridge.json is stale once the bridge writes under ~/.bhai. Delete it
+// only when it holds this bridge's token: the separate ATLAS app writes the same file.
+// ponytail: drop one release after the rename.
+export function removeLegacyDiscoveryFile(legacy = path.join(homedir(), ".atlas", "chrome-bridge.json")): void {
+    if (path.resolve(legacy) === path.resolve(DISCOVERY_FILE)) return;
+    try {
+        if (bridgeToken && JSON.parse(fs.readFileSync(legacy, "utf-8")).token === bridgeToken) fs.unlinkSync(legacy);
+    } catch {
+        /* absent, unreadable or not ours: leave it */
+    }
 }
 
 function removeDiscoveryFile(): void {
@@ -250,7 +263,7 @@ function removeDiscoveryFile(): void {
 // Once Bhai's extension has fetched its token over native messaging (scoped to this OS user)
 // and connected with it, /discover stops handing tokens to any local caller that asks.
 // Delete this file to go back to HTTP discovery.
-const NATIVE_OK_FILE = path.join(homedir(), ".atlas", "bridge-native-ok");
+const NATIVE_OK_FILE = path.join(getBhaiHome(), "bridge-native-ok");
 let nativeHostRegistered = false;
 export const discoverServesTokens = (): boolean => !(nativeHostRegistered && fs.existsSync(NATIVE_OK_FILE));
 
@@ -275,15 +288,32 @@ export function nativeHostLauncher(execPath: string, hostScript: string): string
     return `#!/bin/sh\n${ready.join(" && ")} || exit 1\nELECTRON_RUN_AS_NODE=1 exec ${q(execPath)} ${q(hostScript)}\n`;
 }
 
+const HOST_NAME = "com.bhai.bridge";
+// Extensions from before the rename still ask for com.atlas.bridge: register it too, same host.
+// ponytail: drop LEGACY_HOST_NAME one release after the rename.
+const LEGACY_HOST_NAME = "com.atlas.bridge";
+
+/**
+ * Whether the old-name manifest at `file` may be (over)written: only when there is none or it
+ * is Bhai's own (allows one of Bhai's extension IDs). The separate ATLAS app registers that name.
+ */
+export function mayWriteLegacyManifest(file: string, ids: Iterable<string>): boolean {
+    try {
+        const origins: unknown = JSON.parse(fs.readFileSync(file, "utf-8")).allowed_origins;
+        return Array.isArray(origins) && [...ids].some((id) => origins.includes(`chrome-extension://${id}/`));
+    } catch (err) {
+        return (err as NodeJS.ErrnoException).code === "ENOENT";
+    }
+}
+
 async function registerNativeMessagingHost(_port: number): Promise<void> {
     try {
         // Write the native host script next to the discovery file
-        const hostScriptPath = path.join(homedir(), ".atlas", "atlas-bridge-host.js");
+        const hostScriptPath = path.join(getBhaiHome(), "bhai-bridge-host.js");
         const hostScript = `#!/usr/bin/env node
 // Bhai Browser Bridge — Native Messaging Host
 // Reads the discovery file and returns config to the Chrome extension.
 const fs = require("fs");
-const path = require("path");
 
 function readMessage() {
     return new Promise((resolve) => {
@@ -312,7 +342,7 @@ function sendMessage(msg) {
 (async () => {
     await readMessage();
     try {
-        const discoveryPath = path.join(require("os").homedir(), ".atlas", "chrome-bridge.json");
+        const discoveryPath = ${JSON.stringify(DISCOVERY_FILE)};
         const config = JSON.parse(fs.readFileSync(discoveryPath, "utf-8"));
         sendMessage({ success: true, ...config });
     } catch (err) {
@@ -329,13 +359,13 @@ function sendMessage(msg) {
         if (!ids) return; // Chrome rejects wildcard origins, so without Bhai's ID there's nothing to register
         let hostPath = hostScriptPath;
         if (process.platform !== "win32") {
-            hostPath = path.join(homedir(), ".atlas", "atlas-bridge-host");
+            hostPath = path.join(getBhaiHome(), "bhai-bridge-host");
             fs.writeFileSync(hostPath, nativeHostLauncher(process.execPath, hostScriptPath), { mode: 0o755 });
         }
 
         // Write the native messaging host manifest
         const manifest = {
-            name: "com.atlas.bridge",
+            name: HOST_NAME,
             description: "Bhai Browser Bridge — auto-discovery for Chrome extension",
             path: hostPath,
             type: "stdio",
@@ -349,11 +379,8 @@ function sendMessage(msg) {
 
         if (platform === "win32") {
             // Windows: register via registry
-            const atlasDir = path.join(homedir(), ".atlas");
-            if (!fs.existsSync(atlasDir)) fs.mkdirSync(atlasDir, { recursive: true });
-
-            const manifestPath = path.join(atlasDir, "com.atlas.bridge.json");
-            fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+            const bhaiDir = getBhaiHome();
+            if (!fs.existsSync(bhaiDir)) fs.mkdirSync(bhaiDir, { recursive: true });
 
             try {
                 // winreg2 is ESM with named exports — there is no default export
@@ -362,15 +389,24 @@ function sendMessage(msg) {
                 // createAsync/setAsync) and separate Hive/RegType enums rather
                 // than statics on the class.
                 const { Registry, Hive, RegType } = await import("winreg2");
-                const browsers = [
-                    "SOFTWARE\\Google\\Chrome\\NativeMessagingHosts\\com.atlas.bridge",
-                    "SOFTWARE\\Microsoft\\Edge\\NativeMessagingHosts\\com.atlas.bridge",
-                    "SOFTWARE\\Chromium\\NativeMessagingHosts\\com.atlas.bridge",
-                ];
-                for (const keyPath of browsers) {
-                    const key = new Registry({ hive: Hive.HKCU, key: `\\${keyPath}` });
-                    await key.create();
-                    await key.set("", RegType.REG_SZ, manifestPath);
+                for (const name of [HOST_NAME, LEGACY_HOST_NAME]) {
+                    const manifestPath = path.join(bhaiDir, `${name}.json`);
+                    fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, name }, null, 2));
+                    for (const browser of ["Google\\Chrome", "Microsoft\\Edge", "Chromium"]) {
+                        const key = new Registry({
+                            hive: Hive.HKCU,
+                            key: `\\SOFTWARE\\${browser}\\NativeMessagingHosts\\${name}`,
+                        });
+                        if (name === LEGACY_HOST_NAME) {
+                            const cur = await key.get("").then(
+                                (item) => item.value,
+                                () => "",
+                            );
+                            if (cur && cur !== manifestPath && !mayWriteLegacyManifest(cur, ids)) continue;
+                        }
+                        await key.create();
+                        await key.set("", RegType.REG_SZ, manifestPath);
+                    }
                 }
                 console.log("✓ Chrome/Edge/Chromium native messaging host registered (Windows registry)");
             } catch (err) {
@@ -400,7 +436,11 @@ function sendMessage(msg) {
             fs.mkdirSync(manifestDir, { recursive: true });
         }
 
-        fs.writeFileSync(path.join(manifestDir, "com.atlas.bridge.json"), JSON.stringify(manifest, null, 2));
+        for (const name of [HOST_NAME, LEGACY_HOST_NAME]) {
+            const file = path.join(manifestDir, `${name}.json`);
+            if (name === LEGACY_HOST_NAME && !mayWriteLegacyManifest(file, ids)) continue;
+            fs.writeFileSync(file, JSON.stringify({ ...manifest, name }, null, 2));
+        }
         nativeHostRegistered = true;
     } catch (err) {
         // Native messaging registration is non-fatal — HTTP discovery is the primary method
@@ -441,7 +481,7 @@ export function initChromeBridge(port = BRIDGE_PORT): void {
             // exactly matches its host_permissions, Chrome treats it as a
             // privileged same-origin request and OMITS the Origin header — that
             // was the cause of the extension getting 403 here. (A local CLI can
-            // also omit Origin, but it can already read ~/.atlas/chrome-bridge.json
+            // also omit Origin, but it can already read ~/.bhai/chrome-bridge.json
             // directly as the same UID, so the gate never meaningfully stopped it;
             // the web-origin block is the protection that matters.)
             const origin = (req.headers.origin as string | undefined) || "";
@@ -745,10 +785,25 @@ function handleExtensionMessage(ws: WebSocket, msg: Record<string, unknown>, aut
 
 // ── Send Command to Extension ────────────────
 
+// Commands the bridge itself failed (timed out, queue full, send failed), for
+// diagnostics and the bridge loop test: callers often swallow these. Not counted:
+// a page's own error (success:false) and a `tolerated` command (a page-ready
+// probe, which expects to lose its document mid-navigation and tries again).
+let failureCount = 0;
+const recentFailures: { type: string; error: string }[] = [];
+const bridgeFailed = (type: string, error: string, tolerated: boolean) => {
+    if (tolerated) return;
+    failureCount++;
+    recentFailures.push({ type, error });
+    if (recentFailures.length > 20) recentFailures.shift();
+};
+export const bridgeCommandFailures = () => ({ count: failureCount, recent: [...recentFailures] });
+
 export async function sendBridgeCommand(
     type: string,
     payload: Record<string, unknown> = {},
     timeoutMs?: number,
+    tolerated = false,
 ): Promise<unknown> {
     if (!extensionSocket || extensionSocket.readyState !== 1 || !authenticated) {
         throw new Error("Chrome extension not connected");
@@ -781,6 +836,7 @@ export async function sendBridgeCommand(
         // most are 2-30 s).
         if (pendingRequests.size >= MAX_PENDING_REQUESTS) {
             if (native) native.recordBridgeError();
+            bridgeFailed(type, "queue full", tolerated);
             reject(
                 new Error(
                     `Chrome bridge pending-request queue full (${pendingRequests.size} / ${MAX_PENDING_REQUESTS}) — ` +
@@ -794,6 +850,7 @@ export async function sendBridgeCommand(
         const timeout = setTimeout(() => {
             pendingRequests.delete(id);
             if (native) native.recordBridgeError();
+            bridgeFailed(type, `timed out after ${effectiveTimeout}ms`, tolerated);
             reject(new Error(`Chrome bridge command "${type}" timed out after ${effectiveTimeout}ms`));
         }, effectiveTimeout);
 
@@ -804,6 +861,7 @@ export async function sendBridgeCommand(
         } catch (err) {
             pendingRequests.delete(id);
             clearTimeout(timeout);
+            bridgeFailed(type, `send failed: ${(err as Error).message}`, tolerated);
             reject(new Error(`Failed to send command: ${(err as Error).message}`));
         }
     });
@@ -997,18 +1055,11 @@ function startHeartbeat(ws: WebSocket): void {
         // A socket that stopped answering (laptop slept, extension worker killed) stays
         // "open" until the OS notices, minutes later: until then every call waits out its
         // timeout and the extension's reconnect is refused as a second connection.
+        // No ping from here: the extension sends a pong every 20 s on its own (its MV3
+        // keep-alive), and it still answers a ping if one comes.
         if (Date.now() - lastPong > HEARTBEAT_INTERVAL_MS * 2.5) {
             dropExtension(ws, "Extension stopped answering");
             ws.terminate();
-            return;
-        }
-        if (ws.readyState === 1) {
-            try {
-                ws.send(JSON.stringify({ type: "ping" }));
-            } catch {
-                // Connection dead
-                stopHeartbeat();
-            }
         }
     }, HEARTBEAT_INTERVAL_MS);
 }

@@ -34,7 +34,7 @@ crons.daily(
 );
 
 // Retire never-used user prompt addenda (hits === 0, stale). Self-gates on the
-// ATLAS_ADDENDA_HITS deployment flag — a no-op until hit-tracking is enabled,
+// BHAI_ADDENDA_HITS deployment flag — a no-op until hit-tracking is enabled,
 // so it can never retire addenda whose hits simply weren't being counted.
 crons.daily(
     "sweep stale user addenda",
@@ -46,5 +46,10 @@ crons.daily(
 // Bhai's own email: read the catch-all mailbox. No-op until BHAI_MAIL_USER
 // and BHAI_MAIL_PASS are set.
 crons.interval("bhai mail poll", { minutes: 1 }, internal.bhaiMailNode.poll, {});
+
+// Image queue: requeue jobs whose worker died, kick the worker while anything is queued
+// (so no job is ever stranded), expire day-old jobs,
+// delete finished ones (and their files) after 2 hours.
+crons.interval("image queue tick", { minutes: 1 }, internal.image.tickImageQueue, {});
 
 export default crons;

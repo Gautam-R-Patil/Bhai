@@ -16,7 +16,7 @@ import type { ToolDefinition } from "./get-current-time.js";
 const execFileAsync = promisify(execFile);
 
 async function runJXA(script: string, timeout = 15000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_notes_${Date.now()}.js`);
+    const tmpFile = join(tmpdir(), `bhai_notes_${Date.now()}.js`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout });
@@ -204,6 +204,9 @@ JSON.stringify(output);`,
                 case "read": {
                     const noteName = input.note_name as string;
                     if (!noteName) return JSON.stringify({ error: "Provide 'note_name' to read." });
+                    // gpt-4.1-nano read "task.txt" from Notes (twice): it's a file.
+                    if (/\.(txt|md|csv|json|log|pdf|docx?|rtf)$/i.test(noteName.trim()))
+                        return JSON.stringify({ error: `${noteName} is a file, not a note: read it with read (its full path).` });
                     const result = await runJXA(
                         `
 const notes = Application("Notes");

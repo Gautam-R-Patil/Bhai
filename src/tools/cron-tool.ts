@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { GeneratedImage } from "../agent.js";
 import { addJob, cancelJob, getJobs } from "../cron/store.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { toolError, toolSuccess } from "./tool-result.js";
@@ -16,8 +17,12 @@ type Op = "schedule" | "list" | "cancel" | "trigger";
 export interface CronCallerContext {
     isOwner: boolean;
     autonomous?: boolean;
+    /** A run steered by unvetted content: no outward actions (see ChannelContext.noOutward). */
+    noOutward?: boolean;
     /** A private chat with Bhai (not a group or shared channel): owner memories may be shown. */
     isPrivate?: boolean;
+    /** ChannelContext.showsImages: the reply carries generated images (unset: the channel decides). */
+    showsImages?: boolean;
     /** The owner's words this turn: memory_store supersedes only when they read like a correction. */
     message?: string;
     /** The last memory memory_store saved in this owner turn, for the reply's "Forget that" button. */
@@ -30,6 +35,14 @@ export interface CronCallerContext {
     commitmentDone?: boolean;
     /** storedMemory is a supersede's new row: its undo is the only way back to the old one. */
     undoPinned?: boolean;
+    /** The images the user sent with this turn's message (generate_image source "attached"). */
+    turnImages?: Array<{ base64: string; mimeType: string }>;
+    /** The conversation's key in media/image-memory.ts (channel + user). */
+    conversationKey?: string;
+    /** What generate_image made this turn (sub-agents included), for AgentResponse.images. */
+    generatedImages?: GeneratedImage[];
+    /** Where a result that comes after the turn goes (ChannelContext.replyTo); unset for autonomous runs. */
+    replyTo?: { channel: string; to: string };
 }
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
 // The tool the owner's main loop (agent.ts) is running; a sub-agent or swarm that tool
@@ -45,6 +58,9 @@ export const isMainLoopCall = (tool: string): boolean => _mainLoopTool.getStore(
 export function runWithCallerContext<T>(ctx: CronCallerContext, fn: () => Promise<T> | T): Promise<T> | T {
     return _callerStorage.run(ctx, fn);
 }
+
+/** This run may not act outside the machine (it reads unvetted content, nobody is watching). */
+export const isNoOutwardCaller = (): boolean => _callerStorage.getStore()?.noOutward === true;
 
 /** The owner, speaking in this turn: not a contact, not a scheduled/autonomous run. */
 export function isOwnerCaller(): boolean {
@@ -121,6 +137,50 @@ export function canPinMemory(id?: number): boolean {
     if (!ctx || !isOwnerCaller() || !isMainLoopCall("memory_store")) return false;
     return id === undefined || ctx.shownMemories?.has(id) === true;
 }
+
+/** The images the user sent with this turn's message. */
+export const turnImages = (): Array<{ base64: string; mimeType: string }> | undefined =>
+    _callerStorage.getStore()?.turnImages;
+
+/** This turn's conversation key (media/image-memory.ts), or undefined outside a turn. */
+export const turnConversationKey = (): string | undefined => _callerStorage.getStore()?.conversationKey;
+
+/** The chat a late result of this turn goes to (an image still in the queue). */
+export const turnReplyTarget = (): CronCallerContext["replyTo"] => _callerStorage.getStore()?.replyTo;
+
+/**
+ * ChannelContext.replyTo as a late-result target: the chat that asked, or for an autonomous run only
+ * "owner" (a scheduled task with deliverTo: its channel's owner chats, as its own result goes).
+ */
+export function lateReplyTarget(c?: { channel: string; replyTo?: string; autonomous?: boolean }): CronCallerContext["replyTo"] {
+    if (!c?.replyTo || (c.autonomous && c.replyTo !== "owner")) return undefined;
+    return { channel: c.channel, to: c.replyTo };
+}
+
+/**
+ * This turn's reply delivers its images by itself: a chat turn on these channels (email as
+ * attachments), or a run that says so (a scheduled task with deliverTo). Bhai-mail and
+ * autonomous runs without deliverTo only send text.
+ */
+export const turnShowsImages = (): boolean => {
+    const c = _callerStorage.getStore();
+    if (!c) return false;
+    return (
+        c.showsImages ??
+        (!c.autonomous && /^(telegram|whatsapp|discord|slack|overlay|matrix|email):/.test(c.conversationKey ?? ""))
+    );
+};
+
+/** generate_image made these this turn (deduped by path); the turn's reply carries them. */
+export function noteGeneratedImages(images: GeneratedImage[]): void {
+    const ctx = _callerStorage.getStore();
+    if (!ctx) return;
+    ctx.generatedImages ??= [];
+    for (const img of images) if (!ctx.generatedImages.some((g) => g.path === img.path)) ctx.generatedImages.push(img);
+}
+
+/** What generate_image made this turn (noteGeneratedImages). */
+export const turnGeneratedImages = (): GeneratedImage[] => _callerStorage.getStore()?.generatedImages ?? [];
 
 /** The current turn's caller: true owner, false guest/contact, undefined outside any turn (background work). */
 export function callerIsOwner(): boolean | undefined {

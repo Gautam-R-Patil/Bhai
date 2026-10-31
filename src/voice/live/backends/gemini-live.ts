@@ -4,7 +4,10 @@
 
 // ── Gemini Live Backend — WebSocket real-time voice via @google/genai ──
 
-import { GoogleGenAI, Modality, FunctionResponseScheduling } from "@google/genai";
+import type { GoogleGenAI } from "@google/genai";
+
+// @google/genai loads on the first live-voice connect, not at boot.
+let genai: typeof import("@google/genai");
 import { LiveVoiceBackend } from "./base.js";
 import type { LiveSessionConfig, LiveToolCall, LiveToolResult } from "../types.js";
 
@@ -49,7 +52,8 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
     async connect(config: LiveSessionConfig): Promise<void> {
         if (this._connected) return;
 
-        this.ai = new GoogleGenAI({ apiKey: this.apiKey });
+        genai ??= await import("@google/genai");
+        this.ai = new genai.GoogleGenAI({ apiKey: this.apiKey });
 
         // Primary: gemini-2.5-flash-native-audio-preview-12-2025 — the latest
         // dated preview, cheapest at $10/M out, verified to actually respond
@@ -77,7 +81,7 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
             : undefined;
 
         // All models in LIVE_MODELS support AUDIO-only response modality.
-        const responseModalities = [Modality.AUDIO];
+        const responseModalities = [genai.Modality.AUDIO];
 
         let lastError = "";
         for (const model of LIVE_MODELS) {
@@ -321,7 +325,7 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
                     // ignores this field. We still set it using the SDK enum
                     // as forward-compat in case we ever flag a tool as
                     // non-blocking — the wire value will be correct.
-                    scheduling: FunctionResponseScheduling.INTERRUPT,
+                    scheduling: genai.FunctionResponseScheduling.INTERRUPT,
                 })),
             });
         } catch (err) {
@@ -377,7 +381,7 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
         // Gemini sends back after a tool result. If there's no modelTurn or
         // turnComplete after a tool, we know the server isn't generating a
         // response at all (as opposed to us not handling it correctly).
-        if (process.env.ATLAS_LIVE_DEBUG === "true") {
+        if (process.env.BHAI_LIVE_DEBUG === "true") {
             const keys = Object.keys(data || {});
             const sc = data.serverContent ? Object.keys(data.serverContent) : [];
             console.log(`[GEMINI-LIVE][DEBUG] msg keys=${keys.join(",")} serverContent.keys=${sc.join(",")}`);

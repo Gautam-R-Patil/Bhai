@@ -13,26 +13,26 @@ describe("orchestrator boot", () => {
 
     beforeEach(() => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-orch-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
     });
 
     afterEach(() => {
         closeLibrary();
         rmSync(tmpDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
-    it("initForge does nothing when ATLAS_NO_FORGE=true", async () => {
-        process.env.ATLAS_NO_FORGE = "true";
+    it("initForge does nothing when BHAI_NO_FORGE=true", async () => {
+        process.env.BHAI_NO_FORGE = "true";
         await initForge({ embedFn: async () => new Float32Array(384) });
         expect(isForgeReady()).toBe(false);
-        delete process.env.ATLAS_NO_FORGE;
+        delete process.env.BHAI_NO_FORGE;
     });
 
     it("initForge opens library and runs migration when enabled", async () => {
-        delete process.env.ATLAS_NO_FORGE;
+        delete process.env.BHAI_NO_FORGE;
         await initForge({ embedFn: async () => new Float32Array(384) });
         expect(isForgeReady()).toBe(true);
         const stats = getForgeStats();
@@ -40,7 +40,7 @@ describe("orchestrator boot", () => {
     });
 
     it("initForge migrates legacy tools if present", async () => {
-        const legacyDir = join(process.env.ATLAS_HOME!, "dynamic-tools");
+        const legacyDir = join(process.env.BHAI_HOME!, "dynamic-tools");
         mkdirSync(legacyDir, { recursive: true });
         writeFileSync(join(legacyDir, "foo.json"), JSON.stringify({
             name: "foo", description: "foo tool",
@@ -57,8 +57,8 @@ describe("orchestrator boot", () => {
     it("initForge fails open: SQLite error logs but does not throw", async () => {
         // Force an open failure by putting a file where the data dir should be.
         // (A read-only chmod doesn't stop writes on Windows, or for root.)
-        mkdirSync(process.env.ATLAS_HOME!, { recursive: true });
-        writeFileSync(join(process.env.ATLAS_HOME!, "data"), "");
+        mkdirSync(process.env.BHAI_HOME!, { recursive: true });
+        writeFileSync(join(process.env.BHAI_HOME!, "data"), "");
 
         const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
         await initForge({ embedFn: async () => new Float32Array(384) });

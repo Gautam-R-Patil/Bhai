@@ -12,7 +12,10 @@ vi.mock("../security/url-safety.js", () => ({
     fetchWithRedirectGuard: async () => ({ response: nextResponse() }),
 }));
 
-const { fetchPages } = await import("./fetcher.js");
+let pdfParses = 0;
+vi.mock("../documents/ingest.js", () => ({ extractText: async () => { pdfParses++; return ""; } }));
+
+const { fetchPages, fetchPageContent } = await import("./fetcher.js");
 
 describe("fetcher response-body safety", () => {
     it("caps a huge body by cancelling the stream early (no OOM)", async () => {
@@ -72,6 +75,34 @@ describe("fetcher response-body safety", () => {
     });
 });
 
+describe("fetch retries", () => {
+    const calls = async (status: number) => {
+        let n = 0;
+        nextResponse = () => {
+            n++;
+            return new Response("x", { status, headers: { "content-type": "text/html" } });
+        };
+        expect(await fetchPageContent("https://x.com/r")).toBe("");
+        return n;
+    };
+    it("gives up at once on a 4xx but retries 5xx and 429", async () => {
+        expect(await calls(404)).toBe(1);
+        expect(await calls(503)).toBe(3);
+        expect(await calls(429)).toBe(3);
+    });
+
+    it("downloads and parses a PDF that yields no text only once", async () => {
+        let n = 0;
+        nextResponse = () => {
+            n++;
+            return new Response("%PDF-1.4 scanned", { headers: { "content-type": "application/pdf" } });
+        };
+        pdfParses = 0;
+        expect(await fetchPageContent("https://x.com/scan.pdf")).toBe("");
+        expect([n, pdfParses]).toEqual([1, 1]);
+    });
+});
+
 describe("tagsToText — linear, ReDoS-proof HTML→text", () => {
     it("converts normal HTML to markdownish text", () => {
         const html = "<h1>Title</h1><p>Hello <b>world</b></p><ul><li>one</li><li>two</li></ul><h4>Sub</h4>line<br>next";
@@ -111,6 +142,15 @@ describe("fetched page text", () => {
         expect(await page("x < 10 and y > 5", "text/plain; charset=utf-8")).toBe("x < 10 and y > 5");
         expect(await page("<p>Hello upper</p>", "Text/HTML")).toContain("Hello upper");
         expect(await page("<p>Hello xhtml</p>", "application/xhtml+xml")).toContain("Hello xhtml");
+    });
+
+    it("reads JSON, feeds, CSV and Markdown as text; names a missing content type", async () => {
+        expect(await page('{"tag_name":"v1.2.0"}', "application/json; charset=utf-8")).toBe('{"tag_name":"v1.2.0"}');
+        expect(await page("<rss><item>news</item></rss>", "application/rss+xml")).toContain("<item>news</item>");
+        expect(await page("a,b\n1,2", "text/csv")).toBe("a,b\n1,2");
+        expect(await page("# Title", "text/markdown")).toBe("# Title");
+        expect(await page("<svg/>", "image/svg+xml")).toBe("[Non-text content: image/svg+xml]");
+        expect(await page("??", "")).toBe("[Non-text content: unknown type]");
     });
 
     it("drops whole comments and decodes numeric entities", async () => {

@@ -8,17 +8,22 @@ import { getSessionToken } from "../session.js";
 import { getLocation } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { baseUrlHostMatches } from "../utils/atomic-io.js";
+import { fetchPageContent } from "../research/fetcher.js";
+import { MAX_CONTENT_PER_PAGE } from "../research/profiles.js";
 
 // One log line per engine and failure kind — a silent `return []` hid that
 // Tavily/Exa had no API key, so every search quietly ran on Bing scraping.
 const reportedFailures = new Set<string>();
 // Engines the server says aren't configured (no API key there): every search used to ask
-// again and get the same 500. Skip them for an hour.
-const unconfiguredUntil = new Map<string, number>();
-const engineOff = (engine: string) => (unconfiguredUntil.get(engine) ?? 0) > Date.now();
+// again and get the same 500. Skip them for an hour. A scraped engine that refuses us
+// (Brave's 429, DuckDuckGo's bot check) is skipped for half an hour: it refused every
+// search, and each one still sent it a request from the owner's IP.
+const offUntil = new Map<string, number>();
+const engineOff = (engine: string) => (offUntil.get(engine) ?? 0) > Date.now();
+const REFUSED_BACKOFF_MS = 30 * 60_000;
 
-function engineFailed(engine: string, why: string): void {
-    if (/not configured/i.test(why)) unconfiguredUntil.set(engine, Date.now() + 60 * 60_000);
+function engineFailed(engine: string, why: string, offForMs = /not configured/i.test(why) ? 60 * 60_000 : 0): void {
+    if (offForMs) offUntil.set(engine, Date.now() + offForMs);
     const key = `${engine}:${why.slice(0, 60)}`;
     if (reportedFailures.has(key)) return;
     reportedFailures.add(key);
@@ -145,6 +150,7 @@ export function htmlText(html: string): string {
 // ── DuckDuckGo Lite (fastest, lightest) ───────
 
 async function searchDDGLite(query: string): Promise<SearchResult[]> {
+    if (engineOff("duckduckgo")) return [];
     try {
         const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
         const response = await fetch(url, {
@@ -156,7 +162,8 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
 
         const html = await response.text();
 
-        if (response.status === 202 || html.includes("Refresh this page")) {
+        if (response.status === 202 || response.status === 403 || response.status === 429 || html.includes("Refresh this page")) {
+            engineFailed("duckduckgo", `HTTP ${response.status} (bot check)`, REFUSED_BACKOFF_MS);
             return [];
         }
 
@@ -222,6 +229,7 @@ async function searchDDGLite(query: string): Promise<SearchResult[]> {
 // ── Brave Search (fetch-only fallback) ────────
 
 async function searchBraveLite(query: string): Promise<SearchResult[]> {
+    if (engineOff("brave")) return [];
     try {
         const url = `https://search.brave.com/search?q=${encodeURIComponent(query)}&source=web`;
         const response = await fetch(url, {
@@ -235,6 +243,10 @@ async function searchBraveLite(query: string): Promise<SearchResult[]> {
             signal: AbortSignal.timeout(8000),
         });
 
+        if (response.status === 403 || response.status === 429) {
+            engineFailed("brave", `HTTP ${response.status} (refused)`, REFUSED_BACKOFF_MS);
+            return [];
+        }
         if (response.status !== 200) return [];
 
         // No "page mentions captcha" check: Brave's normal results page carries the string
@@ -489,24 +501,85 @@ export function mergeAndRank(query: string, lists: SearchResult[][]): SearchResu
 
 // ── Lightweight multi-engine (fetch-only, parallel) ───────────
 
+/**
+ * Wait for every engine, but not for the slowest once one has a good answer: after the
+ * first list `isGood` accepts, the rest get `graceMs` more. Engines still out then count
+ * as having nothing (and are reported as slow, not empty). A failing engine is empty.
+ */
+export async function gatherWithGrace<T>(
+    jobs: Promise<T[]>[],
+    isGood: (list: T[]) => boolean,
+    graceMs: number,
+): Promise<{ lists: T[][]; finished: boolean[] }> {
+    const lists: T[][] = jobs.map(() => []);
+    const finished = jobs.map(() => false);
+    await new Promise<void>((resolve) => {
+        let left = jobs.length;
+        let grace: ReturnType<typeof setTimeout> | undefined;
+        const done = () => {
+            clearTimeout(grace);
+            resolve();
+        };
+        if (left === 0) return done();
+        jobs.forEach((job, i) => {
+            job.then(
+                (r) => {
+                    lists[i] = Array.isArray(r) ? r : [];
+                },
+                () => {},
+            ).finally(() => {
+                finished[i] = true;
+                if (--left === 0) return done();
+                if (!grace && isGood(lists[i])) grace = setTimeout(done, graceMs);
+            });
+        });
+    });
+    // Copies: an engine finishing after the deadline mustn't change what was returned.
+    return { lists: lists.map((l, i) => (finished[i] ? l : [])), finished: [...finished] };
+}
+
+const SLOW_ENGINE_GRACE_MS = 2500;
+const CLAUDE_DELAY_MS = 1500;
+
 async function lightweightSearch(query: string): Promise<{ results: SearchResult[]; engine: string; empty: string[] }> {
     // No Google scraper: google.com/search now serves a JavaScript-only page, so it never
     // returned a result — it only sent Google a scraping request from the owner's IP.
     const names = ["parallel", "claude", "tavily", "exa", "brave", "duckduckgo", "bing"];
-    const lists = await Promise.all([
-        searchParallelLite(query),
-        searchClaudeLite(query),
-        searchTavilyLite(query),
-        searchExaLite(query),
-        searchBraveLite(query),
-        searchDDGLite(query),
-        searchBingLite(query),
-    ]);
+    // A good on-topic list from one engine means the slow ones (Claude's route can take 12s)
+    // get a short grace, not the whole wait.
+    const isGood = (list: SearchResult[]) => list.length >= 3 && bestCoverage(query, list) >= 0.5;
+    let answered = false;
+    const noting = (p: Promise<SearchResult[]>) =>
+        p.then((r) => {
+            if (isGood(r)) answered = true;
+            return r;
+        });
+    // Claude's search is paid (a Haiku call per search) and slow: it starts only when no
+    // engine has a good answer by then (Parallel usually has one in ~1s).
+    let claudeSkipped = false;
+    const claudeLater = new Promise<void>((r) => setTimeout(r, CLAUDE_DELAY_MS)).then(() => {
+        if (!answered) return searchClaudeLite(query);
+        claudeSkipped = true;
+        return [] as SearchResult[];
+    });
+    const { lists, finished } = await gatherWithGrace(
+        [
+            noting(searchParallelLite(query)),
+            claudeLater,
+            noting(searchTavilyLite(query)),
+            noting(searchExaLite(query)),
+            noting(searchBraveLite(query)),
+            noting(searchDDGLite(query)),
+            noting(searchBingLite(query)),
+        ],
+        isGood,
+        SLOW_ENGINE_GRACE_MS,
+    );
     const used = names.filter((_, i) => lists[i].length > 0);
     return {
         results: mergeAndRank(query, lists),
         engine: used.join(",") || "none",
-        empty: names.filter((_, i) => lists[i].length === 0),
+        empty: names.filter((n, i) => finished[i] && lists[i].length === 0 && !(n === "claude" && claudeSkipped)),
     };
 }
 
@@ -555,5 +628,48 @@ export const webSearch: ToolDefinition = {
         } catch (err) {
             return JSON.stringify({ error: `Search failed: ${(err as Error).message}` });
         }
+    },
+};
+
+// Reading one page a search found: without it the model curls raw HTML in the shell and greps it.
+export const webRead: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "web_read",
+            description:
+                "Read one public web page or PDF as plain text — the fast way to check a source web_search found, no browser launched. Logged-in, interactive or script-rendered pages need browser_navigate instead.",
+            parameters: {
+                type: "object",
+                properties: {
+                    url: { type: "string", description: "http(s) URL to read" },
+                    max_chars: { type: "number", description: "Characters to return (default 12000, max 50000)" },
+                },
+                required: ["url"],
+            },
+        },
+    },
+
+    async handler(input) {
+        const url = String(input.url ?? "").trim();
+        if (!/^https?:\/\//i.test(url)) return JSON.stringify({ error: "web_read takes an http(s) URL" });
+        const max = Math.min(Math.max(Number(input.max_chars) || 12_000, 500), 50_000);
+        // fetchPageContent refuses private/loopback/metadata hosts and caps the download.
+        const text = await fetchPageContent(url);
+        // An image or archive comes back as "[Non-text content: image/png]", not page text.
+        const nonText = /^\[Non-text content: ([^\]]*)\]$/.exec(text)?.[1];
+        if (nonText) return JSON.stringify({ success: false, url, error: `That URL is ${nonText}, not a page web_read can read.` });
+        if (!text) {
+            return JSON.stringify({
+                success: false,
+                url,
+                error: "Couldn't read that page (not found, blocked, private address, or it needs a real browser). Try browser_navigate.",
+            });
+        }
+        // The fetcher already cut the page at MAX_CONTENT_PER_PAGE, so its real length is unknown.
+        if (text.length >= MAX_CONTENT_PER_PAGE) {
+            return JSON.stringify({ success: true, url, text: text.slice(0, max), truncated: true, note: `The page is longer than ${MAX_CONTENT_PER_PAGE} characters; only its first ${MAX_CONTENT_PER_PAGE} can be read here.` });
+        }
+        return JSON.stringify({ success: true, url, text: text.slice(0, max), ...(text.length > max ? { truncated: true, total_chars: text.length } : {}) });
     },
 };

@@ -100,3 +100,27 @@ export function scrubSecretsAtRest(db: BetterSqlite3.Database): Record<string, n
     })();
     return n;
 }
+
+const RESEARCH_NAME = "research_importance_v1";
+
+/**
+ * Once: research memories saved before 9ea0072f went in as the owner's own words, boosted
+ * to 8-10, and 8+ never weakens — they filled the always-sent core memory. Cap them at what
+ * research is stored at now (summary 7, the rest 6) so unused ones can fade. Nothing is
+ * deleted. Returns the rows changed, or null when it already ran.
+ */
+export function capResearchImportance(db: BetterSqlite3.Database): number | null {
+    db.exec("CREATE TABLE IF NOT EXISTS scrub_state (name TEXT PRIMARY KEY, done_at TEXT NOT NULL)");
+    if (db.prepare("SELECT 1 FROM scrub_state WHERE name = ?").get(RESEARCH_NAME)) return null;
+    let changed = 0;
+    db.transaction(() => {
+        changed = db
+            .prepare(
+                `UPDATE memories SET importance = CASE WHEN content LIKE 'Deep research completed on%' THEN 7 ELSE 6 END
+                 WHERE category = 'research' AND importance > CASE WHEN content LIKE 'Deep research completed on%' THEN 7 ELSE 6 END`,
+            )
+            .run().changes;
+        db.prepare("INSERT INTO scrub_state (name, done_at) VALUES (?, datetime('now'))").run(RESEARCH_NAME);
+    })();
+    return changed;
+}

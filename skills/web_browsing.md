@@ -39,7 +39,6 @@ triggers:
 | Scan page + reveal hidden controls in one call | `browser_scan` with `hover_at` |
 | Multi-step workflows (navigate → click → type) | `browser_multi_action` |
 | Direct JS/DOM access or API calls | `browser_run_js` |
-| Known page, re-run previously successful flow | `browser_replay_actions` |
 
 ## Figma / Canva / Design Tools
 
@@ -199,7 +198,6 @@ browser_run_js(code: "document.querySelector('#onetrust-accept-btn-handler')?.cl
 
 - `browser_multi_action` over individual tool calls — one round-trip vs many
 - `browser_scan(hover_at: {...})` — reveal + scan in one call instead of hover → rescan
-- Cached actions: if `browser_scan` reports `cached_actions_available`, use `browser_replay_actions`
 - Network blockers + `bypassCSP` are already active — pages load faster automatically
 - Use `browser_run_js` for read-only state checks — faster than visual scanning
 

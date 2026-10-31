@@ -31,11 +31,11 @@ Output is a platform-specific `.node` file written to `native/`:
 
 | Platform | Binary |
 |----------|--------|
-| macOS Apple Silicon | `atlas-native.darwin-arm64.node` |
-| macOS Intel | `atlas-native.darwin-x64.node` |
-| Windows x64 | `atlas-native.win32-x64-msvc.node` |
-| Linux x64 | `atlas-native.linux-x64-gnu.node` |
-| Linux ARM64 | `atlas-native.aarch64-unknown-linux-gnu.node` |
+| macOS Apple Silicon | `bhai-native.darwin-arm64.node` |
+| macOS Intel | `bhai-native.darwin-x64.node` |
+| Windows x64 | `bhai-native.win32-x64-msvc.node` |
+| Linux x64 | `bhai-native.linux-x64-gnu.node` |
+| Linux ARM64 | `bhai-native.aarch64-unknown-linux-gnu.node` |
 
 ## Build profile
 
@@ -53,16 +53,16 @@ Output is a platform-specific `.node` file written to `native/`:
 |-------|-------|---------|
 | Vector math | `vector.rs`, `batch.rs`, `hnsw.rs` | SIMD dot-product, cosine similarity, batch + ANN search |
 | Routing | `model_router.rs`, `tool_router.rs`, `tool_analytics.rs`, `query_classifier.rs` | Model tier + tool category selection |
-| Memory hot path | `memory_state.rs`, `memory_tiers.rs`, `knowledge_graph.rs`, `hopfield.rs`, `spreading.rs`, `temporal_cache.rs`, `consolidation.rs`, `context_pruning.rs`, `sleep_gate.rs`, `surprise_gate.rs`, `reflection_core.rs`, `session_memory.rs`, `working_memory.rs`, `task_learnings.rs`, `traits_engine.rs` | Memory reads, scoring, decay |
-| Agents | `agent_core.rs`, `swarm.rs`, `mesh.rs`, `sub_agent.rs`, `long_task.rs` | Orchestration state + scheduling helpers |
-| Reasoning | `metacognition.rs`, `mcts_engine.rs`, `active_inference.rs`, `logic_engine.rs`, `process_reward.rs`, `pattern_speculator.rs`, `prompt_evaluator.rs` | Inference + planning kernels |
+| Memory hot path | `memory_tiers.rs`, `knowledge_graph.rs`, `hopfield.rs`, `spreading.rs`, `temporal_cache.rs`, `consolidation.rs`, `context_pruning.rs`, `sleep_gate.rs`, `surprise_gate.rs`, `reflection_core.rs`, `session_memory.rs`, `working_memory.rs`, `task_learnings.rs`, `traits_engine.rs` | Memory reads, scoring, decay |
+| Agents | `swarm.rs`, `mesh.rs`, `sub_agent.rs`, `long_task.rs` | Orchestration state + scheduling helpers |
+| Reasoning | `metacognition.rs`, `mcts_engine.rs`, `active_inference.rs`, `logic_engine.rs`, `process_reward.rs`, `prompt_evaluator.rs` | Inference + planning kernels |
 | World/user models | `world_model.rs`, `user_model.rs`, `credibility_model.rs` | Predictive state |
 | Proactive | `proactive_scheduler.rs`, `proactive_monitor.rs`, `proactive_intent.rs`, `proactive_calendar.rs`, `proactive_news.rs`, `proactive_stale_email.rs`, `proactive_tasks.rs`, `proactive_weather.rs`, `proactive_source_gate.rs`, `inner_thoughts.rs`, `goal_engine.rs`, `habit_detector.rs`, `notification_tracker.rs` | Intent queue, per-source scoring, rate limit + DND |
 | Browser | `browser_agent.rs`, `browser_guard.rs`, `chrome_bridge.rs`, `ip_guard.rs` | Element scoring, stealth, CAPTCHA detection |
 | Desktop | `glass_effect.rs` | Window glass effect |
-| Vision Nav | `ax_walker.rs` (opt-in via `ATLAS_NATIVE_AX=true`) | Cross-OS accessibility-tree flatten/find |
+| Vision Nav | `ax_walker.rs` (opt-in via `BHAI_NATIVE_AX=true`) | Cross-OS accessibility-tree flatten/find |
 | Voice | `pcm_vad.rs` (cargo feature `vad`, opt-in) | libfvad-backed barge-in for hybrid voice |
-| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON), `pii_protect.rs` (opt-in `ATLAS_NATIVE_PROTECT`, linear-time `maskCredentials`/`findPii`) | Encryption helpers + multi-pattern outbound secrets scrubber |
+| Security | `security.rs`, `secrets_sanitizer.rs` (default-ON), `pii_protect.rs` (opt-in `BHAI_NATIVE_PROTECT`, linear-time `maskCredentials`/`findPii`) | Encryption helpers + multi-pattern outbound secrets scrubber |
 | Research | `research_engine.rs`, `info_gain.rs`, `citation_graph.rs`, `skill_scorer.rs` | Source scoring, info gain, citation graphs |
 | Harness | `harness_optimizer.rs` | NSGA-II Pareto + GP surrogate + TextGrad scoring |
 | Skill Forge sandbox | `forge_sandbox/` (`api.rs`, `pool.rs`, `worker.rs`, `strikes.rs`, `linux_seccomp.rs`, `linux_landlock.rs`, `linux.rs`, `macos.rs`, `windows_appcontainer.rs`, `windows_jobobject.rs`, `windows.rs`, …) | OS-level kernel-sandbox supervisor for persisted dynamic tools: warm-pool LRU, three-strike auto-archive, per-platform seccomp/Landlock · sandbox-exec · AppContainer |
@@ -85,7 +85,7 @@ This module accreted via the "everything Rust is faster" assumption. After measu
 - **Port when** TS is genuinely slow on a hot path **and** Rust has a structural advantage — multi-pattern scanning V8 can't share state across, true CPU parallelism, or large-batch SIMD.
 - **Skip when** Node has hardware-accelerated paths (e.g. OpenSSL SHA-NI), inputs are small per-call, or graph BFS is bounded by FFI cost more than work.
 
-See `CLAUDE.md` → "Rust expansion — empirical lessons" for the canonical worked examples (sanitizer wins; sha2 / small-tree AX flatten / spreading BFS lose). New ports ship behind an opt-in kill-switch (`ATLAS_NATIVE_*`) and the default flips to ON only after `scripts/bench-native.ts` shows a measured win across representative inputs.
+See `CLAUDE.md` → "Rust expansion — empirical lessons" for the canonical worked examples (sanitizer wins; sha2 / small-tree AX flatten / spreading BFS lose). New ports ship behind an opt-in kill-switch (`BHAI_NATIVE_*`) and the default flips to ON only after `scripts/bench-native.ts` shows a measured win across representative inputs.
 
 ## Architecture
 
@@ -100,7 +100,7 @@ native/
     ├── lib.rs          # napi-rs entry — re-exports per-module #[napi] fns
     ├── vector.rs / batch.rs / hnsw.rs
     ├── model_router.rs / tool_router.rs / …
-    ├── ax_walker.rs                    # opt-in (ATLAS_NATIVE_AX)
+    ├── ax_walker.rs                    # opt-in (BHAI_NATIVE_AX)
     ├── pcm_vad.rs                      # opt-in cargo feature `vad`
     ├── secrets_sanitizer.rs            # default-ON
     └── … more (see module map)

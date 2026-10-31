@@ -49,8 +49,8 @@ impl Sandbox for MacosSandbox {
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
             .env("HOME", handler_dir)
-            .env("ATLAS_FORGE_HANDLER_PATH", &handler_path)
-            .env("ATLAS_FORGE_SLUG", slug)
+            .env("BHAI_FORGE_HANDLER_PATH", &handler_path)
+            .env("BHAI_FORGE_SLUG", slug)
             .spawn()
     }
 }

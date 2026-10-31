@@ -94,8 +94,8 @@ async function captureFrame(): Promise<{ dataB64: string; mimeType: string }> {
 async function captureFrameMac(): Promise<{ dataB64: string; mimeType: string }> {
     const tmpDir = tmpdir();
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const rawPath = join(tmpDir, `atlas-screenshare-${stamp}.jpg`);
-    const scaledPath = join(tmpDir, `atlas-screenshare-${stamp}-s.jpg`);
+    const rawPath = join(tmpDir, `bhai-screenshare-${stamp}.jpg`);
+    const scaledPath = join(tmpDir, `bhai-screenshare-${stamp}-s.jpg`);
     try {
         // -x silent, -t jpg for JPEG, -C exclude cursor (less noise)
         await withCursorHidden(() => execFileAsync("screencapture", ["-x", "-t", "jpg", "-C", rawPath], { timeout: 4000 }));

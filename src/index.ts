@@ -2,13 +2,15 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import "./security/log-redaction.js"; // first: redacts secrets/PII from every log line
+import "./config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror, before any module reads env
+import "./security/log-redaction.js"; // next: redacts secrets/PII from every log line
+import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { checkAccountStatus, initAccountGuard } from "./account-guard.js";
 import { runAgent } from "./agent.js";
 import { autoResumeInterruptedTasks } from "./agents/long-task.js";
 import { closeCanvas, initCanvas } from "./canvas/server.js";
-import { getDataDir } from "./config/paths.js";
+import { getBhaiHome, getDataDir } from "./config/paths.js";
 import { loadConfig } from "./config.js";
 import { loadJobs } from "./cron/store.js";
 import { startCronTicker, stopCronTicker } from "./cron/tick.js";
@@ -45,12 +47,17 @@ import {
     stopNetworkMonitor,
 } from "./network-health.js";
 import { getSubscriptionCount, sendPushNotification } from "./notifications/push.js";
-import { closeOverlayChat, initOverlayChat, sendOverlayNotification } from "./overlay/overlay-chat.js";
+import {
+    closeOverlayChat,
+    initOverlayChat,
+    sendOverlayImage,
+    sendOverlayNotification,
+} from "./overlay/overlay-chat.js";
 import { startHeartbeat, stopHeartbeat } from "./proactive/heartbeat.js";
 import { initCredibilityModel } from "./research/credibility-model.js";
 import { initSandbox } from "./security/sandbox.js";
 import { loggableRejection } from "./security/vm-isolate.js";
-import { initSession, revokeCurrentSession } from "./session.js";
+import { initSession, revokeCurrentSession, sessionNeedsSignIn, sessionRetryAfterMs } from "./session.js";
 import { seedProfileIfPresent } from "./setup/wizard-seed.js";
 import { initSkillMetadata } from "./skills/loader.js";
 import { closeSlack, initSlack, sendSlackProactiveMessage } from "./slack.js";
@@ -59,7 +66,6 @@ import { initToolRouter, setToolRouterLLM } from "./tool-router.js";
 import {
     closeBrowser,
     closeChromeBridge,
-    initActionCache,
     initChromeBridge,
     registerChromeBackend,
     registerPlaywrightBackend,
@@ -70,6 +76,7 @@ import {
     executeTool,
     getToolNames,
     initDeepResearch,
+    resumeInterruptedResearch,
     loadDynamicTools,
     registerChannelSender,
     rotateAuditLog,
@@ -78,7 +85,6 @@ import {
     setCaptchaLLM,
     setCodeActionExecutor,
     setCodeActionLLM,
-    setComputerUseLLM,
     setDeepResearchLLM,
     setDeepResearchNotifier,
     setIngestLLM,
@@ -91,7 +97,8 @@ import {
     setSmartClickLLM,
     setSwarmLLM,
 } from "./tools/index.js";
-import { setTaskTriggerHandler } from "./tools/scheduled.js";
+import { deliverOnFirst, telegramStopReason } from "./owner-delivery.js";
+import { restoreScheduledTasks, setTaskTriggerHandler } from "./tools/scheduled.js";
 import { initSpotify } from "./tools/spotify.js";
 import { probeAndLogMacPermissions } from "./utils/macos-permissions.js";
 import { getPlatformCapabilities } from "./utils/platform-capabilities.js";
@@ -119,7 +126,6 @@ setDeepResearchLLM(llm); // Inject into deep research tool
 setLongTaskLLM(llm); // Inject into long task executor
 setCodeActionLLM(llm); // Inject into code-as-action agent tool
 setCodeActionExecutor(executeTool); // Inject tool executor for code_execute sandbox
-setComputerUseLLM(llm); // Inject into computer use agent tool
 setSmartClickLLM(llm); // Inject into os_smart_click cloud-grounding cascade tier
 setSiteMintLLM(llm); // Inject into the Site Skill Minter (site_skill_mint)
 setCaptchaLLM(llm); // Inject into the picture-CAPTCHA vision solver
@@ -164,6 +170,13 @@ async function boot() {
     }
 
     // Saved secrets from the desktop app's vault arrive on stdin (security/vault.ts).
+    // ~/.bhai holds the owner's past requests (strategy library), tool analytics and
+    // tokens; the home folder lets every account in "staff" in, so it's owner-only.
+    try {
+        chmodSync(getBhaiHome(), 0o700);
+    } catch {
+        /* not created yet, or not ours to change */
+    }
     const { initVault } = await import("./security/vault.js");
     initVault();
 
@@ -173,8 +186,13 @@ async function boot() {
     for (let attempt = 1; attempt <= 3; attempt++) {
         sessionOk = await initSession();
         if (sessionOk) break;
+        if (sessionNeedsSignIn() || !process.env.BHAI_OTPLESS_USER_ID) {
+            // 78: not allowed to run — the app shows "sign in again" and won't auto-restart.
+            console.error("❌ This device needs to sign in again (Account in the Bhai app)");
+            process.exit(78);
+        }
         if (attempt < 3) {
-            const delay = attempt * 3000;
+            const delay = Math.max(attempt * 3000, sessionRetryAfterMs());
             console.warn(`⚠️  Session creation failed (attempt ${attempt}/3) — retrying in ${delay / 1000}s...`);
             await new Promise((r) => setTimeout(r, delay));
         }
@@ -213,13 +231,23 @@ async function boot() {
         // Once per install: mask secrets in conversation text saved before at-rest masking.
         setImmediate(() => {
             import("./memory/at-rest-scrub.js")
-                .then(async ({ scrubSecretsAtRest }) => {
+                .then(async ({ scrubSecretsAtRest, capResearchImportance }) => {
                     const { getRawDb } = await import("./memory/sqlite.js");
                     const raw = getRawDb();
                     const n = raw ? scrubSecretsAtRest(raw) : null;
                     if (n) console.log(`🔐 Masked secrets saved before at-rest masking: ${JSON.stringify(n)}`);
+                    const capped = raw ? capResearchImportance(raw) : null;
+                    if (capped) console.log(`🧠 Research memories capped to importance 7/6: ${capped}`);
                 })
                 .catch((err) => console.warn("[memory] at-rest scrub skipped:", (err as Error).message));
+            // The removed browser action cache may still hold text the model typed.
+            void import("node:fs")
+                .then(({ promises }) =>
+                    promises.rm(join(process.env.BHAI_DATA_DIR || "data", "browser-action-cache.json"), {
+                        force: true,
+                    }),
+                )
+                .catch(() => {});
         });
         initKnowledgeGraph(memDb);
         initCredibilityModel(memDb);
@@ -238,12 +266,12 @@ async function boot() {
         // Seed identity from the setup wizard's `.user-profile.json` (if present).
         // Idempotent across restarts — renames source to `.user-profile.seeded.json`
         // after successful seed. Source lives in the Electron app's userData dir,
-        // exposed to the bot via ATLAS_USER_DATA_DIR; falls back to ATLAS_DATA_DIR.
+        // exposed to the bot via BHAI_USER_DATA_DIR; falls back to BHAI_DATA_DIR.
         try {
             const seedResult = seedProfileIfPresent(
                 {
-                    userDataDir: process.env.ATLAS_USER_DATA_DIR,
-                    dataDir: process.env.ATLAS_DATA_DIR,
+                    userDataDir: process.env.BHAI_USER_DATA_DIR,
+                    dataDir: process.env.BHAI_DATA_DIR,
                 },
                 { log: (m) => console.log(m) },
             );
@@ -258,40 +286,47 @@ async function boot() {
         // include a display name in its identity payload, so without this
         // the admin panel renders every user as "Unnamed User".
         // upsertAccountInternal is a no-op when the value already matches,
-        // so this is safe to call on every boot.
-        try {
-            const { syncAccountNameIfPresent } = await import("./setup/account-name-sync.js");
-            const r = await syncAccountNameIfPresent({
-                userDataDir: process.env.ATLAS_USER_DATA_DIR,
-                dataDir: process.env.ATLAS_DATA_DIR,
-            });
-            if (r.ran) {
-                console.log(`👤 Account name synced to server: ${r.name}`);
-            } else if (r.reason === "push-failed") {
-                console.warn("[account-name-sync] push failed:", r.error);
-            }
-        } catch (err) {
-            console.warn("[account-name-sync] non-fatal error:", (err as Error).message);
-        }
+        // so this is safe to call on every boot. Not awaited: a slow network
+        // must not hold up boot, and nothing below reads the result.
+        void import("./setup/account-name-sync.js")
+            .then(({ syncAccountNameIfPresent }) =>
+                syncAccountNameIfPresent({
+                    userDataDir: process.env.BHAI_USER_DATA_DIR,
+                    dataDir: process.env.BHAI_DATA_DIR,
+                }),
+            )
+            .then((r) => {
+                if (r.ran) {
+                    console.log(`👤 Account name synced to server: ${r.name}`);
+                } else if (r.reason === "push-failed") {
+                    console.warn("[account-name-sync] push failed:", r.error);
+                }
+            })
+            .catch((err) => console.warn("[account-name-sync] non-fatal error:", (err as Error).message));
 
         // Sync user-chosen personality preset to server addendum
         // (slug: "user-personality"). Idempotent — renames source after push.
         try {
-            const { syncPersonalityIfPresent } = await import("./setup/personality-sync.js");
-            const r = await syncPersonalityIfPresent({
-                userDataDir: process.env.ATLAS_USER_DATA_DIR,
-                dataDir: process.env.ATLAS_DATA_DIR,
-            });
-            if (r.ran) {
-                console.log(`🎨 Personality preset synced to server (v${r.version})`);
-            } else if (r.reason && r.reason !== "no-file") {
-                console.warn(`[personality-sync] ${r.reason}${r.error ? `: ${r.error}` : ""}`);
-            }
+            const { syncPersonalityIfPresent, watchPersonalityFile, loadActivePreset } = await import(
+                "./setup/personality-sync.js"
+            );
+            // Not awaited, like the account name above.
+            void syncPersonalityIfPresent({
+                userDataDir: process.env.BHAI_USER_DATA_DIR,
+                dataDir: process.env.BHAI_DATA_DIR,
+            })
+                .then((r) => {
+                    if (r.ran) {
+                        console.log(`🎨 Personality preset synced to server (v${r.version})`);
+                    } else if (r.reason && r.reason !== "no-file") {
+                        console.warn(`[personality-sync] ${r.reason}${r.error ? `: ${r.error}` : ""}`);
+                    }
+                })
+                .catch((err) => console.warn("[personality-sync] non-fatal:", (err as Error).message));
             // Later Settings changes apply on the next message, not the next boot.
-            const { watchPersonalityFile, loadActivePreset } = await import("./setup/personality-sync.js");
-            loadActivePreset({ userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR });
+            loadActivePreset({ userDataDir: process.env.BHAI_USER_DATA_DIR, dataDir: process.env.BHAI_DATA_DIR });
             watchPersonalityFile(
-                { userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR },
+                { userDataDir: process.env.BHAI_USER_DATA_DIR, dataDir: process.env.BHAI_DATA_DIR },
                 (res) => {
                     if (res.ran) console.log(`🎨 Personality updated from Settings (v${res.version})`);
                     else if (res.reason !== "no-file")
@@ -302,7 +337,7 @@ async function boot() {
             console.warn("[personality-sync] non-fatal:", (err as Error).message);
         }
 
-        initSupabase();
+        await initSupabase();
 
         // Living Continuity layers
         initSelfStateDB(memDb);
@@ -328,18 +363,6 @@ async function boot() {
         try {
             const { initPromptEvolver } = await import("./prompts/prompt-evolver.js");
             initPromptEvolver(memDb);
-            // PASTE pattern speculator records tool sequences so future turns
-            // can predict the next likely tool. Observation-only for now —
-            // speculative pre-execution stays unwired until the latency/cost
-            // tradeoff is validated. Kill with ATLAS_NO_PATTERN_SPECULATOR=true.
-            if (process.env.ATLAS_NO_PATTERN_SPECULATOR !== "true") {
-                try {
-                    const { initPatternSpeculator } = await import("./execution/pattern-speculator.js");
-                    initPatternSpeculator(memDb);
-                } catch (err) {
-                    console.warn("[PASTE] init failed (non-fatal):", (err as Error).message);
-                }
-            }
         } catch (peErr) {
             console.warn("[BOOT] Prompt evolver init failed (non-fatal):", (peErr as Error).message);
         }
@@ -403,9 +426,9 @@ async function boot() {
         initSkillMetadata().catch((e) => console.warn("[BOOT] Skills:", (e as Error).message)),
         // Load persisted dynamic tools (created by create_tool with persistent=true)
         loadDynamicTools().catch((e) => console.warn("[BOOT] Dynamic tools:", (e as Error).message)),
-        // Skill Forge (Phase 1) — kill switch: ATLAS_NO_FORGE=true
+        // Skill Forge (Phase 1) — kill switch: BHAI_NO_FORGE=true
         initForge({ embedFn: embedText }).catch((e) => console.warn("[BOOT] Forge:", (e as Error).message)),
-        // Hooks (user + project ~/.atlas/hooks.json and .atlas/hooks.json)
+        // Hooks (user + project ~/.bhai/hooks.json and .bhai/hooks.json)
         import("./hooks/index.js")
             .then((mod) => mod.loadHooks())
             .catch((e) => console.warn("[BOOT] Hooks:", (e as Error).message)),
@@ -461,9 +484,8 @@ async function boot() {
         }
     });
 
-    // Browser strategy memory + action cache + unified task learnings (sync inits, fast)
+    // Browser strategy memory + unified task learnings (sync inits, fast)
     initBrowserMemory();
-    initActionCache();
     initTaskLearnings();
     initStrategyLibrary();
 
@@ -522,13 +544,13 @@ async function boot() {
     );
 
     // Warm up platform capability probe (non-blocking)
-    if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
+    if (process.env.BHAI_SKIP_CAPABILITY_PROBE !== "true") {
         getPlatformCapabilities().catch((err) => console.warn("[boot] capability probe failed:", err));
     }
 
     // macOS-only — probe Accessibility + Screen Recording for real, with actionable
     // advice when the user thinks they granted permission but the bot can't actually use it.
-    if (process.platform === "darwin" && process.env.ATLAS_SKIP_PERMISSION_PROBE !== "true") {
+    if (process.platform === "darwin" && process.env.BHAI_SKIP_PERMISSION_PROBE !== "true") {
         probeAndLogMacPermissions().catch((err) => console.warn("[boot] permission probe failed:", err));
     }
 
@@ -554,10 +576,17 @@ async function boot() {
         );
     }
     registerChannelSender("whatsapp", (message, filePath) => sendWhatsAppProactiveMessage(message, filePath));
-    registerChannelSender("discord", (message, filePath) => sendDiscordProactiveMessage(message, filePath));
+    registerChannelSender("discord", (message, filePath, _buttons, _ownerOnly, to) =>
+        sendDiscordProactiveMessage(message, filePath, to),
+    );
     registerChannelSender("slack", (message) => sendSlackProactiveMessage(message));
     registerChannelSender("matrix", (message) => sendMatrixProactiveMessage(message));
-    registerChannelSender("overlay", (message) => sendOverlayNotification(message));
+    registerChannelSender("overlay", async (message, filePath) => {
+        // An image file shows in the chat bar; anything else is only the message.
+        if (filePath && /\.(png|jpe?g|webp|gif)$/i.test(filePath) && (await sendOverlayImage(filePath, message)))
+            return true;
+        return sendOverlayNotification(message);
+    });
 
     // Wire deep research proactive notifier (background research sends progress here)
     setDeepResearchNotifier(async (msg: string) => {
@@ -588,12 +617,9 @@ async function boot() {
         for (const [channel, fn] of Object.entries(sendPrimary)) {
             if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
         }
-
-        // Push notification for background research completion
-        if (msg.includes("complete") || msg.includes("finished")) {
-            sendPushNotification("Research Complete", msg.substring(0, 180)).catch(() => {});
-        }
     });
+    // Research a restart cut off continues now that its channels are wired.
+    resumeInterruptedResearch().catch((err) => console.warn("[BOOT] Research auto-resume failed (non-fatal):", err));
 
     // Live voice mode (real-time conversation — Gemini Live / OpenAI Realtime)
     try {
@@ -703,7 +729,7 @@ async function boot() {
     });
 
     // ── Proactive Observer (V2 scheduler) ─────
-    if (process.env.ATLAS_PROACTIVE_V2_SCHEDULER !== "false") {
+    if (process.env.BHAI_PROACTIVE_V2_SCHEDULER !== "false") {
         try {
             const { Observer, setObserver } = await import("./proactive/observer.js");
             const { join } = await import("node:path");
@@ -752,11 +778,8 @@ async function boot() {
                     }, 60 * 60_000);
                     _expireT.unref?.();
 
-                    // Periodic deferred-ready sweep (every minute)
-                    const _readyT = setInterval(() => {
-                        manager.readyDeferred();
-                    }, 60_000);
-                    _readyT.unref?.();
+                    // Deferred items come back when due (a timer only while something is deferred)
+                    manager.watchDeferred();
                 } else {
                     console.log("[BOOT] InboxManager skipped: no raw DB handle");
                 }
@@ -808,7 +831,7 @@ async function boot() {
 
             // ── Register onboarding_graduation source (W3) ──
             // Fires Day-2 / Day-3 / Day-5 wizard graduation nudges.
-            // ATLAS_NO_ONBOARDING_NUDGES=true short-circuits the source itself.
+            // BHAI_NO_ONBOARDING_NUDGES=true short-circuits the source itself.
             try {
                 const { onboardingGraduationSource } = await import("./proactive/sources/onboarding-graduation.js");
                 obs.registerSource(onboardingGraduationSource);
@@ -873,8 +896,8 @@ async function boot() {
                 console.log("[BOOT] memory_digest registration failed (non-fatal):", (err as Error).message);
             }
 
-            // ── V3 sources (default ON; set ATLAS_PROACTIVE_V3_SOURCES=false to disable) ──
-            if (process.env.ATLAS_PROACTIVE_V3_SOURCES !== "false") {
+            // ── V3 sources (default ON; set BHAI_PROACTIVE_V3_SOURCES=false to disable) ──
+            if (process.env.BHAI_PROACTIVE_V3_SOURCES !== "false") {
                 const webSearch = async (query: string): Promise<string> => {
                     try {
                         return await executeTool("web_search", { query });
@@ -971,15 +994,52 @@ async function boot() {
                     console.log("[BOOT] deep_work_gap registration failed (non-fatal):", (err as Error).message);
                 }
             } else {
-                console.log("💓 V3 sources disabled (ATLAS_PROACTIVE_V3_SOURCES=false)");
+                console.log("💓 V3 sources disabled (BHAI_PROACTIVE_V3_SOURCES=false)");
             }
         } catch (err) {
             console.log("[BOOT] Observer init failed (non-fatal):", (err as Error).message);
         }
     }
 
+    // A scheduled message for the owner: the primary channel first, the others as backup.
+    const notifyOwnerEverywhere = async (message: string): Promise<void> => {
+        // The desktop app always shows it (the owner asked for it: Smart DND doesn't hold it).
+        sendOverlayNotification(message, { requested: true }).catch(() => {});
+        // One chat channel, not all of them: the primary, else the first that delivers.
+        const chats: Record<string, () => Promise<unknown>> = {
+            whatsapp: () => sendWhatsAppProactiveMessage(message),
+            discord: () => sendDiscordProactiveMessage(message),
+            slack: () => sendSlackProactiveMessage(message),
+            matrix: () => sendMatrixProactiveMessage(message),
+        };
+        if (bot) chats.telegram = () => sendProactiveMessage(bot, config, message);
+        const via = await deliverOnFirst(PRIMARY_CHANNEL, chats);
+        console.log(`📬 Scheduled message → overlay${via ? ` + ${via}` : " (no chat channel delivered)"}`);
+    };
+
+    // A scheduled job sent to one channel: while the owner is at the computer it also shows on
+    // the desktop (a desktop job also reaches their chat channel). Same rule as proactive dispatch.
+    const mirrorScheduledResult = async (channel: string, message: string): Promise<void> => {
+        try {
+            const { isUserActive } = await import("./proactive/activity.js");
+            if (!(await isUserActive())) return;
+            if (channel !== "overlay") {
+                const { notifyDesktop } = await import("./desktop-notify.js");
+                notifyDesktop("reminder", "Bhai", message);
+                return;
+            }
+            const { mirrorChatChannel } = await import("./proactive/dispatch.js");
+            const { getChannelSender } = await import("./tools/channel-send.js");
+            const chat = mirrorChatChannel();
+            const send = chat ? getChannelSender(chat) : undefined;
+            if (send) await send(message);
+        } catch {
+            /* the job's own delivery already happened */
+        }
+    };
+
     // ── Scheduled Tasks ───────────────────────
-    setTaskTriggerHandler(async (taskId: string, action: string) => {
+    setTaskTriggerHandler(async (taskId, action, description, opts) => {
         // ── Marketing scheduled post detection ──────────────────────────────
         // Actions encoded as JSON by marketing_schedule tool are executed directly.
         // Format: {"__marketing_post":true,"brandId":"...","itemId":N,"platform":"...","caption":"...","mediaPath":"...","hashtags":[...]}
@@ -1018,39 +1078,42 @@ async function boot() {
             return;
         }
 
-        const message = `🔔 **Task Triggered**\n\n${action}`;
-
-        // Primary channel gets the message first
-        const sendPrimary: Record<string, () => Promise<unknown>> = {
-            whatsapp: () => sendWhatsAppProactiveMessage(message),
-            discord: () => sendDiscordProactiveMessage(message),
-            slack: () => sendSlackProactiveMessage(message),
-            matrix: () => sendMatrixProactiveMessage(message),
-            overlay: () => {
-                sendOverlayNotification(message);
-                return Promise.resolve();
-            },
-        };
-        if (bot) sendPrimary.telegram = () => sendProactiveMessage(bot, config, message);
-
-        // Send to primary channel
-        const primaryFn = sendPrimary[PRIMARY_CHANNEL];
-        if (primaryFn) {
-            try {
-                await primaryFn();
-            } catch {
-                /* primary failed, will try others */
+        // A task does its work and sends the answer ("summarize my inbox every morning").
+        if (opts.doTask) {
+            const response = await runAgent(
+                llm,
+                action,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                { channel: "cron", userId: "cron", isOwner: opts.isOwner, autonomous: true },
+            );
+            const text = response.text?.trim();
+            if (text && text.toUpperCase() !== "[NO_REPLY]") {
+                await notifyOwnerEverywhere(
+                    taskId.startsWith("reminder_") && description ? `⏰ ${description}\n\n${text}` : text,
+                );
             }
+            return;
         }
 
-        // Send to other active channels as backup (non-blocking)
-        for (const [channel, fn] of Object.entries(sendPrimary)) {
-            if (channel !== PRIMARY_CHANNEL) fn().catch(() => {});
-        }
+        // A reminder reads as one ("⏰ Check the oven"), not as the agent instruction behind it.
+        const isReminder = taskId.startsWith("reminder_") && !!description;
+        const message = isReminder ? `⏰ Reminder: ${description}` : `🔔 **Task Triggered**\n\n${action}`;
+
+        await notifyOwnerEverywhere(message);
 
         // Always send push notification for task triggers
-        sendPushNotification("Task Triggered", action.substring(0, 180)).catch(() => {});
+        sendPushNotification(
+            isReminder ? "Reminder" : "Task Triggered",
+            (isReminder ? description : action).substring(0, 180),
+        ).catch(() => {});
     });
+    const restored = restoreScheduledTasks();
+    if (restored) console.log(`   Tasks   : ${restored} scheduled task(s) restored`);
 
     // ── Decay (every 6h) + Dream Replay (nightly) ───
     const scheduleDecayAndReplay = () => {
@@ -1068,6 +1131,9 @@ async function boot() {
                     t: new Date().toISOString(),
                     rssMb: Math.round(m.rss / 1e6),
                     heapMb: Math.round(m.heapUsed / 1e6),
+                    heapTotalMb: Math.round(m.heapTotal / 1e6),
+                    externalMb: Math.round(m.external / 1e6),
+                    arrayBuffersMb: Math.round(m.arrayBuffers / 1e6),
                 };
                 import("node:fs")
                     .then(({ appendFileSync }) =>
@@ -1113,7 +1179,7 @@ async function boot() {
         startCronTicker({
             runPrompt: async (prompt, ctx) => {
                 const channel = (ctx.deliverTo || "cron") as string;
-                const response = await runAgent(
+                return runAgent(
                     llm,
                     prompt,
                     undefined,
@@ -1127,44 +1193,62 @@ async function boot() {
                         userId: ctx.userId || "cron",
                         isOwner: ctx.isOwner,
                         autonomous: true,
+                        // deliver() below sends the run's images after its text on these channels.
+                        showsImages: /^(telegram|slack|discord|matrix|overlay)$/.test(channel),
+                        // An image still in the server's queue when the run ends: the same owner chats, later.
+                        ...(ctx.deliverTo ? { replyTo: "owner" } : {}),
                     },
                 );
-                return response.text;
             },
-            deliver: async (job, response) => {
+            deliver: async (job, response, images) => {
                 const channel = job.deliverTo;
-                if (!channel || !response) return true;
+                // A run that only made images still delivers them, with a line to carry them.
+                if (!response && images?.length) response = images.length > 1 ? "Here are the images." : "Here's the image.";
+                if (!response) return true;
+                // No channel named: the owner's channels, as reminders do (it used to go nowhere).
+                if (!channel) {
+                    await notifyOwnerEverywhere(response);
+                    return true;
+                }
+                // At the computer: the result also reaches the other side (desktop ↔ chat app).
+                void mirrorScheduledResult(channel, response);
                 if (channel === "telegram") {
                     const {
                         getTelegramBot,
                         getTelegramConfig,
+                        parseTelegramOwners,
+                        sendImages,
                         sendProactiveMessage: sendTg,
                     } = await import("./telegram.js");
                     const tb = getTelegramBot();
                     const cfg = getTelegramConfig();
                     if (!tb || !cfg) return false;
-                    await sendTg(tb, cfg, response);
+                    // The images follow the text to the same owners (not when DND or offline held it).
+                    if ((await sendTg(tb, cfg, response)) && images?.length)
+                        for (const id of parseTelegramOwners(cfg)) await sendImages(tb.api, id, images, job.isOwner);
                     return true;
                 }
                 if (channel === "slack") {
                     const { sendSlackProactiveMessage } = await import("./slack.js");
-                    await sendSlackProactiveMessage(response);
+                    await sendSlackProactiveMessage(response, images);
                     return true;
                 }
                 if (channel === "discord") {
                     const { sendDiscordProactiveMessage } = await import("./discord.js");
-                    await sendDiscordProactiveMessage(response);
+                    await sendDiscordProactiveMessage(response, undefined, undefined, images);
                     return true;
                 }
                 if (channel === "matrix") {
                     const { sendMatrixProactiveMessage } = await import("./matrix.js");
-                    await sendMatrixProactiveMessage(response);
+                    await sendMatrixProactiveMessage(response, images);
                     return true;
                 }
                 if (channel === "overlay") {
-                    const { sendOverlayNotification } = await import("./overlay/overlay-chat.js");
-                    sendOverlayNotification(response);
-                    return true;
+                    const { sendOverlayImage, sendOverlayNotification } = await import("./overlay/overlay-chat.js");
+                    const shown = await sendOverlayNotification(response, { requested: true });
+                    // Asked for, like the text: DND doesn't hold the images back.
+                    if (shown) for (const img of images ?? []) await sendOverlayImage(img.path, "", { requested: true });
+                    return shown;
                 }
                 console.error(
                     `[CRON] MISROUTED — job ${job.id} had deliverTo="${channel}" which has no handler. Response (${response.length} chars) was dropped.`,
@@ -1177,16 +1261,19 @@ async function boot() {
         console.warn("[CRON] Ticker failed to start (non-fatal):", (cronErr as Error).message);
     }
 
-    // ── Webhook Server (opt-in via ATLAS_WEBHOOK_PORT=<n>) ──────
+    // Images still in the server's queue when the bot stopped: the channels have registered their senders by now.
+    (await import("./media/image-jobs.js")).startImageJobs();
+
+    // ── Webhook Server (opt-in via BHAI_WEBHOOK_PORT=<n>) ──────
     // register_webhook / list_webhooks tools hand out URLs referring to this
     // HTTP endpoint; if the server isn't running the URLs 404. Opt-in because
     // binding a port at boot is usually unwanted — users who need inbound
-    // webhooks can set ATLAS_WEBHOOK_PORT (e.g. 18790) to activate.
-    const webhookPort = Number(process.env.ATLAS_WEBHOOK_PORT);
+    // webhooks can set BHAI_WEBHOOK_PORT (e.g. 18790) to activate.
+    const webhookPort = Number(process.env.BHAI_WEBHOOK_PORT);
     if (Number.isFinite(webhookPort) && webhookPort > 0 && webhookPort < 65536) {
         try {
             const { initWebhookServer, setWebhookHandler } = await import("./tools/webhook.js");
-            initWebhookServer(webhookPort);
+            await initWebhookServer(webhookPort);
             setWebhookHandler(async (endpointId, payload) => {
                 console.log(`[WEBHOOK] ${endpointId} received`, payload);
             });
@@ -1202,13 +1289,18 @@ async function boot() {
             onStart: (botInfo) => {
                 console.log(`✅ Bot online: @${botInfo.username}`);
                 console.log(`   Mode    : long-polling (no HTTP server)`);
-                console.log(`   Tools   : ${toolNames.join(", ")}`);
                 console.log(`   Send me a message on Telegram to get started!\n`);
             },
+        }).catch(async (err: unknown) => {
+            // Polling stops for good on these (a 401 after the token was replaced did, as an
+            // unhandled rejection): say so, so the Channels tab shows it and the owner knows.
+            const why = telegramStopReason((err as Error)?.message ?? String(err));
+            console.error(`[TELEGRAM] Stopped: ${why}`);
+            const { notifyDesktop } = await import("./desktop-notify.js");
+            notifyDesktop("stuck", "Telegram stopped", `Bhai isn't answering on Telegram: ${why}.`, { tag: "telegram-stopped" });
         });
     } else {
         console.log(`✅ Bhai online (Telegram disabled)`);
-        console.log(`   Tools   : ${toolNames.join(", ")}`);
         console.log(`   Configure Telegram in the Channels tab to enable.\n`);
     }
 
@@ -1228,12 +1320,6 @@ async function boot() {
         }
         await closeMCPServers();
         await closeBrowser();
-        try {
-            const { closeSearchBrowser } = await import("./research/engines.js");
-            await closeSearchBrowser();
-        } catch {
-            /* not loaded */
-        }
         closeChromeBridge();
         closeCanvas();
         closeOverlayChat();

@@ -17,7 +17,7 @@ import { clearCache as clearResponseCache } from "../llm-cache.js";
 import { readChatLog, redactChatLog } from "../overlay/chat-log.js";
 import { ownerApproved } from "../security/consent.js";
 import { clearCache as clearToolCache } from "../tools/tool-intelligence.js";
-import { getFieldValue, getIdentityProfile, type UserProfile } from "./identity.js";
+import { getFieldValue, getIdentityProfile, type UserProfile, type VerifiedField } from "./identity.js";
 import { redactCurrentSession, redactSession, type SessionState } from "./session.js";
 import { extractMsgText, forgetMemoryWithReason, getRawDb, restoreSuperseded } from "./sqlite.js";
 import { deleteLearnings, getAllLearnings } from "./task-learnings.js";
@@ -134,8 +134,80 @@ const toSession = (r: SessionRow) => ({
     lastCompressionSummary: r.last_compression_summary ?? "",
 });
 
-/** Everything that matches `query`, across every tier. */
+/** An import's tag (memory-import.ts SaveResult.batch): as a forget query it means that import's memories. */
+// Seconds + suffix since the minute-only form (still accepted for rows saved before) could hold two imports.
+export const IMPORT_BATCH_RE = /^import:\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d-[0-9a-f]{4})?$/;
+
+/**
+ * What one import added and nothing else: memories whose tags hold `batch` exactly, the graph's people
+ * it created, and the profile fields and projects it filled (identity.extra[batch]) while they still
+ * hold what it put there, so an undone import leaves the rest, and later corrections, alone.
+ */
+function findImportBatch(batch: string): ForgetItem[] {
+    const rows = (getRawDb()
+        ?.prepare("SELECT id, content, category, tags, created_at FROM memories WHERE instr(tags, ?) > 0")
+        .all(batch) ?? []) as Array<{
+        id: number;
+        content: string;
+        category: string;
+        tags: string;
+        created_at: string;
+    }>;
+    const items: ForgetItem[] = rows
+        .filter((r) => r.tags.split(",").some((t) => t.trim() === batch))
+        .map((r) => ({
+            tier: `memory (${r.category})`,
+            ref: r.id,
+            date: String(r.created_at ?? "").slice(0, 10),
+            snippet: snippet(r.content, ""),
+        }));
+    if (hasTable("entities")) {
+        const ents = getRawDb()
+            ?.prepare("SELECT id, name, properties, updated_at FROM entities WHERE instr(properties, ?) > 0")
+            .all(batch) as Array<{ id: number; name: string; properties: string; updated_at: string }>;
+        for (const r of ents) {
+            let props: { batch?: unknown } = {};
+            try {
+                props = JSON.parse(r.properties);
+            } catch {
+                /* not ours */
+            }
+            if (props?.batch === batch)
+                items.push({
+                    tier: "graph entity",
+                    ref: r.id,
+                    date: String(r.updated_at).slice(0, 10),
+                    snippet: r.name,
+                });
+        }
+    }
+    const profile = getIdentityProfile();
+    const rec = profile.extra?.[batch] as { fields?: Record<string, string>; projects?: string[] } | undefined;
+    if (rec) {
+        const p = profile as unknown as Record<string, string | VerifiedField | undefined>;
+        const add = (path: string, text: string) =>
+            items.push({
+                tier: "identity",
+                ref: path,
+                date: String(profile.last_updated ?? "").slice(0, 10),
+                snippet: text,
+            });
+        for (const [k, v] of Object.entries(rec.fields ?? {})) if (getFieldValue(p[k]) === v) add(k, `${k}: ${v}`);
+        for (const name of rec.projects ?? []) {
+            const i = (profile.projects ?? []).indexOf(name);
+            if (i >= 0) add(`projects.${i}`, name);
+        }
+        add(`extra.${batch}`, "the import's record");
+    }
+    return items;
+}
+
+// A batch undo deletes rows by tag: no text in chats, sessions or logs is redacted.
+const matcherFor = (query: string) => (IMPORT_BATCH_RE.test(query) ? () => false : forgetMatcher(query));
+
+/** Everything that matches `query`, across every tier (an import batch tag: that import's memories). */
 export function findForgettable(query: string): ForgetItem[] {
+    if (IMPORT_BATCH_RE.test(query)) return findImportBatch(query);
     const raw = getRawDb();
     const ts = forgetTerms(query);
     if (!raw || ts.length === 0) return [];
@@ -176,7 +248,7 @@ export function findForgettable(query: string): ForgetItem[] {
         const text = [l.taskPattern, l.context, ...l.whatWorked, ...l.whatFailed, ...l.tips].join(" · ");
         if (hit(text)) add("task learning", l.id, l.lastSeen, text);
     }
-    // conversation_messages is absent with ATLAS_NO_SESSION_SEARCH; goals and the graph come up at boot.
+    // conversation_messages is absent with BHAI_NO_SESSION_SEARCH; goals and the graph come up at boot.
     if (hasTable("conversation_messages")) {
         for (const r of rows<{ id: number; content: string; created_at: string }>(
             "SELECT id, content, created_at FROM conversation_messages WHERE instr(lower(content), @t) > 0",
@@ -282,7 +354,7 @@ export function previewForget(query: string): { token?: string; count: number; p
 function forgetItems(query: string, items: ForgetItem[]): void {
     const raw = getRawDb();
     if (!raw) throw new Error("Memory DB not initialized");
-    const hit = forgetMatcher(query);
+    const hit = matcherFor(query);
     const of = (tier: string) => items.filter((it) => it.tier === tier).map((it) => it.ref);
     const memoryIds = items.filter((it) => it.tier.startsWith("memory")).map((it) => it.ref as number);
 
@@ -408,6 +480,40 @@ function dropCaches(): void {
     clearToolCache(); // memory_search/memory_list/trait_list/identity_view results
 }
 
+let seenForgetId: number | undefined;
+
+/**
+ * The app's Memory screen forgets in its own process: the rows go, but this process
+ * still holds the fact in its caches (a cached answer for 10 minutes) and its vector
+ * index. Every forget logs a row, so a new row since last time means drop them.
+ * Called at the start of each turn; one indexed query.
+ */
+export function syncForgetsFromElsewhere(): void {
+    const raw = getRawDb();
+    if (!raw) return;
+    try {
+        const max = (raw.prepare("SELECT MAX(id) AS m FROM memory_forget_log").get() as { m: number | null })?.m ?? 0;
+        if (seenForgetId === undefined || max <= seenForgetId) {
+            seenForgetId = Math.max(seenForgetId ?? 0, max);
+            return;
+        }
+        const rows = raw
+            .prepare("SELECT original_id FROM memory_forget_log WHERE id > ? AND kind = 'memory'")
+            .all(seenForgetId) as Array<{ original_id: string }>;
+        for (const r of rows) {
+            try {
+                getHNSWIndex().removeVector(Number(r.original_id));
+            } catch {
+                /* not in the index */
+            }
+        }
+        seenForgetId = max;
+        dropCaches();
+    } catch {
+        /* no log table yet */
+    }
+}
+
 /**
  * Step 2: the owner confirmed. `live` holds the in-memory chats, redacted too so the
  * next reflection can't write the fact back. Re-runs the preview's query, so
@@ -432,7 +538,7 @@ export function executeForget(
     pending.delete(token);
     const items = findForgettable(p.query);
     forgetItems(p.query, items);
-    for (const h of live) redactMessages(h, forgetMatcher(p.query));
+    for (const h of live) redactMessages(h, matcherFor(p.query));
     logForget(items.length, reason, p.query);
     return { forgotten: items.length };
 }
@@ -442,13 +548,22 @@ function logForget(n: number, reason: string, query: string): void {
     const said = words(reason);
     const why = !reason.trim()
         ? "unspecified"
-        : forgetTerms(query).some((t) => said.includes(` ${t} `))
+        : !IMPORT_BATCH_RE.test(query) && forgetTerms(query).some((t) => said.includes(` ${t} `))
           ? "given"
           : reason.trim();
     getRawDb()
         ?.prepare("INSERT INTO memory_forget_log (kind, original_id, reason, source) VALUES ('forget', ?, ?, 'user')")
         .run(`${n} items`, why);
     console.log(`[MEMORY] forgot ${n} items (${why})`);
+}
+
+/** One whole import (memories, graph people, filled fields, projects), gone now. For the owner's Undo tap in the import window: no quote needed. */
+export function undoImportBatch(batch: string, reason = "import_undo"): { forgotten: number } | { error: string } {
+    if (!IMPORT_BATCH_RE.test(batch)) return { error: "Not an import batch." };
+    const items = findForgettable(batch);
+    forgetItems(batch, items);
+    logForget(items.length, reason, batch);
+    return { forgotten: items.length };
 }
 
 /** One memory, gone now. For the owner's own taps (undo, digest prune): no quote needed. */

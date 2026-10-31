@@ -12,64 +12,17 @@ import { drainTrace, startTrace, stopTrace } from "../mint/recorder.js";
 import { replaySkill } from "../mint/replay.js";
 import { pageDriver } from "../page-driver.js";
 import { mintConsent, runSiteTask } from "../runtime.js";
+import { install, skillSource } from "./spa-skill.js";
 import { SHOP_RESOLVER_ARG, startShop } from "./synthetic-shop.js";
-
-// The reference flow for the shop, written for an SPA: results are known by
-// what the page shows, not by its URL. `withExpect` adds the outcome waits.
-const skillSource = (withExpect: boolean) => `
-const exp = (o) => (${withExpect} ? o : {});
-exports.step = (phase, { snapshot: s, input = {} }, lib) => {
-    const path = lib.path(s.url);
-    const el = (id) => s.elements.find((e) => e.id === id);
-    if (el("accept")) return { actions: [{ op: "click", target: { sel: "#accept" } }] };
-    const cards = s.elements.filter((e) => e.dataId);
-    const soldOut = (e) => /sold out/i.test(e.text);
-    const label = (e) => (e.context || e.text).replace(/\\s*(Add|Sold out)$/, "");
-    if (phase === "search") {
-        if (cards.length) return { options: cards.filter((e) => !soldOut(e)).map((e) => ({ id: e.dataId, label: label(e), price: lib.price(e.context) })) };
-        if (/No results/.test(s.text)) return { fail: { reason: "input_rejected: no results", kind: "input_rejected" } };
-        if (path !== "/") return { actions: [{ op: "navigate", value: new URL("/", s.url).href }] };
-        const actions = [];
-        if (input.location && !/Delivering to/.test(s.text)) actions.push(
-            { op: "type", target: { sel: "#loc" }, value: input.location },
-            { op: "pick", target: { sel: "#loc-list [role=option]" }, value: input.location, field: "location" });
-        actions.push(
-            { op: "type", target: { sel: "#q" }, value: String(input.query || "") },
-            { op: "click", target: { sel: "#search" }, ...exp({ expect: { results: { sel: "[data-item]" }, empty: { text: "No results" } } }) });
-        return { actions };
-    }
-    if (phase === "select") {
-        if (path === "/cart") {
-            if (!el("captcha")?.checked) return { actions: [{ op: "click", target: { sel: "#captcha" } }] };
-            const line = (/(.+₹\\s*[\\d,]+)/.exec(s.text) || [])[1] || "your order";
-            const submit = { op: "click", target: { sel: "#checkout", text: "Place order" },
-                ...exp({ expect: { placed: { url: "/(done|otp)" }, turned_down: { sel: "[role=alert]" } } }) };
-            return { confirm: { summary: line.trim(), amount: lib.price(s.text) || 0, submit } };
-        }
-        const card = cards.find((e) => e.dataId === input.id);
-        if (card && soldOut(card)) return { refused: { field: "id", available: cards.filter((e) => !soldOut(e)).map(label) } };
-        if (card) return { actions: [{ op: "click", target: { sel: '[data-id="' + input.id + '"]' } }] };
-        return { fail: { reason: "unexpected page " + path + " while selecting", kind: "unexpected_page" } };
-    }
-    if (path === "/done") return { done: { summary: (/Order placed #\\d+/.exec(s.text) || ["Order placed"])[0] } };
-    return { fail: { reason: "unexpected page " + path + " after confirm", kind: "unexpected_page" } };
-};`;
-const install = (withExpect: boolean, source = skillSource(withExpect)) => {
-    const d = mkdtempSync(path.join(tmpdir(), "spa-skill-"));
-    const submit = { op: "click", target: { sel: "#checkout", text: "Place order" } };
-    writeFileSync(path.join(d, "skill.json"), JSON.stringify({ name: "spa-shop", domains: ["shop.test"], commits: [submit], questions: [] }));
-    writeFileSync(path.join(d, "skill.cjs"), source);
-    return path.join(d, "skill.cjs");
-};
 
 // biome-ignore lint/suspicious/noExplicitAny: playwright is optional here
 let browser: any = null;
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
     // These time the page's own outcomes; Bhai's cursor glide would pad them (agent-cursor.test covers it).
-    process.env.ATLAS_NO_AGENT_CURSOR = "true";
+    process.env.BHAI_NO_AGENT_CURSOR = "true";
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;
@@ -77,8 +30,8 @@ beforeAll(async () => {
     }
 }, 60_000);
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
-    delete process.env.ATLAS_NO_AGENT_CURSOR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_NO_AGENT_CURSOR;
     await browser?.close();
 });
 
@@ -92,7 +45,11 @@ const edit = (src: string, from: string, to: string) => {
 const noSubmitExpect = () =>
     edit(
         edit(
-            edit(skillSource(true), `...exp({ expect: { placed: { url: "/(done|otp)" }, turned_down: { sel: "[role=alert]" } } })`, ""),
+            edit(
+                skillSource(true),
+                `...exp({ expect: { placed: { url: "/(done|otp)" }, turned_down: { sel: "[role=alert]" } } })`,
+                "",
+            ),
             "{ snapshot: s, input = {} }",
             "{ snapshot: s, input = {}, lastError }",
         ),
@@ -118,8 +75,18 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         const shop = await startShop({ spa: true });
         try {
             const a = await open(shop.url);
-            const loop = await runSiteTask({ skillPath: install(false), phase: "search", input: { query: "paneer" }, driver: a.driver });
-            expect([loop.status, loop.reason, loop.retry, loop.writeStatus]).toEqual(["aborted", "loop_identical_args", "manual", "not_attempted"]);
+            const loop = await runSiteTask({
+                skillPath: install(false),
+                phase: "search",
+                input: { query: "paneer" },
+                driver: a.driver,
+            });
+            expect([loop.status, loop.reason, loop.retry, loop.writeStatus]).toEqual([
+                "aborted",
+                "loop_identical_args",
+                "manual",
+                "not_attempted",
+            ]);
             await a.context.close();
 
             const skillPath = install(true);
@@ -127,18 +94,32 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             // The wait ends when the results show (600 ms after the click), not on the idle
             // fallback: with the fallback at 20 s, anything under 8 s can only be the results.
             // (A tight bound measured Windows process start, not the wait.)
-            process.env.ATLAS_SITE_EXPECT_IDLE_MS = "20000";
+            process.env.BHAI_SITE_EXPECT_IDLE_MS = "20000";
             const t0 = Date.now();
             const s = await runSiteTask({ skillPath, phase: "search", input: { query: "paneer" }, driver: b.driver });
             const ms = Date.now() - t0;
-            delete process.env.ATLAS_SITE_EXPECT_IDLE_MS;
-            expect([s.status, s.task.lastOutcome, s.options?.map((o) => o.id)]).toEqual(["options", "results", ["p1", "p2"]]);
+            delete process.env.BHAI_SITE_EXPECT_IDLE_MS;
+            expect([s.status, s.task.lastOutcome, s.options?.map((o) => o.id)]).toEqual([
+                "options",
+                "results",
+                ["p1", "p2"],
+            ]);
             expect(ms).toBeLessThan(8000);
             expect(s.task.stepCount).toBeLessThanOrEqual(6); // accept, type, click + 3 skill calls
             const c = await runSiteTask({ task: s.task, phase: "select", input: { id: "p1" }, driver: b.driver });
             expect([c.status, c.confirm?.amount]).toEqual(["confirm", 249]);
-            const d = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: b.driver });
-            expect([d.status, d.summary, d.task.lastOutcome, shop.orders()]).toEqual(["done", "Order placed #1", "placed", 1]);
+            const d = await runSiteTask({
+                task: c.task,
+                phase: "confirm",
+                consentToken: mintConsent(c.task),
+                driver: b.driver,
+            });
+            expect([d.status, d.summary, d.task.lastOutcome, shop.orders()]).toEqual([
+                "done",
+                "Order placed #1",
+                "placed",
+                1,
+            ]);
 
             // A search with no hits ends on the "empty" outcome, as the owner's input to fix.
             await b.page.goto(shop.url);
@@ -156,7 +137,11 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         const { context, page, driver } = await open(shop.url);
         try {
             await driver.act({ op: "click", target: { sel: "#accept" } });
-            const search = { op: "click" as const, target: { sel: "#search" }, expect: { results: { sel: "[data-item]" } } };
+            const search = {
+                op: "click" as const,
+                target: { sel: "#search" },
+                expect: { results: { sel: "[data-item]" } },
+            };
             await driver.act({ op: "type", target: { sel: "#q" }, value: "paneer" });
             expect(await driver.act(search)).toMatchObject({ outcome: "results" });
             expect((await driver.snapshot()).text).toContain("Paneer Tikka");
@@ -169,14 +154,16 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             const text = (await driver.snapshot()).text;
             expect([text.includes("Dal Makhani"), text.includes("Paneer Tikka")]).toEqual([true, false]);
 
-            process.env.ATLAS_SITE_EXPECT_IDLE_MS = "300";
+            process.env.BHAI_SITE_EXPECT_IDLE_MS = "300";
             const t1 = Date.now();
-            await expect(driver.act({ ...search, expect: { never: { sel: "#nope" } } })).rejects.toThrow(/^no_outcome: none of never/);
+            await expect(driver.act({ ...search, expect: { never: { sel: "#nope" } } })).rejects.toThrow(
+                /^no_outcome: none of never/,
+            );
             // The fetch in flight and the re-render count as progress; then 300 ms of quiet ends it.
             expect(Date.now() - t1).toBeGreaterThanOrEqual(600);
             expect(Date.now() - t1).toBeLessThan(3000);
         } finally {
-            delete process.env.ATLAS_SITE_EXPECT_IDLE_MS;
+            delete process.env.BHAI_SITE_EXPECT_IDLE_MS;
             await context.close();
             await shop.close();
         }
@@ -188,9 +175,17 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         const skillPath = install(true);
         try {
             const a = await open(shop.url);
-            const tie = await runSiteTask({ skillPath, phase: "search", input: { query: "paneer", location: "Indiranagar" }, driver: a.driver });
+            const tie = await runSiteTask({
+                skillPath,
+                phase: "search",
+                input: { query: "paneer", location: "Indiranagar" },
+                driver: a.driver,
+            });
             expect([tie.status, tie.writeStatus, tie.retry]).toEqual(["refused", "not_attempted", "fix_input"]);
-            expect(tie.refused).toEqual({ field: "location", available: ["Indiranagar, Bengaluru", "Indiranagar 2nd Stage, Bengaluru"] });
+            expect(tie.refused).toEqual({
+                field: "location",
+                available: ["Indiranagar, Bengaluru", "Indiranagar 2nd Stage, Bengaluru"],
+            });
             expect((await a.driver.snapshot()).text).not.toContain("Delivering to");
             await a.context.close();
 
@@ -200,7 +195,12 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
                 ["Koramangala", "Koramangala, Bengaluru"],
             ]) {
                 const b = await open(shop.url);
-                const s = await runSiteTask({ skillPath, phase: "search", input: { query: "paneer", location: wanted }, driver: b.driver });
+                const s = await runSiteTask({
+                    skillPath,
+                    phase: "search",
+                    input: { query: "paneer", location: wanted },
+                    driver: b.driver,
+                });
                 expect([wanted, s.status]).toEqual([wanted, "options"]);
                 expect((await b.driver.snapshot()).text).toContain(`Delivering to ${shown}`);
                 await b.context.close();
@@ -219,7 +219,12 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             const s = await runSiteTask({ skillPath, phase: "search", input: { query: "paneer" }, driver });
             expect(s.options?.map((o) => o.id)).toEqual(["p2"]); // the sold-out item isn't offered
             const r = await runSiteTask({ task: s.task, phase: "select", input: { id: "p1" }, driver }); // an id from an older list
-            expect([r.status, r.writeStatus, r.retry, shop.orders()]).toEqual(["refused", "not_attempted", "fix_input", 0]);
+            expect([r.status, r.writeStatus, r.retry, shop.orders()]).toEqual([
+                "refused",
+                "not_attempted",
+                "fix_input",
+                0,
+            ]);
             expect(r.refused).toEqual({ field: "id", available: ["Paneer Butter Masala — ₹299"] });
         } finally {
             await context.close();
@@ -240,7 +245,12 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         };
         try {
             const a = await toConfirm();
-            const r1 = await runSiteTask({ task: a.c.task, phase: "confirm", consentToken: mintConsent(a.c.task), driver: a.driver });
+            const r1 = await runSiteTask({
+                task: a.c.task,
+                phase: "confirm",
+                consentToken: mintConsent(a.c.task),
+                driver: a.driver,
+            });
             expect([r1.status, r1.reason, r1.writeStatus, r1.task.lastOutcome, shop.orders()]).toEqual([
                 "confirm",
                 "commit_rejected: Payment declined",
@@ -248,16 +258,36 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
                 "turned_down",
                 0,
             ]);
-            const r2 = await runSiteTask({ task: r1.task, phase: "confirm", consentToken: mintConsent(r1.task), driver: a.driver });
+            const r2 = await runSiteTask({
+                task: r1.task,
+                phase: "confirm",
+                consentToken: mintConsent(r1.task),
+                driver: a.driver,
+            });
             expect([r2.status, r2.writeStatus, shop.orders()]).toEqual(["done", "applied", 1]);
             await a.context.close();
 
             shop.set({ rejectOrders: 2 });
             const b = await toConfirm();
-            const first = await runSiteTask({ task: b.c.task, phase: "confirm", consentToken: mintConsent(b.c.task), driver: b.driver });
+            const first = await runSiteTask({
+                task: b.c.task,
+                phase: "confirm",
+                consentToken: mintConsent(b.c.task),
+                driver: b.driver,
+            });
             expect(first.reason).toBe("commit_rejected: Payment declined");
-            const second = await runSiteTask({ task: first.task, phase: "confirm", consentToken: mintConsent(first.task), driver: b.driver });
-            expect([second.status, second.writeStatus, second.retry, shop.orders()]).toEqual(["failed", "may_have_applied", "never", 1]);
+            const second = await runSiteTask({
+                task: first.task,
+                phase: "confirm",
+                consentToken: mintConsent(first.task),
+                driver: b.driver,
+            });
+            expect([second.status, second.writeStatus, second.retry, shop.orders()]).toEqual([
+                "failed",
+                "may_have_applied",
+                "never",
+                1,
+            ]);
             expect(() => mintConsent(second.task)).toThrow(/may have gone through/);
             await b.context.close();
         } finally {
@@ -273,7 +303,8 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         let dir = "";
         try {
             const page = await context.newPage();
-            dir = (await startTrace(context, "shop.test", { root: mkdtempSync(path.join(tmpdir(), "spa-trace-")) })).dir;
+            dir = (await startTrace(context, "shop.test", { root: mkdtempSync(path.join(tmpdir(), "spa-trace-")) }))
+                .dir;
             await page.goto(shop.url);
             await drainTrace(page);
             for (const step of [
@@ -307,9 +338,20 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         expect(bad.failures[0].got).toMatch(/refused$/);
 
         // An expect that never holds on the page the session saw next fails replay.
-        const typo = install(true, edit(skillSource(true), `results: { sel: "[data-item]" }, empty: { text: "No results" }`, `results: { sel: "[data-itemz]" }, empty: { text: "Nothing found" }`));
+        const typo = install(
+            true,
+            edit(
+                skillSource(true),
+                `results: { sel: "[data-item]" }, empty: { text: "No results" }`,
+                `results: { sel: "[data-itemz]" }, empty: { text: "Nothing found" }`,
+            ),
+        );
         const unmatched = await replaySkill(typo, dir, { input, browser });
-        expect([unmatched.ok, unmatched.failures[0]?.phase, unmatched.failures[0]?.verdict]).toEqual([false, "search", "expect_unmatched"]);
+        expect([unmatched.ok, unmatched.failures[0]?.phase, unmatched.failures[0]?.verdict]).toEqual([
+            false,
+            "search",
+            "expect_unmatched",
+        ]);
 
         // The outcome that held reaches the next step as lastOutcome, as at run time.
         const branchy = install(
@@ -336,10 +378,26 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             const o = await open(shop.url);
             try {
                 const skillPath = install(true, noSubmitExpect());
-                const s = await runSiteTask({ skillPath, phase: "search", input: { query: "paneer" }, driver: o.driver });
+                const s = await runSiteTask({
+                    skillPath,
+                    phase: "search",
+                    input: { query: "paneer" },
+                    driver: o.driver,
+                });
                 const c = await runSiteTask({ task: s.task, phase: "select", input: { id: "p1" }, driver: o.driver });
-                const d = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: o.driver });
-                expect([track, d.status, d.reason, d.writeStatus, shop.orders()]).toEqual([track, "done", undefined, "applied", 1]);
+                const d = await runSiteTask({
+                    task: c.task,
+                    phase: "confirm",
+                    consentToken: mintConsent(c.task),
+                    driver: o.driver,
+                });
+                expect([track, d.status, d.reason, d.writeStatus, shop.orders()]).toEqual([
+                    track,
+                    "done",
+                    undefined,
+                    "applied",
+                    1,
+                ]);
                 expect(d.task.commitReverted).toBeUndefined();
             } finally {
                 await o.context.close();
@@ -356,7 +414,11 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             await driver.act({ op: "click", target: { sel: "#accept" } });
             await driver.act({ op: "type", target: { sel: "#q" }, value: "paneer" });
             const t0 = Date.now();
-            const r = await driver.act({ op: "click", target: { sel: "#search" }, expect: { loaded: { gone: { sel: ".spinner" } } } });
+            const r = await driver.act({
+                op: "click",
+                target: { sel: "#search" },
+                expect: { loaded: { gone: { sel: ".spinner" } } },
+            });
             expect(r).toMatchObject({ outcome: "loaded" });
             expect(Date.now() - t0).toBeGreaterThanOrEqual(500); // the results land ~600 ms in
             expect((await driver.snapshot()).text).toContain("Paneer Tikka");
@@ -371,10 +433,17 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         const shop = await startShop({ spa: true, rejectOrders: 2 });
         const { context, page, driver } = await open(`${shop.url}cart?id=p1`);
         try {
-            const submit = { op: "click" as const, target: { sel: "#checkout" }, expect: { declined: { announced: "Payment declined" } } };
+            const submit = {
+                op: "click" as const,
+                target: { sel: "#checkout" },
+                expect: { declined: { announced: "Payment declined" } },
+            };
             for (let n = 0; n < 2; n++) {
                 const r = await driver.act(submit, { submit: true, domains: ["shop.test"] });
-                expect([n, r]).toEqual([n, { outcome: "declined", verdict: { verdict: "not_done", detail: "Payment declined" } }]);
+                expect([n, r]).toEqual([
+                    n,
+                    { outcome: "declined", verdict: { verdict: "not_done", detail: "Payment declined" } },
+                ]);
             }
             expect([await page.locator("[role=alert]").count(), shop.orders()]).toEqual([1, 0]);
         } finally {
@@ -387,8 +456,8 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         if (!browser) return ctx.skip();
         const shop = await startShop({ spa: true, ticker: true });
         const { context, driver } = await open(shop.url);
-        process.env.ATLAS_SITE_EXPECT_IDLE_MS = "300";
-        process.env.ATLAS_SITE_EXPECT_CAP_MS = "20000";
+        process.env.BHAI_SITE_EXPECT_IDLE_MS = "300";
+        process.env.BHAI_SITE_EXPECT_CAP_MS = "20000";
         try {
             await driver.act({ op: "click", target: { sel: "#accept" } });
             await driver.act({ op: "type", target: { sel: "#q" }, value: "paneer" });
@@ -398,8 +467,8 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             // The long-poll counts as progress for 5 s, the countdown for its first 3 ticks; then 300 ms of quiet.
             expect(Date.now() - t0).toBeLessThan(8000);
         } finally {
-            delete process.env.ATLAS_SITE_EXPECT_IDLE_MS;
-            delete process.env.ATLAS_SITE_EXPECT_CAP_MS;
+            delete process.env.BHAI_SITE_EXPECT_IDLE_MS;
+            delete process.env.BHAI_SITE_EXPECT_CAP_MS;
             await context.close();
             await shop.close();
         }

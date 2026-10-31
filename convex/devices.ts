@@ -18,26 +18,47 @@ export function deviceLabel(fingerprint: string): { name: string; platform: stri
     return { name: name.slice(0, 80), platform: PLATFORM[os] ?? (os || "Unknown") };
 }
 
-/** Record a sign-in from `fingerprint`; false when the device was removed (and this isn't a fresh, verified sign-in). */
+export async function sha256Hex(text: string): Promise<string> {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** A random secret a device gets at a verified sign-in; only its hash is stored. */
+export function newDeviceSecret(): string {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Record a session for `fingerprint`.
+ * - verified (validate-token, OTPless just checked the sign-in): brings back a removed device
+ *   and stores `secretHash` as the device's secret.
+ * - otherwise (/api/auth/session): the device must exist, not be removed, and `secretHash`
+ *   must match the one stored at its last verified sign-in. A user id alone is not proof.
+ */
 export async function noteDevice(
     ctx: MutationCtx,
     otplessUserId: string,
     fingerprint: string,
-    reactivate: boolean,
-): Promise<boolean> {
+    verified: boolean,
+    secretHash: string | undefined,
+): Promise<"ok" | "device_removed" | "sign_in_required"> {
     const fp = fingerprint.slice(0, 300);
     const now = Date.now();
     const existing = await ctx.db
         .query("devices")
         .withIndex("by_user_and_fingerprint", (q) => q.eq("otplessUserId", otplessUserId).eq("fingerprint", fp))
         .unique();
-    if (!existing) {
-        await ctx.db.insert("devices", { otplessUserId, fingerprint: fp, firstSeen: now, lastSeen: now });
-        return true;
+    if (verified) {
+        if (!existing) await ctx.db.insert("devices", { otplessUserId, fingerprint: fp, firstSeen: now, lastSeen: now, secretHash });
+        else await ctx.db.patch(existing._id, { lastSeen: now, removedAt: undefined, secretHash });
+        return "ok";
     }
-    if (existing.removedAt && !reactivate) return false;
-    await ctx.db.patch(existing._id, { lastSeen: now, removedAt: undefined });
-    return true;
+    if (existing?.removedAt) return "device_removed";
+    if (!existing?.secretHash || !secretHash || existing.secretHash !== secretHash) return "sign_in_required";
+    await ctx.db.patch(existing._id, { lastSeen: now });
+    return "ok";
 }
 
 export const listDevices = internalQuery({

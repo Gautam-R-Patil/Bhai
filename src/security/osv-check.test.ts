@@ -22,7 +22,7 @@ function lastBody(fn: ReturnType<typeof vi.fn>): { package: { name: string; ecos
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    delete process.env.ATLAS_NO_OSV_CHECK;
+    delete process.env.BHAI_NO_OSV_CHECK;
 });
 
 describe("ecosystem inference", () => {
@@ -207,7 +207,7 @@ describe("fail-open behavior", () => {
 
 describe("kill-switch", () => {
     beforeEach(() => {
-        process.env.ATLAS_NO_OSV_CHECK = "true";
+        process.env.BHAI_NO_OSV_CHECK = "true";
     });
 
     it("disabled → allow, no fetch", async () => {

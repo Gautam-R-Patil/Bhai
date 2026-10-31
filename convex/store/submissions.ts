@@ -3,6 +3,7 @@
 
 import { v } from "convex/values";
 import { internalQuery as query, internalMutation as mutation } from "../_generated/server";
+import { minVersionFields } from "./items";
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
@@ -206,6 +207,7 @@ export const create = mutation({
     longDescription: v.optional(v.string()),
     version: v.string(),
     changelog: v.optional(v.string()),
+    minBhaiVersion: v.optional(v.string()),
     minAtlasVersion: v.optional(v.string()),
     contentFileId: v.id("_storage"),
     iconFileId: v.optional(v.id("_storage")),
@@ -265,6 +267,7 @@ export const create = mutation({
 
     const submissionId = await ctx.db.insert("submissions", {
       ...args,
+      ...minVersionFields(args),
       status: "pending",
       reviewNotes: undefined,
       reviewedBy: undefined,
@@ -344,7 +347,7 @@ export const approve = mutation({
         contentFileId: submission.contentFileId,
         iconFileId: submission.iconFileId,
         screenshotFileIds: submission.screenshotFileIds,
-        minAtlasVersion: submission.minAtlasVersion,
+        ...minVersionFields(submission),
         tags: submission.tags,
         permissions: submission.permissions,
         updatedAt: now,
@@ -374,7 +377,7 @@ export const approve = mutation({
         developerId: submission.developerId,
         version: submission.version,
         changelog: submission.changelog,
-        minAtlasVersion: submission.minAtlasVersion,
+        ...minVersionFields(submission),
         contentFileId: submission.contentFileId,
         iconFileId: submission.iconFileId,
         screenshotFileIds: submission.screenshotFileIds,

@@ -14,6 +14,7 @@ import {
     shellArgsTargetProtectedPath,
 } from "../security/allowlist.js";
 import { auditLog } from "../security/audit-log.js";
+import { shellNamesBhaiState } from "../security/sensitive-paths.js";
 import { sanitizeSecrets } from "../security/secrets-sanitizer.js";
 import { resolveWindowsShell, wrapForShell } from "../utils/win-shell.js";
 import type { ToolDefinition } from "./get-current-time.js";
@@ -169,7 +170,29 @@ export function shellWriteTargetsProtected(line: string, cwd: string): string | 
     return null;
 }
 
+// ── Child environment ────────────────────────
+
+/**
+ * Bhai's own credentials (its channel bot tokens, email password, account ids, the
+ * runtime key) are its, not the commands it runs: every shell_exec child inherited them,
+ * so \`env\` (or a prompt-injected curl …$TELEGRAM_BOT_TOKEN) handed them out. Tokens the
+ * owner set for tools (GITHUB_TOKEN, HF_TOKEN…) stay for gh, git and the like.
+ */
+// ATLAS_ is the pre-rename prefix, still honoured (and so still secret) when set.
+const BHAI_SECRET_ENV =
+    /^((?:BHAI|ATLAS)_(?:RUNTIME_KEY|DEVICE_SECRET|OTPLESS_USER_ID|ACCOUNT_EMAIL)|OWNER_[A-Z_]+_IDS|CONVEX_[A-Z_]+|WIDGET_TOKEN)$|_BOT_TOKEN$|_APP_TOKEN$|_SIGNING_SECRET$|_ACCESS_TOKEN$|^EMAIL_PASS(WORD)?$|^SMTP_PASS(WORD)?$|^IMAP_PASS(WORD)?$|_SESSION_TOKEN$/;
+
+export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    return Object.fromEntries(Object.entries(env).filter(([k]) => !BHAI_SECRET_ENV.test(k)));
+}
+
 // ── Cross-Platform Command Executor ──────────
+
+/** command + args as one sh line, each arg one literal (shell_exec and shell_exec_background). */
+export function posixCommandLine(command: string, args: string[]): string {
+    const q = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
+    return args.length ? `${command} ${args.map(q).join(" ")}` : command;
+}
 
 async function execCommand(
     command: string,
@@ -180,12 +203,18 @@ async function execCommand(
         const shell = await resolveWindowsShell();
         const wrapped = wrapForShell(shell, command, args);
         return execFileAsync(wrapped.command, wrapped.args, {
+            env: childEnv(),
             cwd: options.cwd,
             timeout: options.timeout,
             maxBuffer: 1024 * 1024,
         });
     }
-    return execFileAsync(command, args, {
+    // With shell: true Node joins command and args with bare spaces, so an argument with
+    // spaces fell apart: bash -c "set -e; zip …" ran as \`bash -c set -e; zip …\` — a bare
+    // \`set\`, which printed Bhai's whole environment into the tool result. Each arg is one
+    // literal argument (as the schema says); shell syntax belongs in \`command\`.
+    return execFileAsync(posixCommandLine(command, args), [], {
+        env: childEnv(),
         cwd: options.cwd,
         timeout: options.timeout,
         maxBuffer: 1024 * 1024,
@@ -194,6 +223,46 @@ async function execCommand(
 }
 
 // ── Shell Command Tool ────────────────────────
+
+/**
+ * Keep the tail of each stream (compilers and test runners print the errors
+ * last) and redact well-known secret formats before the output reaches the
+ * agent, so `echo $AWS_KEY` or `env | grep TOKEN` can't leak credentials into
+ * LLM memory + cloud logs.
+ */
+function cleanOutput(command: string, stdout = "", stderr = "") {
+    const outScan = sanitizeSecrets(stdout.slice(-MAX_OUTPUT));
+    const errScan = sanitizeSecrets(stderr.slice(-MAX_OUTPUT));
+    const redacted = outScan.totalRedactions + errScan.totalRedactions;
+    if (redacted > 0) {
+        console.warn(
+            `[SHELL] redacted ${redacted} secret(s) from command="${command}": ${JSON.stringify({
+                ...outScan.redactionsByType,
+                ...errScan.redactionsByType,
+            })}`,
+        );
+    }
+    return {
+        stdout: outScan.sanitized,
+        stderr: errScan.sanitized,
+        truncated: stdout.length > MAX_OUTPUT || stderr.length > MAX_OUTPUT,
+        ...(redacted > 0 ? { redacted } : {}),
+    };
+}
+
+/** A failed command still returns what it printed: tsc and vitest write their errors to stdout. */
+function failure(command: string, err: unknown, fallback: string): string {
+    const e = err as { message?: string; code?: number; killed?: boolean; stdout?: string; stderr?: string };
+    // Node's message is "Command failed: <cmd>\n<stderr>"; stderr ships separately (sanitized).
+    const error = (e.message || fallback).split("\n")[0];
+    return JSON.stringify({
+        success: false,
+        error,
+        code: e.code,
+        killed: e.killed,
+        ...cleanOutput(command, e.stdout, e.stderr),
+    });
+}
 
 export const shellExec: ToolDefinition = {
     schema: {
@@ -209,7 +278,8 @@ export const shellExec: ToolDefinition = {
                     args: {
                         type: "array",
                         items: { type: "string" },
-                        description: "Command arguments",
+                        description:
+                            "Arguments, each passed as one literal argument (quoted). Put pipes, globs, redirects or && in command instead.",
                     },
                     cwd: { type: "string", description: "Working directory (optional)" },
                     timeout: { type: "number", description: "Timeout in ms (default 30000)" },
@@ -257,50 +327,28 @@ export const shellExec: ToolDefinition = {
             });
         }
 
-        // Codebase self-protection: block write forms that touch the atlas folder.
+        // Bhai's own state (memory.db, chat history, the WhatsApp session…): read refuses it, so
+        // the shell must not print it either.
+        const ownState = shellNamesBhaiState(fullCommand, cwd);
+        if (ownState) {
+            return JSON.stringify({
+                error: `Blocked: the command reaches into Bhai's own data (${ownState}). Its memory, chats and sessions never go through the shell; the owner can run it in Terminal.`,
+            });
+        }
+
+        // Codebase self-protection: block write forms that touch the bhai folder.
         const hit = shellWriteTargetsProtected(fullCommand, cwd);
         if (hit) {
             return JSON.stringify({
-                error: `Blocked: command "${command}" writes to the bot's own codebase path "${hit}". Write/delete operations on the atlas codebase are not allowed.`,
+                error: `Blocked: command "${command}" writes to the bot's own codebase path "${hit}". Write/delete operations on the bhai codebase are not allowed.`,
             });
         }
 
         try {
             const { stdout, stderr } = await execCommand(command, args, { cwd, timeout });
-
-            // Truncate first so we only scan what actually ships to the
-            // agent (scanning a 10 MB buffer would be wasteful).
-            const rawOut = (stdout || "").substring(0, MAX_OUTPUT);
-            const rawErr = (stderr || "").substring(0, MAX_OUTPUT);
-
-            // Redact well-known secret formats before the output reaches
-            // the agent context. Prevents scripts like `echo $AWS_KEY`
-            // or `env | grep TOKEN` from leaking credentials into LLM
-            // memory + cloud logs.
-            const outScan = sanitizeSecrets(rawOut);
-            const errScan = sanitizeSecrets(rawErr);
-            if (outScan.totalRedactions + errScan.totalRedactions > 0) {
-                console.warn(
-                    `[SHELL] redacted ${outScan.totalRedactions + errScan.totalRedactions} secret(s) ` +
-                        `from command="${command}": ${JSON.stringify({
-                            ...outScan.redactionsByType,
-                            ...errScan.redactionsByType,
-                        })}`,
-                );
-            }
-
-            return JSON.stringify({
-                success: true,
-                stdout: outScan.sanitized,
-                stderr: errScan.sanitized,
-                truncated: (stdout || "").length > MAX_OUTPUT,
-                ...(outScan.totalRedactions + errScan.totalRedactions > 0
-                    ? { redacted: outScan.totalRedactions + errScan.totalRedactions }
-                    : {}),
-            });
+            return JSON.stringify({ success: true, ...cleanOutput(command, stdout, stderr) });
         } catch (err) {
-            const error = err as { message?: string; code?: number; killed?: boolean };
-            const errMsg = error.message || "Command failed";
+            const errMsg = (err as { message?: string }).message || "Command failed";
 
             // ── Self-heal: if command not found, try auto-installing and retry ──
             if (/ENOENT|command not found|not recognized/i.test(errMsg)) {
@@ -311,25 +359,13 @@ export const shellExec: ToolDefinition = {
                         console.log(`  🔧 Shell self-healed (${heal.action}) — retrying: ${command}`);
                         try {
                             const { stdout, stderr } = await execCommand(command, args, { cwd, timeout });
-                            const outScan = sanitizeSecrets((stdout || "").substring(0, MAX_OUTPUT));
-                            const errScan = sanitizeSecrets((stderr || "").substring(0, MAX_OUTPUT));
                             return JSON.stringify({
                                 success: true,
-                                stdout: outScan.sanitized,
-                                stderr: errScan.sanitized,
+                                ...cleanOutput(command, stdout, stderr),
                                 note: `Auto-installed missing dependency (${heal.action}) before retry`,
-                                ...(outScan.totalRedactions + errScan.totalRedactions > 0
-                                    ? { redacted: outScan.totalRedactions + errScan.totalRedactions }
-                                    : {}),
                             });
                         } catch (retryErr) {
-                            const re = retryErr as { message?: string; code?: number; killed?: boolean };
-                            return JSON.stringify({
-                                success: false,
-                                error: re.message || "Command failed after self-heal retry",
-                                code: re.code,
-                                killed: re.killed,
-                            });
+                            return failure(command, retryErr, "Command failed after self-heal retry");
                         }
                     }
                 } catch {
@@ -337,12 +373,7 @@ export const shellExec: ToolDefinition = {
                 }
             }
 
-            return JSON.stringify({
-                success: false,
-                error: errMsg,
-                code: error.code,
-                killed: error.killed,
-            });
+            return failure(command, err, errMsg);
         }
     },
 };

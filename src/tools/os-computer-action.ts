@@ -492,17 +492,15 @@ async function dispatchScroll(x: number, y: number, dx: number, dy: number): Pro
         const useWayland = isWayland();
         if (useWayland) {
             await ensureYdotoold();
-            // ydotool wheel sign is also "positive=up" historically; mirror our API by negating.
             await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
                 timeout: 3000,
             });
+            // ydotool has no wheel buttons (`click 4/5` does nothing); the wheel is
+            // `mousemove --wheel`, where positive y is up (REL_WHEEL), so negate ours.
             const ticks = Math.max(1, Math.abs(Math.round(dy / 40)));
-            for (let i = 0; i < ticks; i++) {
-                // ydotool wheel buttons: "4" = up, "5" = down (xdotool-compatible button numbers).
-                // 0xC0/0xC1 are USB HID mouse-button codes — wrong tool for the job, would fire
-                // left/right CLICK instead of scrolling. Found via DEEP R2 review.
-                await execFileAsync("ydotool", ["click", dy > 0 ? "5" : "4"], { timeout: 2000 }).catch(() => {});
-            }
+            await execFileAsync("ydotool", ["mousemove", "--wheel", "-x", "0", "-y", String(dy > 0 ? -ticks : ticks)], {
+                timeout: 3000,
+            });
             return;
         }
         await execFileAsync("xdotool", ["mousemove", String(x), String(y)], { timeout: 3000 });
@@ -568,9 +566,9 @@ async function ensureYdotoold(): Promise<void> {
 // terminals, key-repeat-sensitive fields, and to avoid clobbering the user's
 // clipboard. We use real keystrokes for short ASCII text and fall back to the
 // (faster, unicode-safe) clipboard-paste only for long or non-ASCII strings.
-// ATLAS_TYPE_VIA_CLIPBOARD=true forces the old paste behavior everywhere.
+// BHAI_TYPE_VIA_CLIPBOARD=true forces the old paste behavior everywhere.
 export function shouldRealKeystroke(text: string): boolean {
-    if (process.env.ATLAS_TYPE_VIA_CLIPBOARD === "true") return false;
+    if (process.env.BHAI_TYPE_VIA_CLIPBOARD === "true") return false;
     // ASCII printable only, and short enough that per-char synthesis isn't slow.
     return text.length <= 200 && /^[\x20-\x7e]*$/.test(text);
 }
@@ -1307,6 +1305,7 @@ function mapKeyComboToSendKeys(combo: string): string {
         else if (m === "alt" || m === "option") prefix += "%";
         else if (m === "shift") prefix += "+";
         else if (m === "cmd" || m === "command" || m === "meta") prefix += "^"; // Windows has no Cmd; treat as Ctrl
+        else throw new Error(`modifier '${m}' can't be sent on Windows (SendKeys has no Windows key)`);
     }
     const keyMap: Record<string, string> = {
         enter: "{ENTER}",

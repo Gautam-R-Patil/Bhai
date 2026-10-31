@@ -74,7 +74,7 @@ const MAX_SYNTH_STEP_CHARS = 4000; // per-step output cap in the synthesis promp
  * calls before any step runs and only add hint text. Opt-in.
  */
 function deepPlanningEnabled(): boolean {
-    return process.env.ATLAS_SWARM_DEEP_PLANNING === "true";
+    return process.env.BHAI_SWARM_DEEP_PLANNING === "true";
 }
 
 /** Head + tail cap so one huge step output can't blow up the synthesis prompt. */
@@ -440,13 +440,13 @@ async function runSwarmSteps(
     // (code-critic, multi-critic, MoA). Each stage checks remaining time
     // and is skipped if the budget is exhausted. Keeps total swarm
     // latency bounded when any individual stage goes slow.
-    const POST_SYNTHESIS_BUDGET_MS = Math.max(5000, Number(process.env.ATLAS_POST_SYNTHESIS_BUDGET_MS) || 90_000);
+    const POST_SYNTHESIS_BUDGET_MS = Math.max(5000, Number(process.env.BHAI_POST_SYNTHESIS_BUDGET_MS) || 90_000);
     const postSynthesisDeadline = Date.now() + POST_SYNTHESIS_BUDGET_MS;
     const budgetLeft = (): boolean => Date.now() < postSynthesisDeadline;
 
     // ── Code-Aware Critic: deterministic compile/lint/test checks when plan includes coder steps ──
     // Runs in parallel before the LLM multi-critic so cheap, objective signals fire first.
-    // Returns null (skip) when no coder steps exist or ATLAS_NO_CODE_CRITIC=true.
+    // Returns null (skip) when no coder steps exist or BHAI_NO_CODE_CRITIC=true.
     if (budgetLeft()) {
         if (onProgress) await onProgress("🧪 code critic…").catch(() => {});
         try {

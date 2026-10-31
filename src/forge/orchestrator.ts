@@ -2,7 +2,6 @@
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { LLMClient } from "../llm.js";
 import { selectForToolSynthesis } from "../model-router.js";
@@ -12,7 +11,8 @@ import {
     getAwaitingDynamicToolSlug,
     getPlanModeState,
 } from "../agents/plan-mode.js";
-import { getRegistryRef } from "../tools/create-tool.js";
+import { ownerApproved } from "../security/consent.js";
+import { getRegistryRef, isBuiltinToolName, registerDynamicTool, unregisterDynamicTool } from "../tools/create-tool.js";
 import { parseCapabilities, type Capabilities } from "./capabilities.js";
 import {
     closeLibrary,
@@ -32,6 +32,7 @@ import {
     invokePersistedTool,
     reinstallPersistedTool,
     uninstallPersistedTool,
+    wrapHandler,
 } from "./sandbox-supervisor.js";
 import { emitForgeEvent, initForgeTelemetry } from "./telemetry.js";
 import type {
@@ -42,6 +43,7 @@ import type {
     ToolMetadata,
 } from "./types.js";
 import { parseCapabilitiesLooseInput, runVerifier } from "./verifier.js";
+import { getBhaiHome } from "../config/paths.js";
 
 type FunctionGemmaFn = (
     query: string,
@@ -49,15 +51,15 @@ type FunctionGemmaFn = (
 ) => Promise<FunctionGemmaResult | null>;
 
 const FORGE_SYSTEM_PROMPT =
-    "You are Bhai's tool-synthesis engine. Produce a JSON object with handler_code, tests, capabilities_declared, side_effects, synthesis_notes. Return ONLY the JSON.";
+    "You are Bhai's tool-synthesis engine. Produce a JSON object with handler_code, tests, capabilities_declared, side_effects, synthesis_notes. Return ONLY the JSON.\n" +
+    "handler_code is the body of `async function (input, utils, console)` and returns the result. " +
+    "utils = { fs (read-only: readFile, readFileSync, readdir, readdirSync, stat, statSync, existsSync), path, homedir, JSON, console, setTimeout, " +
+    "require (only 'path', 'fs', 'os'; also available as plain `require`) }. utils.exec, utils.execFile and utils.fetch are denied, and there is no Buffer, URL or crypto. " +
+    "Tests run the handler in that same sandbox and check its return value or error; side_effect_* test kinds always fail, and a bare `throws` passes on any error, so prefer throws_contains.";
 
 let _ready = false;
 let _embedFn: ((text: string) => Promise<Float32Array>) | null = null;
 let _llmClient: LLMClient | null = null;
-
-function atlasHome(): string {
-    return process.env.ATLAS_HOME ?? join(homedir(), ".atlas");
-}
 
 function hashSync(s: string): string {
     return createHash("sha256").update(s).digest("hex").substring(0, 16);
@@ -68,8 +70,8 @@ export interface InitForgeOpts {
 }
 
 export async function initForge(opts: InitForgeOpts): Promise<void> {
-    if (process.env.ATLAS_NO_FORGE === "true") {
-        console.log("🔧 Forge: disabled via ATLAS_NO_FORGE");
+    if (process.env.BHAI_NO_FORGE === "true") {
+        console.log("🔧 Forge: disabled via BHAI_NO_FORGE");
         return;
     }
 
@@ -77,7 +79,7 @@ export async function initForge(opts: InitForgeOpts): Promise<void> {
     _embedFn = opts.embedFn;
 
     try {
-        const home = atlasHome();
+        const home = getBhaiHome();
         const libraryPath = join(home, "data", "skill-library.db");
         const telemetryPath = join(home, "data", "forge-telemetry.jsonl");
 
@@ -173,8 +175,14 @@ export async function lookupTool(description: string, _schema: Record<string, un
         embedFn: _embedFn,
         functionGemmaFn: fgFn,
     });
-    if (!hit) return null;
+    if (!hit || !isCallable(hit.slug)) return null;
     return getToolBySlug(hit.slug);
+}
+
+// A library row is reusable only while its tool is in this process's registry:
+// that rules out awaiting_approval, archived, and session tools from before a restart.
+function isCallable(slug: string): boolean {
+    return getRegistryRef()?.has(slug) ?? false;
 }
 
 // F5: centralized slug validation. Matches both the persisted-manifest slug
@@ -215,15 +223,28 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
     if (!SLUG_RE.test(req.name)) {
         return rejectInvalidSlug(req.name, req);
     }
+    if (isBuiltinToolName(req.name)) {
+        return {
+            kind: "failed",
+            report: {
+                requestedName: req.name,
+                description: req.description,
+                attempts: 0,
+                finalDiagnosis: `"${req.name}" is a built-in tool; choose a different name`,
+                failureReason: "exhausted_attempts",
+                reportPath: "",
+            },
+        };
+    }
 
-    if (process.env.ATLAS_NO_FORGE_LOOKUP !== "true" && _embedFn) {
+    if (process.env.BHAI_NO_FORGE_LOOKUP !== "true" && _embedFn) {
         const fgFn = await loadFunctionGemmaFn();
         const hit = await runLookupPipeline({
             description: req.description,
             embedFn: _embedFn,
             functionGemmaFn: fgFn,
         });
-        if (hit) {
+        if (hit && isCallable(hit.slug)) {
             return {
                 kind: "lookup_hit",
                 slug: hit.slug,
@@ -232,11 +253,11 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
         }
     }
 
-    if (process.env.ATLAS_FORGE_STUB_LLM === "true") {
+    if (process.env.BHAI_FORGE_STUB_LLM === "true") {
         return await synthesizeWithStubLLM(req);
     }
 
-    if (process.env.ATLAS_NO_FORGE_VERIFIER === "true") {
+    if (process.env.BHAI_NO_FORGE_VERIFIER === "true") {
         return await synthesizeWithStubLLM(req);
     }
 
@@ -254,7 +275,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
         };
     }
 
-    const home = atlasHome();
+    const home = getBhaiHome();
     const failedDir = join(home, "store", "dynamic", "_failed");
 
     const modelSel = selectForToolSynthesis(req.source === "dream_replay");
@@ -307,7 +328,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
 
     if (!_embedFn) throw new Error("embedFn not set");
     const embedding = await _embedFn(req.description);
-    const handlerHash = hashSync(result.envelope.handler_code);
+    const handlerHash = hashSync(wrapHandler(result.envelope.handler_code)); // what handler.js holds
     try {
         insertTool({
             slug: req.name,
@@ -445,23 +466,6 @@ async function synthesizeWithStubLLM(req: SynthesisRequest): Promise<SynthesisRe
     return { kind: "synthesized", slug: req.name, attempts: 1, testsPassed: 1, testsTotal: 1 };
 }
 
-// Server-side banned-word list — mirrors src/tools/forge-approval.ts so the
-// agent-side check can't be bypassed by manipulating the wrapper.
-const SERVER_BANNED_USER_QUOTE_WORDS = new Set([
-    "ok",
-    "yes",
-    "sure",
-    "approved",
-    "approve",
-    "lgtm",
-    "ship it",
-    "looks good",
-    "go ahead",
-    "do it",
-    "good",
-    "fine",
-]);
-
 export async function approveDynamicTool(
     slug: string,
     userQuote: string,
@@ -480,22 +484,17 @@ export async function approveDynamicTool(
                 `current mode='${planState.mode}', awaiting_slug='${awaitingSlug ?? "(none)"}'`,
         };
     }
-    if (!userQuote || userQuote.trim().length < 10) {
-        return { ok: false, error: "user_quote too short or empty (must be ≥10 non-whitespace chars)" };
-    }
-    // Server-side banned-word recheck (defence in depth — TS-side gate in
-    // forge-approval.ts can be bypassed if anyone calls approveDynamicTool
-    // directly).
-    const trimmed = userQuote.trim().toLowerCase();
-    if (SERVER_BANNED_USER_QUOTE_WORDS.has(trimmed)) {
-        return {
-            ok: false,
-            error: `user_quote "${userQuote}" is too generic — paste the user's actual verbatim approval text`,
-        };
+    // Defence in depth: forge-approval.ts checks the same, but anything that
+    // calls approveDynamicTool directly must still carry the owner's own yes.
+    if (!ownerApproved(userQuote, planState.enteredAt)) {
+        return { ok: false, error: "user_quote must be the owner's own yes from their latest message" };
     }
     const manifest = readManifest(slug);
     if (!manifest) {
         return { ok: false, error: `manifest not found for slug ${slug}` };
+    }
+    if (isBuiltinToolName(slug)) {
+        return { ok: false, error: `"${slug}" is a built-in tool's name; a dynamic tool can't replace it.` };
     }
     // Refresh approval metadata.
     const approved: PersistedToolManifest = {
@@ -511,24 +510,7 @@ export async function approveDynamicTool(
         return { ok: false, error: `install failed: ${(err as Error).message}` };
     }
 
-    const registry = getRegistryRef();
-    if (registry) {
-        const handler = async (input: Record<string, unknown>) => {
-            const res = await invokePersistedTool(slug, input);
-            return JSON.stringify(res);
-        };
-        registry.set(slug, {
-            schema: {
-                type: "function",
-                function: {
-                    name: slug,
-                    description: `[Dynamic — sandboxed] ${manifest.description}`,
-                    parameters: manifest.parametersSchema,
-                },
-            },
-            handler,
-        });
-    }
+    registerPersisted(slug, manifest);
     emitForgeEvent({ event: "tool_approved", ts: Date.now(), slug } as never);
     // Return to act mode so the agent can use the newly-approved tool.
     if (getPlanModeState().mode === "awaiting_dynamic_tool_approval") {
@@ -539,16 +521,32 @@ export async function approveDynamicTool(
     return { ok: true, toolName: slug };
 }
 
+/** Make an approved persisted tool callable; it runs in the sandbox supervisor. */
+function registerPersisted(slug: string, manifest: PersistedToolManifest): void {
+    registerDynamicTool(
+        slug,
+        {
+            schema: {
+                type: "function",
+                function: {
+                    name: slug,
+                    description: `[Dynamic — sandboxed] ${manifest.description}`,
+                    parameters: manifest.parametersSchema,
+                },
+            },
+            handler: async (input) => JSON.stringify(await invokePersistedTool(slug, input)),
+        },
+        { persisted: true },
+    );
+}
+
 export async function revokeDynamicTool(slug: string): Promise<void> {
     try {
         await uninstallPersistedTool(slug);
     } catch (err) {
         console.error("revokeDynamicTool: uninstall failed:", (err as Error).message);
     }
-    const registry = getRegistryRef();
-    if (registry) {
-        registry.delete(slug);
-    }
+    unregisterDynamicTool(slug);
     try {
         setLifecycleState(slug, "archived");
     } catch {
@@ -567,7 +565,7 @@ export async function revokeDynamicTool(slug: string): Promise<void> {
     emitForgeEvent({ event: "tool_revoked", ts: Date.now(), slug } as never);
 }
 
-/// Boot-scan: walk ~/.atlas/store/dynamic/* and re-register any active
+/// Boot-scan: walk ~/.bhai/store/dynamic/* and re-register any active
 /// (approved) manifests in the agent's tool registry.
 async function scanAndRegisterApprovedTools(): Promise<{ registered: number; archived: number }> {
     const dir = getDynamicStoreDir();
@@ -582,7 +580,6 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
     }
     let registered = 0;
     let archived = 0;
-    const registry = getRegistryRef();
     for (const slug of entries) {
         if (slug === "_failed") continue;
         // Skip non-slug-shaped names (.DS_Store, .tmp, foo-bar, etc.).
@@ -644,23 +641,11 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
             }
             continue;
         }
-        if (registry) {
-            const handler = async (input: Record<string, unknown>) => {
-                const res = await invokePersistedTool(slug, input);
-                return JSON.stringify(res);
-            };
-            registry.set(slug, {
-                schema: {
-                    type: "function",
-                    function: {
-                        name: slug,
-                        description: `[Dynamic — sandboxed] ${manifest.description}`,
-                        parameters: manifest.parametersSchema,
-                    },
-                },
-                handler,
-            });
+        if (isBuiltinToolName(slug)) {
+            console.warn(`[forge] boot-scan: ${slug} shadows a built-in tool; not registering it`);
+            continue;
         }
+        registerPersisted(slug, manifest);
         try {
             await reinstallPersistedTool(slug);
         } catch (err) {
@@ -673,7 +658,7 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
 
 // ── Pending queue with HMAC integrity (F6) ────────────────
 //
-// Threat: a malicious actor who can write to ~/.atlas/data/forge-pending.json
+// Threat: a malicious actor who can write to ~/.bhai/data/forge-pending.json
 // could inject crafted SynthesisRequests that the consumer picks up and
 // passes into the verifier loop. We can't stop them from writing to disk
 // (filesystem is shared with the user), but we can refuse to consume
@@ -742,7 +727,7 @@ function verifyEntry(entry: SignedPendingEntry): boolean {
 }
 
 function pendingPath(): string {
-    return join(atlasHome(), "data", "forge-pending.json");
+    return join(getBhaiHome(), "data", "forge-pending.json");
 }
 
 function loadPending(): PendingQueue {

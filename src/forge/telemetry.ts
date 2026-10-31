@@ -1,11 +1,11 @@
 // Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ForgeTelemetryEvent } from "./types.js";
+import { getBhaiHome } from "../config/paths.js";
 
-const DEFAULT_LOG_PATH = join(homedir(), ".atlas", "data", "forge-telemetry.jsonl");
+const DEFAULT_LOG_PATH = join(getBhaiHome(), "data", "forge-telemetry.jsonl");
 
 let _logPath: string = DEFAULT_LOG_PATH;
 let _eventCount = 0;

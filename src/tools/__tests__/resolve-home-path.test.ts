@@ -1,6 +1,6 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // From the model-ladder eval: gpt-4.1-nano opened "/Users/your_username/Downloads".
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -20,6 +20,35 @@ describe("resolveHomePath", () => {
     it("leaves paths that exist, or exist nowhere, alone", () => {
         const tmp = mkdtempSync(join(tmpdir(), "bhai-"));
         expect(resolveHomePath(tmp)).toBe(tmp);
-        expect(resolveHomePath("/Users/someone/definitely-not-here-xyz")).toBe("/Users/someone/definitely-not-here-xyz");
+        // Another home that exists (/Users/Shared on macOS) is meant as written.
+        if (existsSync("/Users/Shared"))
+            expect(resolveHomePath("/Users/Shared/definitely-not-here-xyz")).toBe("/Users/Shared/definitely-not-here-xyz");
+    });
+
+    it("maps a new file into a folder only the real home has", () => {
+        // From the harder eval: "/Users/Shared/Desktop/BhaiEval/count.txt" for ~/Desktop/BhaiEval.
+        if (existsSync("/Users/Shared"))
+            expect(resolveHomePath(`/Users/Shared/${name}/count.txt`)).toBe(join(real, "count.txt"));
+    });
+});
+
+// From the complex-task eval: list_directory("~/Downloads") read "<cwd>/~/Downloads".
+describe("withHomePaths (every tool call)", () => {
+    it("resolves ~ in path arguments and leaves the rest alone", async () => {
+        const { withHomePaths } = await import("../index.js");
+        const out = withHomePaths({ path: "~/Downloads", query: "~/not-a-path", target: "https://x.y/~a" });
+        expect(out.path).toBe(join(homedir(), "Downloads"));
+        expect(out.query).toBe("~/not-a-path");
+        expect(out.target).toBe("https://x.y/~a");
+    });
+
+    it("maps a placeholder home in lists and for files not written yet (a new zip)", async () => {
+        const { withHomePaths } = await import("../index.js");
+        const out = withHomePaths({
+            paths: ["/Users/YourUsername/Desktop"],
+            archive_path: "/Users/YourUsername/Desktop/new-archive-xyz.zip",
+        });
+        expect(out.paths).toEqual([join(homedir(), "Desktop")]);
+        expect(out.archive_path).toBe(join(homedir(), "Desktop/new-archive-xyz.zip"));
     });
 });

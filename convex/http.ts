@@ -5,10 +5,28 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import Anthropic from "@anthropic-ai/sdk";
 import { toClaudeRequest, toOpenAIResponse } from "./claude";
-import { callAzure, isAzureModel } from "./grok";
-import { decodeBase64, STT_CREDIT_COST, STT_MAX_AUDIO_BYTES, sttConfigFromEnv, transcribeWithProvider } from "./stt";
+import { pipeClaudeStream, streamCompletion } from "./llmStream";
+import { encodeFrame } from "./streamFrames";
+import { callAzure, clientAttemptMs, isAzureModel } from "./grok";
+import {
+  analyzeWithProvider,
+  decodeBase64,
+  STT_CREDIT_COST,
+  STT_MAX_AUDIO_BYTES,
+  sttConfigFromEnv,
+  transcribeWithProvider,
+} from "./stt";
+import { encodeBase64, speakWithProvider, TTS_CREDIT_COST, TTS_MAX_CHARS, ttsConfigFromEnv } from "./tts";
+import {
+  callAzureImage,
+  imageConfigFromEnv,
+  imageCreditCost,
+  imageErrorResponse,
+  validateImageRequest,
+} from "./image";
 import {
   generateServerKeyPair,
   deriveSharedKey,
@@ -83,7 +101,7 @@ const _legacyAadByRequest = new WeakMap<Request, true>();
 async function parseRequestBody(
   request: Request,
   sharedKey: string | null,
-): Promise<{ body: any; encrypted: boolean; legacyAad: boolean }> {
+): Promise<{ body: any; encrypted: boolean; legacyAad: boolean; rid?: string }> {
   const isEncrypted = request.headers.get("X-Encryption") === "ecdh-aes-256-gcm";
 
   if (isEncrypted && sharedKey) {
@@ -116,7 +134,7 @@ async function parseRequestBody(
       legacyAad = true;
       _legacyAadByRequest.set(request, true);
     }
-    return { body: JSON.parse(plaintext), encrypted: true, legacyAad };
+    return { body: JSON.parse(plaintext), encrypted: true, legacyAad, rid: envelope.rid };
   }
 
   // Unencrypted fallback
@@ -163,12 +181,23 @@ async function buildResponse(
   });
 }
 
+// Headers of a framed /api/llm/chat answer (live stream or one final `done` frame).
+const FRAME_HEADERS = {
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache, no-transform",
+  "X-Encryption": "ecdh-aes-256-gcm",
+  "X-Stream": "frames",
+};
+
 // Credit cost table + lookup live in ./credit-cost.ts so the tier
 // mapping is unit-testable without a Convex harness.
 import { getCreditCost } from "./credit_cost.js";
+import { updateFeedResponse } from "./updateFeed.js";
 import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
 import { isBotUsername, managedBotLink } from "./telegramManaged.js";
+import { newDeviceSecret, sha256Hex } from "./devices.js";
 import { isEmail, MAX_RECIPIENTS_PER_EMAIL, parseRecipients, SEND_RECIPIENTS_PER_DAY } from "./bhaiMailHelpers.js";
+import { bhaiEnv } from "./envCompat.js";
 
 // ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
 // Isolated subsystem — no coupling to session/credit machinery. Lives next
@@ -177,25 +206,7 @@ import { isEmail, MAX_RECIPIENTS_PER_EMAIL, parseRecipients, SEND_RECIPIENTS_PER
 // against accidental floods, not a security boundary (hCaptcha is).
 const WAITLIST_IP_WINDOW_MS = 10 * 60_000;
 const WAITLIST_IP_MAX = 5;
-const waitlistIpHits = new Map<string, { count: number; windowStart: number }>();
 
-function checkWaitlistIpRateLimit(ip: string): boolean {
-  if (!ip || ip === "unknown") return true; // can't rate-limit what we can't identify
-  const now = Date.now();
-  const existing = waitlistIpHits.get(ip);
-  if (waitlistIpHits.size > 1024) {
-    for (const [k, v] of waitlistIpHits) {
-      if (now - v.windowStart > WAITLIST_IP_WINDOW_MS) waitlistIpHits.delete(k);
-    }
-  }
-  if (!existing || now - existing.windowStart > WAITLIST_IP_WINDOW_MS) {
-    waitlistIpHits.set(ip, { count: 1, windowStart: now });
-    return true;
-  }
-  if (existing.count >= WAITLIST_IP_MAX) return false;
-  existing.count++;
-  return true;
-}
 
 const WAITLIST_ALLOWED_ORIGIN = "https://tryatlasagi.com";
 
@@ -276,6 +287,9 @@ async function verifyHCaptcha(token: string, remoteIp?: string): Promise<boolean
   }
 }
 
+// Convex's .site is behind Cloudflare: it sets CF-Connecting-IP on every request and
+// rejects one the client sends (403), so it must stay first. X-Forwarded-For and
+// X-Real-IP are client-controlled and only a fallback (checked live, Oct 2026).
 function extractClientIp(request: Request): string {
   return (
     request.headers.get("CF-Connecting-IP") ||
@@ -462,10 +476,14 @@ http.route({
     // 3. Parse client request (with E2E decryption if active)
     let body: any;
     let isEncrypted = false;
+    let legacyAad = false;
+    let reqRid: string | undefined;
     try {
       const parsed = await parseRequestBody(request, account.sharedKey);
       body = parsed.body;
       isEncrypted = parsed.encrypted;
+      legacyAad = parsed.legacyAad;
+      reqRid = parsed.rid;
     } catch (err: any) {
       await logCall({
         model: "unknown",
@@ -606,7 +624,11 @@ http.route({
       }
     } else {
       // Normal path: assemble system prompt from server DB
-      const platform = body.platform || "linux";
+      // The platform rules (rules-mac/rules-windows, ~10K chars) only say which tool drives
+      // the computer: a call that can't act (chat lane: just request_tools) doesn't need them.
+      const actsOnComputer =
+        Array.isArray(body.tools) && body.tools.some((t: any) => t?.function?.name && t.function.name !== "request_tools");
+      const platform = actsOnComputer ? body.platform || "linux" : "none";
       const skillSlugs: string[] = Array.isArray(body.skillSlugs) ? body.skillSlugs : [];
 
       try {
@@ -652,10 +674,10 @@ http.route({
 
           // Record that this user's active addenda were exercised, so the
           // nightly staleness sweep can retire never-used ones. Opt-in via the
-          // ATLAS_ADDENDA_HITS deployment env var; fire-and-forget, never blocks
+          // BHAI_ADDENDA_HITS deployment env var; fire-and-forget, never blocks
           // or fails the request. (The assembler is a read-only query and can't
           // mutate, so the hit-bump happens here in the action.)
-          if (process.env.ATLAS_ADDENDA_HITS === "true" && account.otplessUserId) {
+          if (bhaiEnv("ADDENDA_HITS") === "true" && account.otplessUserId) {
             ctx
               .runMutation(internal.userAddenda.incrementActiveAddendaHits, {
                 otplessUserId: account.otplessUserId,
@@ -673,12 +695,109 @@ http.route({
     //    (prompt caching breakpoints are placed by the translator).
     const claudeParams = toClaudeRequest(body, messages);
 
+    // 9b/9c. After a provider answer: per-model usage counter (admin dashboard) and the
+    //        per-call audit row (token totals + latency only, never prompts/responses).
+    //        Both best-effort — they never block or fail the LLM response.
+    const recordSuccess = async (responseData: any) => {
+      try {
+        await ctx.runMutation(internal.llmUsage.incrementModelUsage, {
+          model: String(model),
+          credits: cost,
+        });
+      } catch (err) {
+        console.warn("[HTTP Proxy] usage counter bump failed:", (err as Error).message);
+      }
+      const usage = responseData?.usage ?? {};
+      const cachedTokens = usage.prompt_tokens_details?.cached_tokens;
+      await logCall({
+        model: String(model),
+        status: "success",
+        credits: cost,
+        inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : undefined,
+        outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : undefined,
+        cachedTokens: typeof cachedTokens === "number" ? cachedTokens : undefined,
+        hasMedia,
+      });
+    };
+
+    // 6b. Live frames: only for an encrypted, AAD-bound request that asked for them
+    //     (a legacy no-AAD client gets today's single body). Azure models and the
+    //     LLM_STREAMING_DISABLED switch answer with one final `done` frame (step 10).
+    const frames =
+      body.stream === true && isEncrypted && !legacyAad && reqRid && account.sharedKey
+        ? { rid: reqRid, key: account.sharedKey }
+        : null;
+    if (frames && !isAzureModel(model) && process.env.LLM_STREAMING_DISABLED !== "true") {
+      const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+      const writer = writable.getWriter();
+      const enc = new TextEncoder();
+      const anthropic = new Anthropic({ apiKey: anthropicKey });
+      let seq = 0;
+      // Headers go out now; frames are written from this detached task. Pre-deduction
+      // stands on success and on a client abort (as for an aborted call today); a
+      // provider error refunds before its final `error` frame.
+      void (async () => {
+        try {
+          await streamCompletion(
+            (line) => writer.write(enc.encode(line)),
+            async (emit) => {
+              try {
+                // The stream is piped in the tick it is created, or early events are lost.
+                return await pipeClaudeStream(
+                  anthropic.beta.messages.stream(claudeParams, { signal: request.signal }),
+                  emit,
+                  { coalesceMs: 60 },
+                );
+              } catch (err: any) {
+                if (request.signal.aborted) {
+                  await logCall({
+                    model: String(model),
+                    status: "failed",
+                    credits: cost,
+                    errorType: "client_abort",
+                    errorMessage: "Client left mid-stream",
+                    hasMedia,
+                  });
+                  throw err;
+                }
+                const status = err instanceof Anthropic.APIError && err.status ? err.status : undefined;
+                const errorType = status ? `anthropic_${status}` : "anthropic_network";
+                const snippet = status
+                  ? JSON.stringify(err.error ?? err.message).slice(0, 500)
+                  : (err?.message ?? "Claude request threw");
+                console.error(`[HTTP Proxy] Claude stream error ${status ?? "network"} for ${model}:`, snippet);
+                await refundIfDeducted(errorType);
+                await logCall({ model: String(model), status: "failed", errorType, errorMessage: snippet, hasMedia });
+                throw status ? { status, error: JSON.stringify(err.error ?? { error: err.message }) } : err;
+              }
+            },
+            (f, final) => encodeFrame(f, seq++, final, frames.rid, frames.key),
+            // Audit row + usage counter before `done`: the client hangs up there.
+            { beforeDone: recordSuccess },
+          );
+        } catch (err) {
+          console.error("[HTTP Proxy] stream task failed:", (err as Error)?.message);
+        } finally {
+          await writer.close().catch(() => {});
+        }
+      })();
+      return new Response(readable, { status: 200, headers: FRAME_HEADERS });
+    }
+
     // 7. Call Claude (or an Azure model: Grok, GPT-6; falling back to Claude Sonnet)
     try {
       const anthropic = new Anthropic({ apiKey: anthropicKey });
-      let responseData = isAzureModel(model) ? await callAzure(body, messages) : null;
+      const azureTried = isAzureModel(model);
+      const azureStart = Date.now();
+      let responseData = azureTried ? await callAzure(body, messages) : null;
       if (!responseData) try {
-        const message = await anthropic.beta.messages.stream(claudeParams).finalMessage();
+        // After an Azure try, Claude gets only what's left of the client's attempt: an answer
+        // the client has stopped waiting for would be paid for and thrown away (an abort here
+        // is refunded below, like any network failure).
+        const left = clientAttemptMs(body) - (Date.now() - azureStart) - 2_000;
+        const message = await anthropic.beta.messages
+          .stream(claudeParams, azureTried ? { signal: AbortSignal.timeout(Math.max(1_000, left)) } : undefined)
+          .finalMessage();
         responseData = toOpenAIResponse(message);
       } catch (err) {
         // 8. If Claude returned an error, refund the pre-deduction and pass
@@ -704,33 +823,15 @@ http.route({
       // 9. Credits were already deducted atomically at step 3b before the
       //    fetch — the response is on the success path so we keep the
       //    deduction. No post-call deduction needed.
+      await recordSuccess(responseData);
 
-      // 9b. Bump per-model usage counter for the admin dashboard.
-      //     Best-effort — never blocks or fails the LLM response.
-      try {
-        await ctx.runMutation(internal.llmUsage.incrementModelUsage, {
-          model: String(model),
-          credits: cost,
+      // 10. Return the response (encrypted if client uses E2E; one final frame if it asked for frames)
+      if (frames) {
+        return new Response(await encodeFrame({ kind: "done", completion: responseData }, 0, true, frames.rid, frames.key), {
+          status: 200,
+          headers: FRAME_HEADERS,
         });
-      } catch (err) {
-        console.warn("[HTTP Proxy] usage counter bump failed:", (err as Error).message);
       }
-
-      // 9c. Per-call audit row. Pulled out of the response payload so we
-      //     don't keep prompts/responses — just token totals + latency.
-      const usage = responseData?.usage ?? {};
-      const cachedTokens = usage.prompt_tokens_details?.cached_tokens;
-      await logCall({
-        model: String(model),
-        status: "success",
-        credits: cost,
-        inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : undefined,
-        outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : undefined,
-        cachedTokens: typeof cachedTokens === "number" ? cachedTokens : undefined,
-        hasMedia,
-      });
-
-      // 10. Return the response (encrypted if client uses E2E)
       return await buildResponse(responseData, 200, isEncrypted, account.sharedKey, request);
     } catch (err: any) {
       console.error("[HTTP Proxy] Claude request failed:", err.message);
@@ -751,8 +852,77 @@ http.route({
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// POST /api/tts — speech for voice replies (convex/tts.ts). Body (E2E):
+// { text, voice? } → { audio: base64 Ogg/Opus, mimeType }. 503 when no TTS provider is set.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/tts",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const cfg = ttsConfigFromEnv(process.env);
+    if (!cfg) return buildResponse({ error: "tts_not_configured" }, 503, false, null);
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    const text = typeof body?.text === "string" ? body.text.trim() : "";
+    if (!text) return reply({ error: "text required" }, 400);
+    if (text.length > TTS_MAX_CHARS) return reply({ error: "text too long" }, 413);
+    const voice = typeof body.voice === "string" && /^[\w-]{1,32}$/.test(body.voice) ? body.voice : undefined;
+
+    const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+      otplessUserId: account.otplessUserId,
+      amount: TTS_CREDIT_COST,
+    });
+    if (!deducted?.success) return reply({ error: "Insufficient credits" }, 402);
+
+    const startedAt = Date.now();
+    const log = (status: "success" | "failed", errorMessage?: string) =>
+      ctx
+        .runMutation(internal.llmCallLog.record, {
+          accountId: account.accountId,
+          otplessUserId: account.otplessUserId,
+          model: `tts:${cfg.model}`,
+          status,
+          credits: status === "success" ? TTS_CREDIT_COST : 0,
+          latencyMs: Date.now() - startedAt,
+          errorMessage,
+          hasMedia: true,
+        })
+        .catch(() => {});
+    try {
+      const audio = await speakWithProvider(cfg, text, voice);
+      await log("success");
+      return reply({ audio: encodeBase64(audio), mimeType: "audio/ogg; codecs=opus" }, 200);
+    } catch (err) {
+      const message = (err as Error).message;
+      await ctx
+        .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: TTS_CREDIT_COST })
+        .catch((e: unknown) => console.error("[TTS] refund failed:", e));
+      await log("failed", message);
+      return reply({ error: "speech failed" }, 502);
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // POST /api/stt — voice-note transcription (convex/stt.ts). Body (E2E):
-// { audio: base64, mimeType, filename }. 503 when no STT provider is set.
+// { audio: base64, mimeType, filename, analyze?, format? } → { text, sounds }.
+// 503 when no STT provider is set.
 // ══════════════════════════════════════════════════════════════════════════
 
 http.route({
@@ -796,12 +966,12 @@ http.route({
     if (!deducted?.success) return reply({ error: "Insufficient credits" }, 402);
 
     const startedAt = Date.now();
-    const log = (status: "success" | "failed", errorMessage?: string) =>
+    const log = (status: "success" | "failed", errorMessage?: string, model = `stt:${cfg.model}`) =>
       ctx
         .runMutation(internal.llmCallLog.record, {
           accountId: account.accountId,
           otplessUserId: account.otplessUserId,
-          model: `stt:${cfg.model}`,
+          model,
           status,
           credits: status === "success" ? STT_CREDIT_COST : 0,
           latencyMs: Date.now() - startedAt,
@@ -809,10 +979,21 @@ http.route({
           hasMedia: true,
         })
         .catch(() => {});
+    // "analyze": the words plus what else can be heard, when an audio model is set (mp3/wav only).
+    const format = body.format === "mp3" || body.format === "wav" ? body.format : null;
+    if (body.analyze === true && cfg.audioModel && format) {
+      try {
+        const heard = await analyzeWithProvider(cfg, audio, format);
+        await log("success", undefined, `audio:${cfg.audioModel}`);
+        return reply(heard, 200);
+      } catch (err) {
+        console.warn("[STT] audio model failed, transcribing instead:", (err as Error).message);
+      }
+    }
     try {
       const text = await transcribeWithProvider(cfg, audio, mimeType, filename);
       await log("success");
-      return reply({ text }, 200);
+      return reply({ text, sounds: "" }, 200);
     } catch (err) {
       const message = (err as Error).message;
       await ctx
@@ -821,6 +1002,192 @@ http.route({
       await log("failed", message);
       return reply({ error: "transcription failed" }, 502);
     }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/image — image generation/editing on Azure (convex/image.ts). Body
+// (E2E): { prompt, images?, size?, quality?, n?, background? }; images = edit.
+// Credits are taken before the call and refunded on any failure; when not every
+// image fits in the response, only the delivered ones are charged. 200 =
+// { images, credits, dropped? }; 429 = { error: "image_busy", retryAfter } (the
+// deployment is busy). Kept for older installs; new ones use /api/image/jobs.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/image",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const cfg = imageConfigFromEnv(process.env);
+    if (!cfg) return buildResponse({ error: "image_not_configured" }, 503, false, null);
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    const req = validateImageRequest(body);
+    if ("error" in req) return reply({ error: req.error }, req.status);
+
+    const cost = imageCreditCost(req.quality, req.n);
+    const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+      otplessUserId: account.otplessUserId,
+      amount: cost,
+    });
+    if (!deducted?.success) return reply({ error: "insufficient_credits" }, 402);
+
+    const startedAt = Date.now();
+    const log = (status: "success" | "failed", credits: number, errorMessage?: string) =>
+      ctx
+        .runMutation(internal.llmCallLog.record, {
+          accountId: account.accountId,
+          otplessUserId: account.otplessUserId,
+          model: `image:${cfg.deployment}`,
+          status,
+          credits,
+          latencyMs: Date.now() - startedAt,
+          errorMessage,
+          hasMedia: true,
+        })
+        .catch(() => {});
+    try {
+      const { images, dropped } = await callAzureImage(cfg, req);
+      const charged = imageCreditCost(req.quality, images.length);
+      // await: buildResponse is async, so a failed encrypt must land in the (full) refund path.
+      const res = await reply({ images, credits: charged, ...(dropped ? { dropped } : {}) }, 200);
+      if (charged < cost) {
+        await ctx
+          .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost - charged })
+          .catch((e: unknown) => console.error("[Image] partial refund failed:", e));
+      }
+      await log("success", charged);
+      return res;
+    } catch (err) {
+      await ctx
+        .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost })
+        .catch((e: unknown) => console.error("[Image] refund failed:", e));
+      const { status, body: errBody } = imageErrorResponse(err);
+      console.error(`[Image] ${errBody.error}:`, (err as Error)?.message);
+      await log("failed", 0, (err as Error)?.message);
+      return reply(errBody, status);
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/image/jobs — the queued image API (new clients; convex/image.ts).
+// Same body and errors as /api/image. The full cost is taken now; the job waits
+// for Azure and the client polls /api/image/jobs/status. 200 =
+// { jobId, position (jobs ahead, 0 = next), credits (balance after the charge) }.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/image/jobs",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    if (!imageConfigFromEnv(process.env)) return buildResponse({ error: "image_not_configured" }, 503, false, null);
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    const req = validateImageRequest(body);
+    if ("error" in req) return reply({ error: req.error }, req.status);
+
+    // Inputs first; then the charge and the job in one mutation, so credits never go without a job.
+    const inputs: Array<{ storageId: Id<"_storage">; mimeType: string }> = [];
+    const dropInputs = async () => {
+      for (const i of inputs) await ctx.storage.delete(i.storageId).catch(() => {});
+    };
+    let queued;
+    try {
+      for (const img of req.images)
+        inputs.push({ storageId: await ctx.storage.store(new Blob([img.bytes], { type: img.mimeType })), mimeType: img.mimeType });
+      queued = await ctx.runMutation(internal.image.enqueueImageJob, {
+        accountId: account.accountId,
+        otplessUserId: account.otplessUserId,
+        prompt: req.prompt,
+        size: req.size,
+        quality: req.quality,
+        n: req.n,
+        background: req.background,
+        inputs,
+      });
+    } catch (err) {
+      // The mutation rolled back: nothing was charged.
+      console.error("[Image] enqueue failed:", (err as Error)?.message);
+      await dropInputs();
+      return reply({ error: "image_failed", message: "Could not queue the image." }, 502);
+    }
+    if (queued.shortfall) {
+      await dropInputs();
+      return reply({ error: "insufficient_credits" }, 402);
+    }
+    return reply({ jobId: queued.jobId, position: queued.position, credits: queued.credits }, 200);
+  }),
+});
+
+// POST /api/image/jobs/status — body { jobId }; only the account that made the job
+// may read it (404 otherwise). 200 = { status: "queued", position, etaSeconds } |
+// { status: "running", etaSeconds } | { status: "done", images, dropped?, credits } |
+// { status: "failed", error: { code, message }, credits }; credits = the balance now.
+// A done job's images can be fetched again until it is cleaned up (2h after finishing).
+http.route({
+  path: "/api/image/jobs/status",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    if (typeof body?.jobId !== "string" || !body.jobId) return reply({ error: "jobId required" }, 400);
+    const job = await ctx.runQuery(internal.image.getImageJobStatus, {
+      jobId: body.jobId,
+      accountId: account.accountId,
+    });
+    if (!job) return reply({ error: "not_found" }, 404);
+    if (job.status !== "done") return reply(job, 200);
+    const images: Array<{ base64: string; mimeType: string }> = [];
+    for (const o of job.outputs) {
+      const blob = await ctx.storage.get(o.storageId);
+      if (blob) images.push({ base64: await blob.text(), mimeType: o.mimeType });
+    }
+    return reply({ status: "done", images, ...(job.dropped ? { dropped: job.dropped } : {}), credits: job.credits }, 200);
   }),
 });
 
@@ -927,6 +1294,15 @@ http.route({
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
+    // A user id is not a secret (it shows up in logs and support threads), so a session
+    // also needs the secret this device got at its last verified sign-in.
+    const { deviceSecret } = body;
+    if (typeof deviceFingerprint !== "string" || !deviceFingerprint || typeof deviceSecret !== "string" || !deviceSecret) {
+      return new Response(
+        JSON.stringify({ error: "sign_in_required" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     try {
       // The account MUST already exist. /api/otpless/validate-token is the
@@ -935,7 +1311,7 @@ http.route({
       // /api/auth/session was an account-creation primitive: anyone on the
       // internet could pick any otplessUserId, supply email/phone/name, and
       // get a working 24h session that could call the LLM proxy and burn
-      // ATLAS-owned provider tokens. We do NOT accept email/phone/name
+      // Bhai-owned provider tokens. We do NOT accept email/phone/name
       // here anymore — those fields are only honored during validate-token.
       const existingAccount = await ctx.runQuery(internal.accounts.getByOtplessIdInternal, {
         otplessUserId,
@@ -971,7 +1347,8 @@ http.route({
 
       const result = await ctx.runMutation(internal.sessions.createSessionInternal, {
         otplessUserId,
-        deviceFingerprint: deviceFingerprint || undefined,
+        deviceFingerprint,
+        deviceSecretHash: await sha256Hex(deviceSecret),
         clientPublicKey: clientPublicKey || undefined,
         serverPublicKey,
         sharedKey,
@@ -992,10 +1369,11 @@ http.route({
       );
     } catch (err: any) {
       const msg = typeof err?.message === "string" ? err.message : "";
-      const status = msg.includes("not found") ? 404 : 403;
+      // The app tells these apart: the device must sign in again, not retry.
+      const error = ["device_removed", "sign_in_required"].find((e) => msg.includes(e));
+      const status = error === "sign_in_required" ? 401 : msg.includes("not found") ? 404 : 403;
       return new Response(
-        // The app tells a removed device apart: it must sign in again, not retry.
-        JSON.stringify({ error: msg.includes("device_removed") ? "device_removed" : "Session creation failed" }),
+        JSON.stringify({ error: error ?? "Session creation failed" }),
         { status, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -1276,14 +1654,14 @@ const ADMIN_STORE_QUERY_ALLOWLIST: Record<string, any> = {
 // route that re-derives the developerId from the developer's JWT — those
 // mutations must NOT be exposed on the generic session-proxy.
 const USER_STORE_MUTATION_ALLOWLIST: Record<string, any> = {
-  // Reviews — end-user submits + edits their own review. Convex handler
-  // binds by `args.user` (the otplessUserId) → safe.
+  // Reviews — end-user submits + edits their own review. USER_BOUND_PATHS
+  // sets `userId` to the session's otplessUserId → safe.
   "store/reviews:submit":      internal.store.reviews.submit,
   "store/reviews:remove":      internal.store.reviews.remove,
   "store/reviews:markHelpful": internal.store.reviews.markHelpful,
 
-  // Installs — end-user manages their own install state. Convex handlers
-  // bind by `args.user` → safe.
+  // Installs — end-user manages their own install state. Bound by
+  // USER_BOUND_PATHS (`userId` from the session) → safe.
   "store/installs:startInstall":      internal.store.installs.startInstall,
   "store/installs:confirmInstall":    internal.store.installs.confirmInstall,
   "store/installs:uninstall":         internal.store.installs.uninstall,
@@ -1370,6 +1748,7 @@ const USER_BOUND_PATHS: Set<string> = new Set([
   "store/installs:getUpdateDownload",
   "store/reviews:submit",
   "store/reviews:remove",
+  "store/reviews:markHelpful",
   // Queries
   "store/installs:getByUser",
   "store/installs:checkUpdates",
@@ -1815,6 +2194,47 @@ http.route({
   }),
 });
 
+// ── DELETE /api/admin/prompts — Delete a system prompt ────────────────
+http.route({
+  path: "/api/admin/prompts",
+  method: "DELETE",
+  handler: httpAction(async (ctx, request) => {
+    const authErr = await validateAdminRequest(request);
+    if (authErr) return authErr;
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const { slug } = body;
+    if (!slug) {
+      return new Response(
+        JSON.stringify({ error: "slug is required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    try {
+      const result = await ctx.runMutation(internal.systemContent.deletePrompt, { slug });
+      return new Response(JSON.stringify({ success: true, ...result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ error: err.message }),
+        { status: 404, headers: { "Content-Type": "application/json" } }
+      );
+    }
+  }),
+});
+
 // ── GET /api/admin/skills — List all system skills ────────────────────
 http.route({
   path: "/api/admin/skills",
@@ -1992,8 +2412,9 @@ http.route({
         body: JSON.stringify({
           api_key: tavilyKey,
           query,
-          search_depth: search_depth || "advanced",
-          max_results: max_results || 15,
+          // Unbilled and on the server's quota: client values are clamped, not passed through.
+          search_depth: search_depth === "basic" ? "basic" : "advanced",
+          max_results: Math.min(Math.max(1, Number(max_results) || 15), 20),
           include_answer: false,
           include_raw_content: false,
         }),
@@ -2064,7 +2485,7 @@ http.route({
                         content: `Search the web for: ${query}\n\nThen, for each useful result, say in one line what that page says that answers the search, citing it.`,
                     },
                 ],
-            });
+            }, { timeout: 11_000, maxRetries: 0 }); // the app stops waiting at 12s: past that, refund rather than charge
             const results: Array<{ url: string; title: string; snippet: string; page_age: string | null }> = [];
             const snippets = new Map<string, string>();
             for (const block of msg.content) {
@@ -2141,9 +2562,14 @@ http.route({
         },
         body: JSON.stringify({
           query,
-          type: type || "auto",
-          numResults: numResults || 15,
-          contents: contents || { highlights: { maxCharacters: 300 } },
+          // Unbilled and on the server's quota: client values are clamped, not passed through.
+          type: ["auto", "neural", "keyword", "fast"].includes(type) ? type : "auto",
+          numResults: Math.min(Math.max(1, Number(numResults) || 15), 20),
+          contents: {
+            highlights: {
+              maxCharacters: Math.min(Number(contents?.highlights?.maxCharacters) || 300, 500),
+            },
+          },
         }),
       });
 
@@ -2225,6 +2651,60 @@ http.route({
   }),
 });
 
+// POST /api/decide — Microsoft-Decision-1 proxy (the Azure key stays in Convex env). A typed
+// decision (yes/no per option, one choice, a score) instead of generated text: the tool
+// router's classifier, ~0.5s and ~$0.0001 a turn against ~1s for a gpt-4.1-nano call
+// (scripts/bench-decision.ts). Bounded state and questions; only answers come back.
+http.route({
+  path: "/api/decide",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const { body, encrypted } = await parseRequestBody(request, account.sharedKey);
+    const state = typeof body.state === "string" ? body.state.slice(0, 12000) : "";
+    const questions = body.questions && typeof body.questions === "object" ? (body.questions as Record<string, any>) : null;
+    const names = questions ? Object.keys(questions) : [];
+    if (!state || !names.length || names.length > 64) {
+      return await buildResponse({ error: "state and 1-64 questions are required" }, 400, encrypted, account.sharedKey, request);
+    }
+    const clean: Record<string, unknown> = {};
+    for (const name of names) {
+      const q = questions![name];
+      if (!/^[\w-]{1,64}$/.test(name) || !q || !["noul", "choice", "score"].includes(q.type)) continue;
+      const instructions = String(q.instructions ?? "").slice(0, 800);
+      let criteria: unknown;
+      if (Array.isArray(q.criteria)) criteria = q.criteria.slice(0, 12).map((c: unknown) => String(c).slice(0, 300));
+      else if (q.criteria && typeof q.criteria === "object")
+        criteria = Object.fromEntries(Object.entries(q.criteria).slice(0, 12).map(([k, v]) => [String(k).slice(0, 64), String(v).slice(0, 300)]));
+      clean[name] = { type: q.type, instructions, ...(criteria ? { criteria } : {}) };
+    }
+
+    const endpoint = (process.env.AZURE_GROK_ENDPOINT ?? "").replace(/\/openai\/v1\/?$/, "");
+    const key = process.env.AZURE_GROK_API_KEY;
+    if (!endpoint || !key) {
+      return await buildResponse({ error: "Decision model not configured" }, 500, encrypted, account.sharedKey, request);
+    }
+    try {
+      const response = await fetch(`${endpoint}/providers/microsoft/v1/systemone`, {
+        method: "POST",
+        headers: { "api-key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: process.env.AZURE_DECISION_DEPLOYMENT || "Decision-1", state, questions: clean }),
+        signal: AbortSignal.timeout(Math.min(Math.max(Number(body.timeoutMs) || 4000, 1000), 8000)),
+      });
+      const data = (await response.json()) as { answers?: unknown; usage?: unknown; error?: unknown };
+      if (!response.ok || !data.answers) {
+        return await buildResponse({ error: `Decision HTTP ${response.status}` }, response.ok ? 502 : response.status, encrypted, account.sharedKey, request);
+      }
+      return await buildResponse({ answers: data.answers, usage: data.usage }, 200, encrypted, account.sharedKey, request);
+    } catch (err: any) {
+      return await buildResponse({ error: err.message }, 504, encrypted, account.sharedKey, request);
+    }
+  }),
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // GET /api/updates/* — Generic auto-updater endpoint for electron-updater.
 //
@@ -2233,7 +2713,10 @@ http.route({
 // The client uses the generic provider; electron-updater fetches the YAML
 // here and then downloads the binary from whatever URL is in the YAML.
 //
-// Channels: the client may append ?channel=beta to the feed URL. When a
+// Channels: the desktop sets autoUpdater.channel, so electron-updater asks
+// for <channel>-mac.yml / <channel>.yml (stable-mac.yml by default) and
+// appends ?channel=beta to the feed URL for other channels; latest-mac.yml /
+// latest.yml (channel from the query) are still served. When a
 // channel is specified, the handler looks for <name>_<CHANNEL> env vars
 // and falls back to the unsuffixed vars if the channel-specific ones are
 // unset. Default channel is "stable" (no suffix).
@@ -2241,7 +2724,13 @@ http.route({
 // Env vars (per channel; replace <C> with STABLE / BETA / CANARY — or
 // leave blank for the stable channel):
 //   UPDATE_VERSION[_<C>]      — e.g. "0.2.1"
-//   UPDATE_URL_MAC[_<C>]      — direct download URL for the macOS .dmg
+//   UPDATE_URL_MAC[_<C>]      — direct download URL for the macOS update .zip
+//                               (MacUpdater installs only from a zip; arm64)
+//   UPDATE_URL_MAC_X64[_<C>], UPDATE_SHA512_MAC_X64[_<C>], UPDATE_SIZE_MAC_X64[_<C>]
+//                             — the Intel (x64) Mac zip, a second `files:` entry;
+//                               MacUpdater picks by arch (a URL with "arm64" is
+//                               never installed on an Intel Mac). Desktop builds
+//                               on Intel send ?arch=x64 and get 404 until it is set.
 //   UPDATE_URL_WIN[_<C>]      — direct download URL for the Windows .exe
 //   UPDATE_SHA512_MAC[_<C>]   — SHA-512 (base64) of the macOS artifact
 //   UPDATE_SHA512_WIN[_<C>]   — SHA-512 (base64) of the Windows artifact
@@ -2255,141 +2744,13 @@ http.route({
 //   UPDATE_URL_WIN_MIRROR[_<C>]
 // ══════════════════════════════════════════════════════════════════════════
 
-const EMPTY_YAML = 'version: 0.0.0\npath: ""\nsha512: ""\nreleaseDate: ""\n';
-
-function yamlHeaders(): Record<string, string> {
-  return {
-    "Content-Type": "text/yaml; charset=utf-8",
-    // Cache for 2 minutes at the edge so a thundering-herd recheck doesn't
-    // hammer the backend. Clients can still bypass via ?t=<timestamp>.
-    "Cache-Control": "public, max-age=120",
-  };
-}
-
-function pickChannel(request: Request): string {
-  try {
-    const url = new URL(request.url);
-    const ch = (url.searchParams.get("channel") || "stable").toLowerCase();
-    // Only allow a small whitelist — env var names must be predictable.
-    if (ch === "stable" || ch === "beta" || ch === "alpha" || ch === "canary") return ch;
-  } catch { /* fall through */ }
-  return "stable";
-}
-
-function envForChannel(name: string, channel: string): string | undefined {
-  if (channel && channel !== "stable") {
-    const v = process.env[`${name}_${channel.toUpperCase()}`];
-    if (v) return v;
-  }
-  return process.env[name];
-}
-
-// Channels in descending stability order. When the client asks for a
-// channel that hasn't been provisioned yet, we fall back to the most-stable
-// channel that IS provisioned. So while only alpha exists, every client —
-// stable, beta, alpha — gets the alpha yml. As soon as beta env vars are
-// set, stable+beta clients flip to beta and alpha clients keep their own.
-const CHANNEL_STABILITY: readonly string[] = ["stable", "beta", "alpha"];
-
-function resolveChannelWithFallback(
-  platform: "mac" | "win",
-  requested: string,
-): string {
-  const P = platform.toUpperCase();
-  const probe = (ch: string) =>
-    !!envForChannel("UPDATE_VERSION", ch) && !!envForChannel(`UPDATE_URL_${P}`, ch);
-  if (probe(requested)) return requested;
-  // The requested channel has no artifacts — find a substitute. Walk
-  // toward less-stable channels first (so when only alpha is provisioned,
-  // a "stable" client gets alpha instead of nothing); then walk back
-  // toward more-stable channels as a last resort.
-  const startIdx = CHANNEL_STABILITY.indexOf(requested);
-  if (startIdx >= 0) {
-    for (let i = startIdx + 1; i < CHANNEL_STABILITY.length; i++) {
-      if (probe(CHANNEL_STABILITY[i])) return CHANNEL_STABILITY[i];
-    }
-    for (let i = startIdx - 1; i >= 0; i--) {
-      if (probe(CHANNEL_STABILITY[i])) return CHANNEL_STABILITY[i];
-    }
-  } else {
-    for (const ch of CHANNEL_STABILITY) if (probe(ch)) return ch;
-  }
-  return requested; // nothing provisioned — caller will return EMPTY_YAML
-}
-
-function buildYaml(opts: {
-  platform: "mac" | "win";
-  channel: string;
-  defaultFilename: string;
-}): string | null {
-  const { platform, defaultFilename } = opts;
-  const P = platform.toUpperCase(); // MAC | WIN
-  const channel = resolveChannelWithFallback(platform, opts.channel);
-
-  const version = envForChannel("UPDATE_VERSION", channel);
-  const url = envForChannel(`UPDATE_URL_${P}`, channel);
-  if (!version || !url) return null;
-
-  const sha512 = envForChannel(`UPDATE_SHA512_${P}`, channel) || "";
-  const size = Number(envForChannel(`UPDATE_SIZE_${P}`, channel) || 0) || 0;
-  const mirror = envForChannel(`UPDATE_URL_${P}_MIRROR`, channel);
-  const releaseDate =
-    envForChannel("UPDATE_RELEASE_DATE", channel) || new Date().toISOString();
-
-  const filename = url.split("/").pop() || defaultFilename;
-
-  // electron-updater reads the first entry in `files:`; additional entries
-  // are tried as fallbacks. Top-level path/sha512 kept for v5 compat.
-  const lines = [
-    `version: ${version}`,
-    `files:`,
-    `  - url: ${url}`,
-    `    sha512: ${sha512}`,
-    `    size: ${size}`,
-  ];
-  if (mirror) {
-    lines.push(
-      `  - url: ${mirror}`,
-      `    sha512: ${sha512}`,
-      `    size: ${size}`,
-    );
-  }
-  lines.push(
-    `path: ${filename}`,
-    `sha512: ${sha512}`,
-    `releaseDate: ${releaseDate}`,
-  );
-  return lines.join("\n") + "\n";
-}
-
+// One route for every feed file: unprovisioned feeds answer 404, which the desktop treats as
+// "nothing published" (a 200 placeholder read as version 0.0.0 and, with the channel's
+// allowDowngrade, as an update). Logic in ./updateFeed.ts.
 http.route({
-  path: "/api/updates/latest-mac.yml",
+  pathPrefix: "/api/updates/",
   method: "GET",
-  handler: httpAction(async (_ctx, request) => {
-    const channel = pickChannel(request);
-    const body =
-      buildYaml({
-        platform: "mac",
-        channel,
-        defaultFilename: `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-arm64.dmg`,
-      }) || EMPTY_YAML;
-    return new Response(body, { status: 200, headers: yamlHeaders() });
-  }),
-});
-
-http.route({
-  path: "/api/updates/latest.yml",
-  method: "GET",
-  handler: httpAction(async (_ctx, request) => {
-    const channel = pickChannel(request);
-    const body =
-      buildYaml({
-        platform: "win",
-        channel,
-        defaultFilename: `Bhai-${process.env.UPDATE_VERSION || "0.0.0"}-Setup.exe`,
-      }) || EMPTY_YAML;
-    return new Response(body, { status: 200, headers: yamlHeaders() });
-  }),
+  handler: httpAction(async (_ctx, request) => updateFeedResponse(request)),
 });
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2738,12 +3099,17 @@ http.route({
         phone: identity.phone,
         name: identity.name,
       });
+      // OTPless just verified this sign-in: a removed device comes back, and the device
+      // gets a new secret it must show for later sessions (/api/auth/session).
+      const fp = typeof deviceFingerprint === "string" && deviceFingerprint ? deviceFingerprint : undefined;
+      const deviceSecret = fp ? newDeviceSecret() : undefined;
       const session = await ctx.runMutation(internal.sessions.createSessionInternal, {
         otplessUserId: identity.userId,
-        deviceFingerprint: deviceFingerprint || undefined,
-        reactivate: true, // OTPless just verified this sign-in: a removed device comes back
+        deviceFingerprint: fp,
+        reactivate: true,
+        deviceSecretHash: deviceSecret ? await sha256Hex(deviceSecret) : undefined,
       });
-      return new Response(JSON.stringify({ session, ...identity }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ session, ...identity, ...(deviceSecret ? { deviceSecret } : {}) }), { status: 200, headers: { "Content-Type": "application/json" } });
     } catch (err: any) {
       const raw = (err?.message || "validate failed") as string;
       const clean = raw
@@ -2787,7 +3153,13 @@ http.route({
     }
 
     const ip = extractClientIp(request);
-    if (!checkWaitlistIpRateLimit(ip)) {
+    // In the database: an HTTP action's module state doesn't reliably outlive a request.
+    const waitlistLimit = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: `waitlist_submit|${ip}`,
+      windowMs: WAITLIST_IP_WINDOW_MS,
+      maxRequests: WAITLIST_IP_MAX,
+    });
+    if (waitlistLimit.limited) {
       return new Response(
         JSON.stringify({ error: "Too many submissions. Try again later." }),
         { status: 429, headers: { ...jsonHeaders, "Retry-After": "600" } },
@@ -3270,7 +3642,7 @@ http.route({
 // store/admins.ts re-exports query()/mutation() as internalQuery/internalMutation
 // (see admins.ts line 5), so the admin panel can't reach them via the public
 // /api/query path. These HTTP routes bridge that gap using ADMIN_API_KEY,
-// which the admin panel already has server-side as ATLAS_ADMIN_KEY.
+// which the admin panel already has server-side as BHAI_ADMIN_KEY.
 // ══════════════════════════════════════════════════════════════════════════
 
 http.route({
@@ -3624,33 +3996,15 @@ http.route({
 
 const CONTACT_IP_WINDOW_MS = 10 * 60_000;
 const CONTACT_IP_MAX = 4;
-const contactIpHits = new Map<string, { count: number; windowStart: number }>();
 
-function checkContactIpRateLimit(ip: string): boolean {
-  if (!ip || ip === "unknown") return true;
-  const now = Date.now();
-  const existing = contactIpHits.get(ip);
-  if (contactIpHits.size > 1024) {
-    for (const [k, v] of contactIpHits) {
-      if (now - v.windowStart > CONTACT_IP_WINDOW_MS) contactIpHits.delete(k);
-    }
-  }
-  if (!existing || now - existing.windowStart > CONTACT_IP_WINDOW_MS) {
-    contactIpHits.set(ip, { count: 1, windowStart: now });
-    return true;
-  }
-  if (existing.count >= CONTACT_IP_MAX) return false;
-  existing.count++;
-  return true;
-}
 
 const CONTACT_ALLOWED_ORIGINS = new Set([
   "https://xagilab.com",
   "https://www.xagilab.com",
   "https://tryatlasagi.com",
   "https://www.tryatlasagi.com",
-  // Local dev — only allowed when ATLAS_ENV !== 'prod'
-  ...(process.env.ATLAS_ENV === "prod" ? [] : [
+  // Local dev — only allowed when BHAI_ENV !== 'prod'
+  ...(bhaiEnv("ENV") === "prod" ? [] : [
     "http://localhost:8088",
     "http://localhost:3000",
     "http://127.0.0.1:8088",
@@ -3707,7 +4061,13 @@ http.route({
     }
 
     const ip = extractClientIp(request);
-    if (!checkContactIpRateLimit(ip)) {
+    // In the database: an HTTP action's module state doesn't reliably outlive a request.
+    const contactLimit = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: `contact_submit|${ip}`,
+      windowMs: CONTACT_IP_WINDOW_MS,
+      maxRequests: CONTACT_IP_MAX,
+    });
+    if (contactLimit.limited) {
       return new Response(
         JSON.stringify({ error: "Too many submissions. Please try again later." }),
         { status: 429, headers: { ...jsonHeaders, "Retry-After": "600" } },

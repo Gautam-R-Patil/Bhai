@@ -3,8 +3,8 @@
 // Phase 4 approval-gate test — exercises the user-facing approval flow.
 //
 // Validates:
-//   1. approve_dynamic_tool rejects banned quotes ("ok", "yes", ...)
-//   2. approve_dynamic_tool rejects too-short quotes
+//   1. approve_dynamic_tool rejects a quote from a "no" reply
+//   2. approve_dynamic_tool rejects a quote the owner never wrote
 //   3. approve_dynamic_tool refuses to run outside awaiting_dynamic_tool_approval mode
 //   4. approve_dynamic_tool refuses if slug doesn't match the pending slug
 //   5. Happy path: enter mode + valid quote → approval succeeds
@@ -16,8 +16,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const tmpHome = mkdtempSync(join(tmpdir(), "atlas-phase4-approval-"));
-process.env.ATLAS_HOME = tmpHome;
+const tmpHome = mkdtempSync(join(tmpdir(), "bhai-phase4-approval-"));
+process.env.BHAI_HOME = tmpHome;
 
 const PASS = (msg) => console.log(`\x1b[32m✅ PASS\x1b[0m ${msg}`);
 const FAIL = (msg, detail) => {
@@ -34,6 +34,7 @@ async function run() {
     const orchestrator = await import("../dist/forge/orchestrator.js");
     const supervisor = await import("../dist/forge/sandbox-supervisor.js");
     const forgeApproval = await import("../dist/tools/forge-approval.js");
+    const consent = await import("../dist/security/consent.js");
     const createTool = await import("../dist/tools/create-tool.js");
     const library = await import("../dist/forge/library.js");
 
@@ -85,31 +86,29 @@ async function run() {
     library.setLifecycleState(slug, "awaiting_approval");
     INFO("fixture: manifest + library row persisted with awaiting_approval state");
 
-    // ── Test 1: agent tool rejects banned phrase (≥10 chars, exact-match) ────
-    const bannedR = JSON.parse(
-        await forgeApproval.approveDynamicToolTool.handler({
-            slug,
-            user_quote: "looks good", // 10 chars, in banned set
-        }),
+    // ── Test 1: agent tool rejects a quote taken from a "no" reply ──────────
+    planMode.enterAwaitingDynamicToolApproval(slug);
+    consent.noteOwnerMessage("don't turn on this tool");
+    const noR = JSON.parse(
+        await forgeApproval.approveDynamicToolTool.handler({ slug, user_quote: "turn on this tool" }),
     );
-    if (bannedR.ok === false && /generic|verbatim/i.test(bannedR.error ?? "")) {
-        PASS('agent-tool reject: user_quote="looks good" (banned, ≥10 chars) rejected');
+    if (noR.ok === false && /own yes/i.test(noR.error ?? "")) {
+        PASS('agent-tool reject: quote from "don\'t turn on this tool" rejected');
     } else {
-        FAIL("agent-tool should reject banned quote", bannedR);
+        FAIL("agent-tool should reject a quote from a negative reply", noR);
     }
 
-    // ── Test 2: agent tool rejects too-short quote ───────────────────────────
-    const shortR = JSON.parse(
-        await forgeApproval.approveDynamicToolTool.handler({
-            slug,
-            user_quote: "yep",
-        }),
+    // ── Test 2: agent tool rejects a quote the owner never wrote ────────────
+    consent.noteOwnerMessage("yes");
+    const madeUpR = JSON.parse(
+        await forgeApproval.approveDynamicToolTool.handler({ slug, user_quote: "yes install it" }),
     );
-    if (shortR.ok === false && /≥|short|10/i.test(shortR.error ?? "")) {
-        PASS('agent-tool reject: user_quote="yep" (<10 chars) rejected');
+    if (madeUpR.ok === false && /own yes/i.test(madeUpR.error ?? "")) {
+        PASS('agent-tool reject: quote "yes install it" not in owner\'s message rejected');
     } else {
-        FAIL("agent-tool should reject short quote", shortR);
+        FAIL("agent-tool should reject a quote the owner never wrote", madeUpR);
     }
+    planMode.exitPlanMode();
 
     // ── Test 3: refuses outside awaiting_dynamic_tool_approval mode ──────────
     // We're in "act" by default. Even a valid-looking quote must fail.
@@ -137,6 +136,7 @@ async function run() {
 
     // ── Test 5: happy path — correct mode + correct slug + valid quote ──────
     planMode.enterAwaitingDynamicToolApproval(slug);
+    consent.noteOwnerMessage("yes please install the approval-gate test tool");
     const okR = await orchestrator.approveDynamicTool(
         slug,
         "yes please install the approval-gate test tool",

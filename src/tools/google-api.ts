@@ -9,10 +9,11 @@
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { OAuth2Client } from "google-auth-library";
-import type { calendar_v3 } from "googleapis";
+import type { calendar_v3 } from "@googleapis/calendar";
+import type { OAuth2Client } from "google-auth-library";
 import { getDataDir } from "../config/paths.js";
 import { getTimezone } from "../location/index.js";
 import { newOAuthState, oauthStateMatches } from "../security/oauth-state.js";
@@ -20,18 +21,14 @@ import type { ToolDefinition } from "./get-current-time.js";
 
 const execFileAsync = promisify(execFile);
 
-// googleapis costs ~0.6-1s to import; load it on the first Google call, not at boot.
-let googleMod: typeof import("googleapis").google | undefined;
-async function loadGoogle(): Promise<typeof import("googleapis").google> {
-    googleMod ??= (await import("googleapis")).google;
-    return googleMod;
-}
+// Each Google API client (the per-API @googleapis packages, the same generated
+// code as googleapis) loads on its first call, not at boot.
 
 // ═══════════════════════════════════════════════
 // OAuth2 Account Manager
 // ═══════════════════════════════════════════════
 
-const BASE_DATA_DIR = process.env.ATLAS_DATA_DIR || join(process.cwd(), "data");
+const BASE_DATA_DIR = process.env.BHAI_DATA_DIR || join(process.cwd(), "data");
 const DATA_DIR = join(BASE_DATA_DIR, "google-tokens");
 const CREDENTIALS_PATH = join(BASE_DATA_DIR, "google-credentials.json");
 const OAUTH_CALLBACK_PORT = 8844;
@@ -99,8 +96,10 @@ function loadCredentials(): { client_id: string; client_secret: string; redirect
 function createOAuth2Client(): OAuth2Client | null {
     const creds = loadCredentials();
     if (!creds) return null;
+    // google-auth-library loads only once there are credentials to use, not at boot.
+    const { OAuth2Client: Client } = createRequire(import.meta.url)("google-auth-library") as typeof import("google-auth-library");
     // Always use our callback server port for seamless OAuth
-    const client = new OAuth2Client(creds.client_id, creds.client_secret, OAUTH_REDIRECT_URI);
+    const client = new Client(creds.client_id, creds.client_secret, OAUTH_REDIRECT_URI);
 
     // Auto-refresh tokens and persist to disk
     client.on("tokens", (tokens) => {
@@ -127,6 +126,16 @@ function createOAuth2Client(): OAuth2Client | null {
 /**
  * Load all previously authenticated accounts from disk.
  */
+
+/**
+ * One header value: a line break in to/subject (model-written, or quoted from a page or
+ * an email) started a new header — "x\r\nBcc: someone@else" added a recipient nobody saw.
+ * Non-ASCII text (a Hindi subject) is RFC 2047-encoded so it arrives readable.
+ */
+export function header(value: string, encode = false): string {
+    const v = String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+    return encode && /[^\x20-\x7e]/.test(v) ? `=?UTF-8?B?${Buffer.from(v, "utf8").toString("base64")}?=` : v;
+}
 export function loadSavedAccounts(): void {
     ensureDataDir();
     try {
@@ -449,7 +458,7 @@ export async function completeGoogleAuth(code: string): Promise<{ success: boole
         // Fall back to userinfo API if id_token didn't have email
         if (email === "unknown") {
             try {
-                const oauth2 = (await loadGoogle()).oauth2({ version: "v2", auth: client });
+                const oauth2 = (await import("@googleapis/oauth2")).oauth2({ version: "v2", auth: client });
                 const userInfo = await oauth2.userinfo.get();
                 email = userInfo.data.email || "unknown";
                 console.log(`🔐 Email from userinfo API: ${email}`);
@@ -569,7 +578,7 @@ export const googleCalendarTool: ToolDefinition = {
 
                 for (const acc of accountsToQuery) {
                     try {
-                        const calendar = (await loadGoogle()).calendar({ version: "v3", auth: acc.client });
+                        const calendar = (await import("@googleapis/calendar")).calendar({ version: "v3", auth: acc.client });
                         const res = await calendar.events.list({
                             calendarId: "primary",
                             timeMin,
@@ -620,7 +629,7 @@ export const googleCalendarTool: ToolDefinition = {
                 const acc = targetAccount ? accounts.get(targetAccount) : accounts.values().next().value;
                 if (!acc) return JSON.stringify({ error: "No account available for creating events." });
 
-                const calendar = (await loadGoogle()).calendar({ version: "v3", auth: acc.client });
+                const calendar = (await import("@googleapis/calendar")).calendar({ version: "v3", auth: acc.client });
 
                 const startTime = input.start_time as string;
                 const endTime = input.end_time as string;
@@ -677,7 +686,7 @@ export async function listCalendarEventsRaw(params: { timeMin: string; timeMax: 
     const allEvents: any[] = [];
     for (const acc of accountsToQuery) {
         try {
-            const calendar = (await loadGoogle()).calendar({ version: "v3", auth: acc.client });
+            const calendar = (await import("@googleapis/calendar")).calendar({ version: "v3", auth: acc.client });
             const res = await calendar.events.list({
                 calendarId: "primary",
                 timeMin: params.timeMin,
@@ -767,7 +776,7 @@ export const gmailTool: ToolDefinition = {
 
                 for (const acc of accountsToQuery) {
                     try {
-                        const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
+                        const gmail = (await import("@googleapis/gmail")).gmail({ version: "v1", auth: acc.client });
                         const res = await gmail.users.messages.list({
                             userId: "me",
                             q: "is:unread",
@@ -819,7 +828,7 @@ export const gmailTool: ToolDefinition = {
                 // Try each account to find the message
                 for (const acc of accountsToQuery) {
                     try {
-                        const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
+                        const gmail = (await import("@googleapis/gmail")).gmail({ version: "v1", auth: acc.client });
                         const detail = await gmail.users.messages.get({
                             userId: "me",
                             id: messageId,
@@ -874,7 +883,7 @@ export const gmailTool: ToolDefinition = {
 
                 for (const acc of accountsToQuery) {
                     try {
-                        const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
+                        const gmail = (await import("@googleapis/gmail")).gmail({ version: "v1", auth: acc.client });
                         const res = await gmail.users.messages.list({
                             userId: "me",
                             q: query,
@@ -931,12 +940,12 @@ export const gmailTool: ToolDefinition = {
                 const acc = targetAccount ? accounts.get(targetAccount) : accounts.values().next().value;
                 if (!acc) return JSON.stringify({ error: "No account available for sending." });
 
-                const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
+                const gmail = (await import("@googleapis/gmail")).gmail({ version: "v1", auth: acc.client });
                 const raw = Buffer.from(
                     [
                         `From: ${acc.email}`,
-                        `To: ${to}`,
-                        `Subject: ${subject}`,
+                        `To: ${header(to)}`,
+                        `Subject: ${header(subject, true)}`,
                         `Content-Type: text/plain; charset=utf-8`,
                         "",
                         body,
@@ -959,7 +968,7 @@ export const gmailTool: ToolDefinition = {
                 // Find the account that has this message
                 for (const acc of accountsToQuery) {
                     try {
-                        const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
+                        const gmail = (await import("@googleapis/gmail")).gmail({ version: "v1", auth: acc.client });
                         const original = await gmail.users.messages.get({
                             userId: "me",
                             id: messageId,
@@ -977,10 +986,10 @@ export const gmailTool: ToolDefinition = {
                         const raw = Buffer.from(
                             [
                                 `From: ${acc.email}`,
-                                `To: ${replyTo}`,
-                                `Subject: ${reSubject}`,
-                                `In-Reply-To: ${msgIdHeader}`,
-                                `References: ${msgIdHeader}`,
+                                `To: ${header(replyTo)}`,
+                                `Subject: ${header(reSubject, true)}`,
+                                `In-Reply-To: ${header(msgIdHeader)}`,
+                                `References: ${header(msgIdHeader)}`,
                                 `Content-Type: text/plain; charset=utf-8`,
                                 "",
                                 body,
@@ -1033,7 +1042,7 @@ export async function listGoogleTasksRaw(params: { showCompleted?: boolean; dueM
     const allTasks: any[] = [];
     for (const acc of accountsToQuery) {
         try {
-            const tasks = (await loadGoogle()).tasks({ version: "v1", auth: acc.client });
+            const tasks = (await import("@googleapis/tasks")).tasks({ version: "v1", auth: acc.client });
             const res = await tasks.tasks.list({
                 tasklist: "@default",
                 showCompleted: params.showCompleted ?? false,
@@ -1073,7 +1082,7 @@ export async function listStaleEmailsRaw(): Promise<
     const all: any[] = [];
     for (const acc of accountsToQuery) {
         try {
-            const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
+            const gmail = (await import("@googleapis/gmail")).gmail({ version: "v1", auth: acc.client });
             const listRes = await gmail.users.messages.list({
                 userId: "me",
                 q: "(is:unread OR is:important) older_than:3d -from:me",
@@ -1114,7 +1123,7 @@ export async function getEngagedSenders(): Promise<string[]> {
     const senders = new Set<string>();
     for (const acc of accountsToQuery) {
         try {
-            const gmail = (await loadGoogle()).gmail({ version: "v1", auth: acc.client });
+            const gmail = (await import("@googleapis/gmail")).gmail({ version: "v1", auth: acc.client });
             const listRes = await gmail.users.messages.list({
                 userId: "me",
                 q: "from:me newer_than:30d",

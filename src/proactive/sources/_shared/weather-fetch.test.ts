@@ -105,9 +105,9 @@ describe("weather-fetch", () => {
         expect(result!.hasOutdoorEvent).toBe(false);
     });
 
-    it("ATLAS_PROACTIVE_WEATHER_LOCATION overrides getLocation and uses env value in search query", async () => {
+    it("BHAI_PROACTIVE_WEATHER_LOCATION overrides getLocation and uses env value in search query", async () => {
         vi.mocked(getLocation).mockClear();
-        process.env.ATLAS_PROACTIVE_WEATHER_LOCATION = "Mumbai, India";
+        process.env.BHAI_PROACTIVE_WEATHER_LOCATION = "Mumbai, India";
         try {
             const webSearch = vi.fn(async () => "Mumbai weather data");
             const deps: WeatherFetchDeps = {
@@ -121,7 +121,7 @@ describe("weather-fetch", () => {
             expect(calls[0]).toContain("Mumbai, India");
             expect(getLocation).not.toHaveBeenCalled();
         } finally {
-            delete process.env.ATLAS_PROACTIVE_WEATHER_LOCATION;
+            delete process.env.BHAI_PROACTIVE_WEATHER_LOCATION;
         }
     });
 });

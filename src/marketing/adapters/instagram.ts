@@ -2,7 +2,6 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { getMemoryDB } from "../../memory/sqlite.js";
@@ -28,23 +27,13 @@ function checkRateLimit(brandId: string): void {
   }
 }
 
-async function uploadToTempUrl(filePath: string): Promise<string> {
-  // Stub that assumes a Unix-shell backgrounding operator (`&`). The whole
-  // uploadToTempUrl flow is a non-production placeholder anyway (localhost
-  // is unreachable from Meta). Fail loudly on Windows instead of letting
-  // the shell lookup fail deep in execSync.
-  if (process.platform === "win32") {
-    throw new Error(
-      "Instagram adapter uploadToTempUrl is not supported on Windows — it relies on a POSIX background shell. Configure a real CDN.",
-    );
-  }
-  const dir = path.dirname(filePath);
-  const file = path.basename(filePath);
-  const port = 40000 + Math.floor(Math.random() * 10000);
-  console.warn("[instagram adapter] WARNING: uploadToTempUrl uses localhost — Meta servers cannot reach this URL. Replace with a real CDN for production.");
-  execSync(`npx serve --no-clipboard --listen ${port} "${dir}" &`, { stdio: "ignore", shell: "/bin/sh" });
-  await new Promise<void>((res) => setTimeout(res, 1500));
-  return `http://localhost:${port}/${encodeURIComponent(file)}`;
+// ponytail: Instagram fetches the media from a public URL, and Bhai has no upload service.
+// This used to serve the file's whole folder on every interface with `npx serve` (the path
+// inside a shell command), handing Meta a localhost URL it could never reach.
+async function uploadToTempUrl(_filePath: string): Promise<string> {
+  throw new Error(
+    "Instagram needs the image or video at a public URL, and Bhai has no upload service for that yet. Nothing was posted.",
+  );
 }
 
 export async function postInstagram(

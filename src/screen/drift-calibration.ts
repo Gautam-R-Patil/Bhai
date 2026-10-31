@@ -36,7 +36,7 @@ export interface AffineTransform {
 }
 
 function isDisabled(): boolean {
-    return process.env.ATLAS_NO_DRIFT_CALIBRATION === "true";
+    return process.env.BHAI_NO_DRIFT_CALIBRATION === "true";
 }
 
 function isFiniteTransform(t: unknown): t is AffineTransform {

@@ -85,3 +85,35 @@ describe("os_inspect shows on-screen text but not field contents", () => {
         expect(out.elements).not.toContain("hunter2");
     });
 });
+
+// From cua's driver: a query-filtered read is a few hundred characters instead of the window.
+describe("os_inspect query", () => {
+    it("returns only the matching elements, keeping their ids for os_click_id", async () => {
+        frontPid = 55;
+        tree = app("System Settings", 55, [
+            n("AXButton", "Bluetooth", null, 10),
+            n("AXButton", "Wi-Fi", null, 40),
+            n("AXCheckBox", "Wi-Fi toggle", null, 70),
+            n("AXButton", "Sound", null, 100),
+        ]);
+        const out = JSON.parse(await osInspect.handler({ query: "wi-fi toggle" }));
+        expect(out.elements.split("\n")[0]).toContain('"Wi-Fi toggle"');
+        expect(out.elements).not.toContain("Bluetooth");
+        expect(out.elements).toContain("[3]"); // the id it has in the full list
+        const none = JSON.parse(await osInspect.handler({ query: "printer" }));
+        expect(none.hint).toMatch(/without query/);
+    });
+
+    // From the all-nano eval: query "BhaiEval" listed [195]; nano clicked id=1 ("Recents").
+    it("won't click a list position taken for an id", async () => {
+        frontPid = 55;
+        tree = app("Finder", 55, [n("AXRow", "Recents", null, 10), n("AXImage", "BhaiEval", null, 40)]);
+        const out = JSON.parse(await osInspect.handler({ query: "bhaieval" }));
+        expect(out.tip).toContain("os_click_id id=2");
+        click.mockClear();
+        const wrong = JSON.parse(await osClickId.handler({ id: 1 }));
+        expect(wrong.error).toContain('[2] "BhaiEval"');
+        expect(click).not.toHaveBeenCalled();
+        expect(JSON.parse(await osClickId.handler({ id: 2 })).success).toBe(true);
+    });
+});

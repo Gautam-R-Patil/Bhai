@@ -59,7 +59,7 @@ export const davinciScript: ToolDefinition = {
             PYTHONPATH: `${process.env.PYTHONPATH || ""}:/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules/`,
         };
 
-        const tmpFile = join(tmpdir(), `atlas_davinci_${Date.now()}.py`);
+        const tmpFile = join(tmpdir(), `bhai_davinci_${Date.now()}.py`);
 
         try {
             await fs.writeFile(tmpFile, script, "utf-8");

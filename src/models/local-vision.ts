@@ -101,7 +101,7 @@ export async function analyzeImage(
 export async function analyzeScreen(
     prompt = "What application is the user working in? What are they doing? Brief answer.",
 ): Promise<VisionResult> {
-    const tmpPath = path.join(tmpdir(), "atlas-vision-screen.png");
+    const tmpPath = path.join(tmpdir(), "bhai-vision-screen.png");
 
     try {
         // Take a downsized screenshot (faster processing)
@@ -127,7 +127,7 @@ export async function analyzeScreen(
  * Uses image hashing for fast comparison without VLM.
  */
 export async function detectScreenChange(): Promise<ScreenChangeDetection> {
-    const tmpPath = path.join(tmpdir(), "atlas-vision-change.png");
+    const tmpPath = path.join(tmpdir(), "bhai-vision-change.png");
 
     try {
         await withCursorHidden(() => execFileAsync("screencapture", ["-x", "-t", "png", tmpPath]));

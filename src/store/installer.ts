@@ -5,12 +5,10 @@
 import { mkdir, writeFile, rm, readFile, cp } from "fs/promises";
 import { existsSync, createWriteStream } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { spawn } from "child_process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "zlib";
-import { extract as tarExtract } from "tar";
 
 import type {
   StoreItem,
@@ -22,10 +20,11 @@ import type {
 } from "./types.js";
 import { startInstall, confirmInstall, uninstall as convexUninstall, updateVersion } from "./client.js";
 import { buildMcpEnv } from "../mcp/client.js";
+import { getBhaiHome } from "../config/paths.js";
 
 // ── Constants ─────────────────────────────────────
 
-const STORE_BASE_PATH = join(homedir(), ".atlas", "store");
+const STORE_BASE_PATH = join(getBhaiHome(), "store");
 const SKILLS_PATH = join(STORE_BASE_PATH, "skills");
 const MCP_PATH = join(STORE_BASE_PATH, "mcp-servers");
 const TOOLS_PATH = join(STORE_BASE_PATH, "tools");
@@ -34,9 +33,22 @@ const MANIFEST_PATH = join(STORE_BASE_PATH, "installs.json");
 const MCP_CONFIG_PATH = join(STORE_BASE_PATH, "mcp-servers.json");
 const BACKUP_PATH = join(STORE_BASE_PATH, ".backup");
 
+/**
+ * A package's manifest: bhai.config.json, else the pre-rename atlas.config.json
+ * (published packages can't be rewritten, so the old name is accepted for good).
+ */
+export function packageConfigPath(dir: string): string {
+  const current = join(dir, "bhai.config.json");
+  const legacy = join(dir, "atlas.config.json");
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+}
+
 // ── Get path for item type ────────────────────────
 
 function getItemPath(type: StoreItemType, slug: string): string {
+  // The slug comes from the store server: "../../x" made install, backup and uninstall
+  // (rm -rf) act outside ~/.bhai/store.
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(slug)) throw new Error(`Invalid store item slug: ${JSON.stringify(slug).slice(0, 80)}`);
   switch (type) {
     case "skill":
       return join(SKILLS_PATH, slug);
@@ -139,6 +151,8 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
 // ── Extract zip/tar helper ────────────────────────
 
 async function extractArchive(archivePath: string, destPath: string): Promise<void> {
+  // tar loads on the first store install, not at boot.
+  const { extract: tarExtract } = await import("tar");
   // Determine archive type from extension or magic bytes
   const content = await readFile(archivePath);
 
@@ -286,6 +300,7 @@ export async function installItem(
 
     // 1. Start install in Convex and get download URL
     const { contentUrl, slug, type, version } = await startInstall(item._id, item.version);
+    getItemPath(type, slug); // validates the server's slug before it names any file
 
     notify("downloading", 10, "Downloading content...");
 
@@ -371,22 +386,22 @@ export async function installItem(
 async function addToMCPConfig(slug: string, installPath: string): Promise<void> {
   const config = await loadMCPConfig();
 
-  // Read the atlas.config.json from the installed package
-  const configPath = join(installPath, "atlas.config.json");
+  // Read the bhai.config.json (or old atlas.config.json) from the installed package
+  const configPath = packageConfigPath(installPath);
   let mcpConfig = {
     command: "node",
     args: [join(installPath, "dist", "index.js")],
   };
 
   if (existsSync(configPath)) {
-    const atlasConfig = JSON.parse(await readFile(configPath, "utf-8"));
-    if (atlasConfig.mcp) {
+    const bhaiConfig = JSON.parse(await readFile(configPath, "utf-8"));
+    if (bhaiConfig.mcp) {
       mcpConfig = {
-        command: atlasConfig.mcp.command || "node",
-        args: (atlasConfig.mcp.args || ["dist/index.js"]).map((arg: string) =>
+        command: bhaiConfig.mcp.command || "node",
+        args: (bhaiConfig.mcp.args || ["dist/index.js"]).map((arg: string) =>
           arg.startsWith("/") ? arg : join(installPath, arg)
         ),
-        ...(atlasConfig.mcp.env ? { env: atlasConfig.mcp.env } : {}),
+        ...(bhaiConfig.mcp.env ? { env: bhaiConfig.mcp.env } : {}),
       };
     }
   }

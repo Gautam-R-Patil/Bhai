@@ -1,7 +1,7 @@
 // Copyright © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 // Deep Research v2 — Source ranking, finding dedup, cross-referencing
 
-import type { RankedSource, StructuredFinding } from "./types.js";
+import type { RankedSource, RawFinding, StructuredFinding } from "./types.js";
 import { scoreDomainQuality, getDomain } from "./fetcher.js";
 import { getCredibility } from "./credibility-model.js";
 
@@ -22,12 +22,13 @@ export function rankSource(
         ? Math.min(1, (findings.length / (content.length / 1000)) * 0.5)
         : 0;
 
-    // Recency: detect year in content
+    // Recency: the latest year the page mentions, ignoring future ones (plans, forecasts)
     let recencyScore = 0.3; // default: unknown date
-    const yearMatch = content.match(/\b(202[4-6])\b/);
-    if (yearMatch) {
-        const year = parseInt(yearMatch[1]);
-        recencyScore = year >= 2026 ? 1.0 : year >= 2025 ? 0.8 : 0.6;
+    const currentYear = new Date().getFullYear();
+    const years = [...content.matchAll(/\b(20\d\d)\b/g)].map((m) => Number(m[1])).filter((y) => y <= currentYear);
+    if (years.length > 0) {
+        const age = currentYear - Math.max(...years);
+        recencyScore = age <= 0 ? 1.0 : age === 1 ? 0.8 : age === 2 ? 0.6 : 0.4;
     }
 
     // Citation score (academic papers)
@@ -97,6 +98,25 @@ function getWords(text: string): Set<string> {
     );
 }
 
+// Words that say nothing about the topic: a page that has only these didn't mention it.
+const TOPIC_STOPWORDS = new Set(["what", "which", "with", "from", "about", "that", "this", "they", "have", "find", "best", "more", "most", "into", "your", "their", "there", "when", "where", "does", "should", "could", "would", "latest", "some", "than", "them", "were", "will", "also", "how", "the", "and", "for", "are", "why", "who"]);
+
+/**
+ * A page that never names the topic yields no findings, so it isn't worth a model call. Only
+ * judged for a topic in plain ASCII: a Hindi or CJK topic is often researched from English pages.
+ */
+export function mentionsTopic(content: string, topic: string): boolean {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the full ASCII range
+    if (!/^[\x00-\x7F]*$/.test(topic)) return true;
+    const words = [...getWords(topic)].filter((w) => !TOPIC_STOPWORDS.has(w));
+    if (words.length === 0) return true;
+    const text = content.slice(0, 20000).toLowerCase();
+    // Any one topic word, crudely stemmed, will do: requiring two dropped "lithium-ion battery"
+    // for "lithium batteries", and every English page for a Hinglish topic.
+    const stem = (w: string) => (w.length > 3 ? w.replace(/(ies|es|s)$/, "") : w);
+    return words.some((w) => text.includes(stem(w)));
+}
+
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
     if (a.size === 0 || b.size === 0) return 0; // nothing to compare is not "the same"
     let intersection = 0;
@@ -142,7 +162,7 @@ export function deduplicateFindings(findings: string[]): string[] {
 // ── Cross-Reference Findings ─────────────────
 
 export function crossReferenceFindings(
-    findings: Array<{ text: string; sourceUrl: string; sourceTitle: string; categories: string[] }>,
+    findings: RawFinding[],
     allSources: RankedSource[],
 ): StructuredFinding[] {
     const structured: StructuredFinding[] = [];

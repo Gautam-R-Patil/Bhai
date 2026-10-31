@@ -8,6 +8,6 @@ import * as installer from "../../store/installer.js";
 describe("installer accepts dynamic type", () => {
     it("exports DYNAMIC_PATH constant pointing at the right place", () => {
         const exported = (installer as any).DYNAMIC_PATH as string | undefined;
-        expect(exported).toBe(join(homedir(), ".atlas", "store", "dynamic"));
+        expect(exported).toBe(join(homedir(), ".bhai", "store", "dynamic"));
     });
 });

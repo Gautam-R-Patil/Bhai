@@ -1,6 +1,6 @@
 // © 2024-2026 TRUSCOR Private Limited. All rights reserved.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { _resetPhraseHistory, pickPhrase, smartChunkMessage } from "./alive-ux.js";
+import { _resetPhraseHistory, categorizeError, pickPhrase, smartChunkMessage } from "./alive-ux.js";
 
 describe("pickPhrase — never repeats a phrase back-to-back", () => {
     afterEach(() => {
@@ -37,5 +37,18 @@ describe("smartChunkMessage", () => {
         }
         // Nothing is lost in the split.
         expect(chunks.join("")).toContain("line1 of code here");
+    });
+});
+
+describe("categorizeError", () => {
+    it("names the real cause instead of credits or a missing file", () => {
+        expect(categorizeError("Maximum call stack size exceeded")).toBe("unknown");
+        expect(categorizeError("Max iterations exceeded")).toBe("unknown");
+        expect(categorizeError("404 model not found")).not.toBe("file_not_found");
+        expect(categorizeError(new Error("connect ETIMEDOUT 1.2.3.4:443"))).toBe("network_timeout");
+        expect(categorizeError("EACCES: open '/x'")).toBe("permission_denied");
+        expect(categorizeError("ENOENT: open '/x'")).toBe("file_not_found");
+        expect(categorizeError("Insufficient credits")).toBe("out_of_credits");
+        expect(categorizeError("quota exceeded")).toBe("out_of_credits");
     });
 });

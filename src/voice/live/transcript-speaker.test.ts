@@ -17,7 +17,8 @@ vi.mock("./kokoro-tts.js", () => ({
     hasKokoroFailed: () => kokoroFailedFlag,
 }));
 
-import { extractSentence, TranscriptSpeaker, stripTtsMarkup } from "./transcript-speaker.js";
+import { extractSentence, TranscriptSpeaker } from "./transcript-speaker.js";
+import { stripTtsMarkup, textToSpeech } from "../tts.js";
 
 describe("extractSentence — sentence splitter for on-device TTS", () => {
     it("returns null when the buffer has no complete sentence yet", () => {
@@ -196,6 +197,28 @@ describe("stripTtsMarkup — strip text-mode markup before TTS", () => {
     it("handles empty / already-clean input", () => {
         expect(stripTtsMarkup("")).toBe("");
         expect(stripTtsMarkup("Hello, how are you?")).toBe("Hello, how are you?");
+    });
+    it("strips heading hashes", () => {
+        expect(stripTtsMarkup("## Weather\nSunny")).toBe("Weather\nSunny");
+    });
+
+    it("textToSpeech strips markup and labels ElevenLabs MP3 as audio/mpeg", async () => {
+        vi.stubEnv("BHAI_TTS_PROVIDER", "elevenlabs");
+        vi.stubEnv("ELEVENLABS_API_KEY", "test");
+        const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(new Uint8Array([0xff, 0xfb])));
+        vi.stubGlobal("fetch", fetchMock);
+        try {
+            const out = await textToSpeech("**Hi** <!--WIDGET-->");
+            expect(out.mimetype).toBe("audio/mpeg");
+            const [url, init] = fetchMock.mock.calls[0];
+            expect(url).toContain("output_format=mp3_");
+            const body = JSON.parse(String(init.body));
+            expect(body.text).toBe("Hi");
+            expect(body.model_id).toBe("eleven_multilingual_v2");
+        } finally {
+            vi.unstubAllGlobals();
+            vi.unstubAllEnvs();
+        }
     });
 });
 

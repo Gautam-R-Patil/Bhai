@@ -41,19 +41,19 @@ function withTail(...msgs: ChatCompletionMessageParam[]): ChatCompletionMessageP
     return [...msgs, TAIL];
 }
 
-const ORIG_NO_PREPASS = process.env.ATLAS_NO_HISTORY_PREPASS;
-const ORIG_STRIP_MEDIA = process.env.ATLAS_HISTORY_STRIP_MEDIA;
+const ORIG_NO_PREPASS = process.env.BHAI_NO_HISTORY_PREPASS;
+const ORIG_STRIP_MEDIA = process.env.BHAI_HISTORY_STRIP_MEDIA;
 
 beforeEach(() => {
-    delete process.env.ATLAS_NO_HISTORY_PREPASS;
-    delete process.env.ATLAS_HISTORY_STRIP_MEDIA;
+    delete process.env.BHAI_NO_HISTORY_PREPASS;
+    delete process.env.BHAI_HISTORY_STRIP_MEDIA;
 });
 
 afterEach(() => {
-    if (ORIG_NO_PREPASS === undefined) delete process.env.ATLAS_NO_HISTORY_PREPASS;
-    else process.env.ATLAS_NO_HISTORY_PREPASS = ORIG_NO_PREPASS;
-    if (ORIG_STRIP_MEDIA === undefined) delete process.env.ATLAS_HISTORY_STRIP_MEDIA;
-    else process.env.ATLAS_HISTORY_STRIP_MEDIA = ORIG_STRIP_MEDIA;
+    if (ORIG_NO_PREPASS === undefined) delete process.env.BHAI_NO_HISTORY_PREPASS;
+    else process.env.BHAI_NO_HISTORY_PREPASS = ORIG_NO_PREPASS;
+    if (ORIG_STRIP_MEDIA === undefined) delete process.env.BHAI_HISTORY_STRIP_MEDIA;
+    else process.env.BHAI_HISTORY_STRIP_MEDIA = ORIG_STRIP_MEDIA;
 });
 
 describe("compressToolHistory — short tool result passthrough", () => {
@@ -161,15 +161,15 @@ describe("compressToolHistory — media strip", () => {
         ];
     }
 
-    it("replaces historical image base64 with a placeholder when ATLAS_HISTORY_STRIP_MEDIA=true", () => {
-        process.env.ATLAS_HISTORY_STRIP_MEDIA = "true";
+    it("replaces historical image base64 with a placeholder when BHAI_HISTORY_STRIP_MEDIA=true", () => {
+        process.env.BHAI_HISTORY_STRIP_MEDIA = "true";
         const out = compressToolHistory(withTail(...mediaMsgs()));
         const serialized = JSON.stringify(out);
         expect(serialized).toContain("[image omitted from history]");
         expect(serialized).not.toContain(base64);
     });
 
-    it("keeps the image base64 when ATLAS_HISTORY_STRIP_MEDIA is unset", () => {
+    it("keeps the image base64 when BHAI_HISTORY_STRIP_MEDIA is unset", () => {
         const out = compressToolHistory(withTail(...mediaMsgs()));
         const serialized = JSON.stringify(out);
         expect(serialized).toContain(base64);
@@ -179,7 +179,7 @@ describe("compressToolHistory — media strip", () => {
 
 describe("compressToolHistory — protected tail untouched", () => {
     it("leaves the latest user turn (and its images) byte-identical", () => {
-        process.env.ATLAS_HISTORY_STRIP_MEDIA = "true";
+        process.env.BHAI_HISTORY_STRIP_MEDIA = "true";
         const base64 = "data:image/png;base64," + "B".repeat(2000);
         const tailWithImage: ChatCompletionMessageParam = {
             role: "user",
@@ -199,7 +199,7 @@ describe("compressToolHistory — protected tail untouched", () => {
         const out = compressToolHistory(msgs);
         // Tail user message must be the exact same object reference (copied verbatim).
         expect(out).toContain(tailWithImage);
-        // Its image base64 survives despite ATLAS_HISTORY_STRIP_MEDIA=true.
+        // Its image base64 survives despite BHAI_HISTORY_STRIP_MEDIA=true.
         expect(JSON.stringify(tailWithImage)).toContain(base64);
         // Trailing assistant reply after the tail is preserved verbatim.
         expect(out.some((m) => m.role === "assistant" && m.content === "reply")).toBe(true);
@@ -207,8 +207,8 @@ describe("compressToolHistory — protected tail untouched", () => {
 });
 
 describe("compressToolHistory — kill switch reverts to flat behavior", () => {
-    it("ATLAS_NO_HISTORY_PREPASS=true uses the old flat 500-char cut and verbatim args", () => {
-        process.env.ATLAS_NO_HISTORY_PREPASS = "true";
+    it("BHAI_NO_HISTORY_PREPASS=true uses the old flat 500-char cut and verbatim args", () => {
+        process.env.BHAI_NO_HISTORY_PREPASS = "true";
         const content = "p".repeat(900);
         const bigArg = JSON.stringify({ query: "z".repeat(2000) });
         const out = compressToolHistory(

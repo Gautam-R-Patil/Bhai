@@ -2,13 +2,13 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { getToolBySlug, insertTool } from "./library.js";
 import { emitForgeEvent } from "./telemetry.js";
+import { getBhaiHome } from "../config/paths.js";
 
-const DEFAULT_LEGACY_DIR = join(homedir(), ".atlas", "dynamic-tools");
-const DEFAULT_DYNAMIC_STORE_DIR = join(homedir(), ".atlas", "store", "dynamic");
+const DEFAULT_LEGACY_DIR = join(getBhaiHome(), "dynamic-tools");
+const DEFAULT_DYNAMIC_STORE_DIR = join(getBhaiHome(), "store", "dynamic");
 
 interface LegacyToolFile {
     name: string;

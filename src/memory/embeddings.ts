@@ -25,7 +25,7 @@ import { join, sep } from "node:path";
 import { getOrFetchCached, makeCacheKey } from "./embedding-cache.js";
 
 // ── Embedding Model Configuration ───────────────
-// Configurable model registry — switch models via ATLAS_EMBEDDING_MODEL env var.
+// Configurable model registry — switch models via BHAI_EMBEDDING_MODEL env var.
 // The active model is resolved at runtime; no code changes needed to switch.
 
 export interface EmbeddingModelConfig {
@@ -60,11 +60,11 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModelConfig> = {
 };
 
 /**
- * Resolve the active embedding model from the ATLAS_EMBEDDING_MODEL env var.
+ * Resolve the active embedding model from the BHAI_EMBEDDING_MODEL env var.
  * Returns EMBEDDING_MODELS.NOMIC for "nomic", EMBEDDING_MODELS.MINILM otherwise.
  */
 export function getActiveEmbeddingModel(): EmbeddingModelConfig {
-    const envModel = (process.env.ATLAS_EMBEDDING_MODEL || "").toLowerCase().trim();
+    const envModel = (process.env.BHAI_EMBEDDING_MODEL || "").toLowerCase().trim();
     if (envModel === "nomic") return EMBEDDING_MODELS.NOMIC;
     return EMBEDDING_MODELS.MINILM; // Default — safe, no auth required
 }
@@ -83,7 +83,7 @@ const LEGACY_MODEL_NAME = "Xenova/bge-small-en-v1.5";
 const LEGACY_EMBEDDING_DIM = 384;
 
 // Cache directory — must be writable (not inside .app bundle on macOS)
-const DATA_DIR = process.env.ATLAS_DATA_DIR || join(process.cwd(), "data");
+const DATA_DIR = process.env.BHAI_DATA_DIR || join(process.cwd(), "data");
 const MODELS_CACHE_DIR = join(DATA_DIR, "models");
 
 // Dynamic import to avoid top-level await issues

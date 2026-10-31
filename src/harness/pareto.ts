@@ -21,7 +21,7 @@ try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let native: any = null;
     try { native = _nativeRequire(import.meta.url)(process.cwd() + "/native/index.js"); } catch { native = null; }
-    if (native?.computeParetoDominance && process.env.ATLAS_HARNESS_NATIVE !== "false") {
+    if (native?.computeParetoDominance && process.env.BHAI_HARNESS_NATIVE !== "false") {
         nativeParetoDominance = native.computeParetoDominance;
     }
 } catch { /* JS fallback */ }

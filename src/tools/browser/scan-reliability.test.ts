@@ -8,7 +8,7 @@ import { buildElementsText, formatAriaTree, getInteractiveElements, parseAriaSna
 let browser: any = null;
 beforeAll(async () => {
     try {
-        browser = await (await import("playwright")).chromium.launch({ headless: true });
+        browser = await (await import("playwright-core")).chromium.launch({ headless: true });
     } catch {
         browser = null;
     }
@@ -71,6 +71,20 @@ describe("live scan", () => {
         const pay = (await getInteractiveElements(page, true)).find((e) => e.text === "Pay");
         expect(pay?.x).toBeGreaterThan(300);
         expect(pay?.y).toBeGreaterThan(400);
+        await page.close();
+    }, 30_000);
+
+    it("DOM-scan fallback keeps code editors and shadow-DOM controls", async (ctx) => {
+        if (!browser) return ctx.skip();
+        const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+        // No ARIA-interactive nodes → the SCAN_FRAME_JS fallback runs.
+        await page.setContent(`<div class="monaco-editor" style="width:400px;height:200px"></div><div id=host></div>
+            <script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML =
+                "<div role=tab style='width:80px;height:30px'>Inside</div>";</script>`);
+        await page.waitForTimeout(300);
+        const els = await getInteractiveElements(page, true);
+        expect(els.find((e) => e.editorType === "monaco")?.handle).toBeTruthy();
+        expect(els.find((e) => e.text === "Inside")?.handle).toBeTruthy();
         await page.close();
     }, 30_000);
 

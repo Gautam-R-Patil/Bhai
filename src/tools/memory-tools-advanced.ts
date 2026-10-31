@@ -506,9 +506,8 @@ export const coreMemoryDelete: ToolDefinition = {
 
                     // Check extra fields
                     if (profile.extra && content in profile.extra) {
-                        const extra = { ...profile.extra };
-                        delete extra[content];
-                        updateIdentityProfile({ extra });
+                        // extra merges into what's stored, so the key goes in as undefined (dropped on save).
+                        updateIdentityProfile({ extra: { [content]: undefined } });
                         return JSON.stringify({
                             success: true,
                             message: `Removed extra field "${content}" from identity profile`,

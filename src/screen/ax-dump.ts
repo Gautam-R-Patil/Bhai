@@ -35,7 +35,7 @@ export interface AxDump {
     root: AxNode;
     trusted: boolean;
     depth: number;
-    /** macOS helper: an AX read timed out (ATLAS_AX_MSG_TIMEOUT_MS), so elements are missing. */
+    /** macOS helper: an AX read timed out (BHAI_AX_MSG_TIMEOUT_MS), so elements are missing. */
     partial?: boolean;
     // Added by the wrapper, not present in raw helper output:
     elapsedMs: number;
@@ -171,7 +171,7 @@ async function dumpMacOS(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump
     }
     if (opts.depth) args.push("--depth", String(opts.depth));
     if (opts.bboxOnly) args.push("--bbox-only");
-    const env = opts.budgetMs ? { ...process.env, ATLAS_AX_BUDGET_MS: String(opts.budgetMs) } : undefined;
+    const env = opts.budgetMs ? { ...process.env, BHAI_AX_BUDGET_MS: String(opts.budgetMs) } : undefined;
     return parseDump(await runSwiftHelper(exec, args, timeoutMs, env));
 }
 
@@ -241,6 +241,37 @@ export async function axPerformAction(
     }
 }
 
+/**
+ * Insert `text` at the cursor of app `pid`'s focused text field without raising the app
+ * (macOS; AXSelectedText, from trycua/cua's background typing). Confirmed by reading the
+ * field back. Refuses password fields; web content and terminals answer not_applied /
+ * not_text, so callers fall back to typing in front. The text goes over stdin, not argv.
+ */
+export async function axInsertText(pid: number, text: string): Promise<{ ok: boolean; role?: string; error?: string }> {
+    if (process.platform !== "darwin") return { ok: false, error: "unsupported_platform" };
+    const h = swiftHelper();
+    const { spawn } = await import("node:child_process");
+    return new Promise((resolve) => {
+        const child = spawn(h.exec, [...h.args, "--pid", String(pid), "--action", "insert"], {
+            stdio: ["pipe", "pipe", "ignore"],
+        });
+        let out = "";
+        child.stdout.on("data", (d) => {
+            out += d;
+        });
+        const t = setTimeout(() => child.kill("SIGKILL"), 8000);
+        const done = () => {
+            clearTimeout(t);
+            const line = out.trim();
+            resolve(line.startsWith("ok|") ? { ok: true, role: line.slice(3) } : { ok: false, error: line.replace(/^error\|/, "") || "no_output" });
+        };
+        child.on("close", done);
+        child.on("error", () => resolve({ ok: false, error: "helper_failed" }));
+        child.stdin.on("error", () => {});
+        child.stdin.end(text, "utf-8");
+    });
+}
+
 /** The Dock's AX tree (macOS): it isn't the frontmost app, so a normal dump never sees it. */
 export async function dumpDock(): Promise<AxDump | null> {
     if (process.platform !== "darwin") return null;
@@ -259,7 +290,7 @@ export async function dumpDock(): Promise<AxDump | null> {
 async function dumpWindows(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump> {
     const script = join(getScriptsDir(), "dump_uia.ps1");
     const args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script];
-    if (opts.pid && opts.pid > 0) args.push("-Pid", String(opts.pid));
+    if (opts.pid && opts.pid > 0) args.push("-TargetPid", String(opts.pid)); // not -Pid: PowerShell's read-only $PID
     if (opts.depth) args.push("-MaxDepth", String(opts.depth));
     if (opts.bboxOnly) args.push("-BboxOnly");
     const { stdout } = await execFileAsync("powershell", args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 });
@@ -364,9 +395,9 @@ function isInteractiveRole(role: string | null | undefined): boolean {
  */
 export function flattenInteractive(dump: AxDump): AxFlatElement[] {
     // Kill-switch per CLAUDE.md rollout pattern. JSON round-trip dominates for trees <200 nodes,
-    // so TS is often faster. Default: TS (force opt-in to Rust via ATLAS_NATIVE_AX=true).
+    // so TS is often faster. Default: TS (force opt-in to Rust via BHAI_NATIVE_AX=true).
     // Once bench-native.ts shows a measured win across representative inputs, flip the default.
-    if (process.env.ATLAS_NATIVE_AX === "true") {
+    if (process.env.BHAI_NATIVE_AX === "true") {
         const native = loadNative();
         if (native?.axFlattenInteractive) {
             try {
@@ -755,6 +786,10 @@ function scoreText(q: string, hay: string): number {
         // e.g. "Downloads" in "the Downloads folder in the sidebar") still wins
         // because qCovered there is high relative to the few content tokens.
         if (hayCovered >= 0.999 && qCovered >= 0.5) return 0.82; // label fully in query AND dominates it
+        // Every word the query names is in the label, which adds at most one more ("the clear
+        // button" → "All Clear", "save" → "Save As…"). Below a fully-named label (0.82+), so
+        // "Clear" still beats "All Clear" when both exist; above it this went to a vision call.
+        if (qCovered >= 0.999 && hTok.length <= qTok.length + 1) return 0.8;
         const blend = (2 * hayCovered * qCovered) / (hayCovered + qCovered || 1); // F1 of the two coverages
         if (blend > 0) return Math.min(0.79, 0.35 + blend * 0.45);
     }

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { anySecretTyped, noteSecretTyped, resetVaultTask } from "../security/vault.js";
 import { setActiveChannel } from "../tools/channel-send.js";
 import {
+    buildVerifyReminder,
+    isMutator,
     drivesScreen,
     isVerifier,
     newVerifyGateState,
@@ -177,4 +179,24 @@ describe("browser_form_state", () => {
         expect(fresh.osStateMutated).toBe(false);
     });
 });
+});
+
+describe("iMessage sends need a look before 'sent'", () => {
+    it("messages_tool send is a mutator; reading isn't", () => {
+        expect(isMutator("messages_tool", { action: "send", to: "+911234567890", text: "hi" })).toBe(true);
+        expect(isMutator("messages_tool", { action: "read_recent" })).toBe(false);
+    });
+});
+
+describe("the verify reminder names a check the turn has", () => {
+    it("browser actions get browser checks, desktop actions os_visual_verify", () => {
+        const state = newVerifyGateState();
+        recordToolCall(state, "browser_type", { text: "x" });
+        expect(buildVerifyReminder(state)).toContain("browser_form_state");
+        expect(buildVerifyReminder(state)).not.toContain("os_visual_verify");
+        recordToolCall(state, "os_click", {});
+        expect(buildVerifyReminder(state)).toContain("os_visual_verify");
+        recordToolCall(state, "win_os_click", {});
+        expect(buildVerifyReminder(state)).toContain("win_os_visual_verify");
+    });
 });

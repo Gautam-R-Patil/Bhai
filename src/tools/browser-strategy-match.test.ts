@@ -1,0 +1,22 @@
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
+// A saved browser strategy rides along only when the task is really like it: "what do
+// you know about me?" got "extract data from unknown" ("know" is inside "unknown").
+import { expect, it } from "vitest";
+import { findStrategy, recordStrategy } from "./browser-memory.js";
+
+const ok = [{ action: "navigate", success: true, durationMs: 100 }] as never;
+
+it("matches whole meaningful words, at least two, or the domain", () => {
+    recordStrategy("extract data from unknown", "unknown", ok, "");
+    recordStrategy("extract prices from www.smartprix.com", "www.smartprix.com", ok, "");
+    recordStrategy("interact with form on example.com", "example.com", ok, "");
+
+    expect(findStrategy("what do you know about me?")).toBeNull();
+    expect(findStrategy("send an email from my gmail with the report")).toBeNull();
+    expect(findStrategy("extract prices from smartprix for this phone")?.taskPattern).toMatch(/smartprix/);
+    recordStrategy("extract data from www.flipkart.com", "www.flipkart.com", ok, "");
+    expect(findStrategy("extract the price list on flipkart")?.domain).toBe("www.flipkart.com"); // site by its name
+    expect(findStrategy("fill the signup form", "example.com")?.domain).toBe("example.com");
+    recordStrategy("browse news.ycombinator.com", "news.ycombinator.com", [], ""); // no steps
+    expect(findStrategy("browse news.ycombinator.com")?.successRate).toBe(0); // not NaN
+});

@@ -7,7 +7,9 @@
 //   1. Bump desktop/package.json version (or take --version).
 //   2. Build the mac + win installers with blockmap generation.
 //   3. Compute SHA-512 (base64) + byte size for each artifact.
-//   4. Upload DMG / EXE + .blockmap files to the Cloudflare R2 bucket.
+//   4. Upload DMG / mac update ZIP / EXE + .blockmap files to the Cloudflare
+//      R2 bucket. The Mac updater (electron-updater's MacUpdater) installs
+//      from the ZIP, so the Mac feed points at the ZIP; the DMG is the download.
 //   5. Emit the `npx convex env set ...` commands that point the Convex
 //      updater endpoint at the new version; optionally run them.
 //
@@ -32,9 +34,9 @@
 // Optional env:
 //   CONVEX_DEPLOYMENT      — pinned via .env.local; --apply-convex uses it
 
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { S3Client } from "@aws-sdk/client-s3";
@@ -63,6 +65,7 @@ const SKIP_WIN = !!arg("skip-win", false);
 const SKIP_MAC = !!arg("skip-mac", false);
 
 if (!VERSION) fatal("missing --version. Example: --version 0.2.1");
+const VERSION_RE = String(VERSION).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 if (!["stable", "beta", "alpha", "canary"].includes(CHANNEL)) {
     fatal(`invalid --channel "${CHANNEL}". Must be stable|beta|alpha|canary.`);
 }
@@ -151,6 +154,7 @@ function r2PublicUrl(key) {
 
 function contentTypeFor(name) {
     if (name.endsWith(".dmg")) return "application/x-apple-diskimage";
+    if (name.endsWith(".zip")) return "application/zip";
     if (name.endsWith(".exe")) return "application/vnd.microsoft.portable-executable";
     if (name.endsWith(".blockmap")) return "application/octet-stream";
     if (name.endsWith(".yml") || name.endsWith(".yaml")) return "text/yaml; charset=utf-8";
@@ -195,6 +199,21 @@ async function uploadToR2(filePath) {
     return r2PublicUrl(key);
 }
 
+// electron-builder's dmg formats stop at UDZO/ULFO. ULMO (LZMA) is about 26%
+// smaller for this app (241 vs 327 MB) and opens on macOS 10.15+. A signed
+// image is re-signed with the identity that signed it (conversion drops it).
+function convertDmgToUlmo(dmg) {
+    const info = spawnSync("codesign", ["-dvv", dmg], { encoding: "utf8" });
+    const signedBy =
+        info.status !== 0 ? null : /Signature=adhoc/.test(info.stderr) ? "-" : /Authority=(.+)/.exec(info.stderr)?.[1];
+    if (info.status === 0 && !signedBy) fatal(`can't tell which identity signed ${basename(dmg)}`);
+    const tmp = dmg.replace(/\.dmg$/, ".ulmo.dmg");
+    execFileSync("hdiutil", ["convert", dmg, "-format", "ULMO", "-o", tmp, "-ov", "-quiet"], { stdio: "inherit" });
+    renameSync(tmp, dmg);
+    if (signedBy) execFileSync("codesign", ["--sign", signedBy, dmg], { stdio: "inherit" });
+    log(`${basename(dmg)} → ULMO (${(fileSize(dmg) / 1024 / 1024).toFixed(1)} MB)${signedBy ? ", re-signed" : ""}`);
+}
+
 // ── Phase 1: bump version ──────────────────────────────────────────────────
 headline("Updating desktop/package.json version");
 const pkgPath = resolve(DESKTOP_DIR, "package.json");
@@ -211,11 +230,14 @@ if (pkg.version !== VERSION) {
 // ── Phase 2: build ─────────────────────────────────────────────────────────
 if (!SKIP_BUILD) {
     if (!SKIP_MAC && process.platform === "darwin") {
-        headline("Building macOS installer (DMG + blockmap)");
-        // build:mac:release uses electron-builder's own DMG step, which
-        // writes <name>.dmg.blockmap alongside the DMG. The custom
-        // create-dmg.sh does NOT emit a blockmap — don't use it here.
+        headline("Building macOS installer (DMG) and update (ZIP + blockmap)");
+        // build:mac:release uses electron-builder's own DMG and ZIP steps; the
+        // ZIP gets <name>.zip.blockmap for differential updates. The DMG has no
+        // blockmap (writeUpdateInfo: false): MacUpdater never downloads it.
         sh("npm run build:mac:release", { cwd: DESKTOP_DIR });
+        const builtDmg = findFirst(DIST_DIR, [new RegExp(`-${VERSION_RE}-[^-.]+\\.dmg$`)]);
+        if (!builtDmg) fatal("build:mac:release produced no .dmg");
+        convertDmgToUlmo(builtDmg);
     } else if (!SKIP_MAC) {
         log("Skipping mac build (not on darwin host)");
     }
@@ -234,10 +256,15 @@ if (!SKIP_BUILD) {
 headline("Locating artifacts");
 
 const macDmg = findFirst(DIST_DIR, [
-    new RegExp(`A\\.T\\.L\\.A\\.S-${VERSION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-arm64\\.dmg$`),
+    new RegExp(`A\\.T\\.L\\.A\\.S-${VERSION_RE}-arm64\\.dmg$`),
+    new RegExp(`-${VERSION_RE}-[^-.]+\\.dmg$`),
     /\.dmg$/,
 ]);
-const macBlockmap = macDmg ? `${macDmg}.blockmap` : null;
+// electron-builder names the Apple Silicon zip <name>-<v>-arm64-mac.zip and the Intel one
+// <name>-<v>-mac.zip. The feed lists both; MacUpdater installs the one for its arch.
+const macZip = findFirst(DIST_DIR, [new RegExp(`-${VERSION_RE}-arm64-mac\\.zip$`), new RegExp(`-${VERSION_RE}.*\\.zip$`)]);
+const macZipBlockmap = macZip ? `${macZip}.blockmap` : null;
+const macX64Zip = findFirst(DIST_DIR, [new RegExp(`-${VERSION_RE}-(x64-)?mac\\.zip$`)]);
 const winExe = findFirst(DIST_DIR, [
     new RegExp(`A\\.T\\.L\\.A\\.S.*${VERSION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*\\.exe$`, "i"),
     /Setup.*\.exe$/i,
@@ -250,10 +277,22 @@ const winYml = resolve(DIST_DIR, "latest.yml");
 const artifacts = [];
 if (macDmg && existsSync(macDmg)) {
     artifacts.push({ platform: "mac", path: macDmg, kind: "binary" });
-    if (macBlockmap && existsSync(macBlockmap)) {
-        artifacts.push({ platform: "mac", path: macBlockmap, kind: "blockmap" });
+    // electron-updater's MacUpdater only installs from a .zip
+    // (ERR_UPDATER_ZIP_FILE_NOT_FOUND otherwise).
+    if (!macZip || !existsSync(macZip)) fatal(`no mac update .zip next to ${basename(macDmg)} in ${DIST_DIR}`);
+    artifacts.push({ platform: "mac", path: macZip, kind: "update" });
+    if (macZipBlockmap && existsSync(macZipBlockmap)) {
+        artifacts.push({ platform: "mac", path: macZipBlockmap, kind: "blockmap" });
     } else {
-        log(`⚠ no blockmap for ${basename(macDmg)} — delta updates disabled for mac`);
+        log(`⚠ no blockmap for ${basename(macZip)} — delta updates disabled for mac`);
+    }
+    if (macX64Zip && macX64Zip !== macZip) {
+        artifacts.push({ platform: "macX64", path: macX64Zip, kind: "update" });
+        if (existsSync(`${macX64Zip}.blockmap`)) {
+            artifacts.push({ platform: "macX64", path: `${macX64Zip}.blockmap`, kind: "blockmap" });
+        }
+    } else {
+        log("⚠ no Intel (x64) mac zip — Intel Macs are not offered this release");
     }
     if (existsSync(macYml)) {
         artifacts.push({ platform: "mac", path: macYml, kind: "yml" });
@@ -287,6 +326,7 @@ const urls = {};
 for (const a of artifacts) {
     const url = await uploadToR2(a.path);
     if (a.kind === "binary") urls[a.platform] = url;
+    if (a.kind === "update") urls[`${a.platform}Update`] = url;
 }
 
 // ── Phase 5: compute metadata ─────────────────────────────────────────────
@@ -294,12 +334,17 @@ headline("Computing SHA-512 + sizes");
 
 const meta = {};
 if (macDmg && existsSync(macDmg)) {
+    // The Mac feed describes the update ZIP; the DMG is only the download.
     meta.mac = {
-        url: urls.mac,
-        sha512: sha512Base64(macDmg),
-        size: fileSize(macDmg),
+        url: urls.macUpdate,
+        sha512: sha512Base64(macZip),
+        size: fileSize(macZip),
     };
     log(`mac: ${meta.mac.size} bytes, sha512=${meta.mac.sha512.slice(0, 16)}…`);
+    if (urls.macX64Update) {
+        meta.macX64 = { url: urls.macX64Update, sha512: sha512Base64(macX64Zip), size: fileSize(macX64Zip) };
+        log(`mac x64: ${meta.macX64.size} bytes, sha512=${meta.macX64.sha512.slice(0, 16)}…`);
+    }
 }
 if (winExe && existsSync(winExe)) {
     meta.win = {
@@ -323,11 +368,18 @@ if (meta.mac) {
     envVars.push([`UPDATE_SHA512_MAC${suffix}`, meta.mac.sha512]);
     envVars.push([`UPDATE_SIZE_MAC${suffix}`, String(meta.mac.size)]);
 }
+if (meta.macX64) {
+    envVars.push([`UPDATE_URL_MAC_X64${suffix}`, meta.macX64.url]);
+    envVars.push([`UPDATE_SHA512_MAC_X64${suffix}`, meta.macX64.sha512]);
+    envVars.push([`UPDATE_SIZE_MAC_X64${suffix}`, String(meta.macX64.size)]);
+}
 if (meta.win) {
     envVars.push([`UPDATE_URL_WIN${suffix}`, meta.win.url]);
     envVars.push([`UPDATE_SHA512_WIN${suffix}`, meta.win.sha512]);
     envVars.push([`UPDATE_SIZE_WIN${suffix}`, String(meta.win.size)]);
 }
+// A Mac release without an Intel zip must not keep listing the last release's Intel zip.
+const envRemoves = meta.mac && !meta.macX64 ? [`UPDATE_URL_MAC_X64${suffix}`] : [];
 const showCmd = ([name, value]) => `npx convex env set ${name} ${value}`;
 
 if (APPLY_CONVEX) {
@@ -336,17 +388,21 @@ if (APPLY_CONVEX) {
         const r = spawnSync("npx", ["convex", "env", "set", name, value], { stdio: "inherit", cwd: REPO_ROOT });
         if (r.status !== 0) fatal(`Convex env command failed: ${showCmd([name, value])}`);
     }
+    // Fails harmlessly when the var was never set.
+    for (const name of envRemoves) spawnSync("npx", ["convex", "env", "remove", name], { stdio: "inherit", cwd: REPO_ROOT });
     log("✅ Convex env updated.");
 } else {
     console.log("\nRun these to point the updater at the new release:\n");
     for (const v of envVars) console.log(`  ${showCmd(v)}`);
+    for (const name of envRemoves) console.log(`  npx convex env remove ${name}`);
     console.log("\n(Re-run with --apply-convex to execute them automatically.)");
 }
 
 headline("Done");
 log(`Version:  ${VERSION}`);
 log(`Channel:  ${CHANNEL}`);
-if (meta.mac) log(`macOS:    ${meta.mac.url}`);
+if (urls.mac) log(`macOS:    ${urls.mac}`);
+if (meta.mac) log(`macOS update: ${meta.mac.url}`);
 if (meta.win) log(`Windows:  ${meta.win.url}`);
 log(`Feed:     https://avid-finch-726.convex.site/api/updates${CHANNEL === "stable" ? "" : `?channel=${CHANNEL}`}`);
 console.log("");

@@ -44,9 +44,9 @@ export interface CapabilityReport {
 }
 
 const CACHE_VERSION = 1;
-const CACHE_FILE = ".atlas-vision-capabilities.json";
+const CACHE_FILE = ".bhai-vision-capabilities.json";
 
-const OVERRIDE_ENV = "ATLAS_VISION_PROFILE";
+const OVERRIDE_ENV = "BHAI_VISION_PROFILE";
 
 let _cached: CapabilityReport | null = null;
 
@@ -56,7 +56,7 @@ let _cached: CapabilityReport | null = null;
  * benchmark only runs once per week or after a major hardware change.
  *
  * To force a re-probe: pass { force: true }.
- * To override the profile: set ATLAS_VISION_PROFILE=lite|standard.
+ * To override the profile: set BHAI_VISION_PROFILE=lite|standard.
  */
 export async function detectCapabilities(opts: { force?: boolean; cacheDir?: string } = {}): Promise<CapabilityReport> {
     if (!opts.force && _cached) return _cached;
@@ -107,16 +107,16 @@ function applyOverride(report: CapabilityReport): CapabilityReport {
 
 /**
  * Defense-in-depth fallback: when the desktop spawns the bot it writes the
- * user's wizard selections to `${ATLAS_DATA_DIR}/.env.runtime` and points
+ * user's wizard selections to `${BHAI_DATA_DIR}/.env.runtime` and points
  * dotenv at it via `DOTENV_CONFIG_PATH`. The production bundle obfuscates
  * dotenv's internals, and we've seen cases where the side-effect import
- * doesn't survive bundling — leaving `process.env.ATLAS_VISION_PROFILE`
+ * doesn't survive bundling — leaving `process.env.BHAI_VISION_PROFILE`
  * undefined even though the wizard correctly persisted "full". Parsing the
  * runtime env file directly bypasses that dependency.
  */
 function readProfileFromRuntimeEnv(): string | undefined {
     try {
-        const dataDir = process.env.ATLAS_DATA_DIR;
+        const dataDir = process.env.BHAI_DATA_DIR;
         if (!dataDir) return undefined;
         const path = join(dataDir, ".env.runtime");
         // require-style sync read keeps applyOverride synchronous to match the
@@ -124,11 +124,14 @@ function readProfileFromRuntimeEnv(): string | undefined {
         const fs = fsSync;
         if (!fs.existsSync(path)) return undefined;
         const raw = fs.readFileSync(path, "utf-8");
-        for (const line of raw.split(/\r?\n/)) {
-            const m = line.match(/^\s*ATLAS_VISION_PROFILE\s*=\s*(.+?)\s*$/);
-            if (m) {
-                const v = m[1].replace(/^['"]|['"]$/g, "");
-                if (v === "lite" || v === "standard") return v;
+        // ATLAS_: a settings file written before the rename; a BHAI_ line wins over it.
+        for (const prefix of ["BHAI", "ATLAS"]) {
+            for (const line of raw.split(/\r?\n/)) {
+                const m = line.match(new RegExp(`^\\s*${prefix}_VISION_PROFILE\\s*=\\s*(.+?)\\s*$`));
+                if (m) {
+                    const v = m[1].replace(/^['"]|['"]$/g, "");
+                    if (v === "lite" || v === "standard") return v;
+                }
             }
         }
     } catch {

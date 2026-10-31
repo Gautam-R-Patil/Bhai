@@ -5,6 +5,8 @@
 // Also provides overlay bridge: context menus, page capture, and
 // forwarding user messages/selections/page context to the Bhai overlay chat.
 
+import { emptyView, isAwaiting, RESTORED_SILENT_MS, restoredSilent, restorePanelTurn, turnRoute, turnView } from "./turn-view.js";
+
 // ── State ────────────────────────────────────
 
 // Bridge socket (port 18800): command/response channel that lets Bhai drive
@@ -25,21 +27,84 @@ let heartbeatTimer = null;
 let discoveryTimer = null;
 let connectionAttempts = 0;
 let discoveryAttempts = 0;
-let lastAtlasResponse = "";
+let lastBhaiResponse = "";
 
-// The side panel's conversation. Session storage keeps it while the service
-// worker sleeps and the panel is closed; it's gone when Chrome quits.
+// The side panel's conversation, kept in this Chrome profile so it survives the
+// worker sleeping, the panel closing and Chrome restarting. Text only: the
+// screenshots and pasted images are never stored, and images Bhai made stay in
+// this worker's memory (gone when it sleeps).
 const MAX_CHAT = 60;
 let _chat = [];
-const chatReady = chrome.storage.session.get("chat")
+const chatReady = chrome.storage.local.get("chat")
   .then((r) => { if (Array.isArray(r.chat)) _chat = r.chat; })
   .catch(() => {});
-function addChat(role, text, meta = null) {
-  if (!text) return;
-  _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now(), ...(meta ? { meta } : {}) });
+function addChat(role, text, meta = null, images = null) {
+  if (!text && !images?.length) return;
+  _chat.push({ role, text: String(text || "").slice(0, 20000), ts: Date.now(), ...(meta ? { meta } : {}), ...(images?.length ? { images } : {}) });
   if (_chat.length > MAX_CHAT) _chat = _chat.slice(-MAX_CHAT);
-  chrome.storage.session.set({ chat: _chat }).catch(() => {});
+  // Only the last few image replies keep their thumbnails (each can be ~1 MB, and every update
+  // re-sends the chat); a panel that already shows an older one keeps it on screen.
+  let withImages = 0;
+  for (let i = _chat.length - 1; i >= 0; i--) {
+    if (_chat[i].images && ++withImages > 3) { const { images: _, ...m } = _chat[i]; _chat[i] = m; }
+  }
+  // An image-only reply isn't stored: without its image it would come back as an empty bubble.
+  chrome.storage.local.set({ chat: _chat.filter((m) => m.text).map(({ images: _, ...m }) => m) }).catch(() => {});
   chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
+}
+// A reply's images as the panel shows them: data:image thumbnails only, never a file path.
+const isDataImage = (u) => typeof u === "string" && u.startsWith("data:image/");
+function replyImages(images) {
+  return (Array.isArray(images) ? images : [])
+    .filter((im) => im && isDataImage(im.url))
+    .slice(0, 4)
+    .map((im) => ({
+      url: im.url,
+      name: typeof im.name === "string" ? im.name.slice(0, 120) : "",
+      kind: typeof im.kind === "string" ? im.kind : "generated",
+      ...(typeof im.prompt === "string" ? { prompt: im.prompt.slice(0, 300) } : {}),
+      ...(isDataImage(im.before) ? { before: im.before } : {}),
+    }));
+}
+
+// The side panel's running turn. Only a turn this extension started shows here: after a send,
+// the bot's `thinking` names the turn. The server's one-owner fallback can deliver another
+// surface's turn to this socket. Which turn is ours (never its thinking or steps) is kept in
+// chrome.storage.session, memory-only, so a worker restart mid-turn still takes its reply.
+let awaitingSince = 0; // when we sent something whose turn hasn't started yet (0 = nothing)
+let ownTurn = null;
+let draft = null; // turnView state while ownTurn runs
+let draftStart = 0;
+// When the draft was rebuilt after a worker restart (0 = live, or its turn has spoken since).
+// The reconnected socket may never get that turn's events, so a silent one is dropped.
+let restoredAt = 0;
+const awaitingTurn = () => isAwaiting(awaitingSince, Date.now());
+function savePanelTurn() {
+  chrome.storage.session?.set({ panelTurn: { awaitingSince, ownTurn, draftStart, restoredAt } }).catch(() => {});
+}
+// Drop a restored view: the panel stops showing busy. ownTurn stays, so the turn's reply still
+// lands if the server's one-owner fallback delivers it.
+function dropRestored(note) {
+  if (!draft || !restoredAt) return;
+  broadcastTurn({ done: { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length } });
+  draft = null;
+  restoredAt = 0;
+  savePanelTurn();
+  if (note) addChat("error", "Lost track of that answer after a restart. Ask me again if it doesn't show up.");
+}
+const dropIfSilent = () => { if (restoredSilent(restoredAt, Date.now())) dropRestored(true); };
+const turnReady = (chrome.storage.session?.get("panelTurn") ?? Promise.resolve({}))
+  .then((r) => {
+    if (awaitingSince || ownTurn) return; // something newer already happened in this worker
+    ({ awaitingSince, ownTurn, draft, draftStart, restoredAt } = restorePanelTurn(r.panelTurn, Date.now()));
+    if (restoredAt) {
+      savePanelTurn(); // the first restore's clock, for a second restart
+      setTimeout(dropIfSilent, Math.max(0, restoredAt + RESTORED_SILENT_MS - Date.now()));
+    }
+  })
+  .catch(() => {});
+function broadcastTurn(extra = {}) {
+  chrome.runtime.sendMessage({ type: "turn_update", state: draft, start: draftStart, ...extra }).catch(() => { /* panel closed */ });
 }
 
 // Clicking the toolbar icon opens Bhai in the side panel.
@@ -84,6 +149,40 @@ async function agentTab() {
   pinAgentTab(tab?.id);
   return tab;
 }
+// A new_tab for a new task reuses the last tab Bhai opened itself instead of adding
+// another: every new_tab used to stay open for good. Only when it's still on the site
+// Bhai left it on (the owner may have taken it over), and never within one task (two
+// tabs side by side are what a second new_tab in a task asks for).
+// Exactly the address Bhai left it on: a same-site check let a tab the owner kept using
+// (a draft on the same mail site) be navigated away. Anything else, a fresh tab.
+const bhaiTabs = new Map(); // tab id → the URL Bhai last sent it to
+const hrefOf = (u) => { try { return new URL(u).href; } catch { return ""; } };
+async function openPageInNewTab(url) {
+  const sameTask = agentTabId !== null && Date.now() - agentTabAt < AGENT_TAB_IDLE_MS;
+  if (!sameTask) {
+    for (const [id, href] of [...bhaiTabs].reverse()) {
+      const t = await chrome.tabs.get(id).catch(() => null);
+      if (!t?.id) { bhaiTabs.delete(id); continue; }
+      if (hrefOf(t.url) !== href) continue; // the owner (or a redirect) moved it: theirs now
+      if (t.active) continue; // in front: the owner may still be reading what Bhai opened
+      await chrome.tabs.update(t.id, { url, active: true });
+      bhaiTabs.delete(id);
+      bhaiTabs.set(id, hrefOf(url));
+      pinAgentTab(t.id);
+      return t;
+    }
+  }
+  const created = await chrome.tabs.create({ url, active: true });
+  if (created?.id) bhaiTabs.set(created.id, hrefOf(url));
+  pinAgentTab(created?.id);
+  return created;
+}
+// A click in Bhai's tab that opens a page in front (target=_blank, an OAuth popup) moves Bhai
+// there: otherwise it kept reading the old tab, saw nothing happen and clicked again.
+// Background tabs (ctrl/cmd-click) stay where they are.
+function followOpenedTab(t) {
+  if (t?.active && agentTabId !== null && t.openerTabId === agentTabId && Date.now() - agentTabAt < 10000) pinAgentTab(t.id);
+}
 // (agent-tab:end)
 
 async function withActiveTab(fn) {
@@ -109,13 +208,13 @@ function connect() {
   try {
     ws = new WebSocket(serverUrl);
   } catch (err) {
-    console.error("[ATLAS Bridge] WebSocket creation failed:", err);
+    console.error("[Bhai Bridge] WebSocket creation failed:", err);
     scheduleReconnect();
     return;
   }
 
   ws.onopen = () => {
-    console.log("[ATLAS Bridge] Connected to Bhai bridge");
+    console.log("[Bhai Bridge] Connected to Bhai bridge");
     connectionAttempts = 0;
     reconnectDelay = 1000;
     // The version lets Bhai ask an outdated copy (an update installed under a running Chrome) to reload.
@@ -129,12 +228,12 @@ function connect() {
       const msg = JSON.parse(event.data);
       handleServerMessage(msg);
     } catch (err) {
-      console.error("[ATLAS Bridge] Invalid message:", err);
+      console.error("[Bhai Bridge] Invalid message:", err);
     }
   };
 
   ws.onclose = (event) => {
-    console.log(`[ATLAS Bridge] Bridge disconnected: code=${event.code} reason=${event.reason}`);
+    console.log(`[Bhai Bridge] Bridge disconnected: code=${event.code} reason=${event.reason}`);
     authenticated = false;
     stopHeartbeat();
     updateBadge(false);
@@ -154,7 +253,7 @@ function connect() {
 
   ws.onerror = () => {
     // The WS onerror event has no useful message; the real reason appears in onclose
-    console.warn("[ATLAS Bridge] Bridge WebSocket error (Bhai may not be running yet)");
+    console.warn("[Bhai Bridge] Bridge WebSocket error (Bhai may not be running yet)");
   };
 }
 
@@ -184,26 +283,41 @@ function connectOverlay() {
   try {
     overlayWs = new WebSocket(url);
   } catch (err) {
-    console.error("[ATLAS Bridge] Overlay WebSocket creation failed:", err);
+    console.error("[Bhai Bridge] Overlay WebSocket creation failed:", err);
     scheduleOverlayReconnect();
     return;
   }
 
   overlayWs.onopen = () => {
-    console.log("[ATLAS Bridge] Connected to Bhai overlay");
+    console.log("[Bhai Bridge] Connected to Bhai overlay");
     overlayReconnectDelay = 1000;
   };
 
   overlayWs.onmessage = (event) => {
+    let msg;
     try {
-      handleOverlayMessage(JSON.parse(event.data));
+      msg = JSON.parse(event.data);
     } catch (err) {
-      console.error("[ATLAS Bridge] Invalid overlay message:", err);
+      console.error("[Bhai Bridge] Invalid overlay message:", err);
+      return;
     }
+    // After the saved turn is back, in arrival order.
+    turnReady.then(() => handleOverlayMessage(msg)).catch((err) => console.error("[Bhai Bridge] Overlay message failed:", err));
   };
 
   overlayWs.onclose = (event) => {
-    console.log(`[ATLAS Bridge] Overlay disconnected: code=${event.code} reason=${event.reason}`);
+    console.log(`[Bhai Bridge] Overlay disconnected: code=${event.code} reason=${event.reason}`);
+    // A turn this panel was waiting on can't finish here any more: its events went with the socket.
+    turnReady.then(() => {
+      if (!draft && !awaitingTurn()) return;
+      if (draft) broadcastTurn({ done: { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length } });
+      draft = null;
+      ownTurn = null;
+      awaitingSince = 0;
+      restoredAt = 0;
+      savePanelTurn();
+      addChat("error", "Lost the connection mid-answer. Ask me again.");
+    });
     // 4001 = rejected localToken; re-discover to refresh it rather than loop.
     if (event.code === 4001) {
       overlayToken = "";
@@ -214,7 +328,7 @@ function connectOverlay() {
   };
 
   overlayWs.onerror = () => {
-    console.warn("[ATLAS Bridge] Overlay WebSocket error");
+    console.warn("[Bhai Bridge] Overlay WebSocket error");
   };
 }
 
@@ -245,7 +359,7 @@ function scheduleReconnect() {
   const delay = connectionAttempts < 3
     ? 1000
     : Math.min(reconnectDelay * Math.pow(2, Math.min(connectionAttempts - 3, 6)), MAX_RECONNECT_DELAY);
-  console.log(`[ATLAS Bridge] Reconnecting in ${delay}ms (attempt ${connectionAttempts})`);
+  console.log(`[Bhai Bridge] Reconnecting in ${delay}ms (attempt ${connectionAttempts})`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
@@ -270,11 +384,18 @@ function stopHeartbeat() {
 
 // ── Badge / Status ───────────────────────────
 
+// Replies that came in while the side panel was closed.
+let unread = 0;
+let panelsOpen = 0;
+
 function updateBadge(connected) {
-  const color = connected ? "#22c55e" : "#ef4444";
-  const text = connected ? "ON" : "";
-  chrome.action.setBadgeBackgroundColor({ color });
-  chrome.action.setBadgeText({ text });
+  if (unread > 0) {
+    chrome.action.setBadgeBackgroundColor({ color: "#cf6a33" });
+    chrome.action.setBadgeText({ text: String(Math.min(unread, 9)) });
+    return;
+  }
+  chrome.action.setBadgeBackgroundColor({ color: "#8a7f76" });
+  chrome.action.setBadgeText({ text: connected ? "" : "off" });
 }
 
 let _badgeActivityTimer = null;
@@ -284,7 +405,7 @@ const _badgeFrames = ['⬤', '○'];   // Pulse between filled/hollow
 function setBadgeActive(active) {
   if (active) {
     if (_badgeActivityTimer) return;
-    chrome.action.setBadgeBackgroundColor({ color: "#3b82f6" });
+    chrome.action.setBadgeBackgroundColor({ color: "#cf6a33" });
     _badgeFrameIdx = 0;
     _badgeActivityTimer = setInterval(() => {
       chrome.action.setBadgeText({ text: _badgeFrames[_badgeFrameIdx % 2] });
@@ -310,7 +431,7 @@ function logAction(type, detail) {
   }
   _actionLog.unshift(entry);
   if (_actionLog.length > MAX_ACTION_LOG) _actionLog.pop();
-  chrome.runtime.sendMessage({ type: 'atlas_action', entry }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'bhai_action', entry }).catch(() => {});
 }
 
 // ── Send Message to Bhai Overlay ────────────
@@ -318,9 +439,9 @@ function logAction(type, detail) {
 // Messages include meta.source = "chrome-extension" so the server can
 // detect browser context and prepend URL info for the agent.
 
-function sendToAtlas(text, meta = {}, image = null) {
+function sendToBhai(text, meta = {}, image = null) {
   if (!overlayWs || overlayWs.readyState !== WebSocket.OPEN) {
-    console.warn("[ATLAS Bridge] Cannot send — overlay not connected");
+    console.warn("[Bhai Bridge] Cannot send — overlay not connected");
     return false;
   }
 
@@ -335,7 +456,9 @@ function sendToAtlas(text, meta = {}, image = null) {
   if (image) payload.image = image;
 
   overlayWs.send(JSON.stringify(payload));
-  console.log(`[ATLAS Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
+  awaitingSince = Date.now();
+  savePanelTurn();
+  console.log(`[Bhai Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
   return true;
 }
 
@@ -343,6 +466,14 @@ function sendToAtlas(text, meta = {}, image = null) {
 // screen), with their drawing if they made one; the drawing is removed once
 // captured. null on pages Chrome won't let extensions capture.
 const drawnTabs = new Set();
+// Resolves once the tab has painted twice (rAF runs only in a visible tab), at most capMs.
+function painted(tabId, capMs = 300) {
+  return chrome.scripting.executeScript({
+    target: { tabId },
+    func: (cap) => new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(() => r(true))); setTimeout(() => r(false), cap); }),
+    args: [capMs],
+  }).catch(() => []);
+}
 async function captureTab(tab) {
   if (!tab?.id || !/^(https?|file):/.test(tab.url || "")) return null;
   let drew = false;
@@ -357,7 +488,7 @@ async function captureTab(tab) {
       },
     }).catch(() => []);
     drew = !!probe?.result;
-    await new Promise((r) => setTimeout(r, 80)); // let the toolbar disappear before the capture
+    await painted(tab.id); // the toolbar is gone from the screen before the capture
   }
   try {
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
@@ -426,7 +557,7 @@ async function sendFromPanel(msg) {
   }
   const mentions = await mentionedTabs(msg.mentions);
   const text = `${url ? `[From browser: ${url}] ` : ""}${body}${mentions.text}`;
-  const sent = sendToAtlas(text, { url, title, action: msg.type, imageKind: shot?.pasted ? "pasted" : "tab" }, shot?.image || null);
+  const sent = sendToBhai(text, { url, title, action: msg.type, imageKind: shot?.pasted ? "pasted" : "tab" }, shot?.image || null);
   // What went with the message, for the panel to show as chips.
   if (sent) {
     addChat("you", display, {
@@ -447,12 +578,12 @@ async function sendFromPanel(msg) {
 function handleServerMessage(msg) {
   if (msg.type === "auth_ok") {
     authenticated = true;
-    console.log("[ATLAS Bridge] Bridge authenticated successfully");
+    console.log("[Bhai Bridge] Bridge authenticated successfully");
     return;
   }
 
   if (msg.type === "auth_failed") {
-    console.error("[ATLAS Bridge] Bridge authentication failed:", msg.error);
+    console.error("[Bhai Bridge] Bridge authentication failed:", msg.error);
     authenticated = false;
     authToken = "";
     // Clear the stale cached token so the next boot doesn't reuse it
@@ -467,7 +598,7 @@ function handleServerMessage(msg) {
 
   // Bhai shipped a newer copy of this extension: load it (the socket reconnects after).
   if (msg.type === "reload") {
-    console.log("[ATLAS Bridge] Reloading to pick up the updated extension");
+    console.log("[Bhai Bridge] Reloading to pick up the updated extension");
     chrome.runtime.reload();
     return;
   }
@@ -489,12 +620,47 @@ function handleServerMessage(msg) {
 // Overlay socket (18792): chat replies relayed to the popup.
 function handleOverlayMessage(msg) {
   if (msg.type === "ready") {
-    console.log("[ATLAS Bridge] Overlay server ready");
+    console.log("[Bhai Bridge] Overlay server ready");
     return;
   }
 
+  // A turn started: ours only if we just sent something.
+  if (msg.type === "thinking" && msg.turn) {
+    if (!awaitingTurn()) return;
+    awaitingSince = 0;
+    ownTurn = msg.turn;
+    draft = emptyView(msg.turn);
+    draftStart = Date.now();
+    restoredAt = 0;
+    savePanelTurn();
+    broadcastTurn({ text: msg.text || "" });
+    return;
+  }
+
+  if (typeof msg.type === "string" && msg.type.startsWith("turn_")) {
+    if (!draft || turnRoute(ownTurn, true, msg) !== "apply") return;
+    if (restoredAt) { restoredAt = 0; savePanelTurn(); } // its turn is still talking to us
+    const next = turnView(draft, msg);
+    if (next !== draft) { draft = next; broadcastTurn(); }
+    return;
+  }
+
+  if (msg.type === "response" || msg.type === "error") {
+    // Not ours: the reply to another surface's turn, or anything we never asked for.
+    if (msg.turn ? msg.turn !== ownTurn : !draft && !awaitingTurn()) return;
+    if (turnRoute(ownTurn, !!draft, msg) === "finish") {
+      const worked = msg.worked || { secs: Math.round((Date.now() - draftStart) / 1000), steps: draft.steps.length };
+      broadcastTurn({ done: worked });
+      draft = null;
+    }
+    ownTurn = null; // a late duplicate reply can't land twice (also after a restored view was dropped)
+    awaitingSince = 0;
+    restoredAt = 0;
+    savePanelTurn();
+  }
+
   if (msg.type === "response") {
-    lastAtlasResponse = msg.text || "";
+    lastBhaiResponse = msg.text || "";
     // Follow-ups, feedback and "Forget that" ride with the reply; the panel shows them as buttons.
     const actions = (Array.isArray(msg.quickActions) ? msg.quickActions : [])
       .map((a) => (typeof a === "string" ? { label: a, action: a } : a))
@@ -502,17 +668,33 @@ function handleOverlayMessage(msg) {
       .slice(0, 8)
       .map((a) => ({ label: a.label.slice(0, 80), action: a.action.slice(0, 300) }));
     const links = (Array.isArray(msg.links) ? msg.links : []).filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 6);
-    addChat("bhai", lastAtlasResponse, actions.length || links.length ? { actions, links } : null);
+    addChat("bhai", lastBhaiResponse, actions.length || links.length ? { actions, links } : null, replyImages(msg.images));
+    if (!panelsOpen) {
+      unread++;
+      if (!_badgeActivityTimer) updateBadge(authenticated);
+    }
     chrome.runtime.sendMessage({
-      type: "atlas_response",
-      text: lastAtlasResponse,
+      type: "bhai_response",
+      text: lastBhaiResponse,
     }).catch(() => { /* popup not open */ });
     return;
   }
 
+  // An image sent outside a turn (send_file, a scheduled task): it lands as a Bhai reply.
+  if (msg.type === "image") {
+    addChat("bhai", msg.text || "", null, replyImages(msg.images));
+    if (!panelsOpen) {
+      unread++;
+      if (!_badgeActivityTimer) updateBadge(authenticated);
+    }
+    return;
+  }
+
   if (msg.type === "progress" || msg.type === "contract" || msg.type === "thinking" || msg.type === "thinking_content") {
+    // Research running in the background, or another surface's turn: not this panel's work.
+    if (msg.background || (!draft && !awaitingTurn())) return;
     chrome.runtime.sendMessage({
-      type: "atlas_progress",
+      type: "bhai_progress",
       text: msg.text || "",
     }).catch(() => { /* popup not open */ });
     return;
@@ -521,7 +703,7 @@ function handleOverlayMessage(msg) {
   if (msg.type === "error") {
     addChat("error", msg.text || "Something went wrong");
     chrome.runtime.sendMessage({
-      type: "atlas_error",
+      type: "bhai_error",
       text: msg.text || "Something went wrong",
     }).catch(() => { /* popup not open */ });
   }
@@ -532,27 +714,58 @@ function handleOverlayMessage(msg) {
 // Closing the side panel takes any drawing off the page: it was only for Bhai.
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "sidepanel") return;
-  port.onDisconnect.addListener(() => { for (const id of [...drawnTabs]) removeDrawing(id); });
+  panelsOpen++;
+  unread = 0;
+  if (!_badgeActivityTimer) updateBadge(authenticated);
+  port.onDisconnect.addListener(() => {
+    panelsOpen = Math.max(0, panelsOpen - 1);
+    for (const id of [...drawnTabs]) removeDrawing(id);
+  });
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   // Remove existing menus first to avoid duplicates
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: "atlas-ask-page",
-      title: "Ask Bhai about this page",
-      contexts: ["page"],
-    });
-
-    chrome.contextMenus.create({
-      id: "atlas-ask-selection",
-      title: "Ask Bhai about this",
-      contexts: ["selection"],
-    });
-
-    console.log("[ATLAS Bridge] Context menus registered");
+    chrome.contextMenus.create({ id: "bhai-ask-page", title: "Ask Bhai about this page", contexts: ["page"] });
+    chrome.contextMenus.create({ id: "bhai-ask-image", title: "Ask Bhai about this image", contexts: ["image"] });
+    // Text gets one "Bhai" submenu so the right-click menu doesn't fill up.
+    chrome.contextMenus.create({ id: "bhai-text", title: "Bhai", contexts: ["selection"] });
+    for (const [id, title] of [
+      ["bhai-ask-selection", "Ask about this"],
+      ["bhai-explain", "Explain"],
+      ["bhai-summarize", "Summarize"],
+      ["bhai-translate", "Translate to English"],
+    ]) {
+      chrome.contextMenus.create({ id, parentId: "bhai-text", title, contexts: ["selection"] });
+    }
   });
 });
+
+const TEXT_ASKS = {
+  "bhai-ask-selection": ["What can you tell me about this?", "About"],
+  "bhai-explain": ["Explain this simply.", "Explain"],
+  "bhai-summarize": ["Summarize this in a few lines.", "Summarize"],
+  "bhai-translate": ["Translate this to English. Keep the meaning and tone.", "Translate"],
+};
+
+// A page image as a ≤1600px JPEG data part; null if the site won't let us fetch it.
+async function fetchImage(src) {
+  try {
+    if (!/^https?:/.test(src || "")) return null;
+    const blob = await (await fetch(src, { credentials: "include" })).blob();
+    if (!blob.type.startsWith("image/") || blob.size > 15_000_000) return null;
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(bmp.width * scale)), Math.max(1, Math.round(bmp.height * scale)));
+    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const jpeg = new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.85 })).arrayBuffer());
+    let bin = "";
+    for (let k = 0; k < jpeg.length; k += 0x8000) bin += String.fromCharCode(...jpeg.subarray(k, k + 0x8000));
+    return { mimeType: "image/jpeg", base64: btoa(bin) };
+  } catch {
+    return null;
+  }
+}
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
@@ -562,15 +775,28 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const url = tab.url || "unknown";
   const title = tab.title || "Untitled";
 
-  if (info.menuItemId === "atlas-ask-page") {
+  if (info.menuItemId === "bhai-ask-page") {
     const message = `[From browser: ${url}] User asks about this page: "${title}"`;
-    if (sendToAtlas(message, { url, title, action: "ask_page" })) addChat("you", `About this page: ${title}`);
+    if (sendToBhai(message, { url, title, action: "ask_page" })) addChat("you", `About this page: ${title}`);
   }
 
-  if (info.menuItemId === "atlas-ask-selection") {
-    const selectedText = info.selectionText || "";
-    const message = `[From browser: ${url}] User asks about: "${selectedText}"`;
-    if (sendToAtlas(message, { url, title, selectedText, action: "ask_selection" })) addChat("you", `About: "${selectedText.slice(0, 200)}"`);
+  if (TEXT_ASKS[info.menuItemId]) {
+    const [ask, label] = TEXT_ASKS[info.menuItemId];
+    const selectedText = (info.selectionText || "").slice(0, 4000);
+    const message = `[From browser: ${url}] User selected: "${selectedText}"\n\n${ask}`;
+    if (sendToBhai(message, { url, title, selectedText, action: "ask_selection" })) {
+      addChat("you", label, { selection: selectedText.slice(0, 140) });
+    }
+  }
+
+  if (info.menuItemId === "bhai-ask-image") {
+    const image = await fetchImage(info.srcUrl);
+    const message = image
+      ? `[From browser: ${url}] What can you tell me about this image?`
+      : `[From browser: ${url}] What can you tell me about the image at ${info.srcUrl}?`;
+    if (sendToBhai(message, { url, title, action: "ask_image", imageKind: "pasted" }, image)) {
+      addChat("you", "About this image", image ? { pasted: true } : null);
+    }
   }
 });
 
@@ -789,7 +1015,7 @@ async function scanElements(payload) {
       const key = `${el.x},${el.y}`;
       if (seenCoords.has(key)) continue;
       seenCoords.add(key);
-      allElements.push(el);
+      allElements.push({ ...el, frameId: frame.frameId });
     }
   }
 
@@ -805,8 +1031,10 @@ async function scanElements(payload) {
     y: el.y,
     tag: el.tag,
     text: el.text,
-    atlasId: el.atlasId,
+    bhaiId: el.bhaiId,
+    atlasId: el.bhaiId, // for a bot from before the rename; drop after a release
     editorType: el.editorType,
+    frameId: el.frameId, // 0 = the top page, where the bot can find a light-DOM element again by its id
   }));
 
   return { elements: labeled };
@@ -815,6 +1043,11 @@ async function scanElements(payload) {
 function scanPageElements() {
   // Runs inside the page (executeScript serializes only this function), so its
   // helpers must live in here too: an outside helper is a ReferenceError there.
+  // data-atlas-id too, for one release: a bot from before the rename looks that up.
+  function stampId(el, id) {
+    el.setAttribute('data-bhai-id', id);
+    el.setAttribute('data-atlas-id', id);
+  }
   function detectSpecialEditors() {
     const editors = [];
     const ts = Date.now();
@@ -827,9 +1060,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-monaco-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, atlasId, editorType: 'monaco' });
+      const bhaiId = `bhai-editor-monaco-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, bhaiId, editorType: 'monaco' });
     });
 
     // CodeMirror 6
@@ -838,9 +1071,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-cm6-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror6' });
+      const bhaiId = `bhai-editor-cm6-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, bhaiId, editorType: 'codemirror6' });
     });
 
     // CodeMirror 5 (skip if already detected as CM6)
@@ -850,9 +1083,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-cm5-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror5' });
+      const bhaiId = `bhai-editor-cm5-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, bhaiId, editorType: 'codemirror5' });
     });
 
     // Ace Editor
@@ -861,9 +1094,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-ace-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, atlasId, editorType: 'ace' });
+      const bhaiId = `bhai-editor-ace-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, bhaiId, editorType: 'ace' });
     });
 
     // ── Rich Text Editors ──
@@ -874,9 +1107,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-quill-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, atlasId, editorType: 'quill' });
+      const bhaiId = `bhai-editor-quill-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, bhaiId, editorType: 'quill' });
     });
 
     // TinyMCE
@@ -885,9 +1118,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-tinymce-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, atlasId, editorType: 'tinymce' });
+      const bhaiId = `bhai-editor-tinymce-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, bhaiId, editorType: 'tinymce' });
     });
 
     // ProseMirror (also covers Tiptap which extends it)
@@ -899,9 +1132,9 @@ function scanPageElements() {
       const y = Math.round(rect.top + rect.height / 2);
       const type = isTiptap ? 'tiptap' : 'prosemirror';
       const label = isTiptap ? 'Tiptap' : 'ProseMirror';
-      const atlasId = `atlas-editor-${type}-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: `Rich Text Editor (${label})`, score: 25, atlasId, editorType: type });
+      const bhaiId = `bhai-editor-${type}-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: `Rich Text Editor (${label})`, score: 25, bhaiId, editorType: type });
     });
 
     // Slate
@@ -910,9 +1143,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-slate-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, atlasId, editorType: 'slate' });
+      const bhaiId = `bhai-editor-slate-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, bhaiId, editorType: 'slate' });
     });
 
     // Draft.js
@@ -921,9 +1154,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-draftjs-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, atlasId, editorType: 'draftjs' });
+      const bhaiId = `bhai-editor-draftjs-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, bhaiId, editorType: 'draftjs' });
     });
 
     return editors;
@@ -1038,10 +1271,10 @@ function scanPageElements() {
     if (hasCursorPointer) score += 3;
     if (hasButtonClass) score += 2;
 
-    const atlasId = `atlas-el-${Date.now()}-${i}`;
-    el.setAttribute("data-atlas-id", atlasId);
+    const bhaiId = `bhai-el-${Date.now()}-${i}`;
+    stampId(el, bhaiId);
 
-    candidateMap.push({ x, y, tag, text: text.trim(), score, atlasId });
+    candidateMap.push({ x, y, tag, text: text.trim(), score, bhaiId });
   }
 
     // ── Shadow DOM traversal ──
@@ -1065,9 +1298,9 @@ function scanPageElements() {
         seenCoords.add(sKey);
         const sText = shadowEl.innerText?.replace(/\n/g, ' ').substring(0, 40) ||
                       shadowEl.getAttribute?.('aria-label') || '';
-        const sAtlasId = `atlas-shadow-${Date.now()}-${i}`;
-        shadowEl.setAttribute('data-atlas-id', sAtlasId);
-        candidateMap.push({ x: sx, y: sy, tag: sTag, text: sText.trim(), score: 10, atlasId: sAtlasId });
+        const sBhaiId = `bhai-shadow-${Date.now()}-${i}`;
+        stampId(shadowEl, sBhaiId);
+        candidateMap.push({ x: sx, y: sy, tag: sTag, text: sText.trim(), score: 10, bhaiId: sBhaiId });
       }
     }
 
@@ -1104,34 +1337,34 @@ function scanPageElements() {
 
 // ── Shared visual feedback injected into real tabs ──────────────────────────
 
-function injectAtlasVisuals(tabId) {
+function injectBhaiVisuals(tabId) {
   // Inject keyframes + HUD CSS once per tab
   chrome.scripting.executeScript({
     target: { tabId },
     world: "ISOLATED",
     func: () => {
-      if (document.getElementById('__atlasKF')) return;
+      if (document.getElementById('__bhaiKF')) return;
       const s = document.createElement('style');
-      s.id = '__atlasKF';
+      s.id = '__bhaiKF';
       s.textContent = `
-        @keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}
-        @keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}
-        @keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}
-        @keyframes atlasPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
-        @keyframes atlasScrollFadeDown{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(16px)}}
-        @keyframes atlasScrollFadeUp{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-16px)}}
+        @keyframes bhaiRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}
+        @keyframes bhaiDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}
+        @keyframes bhaiFade{0%{opacity:.8}100%{opacity:0}}
+        @keyframes bhaiPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+        @keyframes bhaiScrollFadeDown{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(16px)}}
+        @keyframes bhaiScrollFadeUp{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-16px)}}
       `;
       document.head.appendChild(s);
     }
   }).catch(() => {});
 }
 
-function showAtlasHUD(tabId, label, done = false) {
+function showBhaiHUD(tabId, label, done = false) {
   chrome.scripting.executeScript({
     target: { tabId },
     world: "ISOLATED",
     func: (lbl, isDone) => {
-      const ID = '__atlasHUD';
+      const ID = '__bhaiHUD';
       let hud = document.getElementById(ID);
       if (isDone) {
         if (hud) { hud.style.opacity = '0'; setTimeout(() => hud?.remove(), 300); }
@@ -1140,13 +1373,13 @@ function showAtlasHUD(tabId, label, done = false) {
       if (!hud) {
         hud = document.createElement('div');
         hud.id = ID;
-        hud.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;animation:atlasPulse 1.2s ease-in-out infinite;flex-shrink:0"></span>' +
-                        '<span id="__atlasHUDtxt" style="margin-left:7px;font-size:11px;font-weight:500;color:#e2e8f0;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px"></span>';
+        hud.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;animation:bhaiPulse 1.2s ease-in-out infinite;flex-shrink:0"></span>' +
+                        '<span id="__bhaiHUDtxt" style="margin-left:7px;font-size:11px;font-weight:500;color:#e2e8f0;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px"></span>';
         hud.style.cssText = 'position:fixed;top:10px;right:10px;display:flex;align-items:center;padding:6px 12px;border-radius:20px;background:rgba(15,23,42,0.92);border:1px solid #1e3a5f;backdrop-filter:blur(8px);pointer-events:none;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.4);transition:opacity .3s ease;opacity:0;';
         document.body.appendChild(hud);
         requestAnimationFrame(() => { hud.style.opacity = '1'; });
       }
-      const txt = document.getElementById('__atlasHUDtxt');
+      const txt = document.getElementById('__bhaiHUDtxt');
       if (txt) txt.textContent = lbl;
     },
     args: [label, done]
@@ -1178,9 +1411,9 @@ async function cdpClick(tabId, payload) {
 
 async function clickAt(payload) {
   return withActiveTab(async (tabId) => {
-    injectAtlasVisuals(tabId);
+    injectBhaiVisuals(tabId);
     const elementLabel = payload.elementLabel || '';
-    if (elementLabel) showAtlasHUD(tabId, `🖱 Clicking "${elementLabel.substring(0, 30)}"`);
+    if (elementLabel) showBhaiHUD(tabId, `🖱 Clicking "${elementLabel.substring(0, 30)}"`);
 
     if (await cdpClick(tabId, payload)) {
       // The click indicator only; the click itself already happened.
@@ -1188,15 +1421,15 @@ async function clickAt(payload) {
         target: { tabId },
         func: (x, y) => {
           const ring = document.createElement('div');
-          ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid rgba(59,130,246,.9);pointer-events:none;z-index:2147483646;animation:atlasRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
+          ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid rgba(59,130,246,.9);pointer-events:none;z-index:2147483646;animation:bhaiRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
           const dot = document.createElement('div');
-          dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:#3b82f6;pointer-events:none;z-index:2147483647;animation:atlasDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
+          dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:#3b82f6;pointer-events:none;z-index:2147483647;animation:bhaiDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
           [ring, dot].forEach(e => document.body.appendChild(e));
           setTimeout(() => [ring, dot].forEach(e => e.remove()), 650);
         },
         args: [payload.x, payload.y],
       }).catch(() => {});
-      if (elementLabel) showAtlasHUD(tabId, '', true);
+      if (elementLabel) showBhaiHUD(tabId, '', true);
       return { success: true, method: "cdp" };
     }
 
@@ -1207,13 +1440,13 @@ async function clickAt(payload) {
         const colors = { left: ['rgba(59,130,246,0.15)','rgba(59,130,246,.9)','#3b82f6'], right: ['rgba(239,68,68,.15)','rgba(239,68,68,.9)','#ef4444'], middle: ['rgba(168,85,247,.15)','rgba(168,85,247,.9)','#a855f7'] };
         const [, border, solid] = colors[button || 'left'] || colors.left;
         const ring = document.createElement('div');
-        ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid ${border};pointer-events:none;z-index:2147483646;animation:atlasRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
+        ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid ${border};pointer-events:none;z-index:2147483646;animation:bhaiRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
         const dot = document.createElement('div');
-        dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:${solid};pointer-events:none;z-index:2147483647;animation:atlasDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
-        const mkL = (h) => { const l = document.createElement('div'); l.style.cssText=`position:fixed;${h?`left:${x-12}px;top:${y-1}px;width:24px;height:2px;`:`left:${x-1}px;top:${y-12}px;width:2px;height:24px;`}background:${solid};opacity:.6;pointer-events:none;z-index:2147483647;animation:atlasFade .5s ease-out forwards;`; return l; };
+        dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:${solid};pointer-events:none;z-index:2147483647;animation:bhaiDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
+        const mkL = (h) => { const l = document.createElement('div'); l.style.cssText=`position:fixed;${h?`left:${x-12}px;top:${y-1}px;width:24px;height:2px;`:`left:${x-1}px;top:${y-12}px;width:2px;height:24px;`}background:${solid};opacity:.6;pointer-events:none;z-index:2147483647;animation:bhaiFade .5s ease-out forwards;`; return l; };
         [ring, dot, mkL(true), mkL(false)].forEach(e => document.body.appendChild(e));
         setTimeout(() => [ring, dot].forEach(e => e.remove()), 650);
-        setTimeout(() => document.querySelectorAll('[style*="atlasFade"]').forEach(e => e.remove()), 560);
+        setTimeout(() => document.querySelectorAll('[style*="bhaiFade"]').forEach(e => e.remove()), 560);
 
         const el = document.elementFromPoint(x, y);
         if (!el) return { success: false, error: "No element at coordinates" };
@@ -1303,7 +1536,7 @@ async function clickAt(payload) {
     });
 
     // Clear HUD after click
-    if (elementLabel) showAtlasHUD(tabId, '', true);
+    if (elementLabel) showBhaiHUD(tabId, '', true);
     return results[0]?.result || { success: true };
   });
 }
@@ -1345,7 +1578,7 @@ async function typeText(payload) {
               const model = editor.getModel();
               if (model) {
                 const range = clear ? model.getFullModelRange() : editor.getSelection();
-                editor.executeEdits('atlas', [{ range, text, forceMoveMarkers: true }]);
+                editor.executeEdits('bhai', [{ range, text, forceMoveMarkers: true }]);
                 return true;
               }
             }
@@ -1520,8 +1753,8 @@ async function typeText(payload) {
 
 async function scroll(payload) {
   return withActiveTab(async (tabId) => {
-    injectAtlasVisuals(tabId);
-    showAtlasHUD(tabId, `↕ Scrolling ${payload.direction || 'down'} ${payload.amount || 300}px`);
+    injectBhaiVisuals(tabId);
+    showBhaiHUD(tabId, `↕ Scrolling ${payload.direction || 'down'} ${payload.amount || 300}px`);
 
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -1534,7 +1767,7 @@ async function scroll(payload) {
         const arrows = {up:'↑', down:'↓', left:'←', right:'→'};
         const pill = document.createElement('div');
         pill.textContent = (arrows[direction] || '↕') + ' ' + px + 'px';
-        const fadeAnim = direction === 'up' ? 'atlasScrollFadeUp' : 'atlasScrollFadeDown';
+        const fadeAnim = direction === 'up' ? 'bhaiScrollFadeUp' : 'bhaiScrollFadeDown';
         pill.style.cssText = `position:fixed;left:50%;transform:translateX(-50%);bottom:40px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(15,23,42,.88);color:#94a3b8;border:1px solid #334155;pointer-events:none;z-index:2147483647;backdrop-filter:blur(4px);animation:${fadeAnim} .75s ease-out forwards;font-family:-apple-system,sans-serif;`;
         document.body.appendChild(pill);
         setTimeout(() => pill.remove(), 780);
@@ -1566,7 +1799,7 @@ async function scroll(payload) {
       args: [payload.direction, payload.amount || 300, payload.selector || null],
     });
 
-    setTimeout(() => showAtlasHUD(tabId, '', true), 800);
+    setTimeout(() => showBhaiHUD(tabId, '', true), 800);
     return { success: true };
   });
 }
@@ -1755,12 +1988,12 @@ async function navigate(payload) {
     throw new Error(`unsafe URL scheme — only http(s) is allowed`);
   }
   if (payload.newTab) {
-    const created = await chrome.tabs.create({ url: payload.url, active: true });
-    pinAgentTab(created?.id);
+    await openPageInNewTab(payload.url);
   } else {
     const tab = await agentTab();
     if (!tab || !tab.id) throw new Error("No active tab");
     await chrome.tabs.update(tab.id, { url: payload.url });
+    if (bhaiTabs.has(tab.id)) bhaiTabs.set(tab.id, hrefOf(payload.url));
   }
   return { success: true };
 }
@@ -1784,7 +2017,7 @@ async function captureScreenshot(payload) {
   // window, bring Bhai's tab back to front (another window is left alone).
   if (tab?.id && !tab.active) {
     await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 150));
+    await painted(tab.id);
   }
   const overlay = (hide) => !tab?.id ? Promise.resolve(false) : chrome.scripting.executeScript({
     target: { tabId: tab.id },
@@ -1920,15 +2153,15 @@ async function keyboard(payload) {
 
 async function hover(payload) {
   return withActiveTab(async (tabId) => {
-    injectAtlasVisuals(tabId);
+    injectBhaiVisuals(tabId);
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (x, y) => {
         // Subtle hover cursor dot
-        const prev = document.getElementById('__atlasHoverDot');
+        const prev = document.getElementById('__bhaiHoverDot');
         if (prev) prev.remove();
         const dot = document.createElement('div');
-        dot.id = '__atlasHoverDot';
+        dot.id = '__bhaiHoverDot';
         dot.style.cssText = `position:fixed;left:${x-5}px;top:${y-5}px;width:10px;height:10px;border-radius:50%;background:rgba(99,102,241,.7);border:2px solid rgba(99,102,241,.9);pointer-events:none;z-index:2147483647;transition:all .15s ease;`;
         document.body.appendChild(dot);
         setTimeout(() => dot?.remove(), 1500);
@@ -1950,21 +2183,27 @@ async function selectOption(payload) {
   const tab = await agentTab();
   if (!tab || !tab.id) throw new Error("No active tab");
 
-  await chrome.scripting.executeScript({
+  const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (selector, values) => {
       const el = document.querySelector(selector);
-      if (!el || el.tagName !== "SELECT") return;
-      for (const option of el.options) {
-        option.selected = values.includes(option.value) || values.includes(option.text);
-      }
+      if (!el || el.tagName !== "SELECT") return { error: `No <select> matches ${selector}` };
+      // Like Playwright: no match is an error, and the current choice stays as it was.
+      const picked = Array.from(el.options).filter(
+        (o) => values.includes(o.value) || values.includes(o.text) || values.includes(o.label),
+      );
+      if (!picked.length) return { error: `No option matches ${values.join(", ")}` };
+      for (const option of el.options) option.selected = picked.includes(option);
       el.dispatchEvent(new Event("change", { bubbles: true }));
       el.dispatchEvent(new Event("input", { bubbles: true }));
+      return { matched: picked.length };
     },
     args: [payload.selector, payload.values],
   });
 
-  return { success: true };
+  const out = results[0]?.result;
+  if (!out || out.error) throw new Error(out?.error || "select_option failed");
+  return { success: true, matched: out.matched };
 }
 
 async function waitFor(payload) {
@@ -2050,6 +2289,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }));
 });
 
+chrome.tabs.onCreated.addListener(followOpenedTab);
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({
@@ -2118,10 +2359,10 @@ async function autoDiscover() {
 // work, it stops handing tokens out over HTTP (any local process can GET /discover).
 let discoveredVia = "";
 
-function nativeConfig() {
+function nativeConfigFrom(host) {
   return new Promise((resolve) => {
     try {
-      chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" }, (resp) => {
+      chrome.runtime.sendNativeMessage(host, { action: "get_config" }, (resp) => {
         resolve(chrome.runtime.lastError ? null : resp);
       });
     } catch {
@@ -2130,11 +2371,16 @@ function nativeConfig() {
   });
 }
 
+// A bot from before the rename registered only com.atlas.bridge.
+async function nativeConfig() {
+  return (await nativeConfigFrom("com.bhai.bridge")) || nativeConfigFrom("com.atlas.bridge");
+}
+
 async function _autoDiscover() {
   // Native messaging first: Chrome only starts the host for this extension, as this OS user.
   const native = await nativeConfig();
   if (native?.success && native.token) {
-    console.log("[ATLAS Bridge] Discovered via native messaging");
+    console.log("[Bhai Bridge] Discovered via native messaging");
     discoveredVia = "native";
     applyDiscovery(native);
     return true;
@@ -2146,16 +2392,16 @@ async function _autoDiscover() {
     const config = await res.json();
 
     if (config.token && config.wsUrl) {
-      console.log("[ATLAS Bridge] Auto-discovered Bhai server");
+      console.log("[Bhai Bridge] Auto-discovered Bhai server");
       discoveredVia = "http";
       applyDiscovery(config);
       return true;
     }
-    console.warn("[ATLAS Bridge] /discover returned no token/wsUrl:", JSON.stringify(config));
+    console.warn("[Bhai Bridge] /discover returned no token/wsUrl:", JSON.stringify(config));
   } catch (err) {
     // Surface the real reason — silent failure here was the root of a long
     // "stuck Searching" debug. Network/CORS/PNA errors all land here.
-    console.warn("[ATLAS Bridge] /discover fetch failed:", err && err.message ? err.message : String(err));
+    console.warn("[Bhai Bridge] /discover fetch failed:", err && err.message ? err.message : String(err));
   }
 
   // No fallback to the overlay port. 18792 is the overlay chat server — it
@@ -2195,19 +2441,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       serverUrl,
       hasToken: !!authToken,
       discoveryAttempts,
-      lastResponse: lastAtlasResponse,
+      lastResponse: lastBhaiResponse,
       actionLog: _actionLog,
     });
     return true;
   }
   if (msg.type === "get_chat") {
-    chatReady.then(() => sendResponse({ chat: _chat }));
+    Promise.all([chatReady, turnReady]).then(() => dropIfSilent()).then(() =>
+      sendResponse({ chat: _chat, turn: draft && { state: draft, start: draftStart }, waiting: awaitingTurn() }),
+    );
     return true;
   }
   if (msg.type === "clear_chat") {
     _chat = [];
-    lastAtlasResponse = "";
-    chrome.storage.session.set({ chat: [] }).catch(() => {});
+    lastBhaiResponse = "";
+    chrome.storage.local.set({ chat: [] }).catch(() => {});
     sendResponse({ ok: true });
     return true;
   }
@@ -2243,13 +2491,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
     if (ok) {
       overlayWs.send(JSON.stringify({ type: "quick_action", text: msg.action }));
+      awaitingSince = Date.now();
+      savePanelTurn();
       if (!msg.action.startsWith("feedback:")) addChat("you", msg.label || msg.action);
     }
     sendResponse({ ok });
     return true;
   }
-  if (msg.type === "send_message" && msg.text === "stop") {
-    sendResponse({ ok: sendToAtlas("stop", { action: "send_message" }) });
+  // Stop the running turn. Never a chat message: that started a paid turn saying "stop".
+  if (msg.type === "stop") {
+    const ok = !!overlayWs && overlayWs.readyState === WebSocket.OPEN;
+    if (ok) overlayWs.send(JSON.stringify({ type: "stop" }));
+    // A restored view whose turn never spoke to this socket can't get a stopped reply here either.
+    dropRestored(false);
+    sendResponse({ ok, running: !!draft });
     return true;
   }
   if (msg.type === "send_page" || msg.type === "send_selection" || msg.type === "send_message") {
@@ -2342,7 +2597,8 @@ async function ensureConnected() {
 ensureConnected();
 chrome.runtime.onStartup.addListener(() => { ensureConnected(); });
 chrome.runtime.onInstalled.addListener(() => { ensureConnected(); });
-chrome.alarms.create("atlas-keepalive", { periodInMinutes: 0.5 });
+chrome.alarms.clear("atlas-keepalive"); // the pre-rename name
+chrome.alarms.create("bhai-keepalive", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "atlas-keepalive") ensureConnected();
+  if (alarm.name === "bhai-keepalive") ensureConnected();
 });

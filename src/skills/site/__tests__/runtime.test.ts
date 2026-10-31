@@ -3,8 +3,9 @@
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
-import { SkillHost, type SiteAction } from "../host.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { isDrift } from "../drift.js";
+import { type SiteAction, SkillHost } from "../host.js";
 import { MAX_STEPS, mintConsent, runSiteTask } from "../runtime.js";
 
 const dir = mkdtempSync(path.join(tmpdir(), "site-skills-"));
@@ -29,8 +30,8 @@ const fakeDriver = () => {
 // Only the hang fixtures need a short deadline; everything else keeps the real
 // 5s one, so a slow CI runner (Windows process spawn) isn't read as a hang.
 const shortDeadline = (on: boolean) => {
-    if (on) process.env.ATLAS_SITE_SKILL_DEADLINE_MS = "1000";
-    else delete process.env.ATLAS_SITE_SKILL_DEADLINE_MS;
+    if (on) process.env.BHAI_SITE_SKILL_DEADLINE_MS = "1000";
+    else delete process.env.BHAI_SITE_SKILL_DEADLINE_MS;
 };
 afterAll(() => shortDeadline(false));
 
@@ -79,7 +80,8 @@ describe("isolation: a bad skill fails the task, never the runtime", () => {
         shortDeadline(false);
         const exited = () => hosts.every((h) => h.spawned.every((c) => c.exitCode !== null || c.signalCode !== null));
         for (let t = 0; t < 50 && !exited(); t++) await new Promise((r) => setTimeout(r, 100)); // Windows reaps slowly
-        for (const h of hosts) for (const c of h.spawned) expect(c.exitCode !== null || c.signalCode !== null).toBe(true);
+        for (const h of hosts)
+            for (const c of h.spawned) expect(c.exitCode !== null || c.signalCode !== null).toBe(true);
     }, 30_000);
 });
 
@@ -95,7 +97,9 @@ describe("step cap", () => {
     });
 
     it("one call with 60 actions runs only up to the cap", async () => {
-        const sixty = skill(`exports.step = () => ({ actions: Array.from({ length: 60 }, (_, i) => ({ op: "click", target: { sel: "#x" + i } })) });`);
+        const sixty = skill(
+            `exports.step = () => ({ actions: Array.from({ length: 60 }, (_, i) => ({ op: "click", target: { sel: "#x" + i } })) });`,
+        );
         const d = fakeDriver();
         const r = await runSiteTask({ skillPath: sixty, phase: "search", driver: d });
         expect(r.reason).toBe("max_steps");
@@ -173,7 +177,9 @@ describe("checkout safety", () => {
         const { task } = await toConfirm();
         const token = mintConsent(task);
         const tampered = { ...task, pendingConfirm: { ...task.pendingConfirm!, amount: 6000 } };
-        expect((await runSiteTask({ task: tampered, phase: "confirm", consentToken: token, driver: fakeDriver() })).reason).toBe("consent_required");
+        expect(
+            (await runSiteTask({ task: tampered, phase: "confirm", consentToken: token, driver: fakeDriver() })).reason,
+        ).toBe("consent_required");
 
         const again = (await toConfirm()).task;
         const t2 = mintConsent(again);
@@ -181,11 +187,13 @@ describe("checkout safety", () => {
         expect((await runSiteTask({ task: again, phase: "confirm", consentToken: t2, driver: d })).status).toBe("done");
         expect(clicks(d)).toBe(1);
         const third = (await toConfirm()).task;
-        expect((await runSiteTask({ task: third, phase: "confirm", consentToken: t2, driver: fakeDriver() })).reason).toBe("consent_required");
+        expect(
+            (await runSiteTask({ task: third, phase: "confirm", consentToken: t2, driver: fakeDriver() })).reason,
+        ).toBe("consent_required");
     });
 
     it("an order over the spend cap is blocked before checkout (100/100)", async () => {
-        process.env.ATLAS_SPEND_CAP_ORDER_INR = "500";
+        process.env.BHAI_SPEND_CAP_ORDER_INR = "500";
         try {
             for (let i = 0; i < 100; i++) {
                 const { task } = await toConfirm();
@@ -194,7 +202,7 @@ describe("checkout safety", () => {
                 expect([r.reason, clicks(d)]).toEqual(["spend_cap", 0]);
             }
         } finally {
-            delete process.env.ATLAS_SPEND_CAP_ORDER_INR;
+            delete process.env.BHAI_SPEND_CAP_ORDER_INR;
         }
     }, 120_000);
 });
@@ -208,12 +216,21 @@ const withManifest = (body: string, manifest: object) => {
     return path.join(d, "skill.cjs");
 };
 const SUBMIT = { op: "click", target: { sel: "#checkout" } };
-const manifest = { domains: ["shop.test"], commits: [SUBMIT], questions: [{ id: "otp", kind: "otp", prompt: "Enter the code" }] };
+const manifest = {
+    domains: ["shop.test"],
+    commits: [SUBMIT],
+    questions: [{ id: "otp", kind: "otp", prompt: "Enter the code" }],
+};
 const pageDriver = (opts: { url?: () => string; price?: () => number; onAct?: (a: SiteAction) => void } = {}) => {
     const calls: SiteAction[] = [];
     return {
         calls,
-        snapshot: async () => ({ url: opts.url?.() ?? "https://shop.test/cart", title: "", text: `Paneer ₹${opts.price?.() ?? 249}`, elements: [] }),
+        snapshot: async () => ({
+            url: opts.url?.() ?? "https://shop.test/cart",
+            title: "",
+            text: `Paneer ₹${opts.price?.() ?? 249}`,
+            elements: [],
+        }),
         act: async (a: SiteAction) => {
             calls.push(a);
             opts.onAct?.(a);
@@ -230,7 +247,7 @@ const cartSkill = `exports.step = (phase, { snapshot: s }) => {
 describe("commit safety (write-ahead)", () => {
     it("a submit that timed out is marked sent before the click and never sent again (100 runs)", async () => {
         const skillPath = withManifest(cartSkill, manifest);
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // 100 × ₹249 is past the real daily cap
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000"; // 100 × ₹249 is past the real daily cap
         for (let i = 0; i < 100; i++) {
             const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
             let sentBeforeClick = false;
@@ -238,19 +255,37 @@ describe("commit safety (write-ahead)", () => {
                 onAct: (a) => {
                     if (a.target?.sel !== "#checkout") return;
                     const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
-                    sentBeforeClick = JSON.parse(readFileSync(path.join(dir, files[0]), "utf8")).commit?.state === "sent";
+                    sentBeforeClick =
+                        JSON.parse(readFileSync(path.join(dir, files[0]), "utf8")).commit?.state === "sent";
                     throw new Error("Timeout 5000ms exceeded");
                 },
             });
             const c = await runSiteTask({ skillPath, phase: "select", driver: d, checkpointDir: dir });
-            const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d, checkpointDir: dir });
-            expect([r.status, r.reason, r.writeStatus, sentBeforeClick]).toEqual(["failed", "possible_commit", "may_have_applied", true]);
+            const r = await runSiteTask({
+                task: c.task,
+                phase: "confirm",
+                consentToken: mintConsent(c.task),
+                driver: d,
+                checkpointDir: dir,
+            });
+            expect([r.status, r.reason, r.writeStatus, sentBeforeClick]).toEqual([
+                "failed",
+                "possible_commit",
+                "may_have_applied",
+                true,
+            ]);
             expect(() => mintConsent(r.task)).toThrow(/may already have gone through|check before ordering again/);
-            const again = await runSiteTask({ task: r.task, phase: "confirm", consentToken: "x", driver: d, checkpointDir: dir });
+            const again = await runSiteTask({
+                task: r.task,
+                phase: "confirm",
+                consentToken: "x",
+                driver: d,
+                checkpointDir: dir,
+            });
             expect(again.reason).toBe("commit_unresolved");
             expect(d.calls.filter((a) => a.target?.sel === "#checkout").length).toBe(1);
         }
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     }, 180_000);
 
     it("a skill can't click the submit outside confirm", async () => {
@@ -268,7 +303,7 @@ describe("commit safety (write-ahead)", () => {
             snapshot: async () => ({ url: "https://shop.test/cart", title: "", text: "", elements: [] }),
             act: async (_a: SiteAction, o?: unknown) => {
                 seen.push(o);
-                throw new Error("unconsented_submit: {\"sel\":\"#checkout\"}");
+                throw new Error('unconsented_submit: {"sel":"#checkout"}');
             },
         };
         const r = await runSiteTask({ skillPath: sneaky, phase: "select", input: { id: "p1" }, driver: d });
@@ -281,7 +316,9 @@ describe("commit safety (write-ahead)", () => {
         const c1 = await runSiteTask({ skillPath, phase: "select", driver: pageDriver() });
         const t1 = mintConsent(c1.task);
         writeFileSync(skillPath, `${cartSkill}\n// v2`); // hot-reloaded between the yes and the click
-        expect((await runSiteTask({ task: c1.task, phase: "confirm", consentToken: t1, driver: pageDriver() })).reason).toBe("consent_required");
+        expect(
+            (await runSiteTask({ task: c1.task, phase: "confirm", consentToken: t1, driver: pageDriver() })).reason,
+        ).toBe("consent_required");
 
         writeFileSync(skillPath, cartSkill);
         let url = "https://shop.test/cart";
@@ -302,7 +339,13 @@ describe("commit safety (write-ahead)", () => {
         price = 289; // delivery fee appeared
         const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: token, driver: d });
         // Parked as a new confirm for the new total: the owner says yes again (or not).
-        expect([r.status, r.reason, r.confirm?.amount, r.writeStatus, d.calls.length]).toEqual(["confirm", "total_changed", 289, "not_attempted", 0]);
+        expect([r.status, r.reason, r.confirm?.amount, r.writeStatus, d.calls.length]).toEqual([
+            "confirm",
+            "total_changed",
+            289,
+            "not_attempted",
+            0,
+        ]);
         const t2 = mintConsent(r.task);
         const ok = await runSiteTask({ task: r.task, phase: "confirm", consentToken: t2, driver: d });
         expect(ok.status === "failed" ? ok.reason : "submitted").not.toBe("consent_required");
@@ -311,58 +354,108 @@ describe("commit safety (write-ahead)", () => {
 
 describe("same-site fence and declared questions", () => {
     it("navigating or being redirected off the skill's sites ends the task", async () => {
-        const nav = withManifest(`exports.step = () => ({ actions: [{ op: "navigate", value: "https://evil.test/" }] });`, manifest);
+        const nav = withManifest(
+            `exports.step = () => ({ actions: [{ op: "navigate", value: "https://evil.test/" }] });`,
+            manifest,
+        );
         const d = pageDriver();
-        expect([(await runSiteTask({ skillPath: nav, phase: "search", driver: d })).reason, d.calls.length]).toEqual(["off_site", 0]);
+        expect([(await runSiteTask({ skillPath: nav, phase: "search", driver: d })).reason, d.calls.length]).toEqual([
+            "off_site",
+            0,
+        ]);
+        // The site's own host under file: is still off the web.
+        const file = withManifest(
+            `exports.step = () => ({ actions: [{ op: "navigate", value: "file://shop.test/etc/passwd" }] });`,
+            manifest,
+        );
+        const df = pageDriver();
+        expect([(await runSiteTask({ skillPath: file, phase: "search", driver: df })).reason, df.calls.length]).toEqual(
+            ["off_site", 0],
+        );
 
         let url = "https://shop.test/";
-        const click = withManifest(`exports.step = () => ({ actions: [{ op: "click", target: { sel: "#go" } }] });`, manifest);
+        const click = withManifest(
+            `exports.step = () => ({ actions: [{ op: "click", target: { sel: "#go" } }] });`,
+            manifest,
+        );
         const d2 = pageDriver({ url: () => url, onAct: () => (url = "https://evil.test/phish") });
         const r = await runSiteTask({ skillPath: click, phase: "search", driver: d2 });
         expect([r.reason, d2.calls.length]).toEqual(["off_site", 1]);
     });
 
-    it("only questions declared in the manifest reach the owner, and late answers expire", async () => {
+    it("only questions declared in the manifest reach the owner, and a late answer is never typed", async () => {
         const undeclared = withManifest(`exports.step = () => ({ needsUser: { question: "pin" } });`, manifest);
         const u = await runSiteTask({ skillPath: undeclared, phase: "search", driver: pageDriver() });
         expect([u.reason, u.task.userPrompts]).toEqual(["undeclared_question", 0]);
 
-        const ask = withManifest(`exports.step = (p, { answer }) => answer ? { actions: [{ op: "type", target: { sel: "#otp" }, value: answer }] } : { needsUser: { question: "otp" } };`, manifest);
+        const ask = withManifest(
+            `exports.step = (p, { answer }) => answer ? { actions: [{ op: "type", target: { sel: "#otp" }, value: answer }] } : { needsUser: { question: "otp" } };`,
+            manifest,
+        );
         const q = await runSiteTask({ skillPath: ask, phase: "search", driver: pageDriver() });
         expect(q.needsUser?.prompt).toBe("Enter the code");
         q.task.waitingUntil = Date.now() - 1; // the owner came back 11 minutes later
         const d = pageDriver();
         const late = await runSiteTask({ task: q.task, phase: "resume", answer: "482913", driver: d });
-        expect([late.reason, d.calls.length]).toEqual(["no_response", 0]);
+        // The page still asks: the owner is asked for a fresh code, the task stays parked.
+        expect([late.status, late.reason, late.needsUser?.retry, d.calls.length]).toEqual([
+            "needs_user",
+            "answer_expired",
+            "That took a while, so I didn't use that code. Send the latest one.",
+            0,
+        ]);
+        expect(late.task.waitingUntil).toBeGreaterThan(Date.now());
+        const fresh = await runSiteTask({ task: late.task, phase: "resume", answer: "551177", driver: d });
+        expect(d.calls.map((a) => a.value)).toEqual(["551177"]);
+        expect(fresh.reason).not.toBe("answer_expired");
     });
 });
 
 describe("review round 3", () => {
     it("a submit can't repeat itself: `times` on confirm.submit is rejected", async () => {
-        const many = withManifest(`exports.step = () => ({ confirm: { summary: "x ₹249", amount: 249, submit: { op: "click", target: { sel: "#checkout" }, times: 5 } } });`, manifest);
+        const many = withManifest(
+            `exports.step = () => ({ confirm: { summary: "x ₹249", amount: 249, submit: { op: "click", target: { sel: "#checkout" }, times: 5 } } });`,
+            manifest,
+        );
         const d = pageDriver();
         const r = await runSiteTask({ skillPath: many, phase: "select", driver: d });
         expect([r.status, r.reason, d.calls.length]).toEqual(["failed", "skill_garbage", 0]);
     });
 
     it("a driver error after the submit still says the order may have been placed", async () => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // earlier tests in this file booked spend
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000"; // earlier tests in this file booked spend
         const skillPath = withManifest(cartSkill, manifest);
         let submitted = false;
-        const d = pageDriver({ onAct: (a) => { if (a.target?.sel === "#checkout") submitted = true; } });
+        const d = pageDriver({
+            onAct: (a) => {
+                if (a.target?.sel === "#checkout") submitted = true;
+            },
+        });
         const snap = d.snapshot;
-        d.snapshot = async () => { if (submitted) throw new Error("Execution context was destroyed"); return snap(); };
+        d.snapshot = async () => {
+            if (submitted) throw new Error("Execution context was destroyed");
+            return snap();
+        };
         const c = await runSiteTask({ skillPath, phase: "select", driver: d });
         const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
         expect(r.status).toBe("failed");
         expect(r.reason).toMatch(/^driver_error/);
         expect(r.writeStatus).toBe("may_have_applied");
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     });
 
     it("a skill that hangs while the total is re-checked fails with its own reason, not total_changed", async () => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
-        const hang = withManifest(cartSkill.replace('if (phase === "select"', 'if (phase === "select" && state.n) return new Promise(() => {}); if (phase === "select"').replace("{ snapshot: s }", "{ snapshot: s, state }").replace("return { confirm:", "return { state: { n: 1 }, confirm:"), manifest);
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+        const hang = withManifest(
+            cartSkill
+                .replace(
+                    'if (phase === "select"',
+                    'if (phase === "select" && state.n) return new Promise(() => {}); if (phase === "select"',
+                )
+                .replace("{ snapshot: s }", "{ snapshot: s, state }")
+                .replace("return { confirm:", "return { state: { n: 1 }, confirm:"),
+            manifest,
+        );
         const d = pageDriver();
         const c = await runSiteTask({ skillPath: hang, phase: "select", driver: d });
         expect(c.status).toBe("confirm");
@@ -371,11 +464,14 @@ describe("review round 3", () => {
         shortDeadline(false);
         expect([r.status, r.reason, r.writeStatus]).toEqual(["failed", "skill_timeout", "not_attempted"]);
         expect(d.calls.some((a) => a.target?.sel === "#checkout")).toBe(false);
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     });
 
     it("the third OTP attempt is allowed (a fresh answer resets the loop counter)", async () => {
-        const ask = withManifest(`exports.step = (p, { answer }) => answer ? { actions: [{ op: "click", target: { sel: "#verify" } }] } : { needsUser: { question: "otp", retry: p === "resume" } };`, manifest);
+        const ask = withManifest(
+            `exports.step = (p, { answer }) => answer ? { actions: [{ op: "click", target: { sel: "#verify" } }] } : { needsUser: { question: "otp", retry: p === "resume" } };`,
+            manifest,
+        );
         const d = pageDriver();
         let r = await runSiteTask({ skillPath: ask, phase: "search", driver: d });
         for (const code of ["111111", "222222", "333333"]) {
@@ -386,3 +482,401 @@ describe("review round 3", () => {
     });
 });
 
+// ── Stop (the owner's abort signal) ─────────────────────────────────────────
+describe("Stop", () => {
+    const typer = withManifest(
+        `exports.step = () => ({ actions: [{ op: "type", target: { sel: "#q" }, value: "paneer" }] });`,
+        manifest,
+    );
+    const stopIn = (ms: number) => {
+        const ctl = new AbortController();
+        let at = 0;
+        setTimeout(() => {
+            at = Date.now();
+            ctl.abort();
+        }, ms);
+        return { signal: ctl.signal, abortedAt: () => at };
+    };
+
+    it("a task stopped before it starts touches nothing", async () => {
+        const ctl = new AbortController();
+        ctl.abort();
+        const d = pageDriver();
+        let snaps = 0;
+        const r = await runSiteTask({
+            skillPath: typer,
+            phase: "search",
+            driver: {
+                ...d,
+                snapshot: () => {
+                    snaps++;
+                    return d.snapshot();
+                },
+            },
+            signal: ctl.signal,
+        });
+        expect([r.status, r.reason, r.writeStatus, r.retry, d.calls.length, snaps]).toEqual([
+            "aborted",
+            "stopped",
+            "not_attempted",
+            "ask_owner",
+            0,
+            0,
+        ]);
+    });
+
+    it("an action that never returns: the task ends at Stop, not at the action", async () => {
+        const stop = stopIn(100);
+        const d = pageDriver();
+        const r = await runSiteTask({
+            skillPath: typer,
+            phase: "search",
+            driver: { ...d, act: () => new Promise(() => {}) },
+            signal: stop.signal,
+        });
+        expect([r.status, r.reason, r.writeStatus]).toEqual(["aborted", "stopped", "not_attempted"]);
+        expect(Date.now() - stop.abortedAt()).toBeLessThan(2000);
+    });
+
+    it("a dropped network's backoff ends at Stop", async () => {
+        const stop = stopIn(700); // inside the second backoff (500 ms, then 1 s)
+        const d = pageDriver({
+            onAct: () => {
+                throw new Error("page.goto: net::ERR_INTERNET_DISCONNECTED");
+            },
+        });
+        const r = await runSiteTask({ skillPath: typer, phase: "search", driver: d, signal: stop.signal });
+        expect([r.status, r.reason]).toEqual(["aborted", "stopped"]);
+        expect(Date.now() - stop.abortedAt()).toBeLessThan(2000); // not the ~15 s of backoffs
+    });
+
+    it("Stop after the yes but before the mark: nothing sent, and the yes is spent", async () => {
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+        const skillPath = withManifest(cartSkill, manifest);
+        const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
+        const d = pageDriver();
+        const c = await runSiteTask({ skillPath, phase: "select", driver: d, checkpointDir: dir });
+        const token = mintConsent(c.task);
+        const ctl = new AbortController();
+        // The re-read snapshot comes back, then Stop lands while the skill re-reads the total.
+        const snapshot = async () => {
+            setTimeout(() => ctl.abort(), 0);
+            return d.snapshot();
+        };
+        const r = await runSiteTask({
+            task: c.task,
+            phase: "confirm",
+            consentToken: token,
+            driver: { ...d, snapshot },
+            checkpointDir: dir,
+            signal: ctl.signal,
+        });
+        expect([r.status, r.reason, r.writeStatus, r.task.commit]).toEqual([
+            "aborted",
+            "stopped",
+            "not_attempted",
+            undefined,
+        ]);
+        expect(d.calls.some((a) => a.target?.sel === "#checkout")).toBe(false);
+        const again = await runSiteTask({
+            task: r.task,
+            phase: "confirm",
+            consentToken: token,
+            driver: d,
+            checkpointDir: dir,
+        });
+        expect(again.reason).toBe("consent_required"); // a new yes is needed
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    });
+
+    it("Stop while the submit runs: the order may exist, never sent again", async () => {
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+        const skillPath = withManifest(cartSkill, manifest);
+        const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
+        const d = pageDriver();
+        const c = await runSiteTask({ skillPath, phase: "select", driver: d, checkpointDir: dir });
+        const token = mintConsent(c.task);
+        const ctl = new AbortController();
+        let abortedAt = 0;
+        const act = (a: SiteAction) => {
+            if (a.target?.sel !== "#checkout") return d.act(a);
+            d.calls.push(a);
+            setTimeout(() => {
+                abortedAt = Date.now();
+                ctl.abort();
+            }, 100);
+            return new Promise<void>(() => {}); // the click never reports back
+        };
+        const r = await runSiteTask({
+            task: c.task,
+            phase: "confirm",
+            consentToken: token,
+            driver: { ...d, act },
+            checkpointDir: dir,
+            signal: ctl.signal,
+        });
+        expect([r.status, r.reason, r.writeStatus, r.retry]).toEqual([
+            "aborted",
+            "stopped",
+            "may_have_applied",
+            "never",
+        ]);
+        expect(Date.now() - abortedAt).toBeLessThan(2000);
+        expect(JSON.parse(readFileSync(path.join(dir, `${r.task.taskId}.json`), "utf8")).commit.state).toBe("sent");
+        const again = await runSiteTask({
+            task: r.task,
+            phase: "confirm",
+            consentToken: "x",
+            driver: d,
+            checkpointDir: dir,
+        });
+        expect(again.reason).toBe("commit_unresolved");
+        expect(d.calls.filter((a) => a.target?.sel === "#checkout").length).toBe(1);
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    });
+});
+
+// ── Faults around the yes (fault-matrix.e2e.test.ts runs them in Chromium) ──
+describe("offline at the yes, a closed tab", () => {
+    // cartSkill, but the page after the submit says done.
+    const skillPath = withManifest(
+        cartSkill
+            .replace('|| phase === "after_confirm"', "")
+            .replace(
+                'return { fail: { reason: "x" } }',
+                'return phase === "after_confirm" ? { done: { summary: "ok" } } : { fail: { reason: "x" } }',
+            ),
+        manifest,
+    );
+    // Earlier describes booked orders against today's in-memory spend.
+    beforeAll(() => {
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+    });
+    afterAll(() => {
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    });
+    const toConfirm = async (url = () => "https://shop.test/cart?id=p1&s=tok", online?: () => Promise<boolean>) => {
+        const d = { ...pageDriver({ url }), online };
+        const c = await runSiteTask({ skillPath, phase: "select", driver: d });
+        expect(c.status).toBe("confirm");
+        return { c, d, clicks: () => d.calls.filter((a) => a.target?.sel === "#checkout").length };
+    };
+
+    it("an offline browser is waited out before the mark: one click once it's back", async () => {
+        let n = 0;
+        const { c, d, clicks } = await toConfirm(undefined, async () => ++n > 3);
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        expect([r.writeStatus, clicks(), n]).toEqual(["applied", 1, 4]);
+    });
+
+    it("still offline after 20 s: network_error, nothing sent, the owner can say yes again", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
+            const { c, d, clicks } = await toConfirm(undefined, async () => {
+                vi.setSystemTime(Date.now() + 6000); // each check is 6 s later
+                return false;
+            });
+            const token = mintConsent(c.task);
+            const r = await runSiteTask({
+                task: c.task,
+                phase: "confirm",
+                consentToken: token,
+                driver: d,
+                checkpointDir: dir,
+            });
+            expect([r.status, r.reason, r.writeStatus, r.retry, clicks()]).toEqual([
+                "failed",
+                "network_error",
+                "not_attempted",
+                "later",
+                0,
+            ]);
+            expect(JSON.parse(readFileSync(path.join(dir, `${r.task.taskId}.json`), "utf8")).commit).toBeUndefined();
+            expect(() => mintConsent(r.task)).not.toThrow();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("Stop during the offline wait: aborted, nothing marked, nothing clicked", async () => {
+        const ctl = new AbortController();
+        const { c, d, clicks } = await toConfirm(undefined, async () => {
+            setTimeout(() => ctl.abort(), 100);
+            return false;
+        });
+        const r = await runSiteTask({
+            task: c.task,
+            phase: "confirm",
+            consentToken: mintConsent(c.task),
+            driver: d,
+            signal: ctl.signal,
+        });
+        expect([r.status, r.reason, r.writeStatus, r.task.commit, clicks()]).toEqual([
+            "aborted",
+            "stopped",
+            "not_attempted",
+            undefined,
+            0,
+        ]);
+    });
+
+    it("a blank page before the commit reopens the last page; the checkpoint keeps no query", async () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
+        let url = "https://shop.test/cart?id=p1&s=tok";
+        const { c, d, clicks } = await toConfirm(() => url);
+        url = "about:blank"; // the owner closed the tab; the next call starts on a blank page
+        const navs: string[] = [];
+        const act = async (a: SiteAction) => {
+            if (a.op === "navigate") url = navs[navs.push(a.value ?? "") - 1];
+            return d.act(a);
+        };
+        const r = await runSiteTask({
+            task: c.task,
+            phase: "confirm",
+            consentToken: mintConsent(c.task),
+            driver: { ...d, act },
+            checkpointDir: dir,
+        });
+        expect([r.writeStatus, clicks(), navs]).toEqual(["applied", 1, ["https://shop.test/cart?id=p1&s=tok"]]);
+        expect(JSON.parse(readFileSync(path.join(dir, `${r.task.taskId}.json`), "utf8")).lastUrl).toBe(
+            "https://shop.test/cart",
+        );
+    });
+
+    it("a blank page after the submit is never reopened: may have been placed, never retried", async () => {
+        const { c, d, clicks } = await toConfirm();
+        let url = "https://shop.test/cart?id=p1";
+        const navs: SiteAction[] = [];
+        const act = async (a: SiteAction) => {
+            if (a.op === "navigate") navs.push(a);
+            if (a.target?.sel === "#checkout") url = "about:blank"; // the tab closed as the order went out
+            return d.act(a);
+        };
+        const r = await runSiteTask({
+            task: c.task,
+            phase: "confirm",
+            consentToken: mintConsent(c.task),
+            driver: { ...d, act, snapshot: async () => ({ ...(await d.snapshot()), url }) },
+        });
+        expect([r.status, r.reason, r.writeStatus, r.retry, clicks(), navs]).toEqual([
+            "aborted",
+            "off_site",
+            "may_have_applied",
+            "never",
+            1,
+            [],
+        ]);
+    });
+});
+
+describe("an overlay over a target (the page driver's unblock / blocked_by_overlay)", () => {
+    // cartSkill, but the page after the submit says done.
+    const skillPath = withManifest(
+        cartSkill
+            .replace('|| phase === "after_confirm"', "")
+            .replace(
+                'return { fail: { reason: "x" } }',
+                'return phase === "after_confirm" ? { done: { summary: "ok" } } : { fail: { reason: "x" } }',
+            ),
+        manifest,
+    );
+    beforeAll(() => {
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+    });
+    afterAll(() => {
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    });
+    // Select → confirm with `unblock`, logging snapshots, unblocks and the submit in order.
+    const toConfirm = async (unblock: () => Promise<boolean>, price = () => 249) => {
+        const log: string[] = [];
+        const base = pageDriver({ url: () => "https://shop.test/cart?id=p1", price });
+        const d = {
+            ...base,
+            snapshot: async () => {
+                log.push("snapshot");
+                return base.snapshot();
+            },
+            act: async (a: SiteAction) => {
+                log.push(a.target?.sel === "#checkout" ? "submit" : "act");
+                return base.act(a);
+            },
+            unblock: async () => {
+                log.push("unblock");
+                return unblock();
+            },
+        };
+        const c = await runSiteTask({ skillPath, phase: "select", driver: d });
+        expect(c.status).toBe("confirm");
+        log.length = 0;
+        return { c, d, log };
+    };
+
+    it("a click it can't clear stops at once: one try, ask_owner, not drift", async () => {
+        const clicker = withManifest(
+            `exports.step = () => ({ actions: [{ op: "click", target: { sel: "#captcha" } }] });`,
+            manifest,
+        );
+        const d = pageDriver({
+            onAct: () => {
+                throw new Error('blocked_by_overlay: kept "Confirm your order of ₹249"');
+            },
+        });
+        const r = await runSiteTask({ skillPath: clicker, phase: "select", driver: d });
+        expect([r.status, r.reason, r.retry, r.writeStatus, r.repairQueued, d.calls.length]).toEqual([
+            "failed",
+            'blocked_by_overlay: kept "Confirm your order of ₹249"',
+            "ask_owner",
+            "not_attempted",
+            undefined,
+            1, // not handed back to the skill to repeat into loop_identical_args (which reads as drift)
+        ]);
+        expect(isDrift(r.status, r.reason, r.writeStatus)).toBe(false);
+    });
+
+    it("over the submit after the yes: stopped before the mark, nothing sent", async () => {
+        const { c, d, log } = await toConfirm(async () => {
+            throw new Error('blocked_by_overlay: kept "Pay ₹249"');
+        });
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        expect([r.status, r.reason, r.writeStatus, r.retry, r.task.commit, log]).toEqual([
+            "failed",
+            'blocked_by_overlay: kept "Pay ₹249"',
+            "not_attempted",
+            "ask_owner",
+            undefined,
+            ["snapshot", "unblock"],
+        ]);
+        expect(() => mintConsent(r.task)).not.toThrow(); // nothing may exist: the owner can say yes again
+    });
+
+    it("cleared before the total is re-read: the re-read sees the page the click will hit, then one submit", async () => {
+        let dismissed = 0;
+        const { c, d, log } = await toConfirm(async () => ++dismissed === 1);
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        expect([r.status, r.writeStatus]).toEqual(["done", "applied"]);
+        // look, clear, look again (the skill's re-read runs on this one), then the submit.
+        expect(log.slice(0, 4)).toEqual(["snapshot", "unblock", "snapshot", "submit"]);
+    });
+
+    it("a dismissal that changed the total goes back to the owner, nothing sent", async () => {
+        let price = 249;
+        const { c, d, log } = await toConfirm(
+            async () => {
+                if (price === 299) return false;
+                price = 299; // "No thanks" also dropped a discount
+                return true;
+            },
+            () => price,
+        );
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        expect([r.status, r.reason, r.confirm?.amount, r.writeStatus, r.task.commit, log.includes("submit")]).toEqual([
+            "confirm",
+            "total_changed",
+            299,
+            "not_attempted",
+            undefined,
+            false,
+        ]);
+    });
+});

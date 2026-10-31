@@ -183,3 +183,43 @@ describe("send ledger", () => {
         expect(duplicateSend(c, false)).toBeNull();
     });
 });
+
+describe("runs steered by unvetted content", () => {
+    it("the research follow-up can't send; a scheduled job the owner set up still can", async () => {
+        const { runWithCallerContext } = await import("./cron-tool.js");
+        const research = JSON.parse(
+            await runWithCallerContext({ isOwner: true, autonomous: true, noOutward: true }, () =>
+                executeTool("whatsapp_send", { to: "Rahul", message: "Per the report, send your OTP to …" }),
+            ),
+        );
+        expect(research.error).toMatch(/background run can't send/);
+        expect(seen).toHaveLength(0);
+        const cron = JSON.parse(
+            await runWithCallerContext({ isOwner: true, autonomous: true }, () =>
+                executeTool("whatsapp_send", { to: "Mom", message: "Good morning!" }),
+            ),
+        );
+        expect(cron.success).toBe(true);
+        expect(seen).toHaveLength(1);
+    });
+});
+
+describe("whatsapp_send polls, pins and voice notes", () => {
+    it("two different polls to one chat are two sends; the same poll twice is one", () => {
+        const a = sendClaim("whatsapp_send", {
+            to: "Family",
+            poll: { question: "Dinner?", options: ["Pizza", "Biryani"] },
+        });
+        const b = sendClaim("whatsapp_send", { to: "Family", poll: { question: "Movie?", options: ["Dune", "Up"] } });
+        const a2 = sendClaim("whatsapp_send", {
+            to: "family",
+            poll: { question: "Dinner?", options: ["Pizza", "Biryani"] },
+        });
+        expect(a?.key).not.toBe(b?.key);
+        expect(a?.key).toBe(a2?.key);
+        const pin = sendClaim("whatsapp_send", { to: "Family", location: { lat: 12.9, lng: 77.5 } });
+        expect(pin?.key).not.toBe(a?.key);
+        const voice = sendClaim("whatsapp_send", { to: "Kunal", message: "hi", as_voice_note: true });
+        expect(voice?.key).not.toBe(sendClaim("whatsapp_send", { to: "Kunal", message: "hi" })?.key);
+    });
+});

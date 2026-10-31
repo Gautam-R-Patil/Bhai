@@ -15,7 +15,7 @@
 //                async code, loops with no exit test
 //   4 literals   no value from the session (the search text, the chosen item,
 //                what else was typed, the order id, the amount) and no PII
-//   5 selectors  no generated/hashed class, no data-atlas-id; :nth-child warns
+//   5 selectors  no generated/hashed class, no data-bhai-id/data-atlas-id; :nth-child warns
 //   6 questions  every needsUser.question is a string literal skill.json declares
 //   7 commits    listed when the session committed; their selectors appear only
 //                inside a confirm.submit object; neither is a pick
@@ -24,13 +24,17 @@
 //
 // Findings name a value by its placeholder ({{input.query}}), never the value.
 
-import * as acorn from "acorn";
+import { createRequire } from "node:module";
 import { z } from "zod";
 import { runSastCritic } from "../../../forge/critics.js";
 import { findPii } from "../../../security/pii-redactor.js";
 import { ActionSchema } from "../host.js";
 import { commitEvent, type LoadedTrace } from "./recorder.js";
 import { lib } from "./replay.js";
+
+// acorn loads synchronously on first parse, not at boot.
+let acornMod: typeof import("acorn") | undefined;
+const acorn = (): typeof import("acorn") => (acornMod ??= createRequire(import.meta.url)("acorn"));
 
 export interface Finding {
     id: string;
@@ -202,7 +206,7 @@ export async function checkSkill(opts: {
     if (Buffer.byteLength(src) > MAX_SKILL_BYTES) err("too_large", `skill_cjs is over ${MAX_SKILL_BYTES} bytes`);
     let ast: N;
     try {
-        ast = acorn.parse(src, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: false });
+        ast = acorn().parse(src, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: false });
     } catch (e) {
         err("compile", (e as Error).message);
         return { manifest, findings };
@@ -350,8 +354,8 @@ export async function checkSkill(opts: {
 
     // 5 selectors
     for (const s of strings) {
-        if (s.text.includes("data-atlas-id"))
-            err("selector", `data-atlas-id changes on every scan (line ${lineOf(src, s.start)})`);
+        const scanId = /data-(?:bhai|atlas)-id/.exec(s.text)?.[0];
+        if (scanId) err("selector", `${scanId} changes on every scan (line ${lineOf(src, s.start)})`);
         if (keyName(s.parent) !== "sel" || s.key !== "value") continue;
         const bare = s.text.replace(/"[^"]*"|'[^']*'|\$\{\}/g, "");
         for (const m of bare.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) {

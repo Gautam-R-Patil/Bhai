@@ -26,23 +26,25 @@ export type IsolatedResult = { ok: true; result: unknown } | { ok: false; error:
 export interface IsolatedRunOpts {
     /** Source of a function expression; called as fn(input, api, console). */
     fn: string;
-    /** In-context expression for the `api` argument; may use `call(name, args)`. */
+    /** In-context expression for the `api` argument; may use `call(name, args)` and `callSync(name, args)`. */
     api?: string;
     input?: unknown;
     /** Host side of `call(name, args)`; its result reaches the sandbox as JSON. */
     onCall?: (name: string, args: unknown) => unknown;
+    /** Host side of `callSync(name, args)`: same, but answered on the spot (keep it quick). */
+    onCallSync?: (name: string, args: unknown) => unknown;
     onLog?: (level: "log" | "warn" | "error", line: string) => void;
     timeoutMs: number;
     filename: string;
 }
 
 const BOOT = `"use strict";
-(function (rawLog, rawCall, rawTimer, rawClear, rawDone, inputJson, userFn, makeApi) {
+(function (rawLog, rawCall, rawSync, rawTimer, rawClear, rawDone, inputJson, userFn, makeApi) {
     const S = String, stringify = JSON.stringify, parse = JSON.parse, P = Promise, E = Error;
     // A host fn can still throw from the host realm (a stack overflow at the
     // call itself): swap anything thrown for a sandbox Error.
     const safe = (f) => (...a) => { try { return f(...a); } catch { throw new E("host call failed"); } };
-    const hostLog = safe(rawLog), hostCall = safe(rawCall), hostTimer = safe(rawTimer), hostClear = safe(rawClear), hostDone = safe(rawDone);
+    const hostLog = safe(rawLog), hostCall = safe(rawCall), hostSync = safe(rawSync), hostTimer = safe(rawTimer), hostClear = safe(rawClear), hostDone = safe(rawDone);
     const say = (level) => (...a) => { hostLog(level, a.map((x) => S(x)).join(" ")); };
     const console = Object.freeze({ log: say("log"), info: say("log"), debug: say("log"), warn: say("warn"), error: say("error") });
     // The host call runs before the promise exists, so a failed call (a stack
@@ -55,11 +57,16 @@ const BOOT = `"use strict";
             (j) => res(j === undefined ? undefined : parse(j)), (m) => rej(new E(m)));
         return new P((a, b) => { res = a; rej = b; });
     };
+    const callSync = (name, args) => {
+        const r = parse(S(hostSync(S(name), stringify(args === undefined ? null : args))));
+        if (r.e !== undefined) throw new E(r.e);
+        return r.v;
+    };
     globalThis.setTimeout = (f, ms, ...a) => hostTimer(+ms || 0, () => f(...a));
     globalThis.clearTimeout = (id) => hostClear(+id);
     const text = (f) => { try { return S(f()); } catch { return ""; } };
     const fail = (e) => hostDone(text(() => e && e.message !== undefined ? e.message : e) || "error", undefined, text(() => e && e.stack));
-    P.resolve().then(() => userFn(parse(inputJson), makeApi(call), console)).then((v) => {
+    P.resolve().then(() => userFn(parse(inputJson), makeApi(call, callSync), console)).then((v) => {
         let j;
         try { j = stringify(v); } catch (e) { return fail(e); }
         hostDone(null, j);
@@ -163,6 +170,19 @@ export function runIsolated(opts: IsolatedRunOpts): Promise<IsolatedResult> {
                 }
             })();
         };
+        const hostSync = (name: unknown, argsJson: unknown): string => {
+            try {
+                if (!opts.onCallSync) throw new Error("no host calls available");
+                const v = opts.onCallSync(str(name), JSON.parse(str(argsJson) || "null"));
+                return JSON.stringify({ v: v === undefined ? null : v });
+            } catch (e) {
+                try {
+                    return JSON.stringify({ e: String((e as Error)?.message ?? e) });
+                } catch {
+                    return '{"e":"host call failed"}';
+                }
+            }
+        };
         const hostTimer = (ms: unknown, cb: unknown) => {
             if (typeof cb !== "function") return 0;
             const id = nextTimer++;
@@ -194,7 +214,7 @@ export function runIsolated(opts: IsolatedRunOpts): Promise<IsolatedResult> {
 
         try {
             const boot = vm.runInContext(BOOT, ctx, { filename: opts.filename });
-            const makeApi = vm.runInContext(`"use strict"; (call) => (${opts.api ?? "undefined"})`, ctx, {
+            const makeApi = vm.runInContext(`"use strict"; (call, callSync) => (${opts.api ?? "undefined"})`, ctx, {
                 filename: opts.filename,
             });
             // Injected source can run code (and throw anything) right here.
@@ -203,7 +223,17 @@ export function runIsolated(opts: IsolatedRunOpts): Promise<IsolatedResult> {
                 displayErrors: false,
                 timeout: opts.timeoutMs,
             });
-            enter(boot, [hostLog, hostCall, hostTimer, hostClear, hostDone, JSON.stringify(opts.input ?? null), userFn, makeApi]);
+            enter(boot, [
+                hostLog,
+                hostCall,
+                hostSync,
+                hostTimer,
+                hostClear,
+                hostDone,
+                JSON.stringify(opts.input ?? null),
+                userFn,
+                makeApi,
+            ]);
         } catch (e) {
             if (isTimeout(e)) return finish(timedOut);
             let error = "sandbox setup failed";

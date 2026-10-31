@@ -2,8 +2,8 @@
 // Dedup must keep ONE representative per cluster — including for exact-duplicate
 // texts. The old executor re-filtered originals by `dedupedTexts.includes(text)`,
 // which re-admitted every copy of a surviving text (no-op for exact dupes).
-import { describe, expect, it } from "vitest";
-import { dedupeByText, deduplicateFindings, normalizeUrl, UrlSet } from "./scoring.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { dedupeByText, deduplicateFindings, mentionsTopic, normalizeUrl, rankSource, UrlSet } from "./scoring.js";
 
 describe("dedupeByText", () => {
     it("collapses exact-duplicate texts to a single object", () => {
@@ -56,5 +56,28 @@ describe("non-Latin findings and URL identity", () => {
         const visited = new UrlSet();
         visited.add(same[0]);
         expect(visited.has(same[1])).toBe(true);
+    });
+});
+
+describe("mentionsTopic", () => {
+    it("keeps a page that names the topic in another form, drops one that never does", () => {
+        expect(mentionsTopic("New lithium-ion battery cells", "lithium batteries")).toBe(true);
+        expect(mentionsTopic("Nvidia's H100 GPU", "Nvidia GPUs")).toBe(true);
+        expect(mentionsTopic("Best laptop for students", "sabse accha laptop kaunsa hai")).toBe(true);
+        expect(mentionsTopic("Please sign in to continue", "lithium batteries")).toBe(false);
+    });
+});
+
+describe("rankSource recency", () => {
+    afterEach(() => vi.useRealTimers());
+    const recency = (content: string) => rankSource("https://example.com/a", "A", content, []).recencyScore;
+
+    it("scores by the latest past year mentioned, against the current year", () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date("2027-01-15T00:00:00Z"));
+        expect(recency("Released in January 2027.")).toBe(1);
+        expect(recency("In 2024 it began; the 2026 report followed.")).toBe(0.8);
+        expect(recency("A 2025 post.")).toBe(0.6);
+        expect(recency("Plans for 2030 only.")).toBe(0.3);
     });
 });

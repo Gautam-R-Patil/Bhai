@@ -109,7 +109,7 @@ export const linuxShellScript: ToolDefinition = {
             });
         }
 
-        const tmpFile = join(tmpdir(), `atlas_linux_${Date.now()}.sh`);
+        const tmpFile = join(tmpdir(), `bhai_linux_${Date.now()}.sh`);
         try {
             await fs.writeFile(tmpFile, script, { mode: 0o755 });
             const { stdout, stderr } = await execFileAsync("bash", [tmpFile], { timeout });
@@ -156,8 +156,8 @@ export const linuxOsScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "This Linux os_screenshot handler should not be called on non-Linux." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
-        const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
+        const tmpPng = join(tmpdir(), `bhai_screen_${Date.now()}.png`);
+        const tmpJpg = join(tmpdir(), `bhai_screen_${Date.now()}.jpg`);
 
         try {
             // Get dims for the focused monitor (multi-monitor aware).
@@ -333,19 +333,20 @@ export const linuxOsClick: ToolDefinition = {
                         await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
                             timeout: 3000,
                         });
-                        await execFileAsync("ydotool", ["click", "0xC0"], { timeout: 3000 }); // right click
+                        // ydotool click codes: button | 0x40 down | 0x80 up (0xC0 left, 0xC1 right)
+                        await execFileAsync("ydotool", ["click", "0xC1"], { timeout: 3000 });
                         break;
                     case "double_click":
                         await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
                             timeout: 3000,
                         });
-                        await execFileAsync("ydotool", ["click", "0x40", "0x40"], { timeout: 3000 });
+                        await execFileAsync("ydotool", ["click", "0xC0", "0xC0"], { timeout: 3000 });
                         break;
                     default: // click
                         await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
                             timeout: 3000,
                         });
-                        await execFileAsync("ydotool", ["click", "0x40"], { timeout: 3000 }); // left click
+                        await execFileAsync("ydotool", ["click", "0xC0"], { timeout: 3000 });
                         break;
                 }
                 return JSON.stringify({ success: true, action, x, y, method: "ydotool" });
@@ -440,13 +441,16 @@ export const linuxOsType: ToolDefinition = {
             if (input.text) {
                 const text = input.text as string;
 
-                if (tool === "xdotool") {
-                    await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", "12", text], {
-                        timeout: 15000,
-                    });
-                } else {
-                    await execFileAsync("ydotool", ["type", text], { timeout: 15000 });
-                }
+                // Over stdin, not argv: argv text starting with '-' is read as options
+                // ('--file ~/.ssh/id_rsa' would type that file), and argv shows in ps.
+                const args =
+                    tool === "xdotool"
+                        ? ["type", "--clearmodifiers", "--delay", "12", "--file", "-"]
+                        : ["type", "--file", "-"];
+                const typing = execFileAsync(tool, args, { timeout: 15000 });
+                typing.child.stdin?.on("error", () => {}); // EPIPE if it died first: the rejection reports it
+                typing.child.stdin?.end(text, "utf-8");
+                await typing;
 
                 return JSON.stringify({
                     success: true,
@@ -673,7 +677,7 @@ export const linuxSendScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "Telegram context not available." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_sendscreen_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_sendscreen_${Date.now()}.png`);
 
         try {
             await captureScreenshot(tmpPng);
@@ -740,7 +744,7 @@ export async function runLinuxOcr(imgPath: string | null): Promise<OcrResult | n
 
     let tempCapture = false;
     if (!imgPath) {
-        imgPath = join(tmpdir(), `atlas_ocr_${Date.now()}.png`);
+        imgPath = join(tmpdir(), `bhai_ocr_${Date.now()}.png`);
         await captureScreenshot(imgPath);
         tempCapture = true;
     }

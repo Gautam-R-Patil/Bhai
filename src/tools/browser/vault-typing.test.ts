@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getActivePage = vi.fn();
 const getLastElementMap = vi.fn(() => [] as Array<{ label: number; x: number; y: number }>);
 vi.mock("./core.js", () => ({
-    ATLAS_HUD_JS: "() => {}",
+    BHAI_HUD_JS: "() => {}",
     CLICK_INDICATOR_JS: "() => {}",
     SCROLL_INDICATOR_JS: "() => {}",
     getActivePageIndex: () => 0,

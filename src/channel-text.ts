@@ -12,6 +12,22 @@ import { smartChunkMessage } from "./alive-ux.js";
 
 export const TELEGRAM_MAX_MESSAGE = 4096;
 
+// Sanitize attacker-controlled inbound text before wrapping in channel
+// delimiters. Strips framing tokens the LLM treats as authoritative. The old
+// [ATLAS-INTERNAL spelling stays neutralised for good: stored history still
+// shows the model that form, so a sender could forge it.
+export function sanitizeIncomingChannelText(text: string): string {
+    if (!text) return text;
+    return text
+        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
+        .replace(/\[(?:BHAI|ATLAS)-INTERNAL\b/gi, "[user-quoted-text")
+        .replace(/<system_log>/gi, "&lt;system_log&gt;")
+        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
+        .replace(/<tool_log/gi, "&lt;tool_log")
+        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
+        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
+}
+
 function escapeHtml(text: string): string {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -31,6 +47,9 @@ function replaceFences(text: string, render: (code: string, lang?: string) => st
         },
     );
 }
+
+// *text*, with no space just inside the stars (CommonMark): "5 * 3 * 2" is arithmetic.
+const ITALIC = /(?<!\w)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\w)/g;
 
 /**
  * Convert the model's Markdown into the HTML subset Telegram accepts.
@@ -55,11 +74,12 @@ export function markdownToTelegramHtml(text: string): string {
 
     html = escapeHtml(html);
 
-    // Bold: **text** → <b>text</b>
-    html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+    // Bold: **text** → <b>text</b>. As in CommonMark, no space just inside the markers:
+    // "5 * 3 * 2 = 30" or "a ** b" is arithmetic, and lost its asterisks to italics.
+    html = html.replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, "<b>$1</b>");
 
     // Italic: *text* → <i>text</i> (but not inside bold)
-    html = html.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, "<i>$1</i>");
+    html = html.replace(ITALIC, "<i>$1</i>");
 
     // Strikethrough: ~~text~~ → <s>text</s>
     html = html.replace(/~~(.+?)~~/g, "<s>$1</s>");
@@ -106,8 +126,8 @@ export function markdownToTelegramHtml(text: string): string {
 export function markdownToPlainText(text: string): string {
     return replaceFences(text, (code) => code)
         .replace(/`([^`\n]+)`/g, "$1")
-        .replace(/\*\*(.+?)\*\*/g, "$1")
-        .replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, "$1")
+        .replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, "$1")
+        .replace(ITALIC, "$1")
         .replace(/__(.+?)__/g, "$1");
 }
 
@@ -214,6 +234,11 @@ const STUCK_ACTIONS = new Map([
     ["skip", { label: "Skip", message: "Skip that part and carry on with the rest." }],
 ]);
 
+/** The handoff choices as buttons that say their message (the desktop notification's). */
+export function stuckActionButtons(): Array<{ label: string; message: string }> {
+    return [...STUCK_ACTIONS.values()].map(({ label, message }) => ({ label, message }));
+}
+
 /**
  * The stuck-report marker [[STUCK]] (or **[[ stuck ]]**, `[[STUCK]]`, _[[STUCK]]_), anywhere in the reply:
  * the double-bracket token only exists as our prompt's protocol marker, so it never reaches the user.
@@ -229,6 +254,16 @@ export function takeStuckMarker(text: string): { text: string; stuck: boolean } 
     const stripped = text.replace(STUCK_LINE_START_RE, "").replace(STUCK_ANYWHERE_RE, "");
     if (stripped === text) return { text, stuck: false };
     return { text: stripped.replace(/\n{3,}/g, "\n\n").trim(), stuck: true };
+}
+
+const STUCK_BARE_RE = new RegExp(STUCK_MARKER, "gi");
+
+/**
+ * takeStuckMarker for a stream: drops the marker but not the spaces before a mid-line one,
+ * and neither trims nor collapses blank lines, since streamed text can't be taken back.
+ */
+export function dropStuckMarker(text: string): string {
+    return text.replace(STUCK_LINE_START_RE, "").replace(STUCK_BARE_RE, "");
 }
 
 /** Where a channel has no buttons, a stuck report to the owner ends with this line. */
@@ -268,4 +303,14 @@ export function stuckKeyboard(): InlineKeyboardMarkup {
 /** What a "stuck:<action>" button says on the user's behalf; undefined for any other data. */
 export function stuckCallbackMessage(data: string): string | undefined {
     return data.startsWith("stuck:") ? STUCK_ACTIONS.get(data.slice(6))?.message : undefined;
+}
+
+/** Pulls the [[react:…]] marker out of a reply: the text without it, and the emoji if there was one. */
+export function takeReaction(text: string): { text: string; emoji?: string } {
+    let emoji: string | undefined;
+    const rest = text.replace(/\[\[\s*react\s*:\s*([^\]]{1,16}?)\s*\]\]/gi, (_m, e: string) => {
+        if (!emoji && /\p{Extended_Pictographic}/u.test(e)) emoji = e.trim();
+        return "";
+    });
+    return { text: rest !== text ? rest.trim() : text, emoji };
 }

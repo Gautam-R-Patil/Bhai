@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import { sendBhaiMail } from "../bhai-mail.js";
-import { sendEmailFromAtlas } from "../email.js";
+import { sendEmailFromBhai } from "../email.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 // ── email_send ────────────────────────────────
@@ -62,7 +62,7 @@ export const emailSend: ToolDefinition = {
             if (bcc) return JSON.stringify({ error: "Bhai's own email can't BCC; put them in cc or send separately." });
             return JSON.stringify(await sendBhaiMail({ to, cc, subject, text: body }), null, 2);
         }
-        const result = await sendEmailFromAtlas(to, subject, body, { cc, bcc });
+        const result = await sendEmailFromBhai(to, subject, body, { cc, bcc });
         return JSON.stringify(result, null, 2);
     },
 };

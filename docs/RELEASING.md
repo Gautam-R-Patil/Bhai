@@ -15,12 +15,14 @@ endpoint at `/api/updates` serves only the YAML metadata and points
  │ (electron- │                     │   reads UPDATE_* env vars  │
  │  updater)  │◀── latest*.yml ─────│   returns metadata only    │
  └─────┬──────┘                     └────────────────────────────┘
-       │ downloads DMG/EXE + blockmap directly from R2
+       │ downloads the mac ZIP / EXE + blockmap directly from R2
        ▼
  ┌────────────────────────────────────────────────────────────────┐
  │ Cloudflare R2 bucket (e.g. atlas-releases)                     │
- │   stable/0.2.1/Bhai-0.2.1-arm64.dmg                       │
- │   stable/0.2.1/Bhai-0.2.1-arm64.dmg.blockmap              │
+ │   stable/0.2.1/Bhai-0.2.1-arm64.dmg      (download only)  │
+ │   stable/0.2.1/Bhai-0.2.1-arm64-mac.zip  (mac update)     │
+ │   stable/0.2.1/Bhai-0.2.1-arm64-mac.zip.blockmap          │
+ │   stable/0.2.1/Bhai-0.2.1-mac.zip        (Intel mac update)│
  │   stable/0.2.1/Bhai Setup 0.2.1.exe                       │
  │   stable/0.2.1/Bhai Setup 0.2.1.exe.blockmap              │
  │   beta/…                                                       │
@@ -33,6 +35,16 @@ The Convex YAML surface supports:
   `?channel=alpha` to the feed URL; each channel reads suffixed env
   vars (e.g. `UPDATE_URL_MAC_ALPHA`). If a channel-specific var is
   unset, the handler falls back to the unsuffixed `stable` var.
+- **Intel Macs** — `UPDATE_URL_MAC` is the Apple Silicon zip. The Intel
+  zip (`Bhai-<v>-mac.zip`, built with `--x64`) goes in
+  `UPDATE_URL_MAC_X64` / `UPDATE_SHA512_MAC_X64` / `UPDATE_SIZE_MAC_X64`
+  and is listed as a second `files:` entry; electron-updater picks the
+  one for its arch. `scripts/release.mjs` sets them when that zip is in
+  `desktop/dist`, and removes `UPDATE_URL_MAC_X64` when it is not. Intel
+  Macs ask with `?arch=x64` and get 404 (nothing to install) until an
+  Intel zip is listed, so they never see an update they can't install.
+- **Nothing published** — a feed with no `UPDATE_VERSION` / `UPDATE_URL_*`
+  answers 404, which the app treats as "no release yet".
 - **Failover URLs** — set `UPDATE_URL_MAC_MIRROR` to add a second
   `files:` entry; electron-updater tries them in order.
 - **Delta updates** — uploading the `.blockmap` alongside the binary
@@ -53,7 +65,7 @@ Cloudflare Dashboard → R2 → Create bucket → "atlas-releases"
 Then either:
 
 - Attach a custom domain (recommended). Bucket → Settings → Custom
-  Domains → add `dl.atlas.<your-domain>`. DNS propagates in minutes.
+  Domains → add `dl.bhai.<your-domain>`. DNS propagates in minutes.
 - Or enable the `r2.dev` subdomain for testing (lower throughput; public
   URL looks like `https://pub-<hash>.r2.dev`).
 
@@ -63,7 +75,7 @@ R2 objects are private by default. The cleanest path is:
 
 1. Bucket → Settings → Public access → enable on your custom domain.
 2. Bucket → Settings → CORS → add a rule allowing `GET` from
-   `https://atlas.xagilabs.com` (or `*` if you don't mind).
+   `https://bhai.xagilabs.com` (or `*` if you don't mind).
 
 Blockmap requests do `Range` reads, so make sure your CORS response
 includes `Access-Control-Expose-Headers: Content-Range, Content-Length`.
@@ -101,7 +113,9 @@ What the config actually does today (`desktop/package.json` → `build.mac`):
 - `build:mac` (local dev DMG) additionally runs `build/resign-local.sh`, which
   re-signs with a stable self-made "Bhai Local Signing" identity if present
   (`scripts/make-signing-cert.sh`) so macOS keeps Screen Recording /
-  Accessibility grants across updates. `build:mac:release` does NOT run it.
+  Accessibility grants across updates. Every mac build now runs it from the
+  `afterSign` hook (`build/after-sign.js`), but only while `mac.identity` is
+  `"-"`: a Developer ID build keeps its signature and notarization.
 - `desktop/build/check-signing.js` documents the env vars for real signing
   (`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
   `APPLE_TEAM_ID`; `SKIP_SIGNING_CHECK=true` to skip). Windows uses
@@ -133,11 +147,15 @@ The script (uses the AWS S3 SDK multipart upload, not wrangler):
    currently 0.2.1, is not touched).
 2. Builds the installer via `npm run build:mac:release` (which first runs
    `npm run build:helpers` — the Swift OCR/location/AX helpers must exist —
-   then `npm run build`, then `electron-builder --mac dmg` so a blockmap is
-   emitted; `build:mac`'s custom `create-dmg.sh` does NOT produce blockmaps
-   and must not be used for releases). On a Windows host it runs
+   then `npm run build`, then `electron-builder --mac dmg zip`), then converts
+   the DMG to ULMO (LZMA, ~26% smaller; electron-builder only offers UDZO/ULFO)
+   and re-signs it as it was. electron-updater's MacUpdater installs only from
+   the ZIP (`ERR_UPDATER_ZIP_FILE_NOT_FOUND` otherwise), so the ZIP and its
+   blockmap are the Mac update and `UPDATE_*_MAC` describe the ZIP; the DMG is
+   the first-install download. `build:mac`'s custom `create-dmg.sh` makes no
+   ZIP and must not be used for releases. On a Windows host it runs
    `npm run build:win` (NSIS, x64).
-3. Locates the DMG / EXE / blockmap / `latest*.yml` in `desktop/dist/`.
+3. Locates the DMG / ZIP / EXE / blockmaps / `latest*.yml` in `desktop/dist/`.
 4. Uploads each file to `r2://<bucket>/<channel>/<version>/<filename>`.
 5. Computes SHA-512 (base64) and byte size for each binary.
 6. Either prints or runs the `npx convex env set UPDATE_…` commands.
@@ -187,7 +205,7 @@ npx convex env remove UPDATE_SHA512_MAC
 npx convex env remove UPDATE_SIZE_MAC
 npx convex env remove UPDATE_RELEASE_DATE
 npx convex env set UPDATE_VERSION_ALPHA    0.2.1
-npx convex env set UPDATE_URL_MAC_ALPHA    https://.../alpha/0.2.1/<file>.dmg
+npx convex env set UPDATE_URL_MAC_ALPHA    https://.../alpha/0.2.1/<file>-mac.zip
 npx convex env set UPDATE_SHA512_MAC_ALPHA <base64-sha512>
 npx convex env set UPDATE_SIZE_MAC_ALPHA   <bytes>
 npx convex env set UPDATE_RELEASE_DATE_ALPHA <iso-date>
@@ -206,7 +224,7 @@ before falling back to the next 4 h tick. 404 responses are treated as
 "no release yet" rather than a retryable error.
 
 Users can opt in to a non-stable channel (`beta`, `alpha`, `canary`) from
-Settings → Advanced, which calls `update:setChannel` (`atlas.setUpdateChannel` in the
+Settings → Advanced, which calls `update:setChannel` (`bhai.setUpdateChannel` in the
 renderer), saves the choice to `electron-store`, and re-checks the feed immediately.
 
 ## Why not…

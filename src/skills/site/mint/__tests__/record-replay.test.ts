@@ -32,7 +32,7 @@ const filesIn = (dir: string): string[] =>
 
 beforeAll(async () => {
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;
@@ -346,8 +346,8 @@ describe("offline replay", () => {
         expect(payableOk("MRP ₹499 · Subtotal ₹249 · Total ₹279 · 2 items · 560001", 279)).toBe(true);
         expect(payableOk("Paneer Tikka ₹249 · qty 2", 2)).toBe(false); // not in rupees
         expect(payableOk("Paneer Tikka ₹249 · Delivery ₹30", 249)).toBe(true); // no total shown: the largest
-        // The shop's cart with a delivery fee: the reference skill reads the first
-        // rupee value (the item price) and must fail; reading "To pay" passes.
+        // The shop's cart with a delivery fee: the reference skill reads the cart
+        // line's total element (the item price) and must fail; reading "To pay" passes.
         const t = loadTrace(traceDir);
         const fee = {
             ...t,
@@ -377,10 +377,7 @@ describe("offline replay", () => {
             k: 5,
             got: "249",
         });
-        const toPay = mutate(
-            "amount: price(s.text) || 0",
-            "amount: price((/To pay.*/.exec(s.text) || [s.text])[0]) || 0",
-        );
+        const toPay = mutate('price(tid("total")?.text)', "price((/To pay.*/.exec(s.text) || [])[0])");
         expect(await replaySkill(toPay, fee, { input: INPUT, answer: OTP, browser })).toMatchObject({
             ok: true,
             phases: { confirm: "pass" },
@@ -422,8 +419,8 @@ describe("offline replay", () => {
         ],
         [
             "a review page that reads the input (the runtime re-checks with none)",
-            "summary: line.trim(),",
-            'summary: line.trim() + (input.id || ""),',
+            "summary: line,",
+            'summary: line + (input.id || ""),',
             { phase: "confirm", verdict: "recheck_differs", k: 5 },
         ],
     ] as Array<[string, string, string, object]>)("fails a skill with %s", async ([, from, to, want], ctx) => {

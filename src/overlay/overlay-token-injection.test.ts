@@ -7,11 +7,11 @@ import { isBrowserPageLoad } from "../security/loopback.js";
 import { getOverlayLocalToken, overlayPageToken } from "./overlay-chat.js";
 
 // Regression guard for the overlay WS-auth fix: the served HTML must have its
-// %%ATLAS_LOCAL_TOKEN%% placeholder replaced with the real loopback token, and
+// %%BHAI_LOCAL_TOKEN%% placeholder replaced with the real loopback token, and
 // the client must then send it as ?localToken=. Token-less WS handshakes are
 // rejected (4001) by the server, which previously left the overlay mute.
 describe("overlay token injection", () => {
-    const PLACEHOLDER = "%%ATLAS_LOCAL_TOKEN%%";
+    const PLACEHOLDER = "%%BHAI_LOCAL_TOKEN%%";
 
     it("getOverlayLocalToken returns a stable non-empty hex token", () => {
         const t1 = getOverlayLocalToken();
@@ -22,8 +22,8 @@ describe("overlay token injection", () => {
     });
 
     it("the placeholder-replace contract produces a tokenized page (no placeholder left)", () => {
-        const html = `<script>window.__ATLAS_LOCAL_TOKEN__ = "${PLACEHOLDER}";</script>`;
-        const served = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, getOverlayLocalToken());
+        const html = `<script>window.__BHAI_LOCAL_TOKEN__ = "${PLACEHOLDER}";</script>`;
+        const served = html.replace(/%%BHAI_LOCAL_TOKEN%%/g, getOverlayLocalToken());
         expect(served).not.toContain(PLACEHOLDER);
         expect(served).toContain(getOverlayLocalToken());
     });

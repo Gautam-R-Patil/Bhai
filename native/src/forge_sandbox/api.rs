@@ -31,7 +31,7 @@ fn strikes() -> &'static StrikeBoard {
 }
 
 fn strike_window() -> Duration {
-    let ms = std::env::var("ATLAS_FORGE_STRIKE_WINDOW_MS")
+    let ms = std::env::var("BHAI_FORGE_STRIKE_WINDOW_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(3_600_000);
@@ -39,7 +39,7 @@ fn strike_window() -> Duration {
 }
 
 fn call_timeout() -> Duration {
-    let ms = std::env::var("ATLAS_FORGE_CALL_TIMEOUT_MS")
+    let ms = std::env::var("BHAI_FORGE_CALL_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(60_000);

@@ -2,9 +2,13 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
     formatCapabilitiesForContext,
+    hasBridgeHost,
     type PlatformCapabilities,
 } from "./platform-capabilities.js";
 
@@ -137,5 +141,20 @@ describe("formatCapabilitiesForContext", () => {
         expect(out).toContain("Screenshot: system.drawing");
         expect(out).toContain("Clipboard: clipboardy");
         expect(out).toContain("OCR: windows.media.ocr");
+    });
+});
+
+describe("hasBridgeHost", () => {
+    it("finds com.bhai.bridge or the pre-rename com.atlas.bridge manifest", () => {
+        for (const name of ["com.bhai.bridge.json", "com.atlas.bridge.json"]) {
+            const dir = mkdtempSync(join(tmpdir(), "nm-hosts-"));
+            try {
+                expect(hasBridgeHost(dir)).toBe(false);
+                writeFileSync(join(dir, name), "{}");
+                expect(hasBridgeHost(dir)).toBe(true);
+            } finally {
+                rmSync(dir, { recursive: true, force: true });
+            }
+        }
     });
 });

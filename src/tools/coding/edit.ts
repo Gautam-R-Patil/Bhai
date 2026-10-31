@@ -113,8 +113,8 @@ export const edit: ToolDefinition = {
 
     async handler(input) {
         const rawPath = input.file_path as string;
-        const oldStr = (input.old_string as string) ?? "";
-        const newStr = (input.new_string as string) ?? "";
+        let oldStr = (input.old_string as string) ?? "";
+        let newStr = (input.new_string as string) ?? "";
         const replaceAll = input.replace_all === true;
         // Pre-edit hint from the built-in LSP hook (if fired). Surfaced in
         // the tool result so the model sees "this symbol is defined at X"
@@ -177,7 +177,13 @@ export const edit: ToolDefinition = {
         }
 
         // Occurrence check
-        const parts = before.split(oldStr);
+        let parts = before.split(oldStr);
+        // A CRLF file whose lines the model quoted with LF: match with CRLF, keep CRLF.
+        if (parts.length === 1 && before.includes("\r\n") && !oldStr.includes("\r")) {
+            oldStr = oldStr.replace(/\n/g, "\r\n");
+            newStr = newStr.replace(/\r?\n/g, "\r\n");
+            parts = before.split(oldStr);
+        }
         const occurrences = parts.length - 1;
         if (occurrences === 0) {
             return JSON.stringify({
@@ -190,7 +196,8 @@ export const edit: ToolDefinition = {
             });
         }
 
-        const after = replaceAll ? parts.join(newStr) : before.replace(oldStr, newStr);
+        // join, not String.replace: "$&" / "$$" in new_string must land verbatim.
+        const after = parts.join(newStr);
 
         // Write
         try {
@@ -206,7 +213,7 @@ export const edit: ToolDefinition = {
 
         // Compute the line number of the edit (first line where the change landed)
         // so the debug log points straight at the modified region.
-        const editLine = before.split(oldStr)[0].split("\n").length;
+        const editLine = parts[0].split("\n").length;
         logToolAction({
             tool: "edit",
             filePath,
@@ -223,12 +230,12 @@ export const edit: ToolDefinition = {
         // anything. Surfaces type/parse errors in the tool response so
         // the next iteration sees them immediately — no need for the
         // agent to remember to call `lsp getDiagnostics` itself.
-        // Gated by ATLAS_NO_POST_EDIT_DIAGNOSTICS for users who don't
+        // Gated by BHAI_NO_POST_EDIT_DIAGNOSTICS for users who don't
         // want the extra latency.
         let diagnosticsSummary: string | undefined;
         let postEditErrorCount = 0;
         let lspWasReached = false;
-        if (process.env.ATLAS_NO_POST_EDIT_DIAGNOSTICS !== "true" && isLspWorthy(filePath)) {
+        if (process.env.BHAI_NO_POST_EDIT_DIAGNOSTICS !== "true" && isLspWorthy(filePath)) {
             try {
                 const { lsp } = await import("./lsp.js");
                 const raw = await lsp.handler({

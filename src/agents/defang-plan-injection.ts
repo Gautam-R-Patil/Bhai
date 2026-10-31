@@ -3,7 +3,7 @@
 // Scrub identity-affirming language from an orchestrator's plan output before
 // it gets injected as a system message to the main agent. The orchestrator
 // runs with its own server-side identity-defense prompt, but as belt-and-
-// suspenders this strips any affirmation of TRUSCOR/Atlas/founder/builder
+// suspenders this strips any affirmation of TRUSCOR/Bhai/founder/builder
 // claims that might have leaked through.
 
 // Patterns stored as source-strings so each call gets a fresh RegExp instance.

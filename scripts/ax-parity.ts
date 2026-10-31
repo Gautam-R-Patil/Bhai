@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 //
 // Parity + timing for scripts/dump_ax_bin: per-attribute walk (default) vs the
-// batched walk (the default; ATLAS_NO_AX_BATCH=true turns it off). Compares every node and field of both modes
+// batched walk (the default; BHAI_NO_AX_BATCH=true turns it off). Compares every node and field of both modes
 // (rule: compareRuns in src/screen/ax-batch-parity.ts)
 // and prints the median wall time of 5 interleaved runs each.
 //
@@ -12,6 +12,7 @@
 //
 // Exits 1 on a parity failure or when the hang test misses its budget.
 
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,8 +58,8 @@ function hangTest(): boolean {
     try {
         for (const batch of [false, true]) {
             const r = runDump(BIN, pid, batch, {
-                ATLAS_AX_MSG_TIMEOUT_MS: String(timeoutMs),
-                ATLAS_AX_BUDGET_MS: "3000",
+                BHAI_AX_MSG_TIMEOUT_MS: String(timeoutMs),
+                BHAI_AX_BUDGET_MS: "3000",
             });
             // Two timeouts in a row usually end the walk (~2x the timeout); a quick error between
             // them resets the count, so the hard bound is the helper's 3 s walk budget, plus launch.

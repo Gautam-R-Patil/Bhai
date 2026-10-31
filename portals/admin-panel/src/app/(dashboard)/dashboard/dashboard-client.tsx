@@ -226,7 +226,7 @@ export default function DashboardClient({
         <div className="glass-card-static p-8 text-center">
           <AlertTriangle className="h-12 w-12 text-[--accent-warning] mx-auto mb-4" />
           <p className="text-[--text-secondary]">
-            Convex backend unreachable. Check ATLAS_ADMIN_KEY in .env.local and that the prod
+            Convex backend unreachable. Check BHAI_ADMIN_KEY in .env.local and that the prod
             deployment is up at avid-finch-726.convex.cloud.
           </p>
           <button

@@ -42,8 +42,9 @@ const SERVER_ONLY_APPS = new Set([
 async function getUserIdleSeconds(): Promise<number> {
     if (IS_MAC) {
         try {
+            // -r -d 1 -k: only the IOHIDSystem entry's HIDIdleTime (~4 KB, not the whole 300 KB subtree).
             const { stdout } = await execFileAsync("ioreg", [
-                "-c", "IOHIDSystem",
+                "-r", "-c", "IOHIDSystem", "-d", "1", "-k", "HIDIdleTime",
             ], { timeout: 5000 });
 
             const match = stdout.match(/"HIDIdleTime"\s*=\s*(\d+)/);
@@ -89,27 +90,54 @@ public class IdleTime {
     return 0;
 }
 
+/** The owner touched the keyboard or mouse in the last 5 minutes (getUserPresence's isActive). */
+export async function isUserActive(): Promise<boolean> {
+    return (await getUserIdleSeconds()) < 5 * 60;
+}
+
 // ── Active Apps ───────────────────────────────
 
-async function getActiveApps(): Promise<{ apps: string[]; frontmost: string }> {
+// Bidi marks some apps put in their display name (WhatsApp is "\u200eWhatsApp"); System Events drops them.
+const BIDI_MARKS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * Parse `lsappinfo list`: the user-facing apps (type "Foreground", what System Events calls
+ * "background only is false"), in order, and the one marked "(in front)". A UIElement or
+ * background process marked in front (SecurityAgent's password prompt) is not what System
+ * Events calls frontmost, so frontmost is then empty, as it is when nothing is marked.
+ */
+export function parseLsappinfoList(out: string): { apps: string[]; frontmost: string } {
+    const apps: string[] = [];
+    let frontmost = "";
+    let name: string | null = null;
+    let inFront = false;
+    for (const line of out.split("\n")) {
+        const head = /^\s*\d+\) "(.*)" ASN:/.exec(line);
+        if (head) {
+            name = head[1].replace(BIDI_MARKS, "").trim();
+            inFront = line.includes("(in front)");
+            continue;
+        }
+        if (name !== null && /\btype="Foreground"/.test(line)) {
+            apps.push(name);
+            if (inFront) frontmost = name;
+            name = null;
+        }
+    }
+    return { apps, frontmost };
+}
+
+/** The visible apps and the frontmost one ("" = keep the last known); null when the probe failed (the caller keeps what it knew). */
+async function getActiveApps(): Promise<{ apps: string[]; frontmost: string } | null> {
     if (IS_MAC) {
         try {
-            const [appsResult, frontmostResult] = await Promise.all([
-                execFileAsync("osascript", [
-                    "-e",
-                    'tell application "System Events" to get name of every process whose background only is false',
-                ], { timeout: 5000 }),
-                execFileAsync("osascript", [
-                    "-e",
-                    'tell application "System Events" to get name of first process whose frontmost is true',
-                ], { timeout: 5000 }),
-            ]);
-
-            const apps = appsResult.stdout.trim().split(", ").filter(Boolean);
-            const frontmost = frontmostResult.stdout.trim();
-            return { apps, frontmost };
+            // One lsappinfo call (~1 ms CPU) instead of two parallel System Events osascripts
+            // (~0.2 s CPU, and they collided: -1719 turned the front app into "unknown").
+            const { stdout } = await execFileAsync("lsappinfo", ["list"], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+            const parsed = parseLsappinfoList(stdout);
+            return parsed.apps.length ? parsed : null;
         } catch {
-            return { apps: [], frontmost: "unknown" };
+            return null;
         }
     }
 
@@ -125,7 +153,7 @@ async function getActiveApps(): Promise<{ apps: string[]; frontmost: string }> {
             const frontmost = apps[0] || "unknown";
             return { apps, frontmost };
         } catch {
-            return { apps: [], frontmost: "unknown" };
+            return null;
         }
     }
 
@@ -135,6 +163,7 @@ async function getActiveApps(): Promise<{ apps: string[]; frontmost: string }> {
 // ── App Transition Tracking ──────────────────
 
 let lastFrontmostApp = "";
+let lastApps: string[] = [];
 let lastAppChangeTime = Date.now();
 const appTransitions: string[] = []; // "From → To" history
 const appDurations = new Map<string, number>(); // app → cumulative minutes
@@ -154,11 +183,37 @@ export function getLastAppTransition(): { from: string; to: string } | null {
 
 // ── Main: Get User Presence ───────────────────
 
-export async function getUserPresence(): Promise<UserPresence> {
-    const [idleSeconds, { apps, frontmost }] = await Promise.all([
+// One shared result for the observer, the overlay placeholder and the heartbeat: whoever asks
+// first probes, the rest reuse it (and an in-flight probe) for up to 25 s, under the 30 s poll.
+// The probe that computes a fresh value is the one that emits app_switch / idle_* events.
+const PRESENCE_TTL_MS = 25_000;
+let presenceCache: { at: number; value: Promise<UserPresence> } | null = null;
+
+export function _resetPresenceCacheForTests(): void {
+    presenceCache = null;
+}
+
+export function getUserPresence(): Promise<UserPresence> {
+    if (presenceCache && Date.now() - presenceCache.at < PRESENCE_TTL_MS) return presenceCache.value;
+    const value = probePresence();
+    const entry = { at: Date.now(), value };
+    presenceCache = entry;
+    value.catch(() => {
+        if (presenceCache === entry) presenceCache = null;
+    });
+    return value;
+}
+
+async function probePresence(): Promise<UserPresence> {
+    const [idleSeconds, probed] = await Promise.all([
         getUserIdleSeconds(),
         getActiveApps(),
     ]);
+    // A failed probe isn't an app switch: keep the last known front app and app list.
+    // So is a front process that isn't a user-facing app (SecurityAgent, loginwindow).
+    const apps = probed?.apps ?? lastApps;
+    const frontmost = probed?.frontmost || lastFrontmostApp || "unknown";
+    lastApps = apps;
 
     const idleMinutes = Math.floor(idleSeconds / 60);
     const isActive = idleMinutes < 5;

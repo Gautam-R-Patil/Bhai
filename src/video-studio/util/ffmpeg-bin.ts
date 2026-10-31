@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 
@@ -44,6 +45,12 @@ function resolveFFmpeg(): string {
 
 function resolveFFprobe(): string {
     if (_ffprobePath !== undefined) return _ffprobePath as string;
+    // ffprobe-static's darwin "arm64" binary is x86_64: on a Mac without Rosetta it can't
+    // start (spawn error -86). A native Homebrew one wins when there is one.
+    if (process.platform === "darwin" && process.arch === "arm64" && existsSync("/opt/homebrew/bin/ffprobe")) {
+        _ffprobePath = "/opt/homebrew/bin/ffprobe";
+        return _ffprobePath;
+    }
 
     let resolved: string | null = null;
     try {
@@ -70,4 +77,67 @@ export function ffmpegPath(): string {
 
 export function ffprobePath(): string {
     return resolveFFprobe();
+}
+
+/**
+ * The ffprobe to run (on a Mac Homebrew's when there is one, else the shipped one), or null
+ * when none is installed. ffprobe-static's darwin build is x86_64: without Rosetta it can't
+ * start, so callers fall back to probeWithFfmpeg() when ffprobeCouldNotStart(err).
+ */
+export function ffprobePathIfAny(): string | null {
+    if (process.platform === "darwin") {
+        const brew = process.arch === "arm64" ? "/opt/homebrew/bin/ffprobe" : "/usr/local/bin/ffprobe";
+        if (existsSync(brew)) return brew;
+    }
+    try {
+        return resolveFFprobe();
+    } catch {
+        return null;
+    }
+}
+
+/** The ffprobe process never ran (missing, or an x86_64 binary with no Rosetta: errno -86). */
+export function ffprobeCouldNotStart(err: unknown): boolean {
+    return typeof (err as { code?: unknown } | null)?.code === "string";
+}
+
+export interface MediaProbe {
+    duration: number;
+    width: number;
+    height: number;
+    fps: number;
+}
+
+/**
+ * Reads ffmpeg's input banner (`ffmpeg -hide_banner -i <file>` stderr): the duration
+ * (printed to 10 ms), and the first video stream's size and tbr, which is ffprobe's
+ * r_frame_rate rounded to 2 decimals. Throws when ffmpeg could not open the input.
+ */
+export function parseFfmpegBanner(stderr: string): MediaProbe {
+    if (!/^Input #0,/m.test(stderr)) {
+        throw new Error(stderr.trim().split("\n").at(-1) || "ffmpeg could not read the input");
+    }
+    const d = /Duration: (\d+):(\d{2}):(\d{2}(?:\.\d+)?)/.exec(stderr);
+    const duration = d ? Math.round((Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3])) * 100) / 100 : 0;
+    const video = /^\s*Stream #0:\d+.*?: Video: (.*)$/m.exec(stderr)?.[1] ?? "";
+    // "1920x1080 [SAR", "1280x720," — but not a codec tag like "0x31637661)".
+    const size = /(?:^|[\s,])(\d+)x(\d+)(?=[\s,[]|$)/.exec(video);
+    const tbr = /([\d.]+)(k?) tbr/.exec(video);
+    const fps = tbr ? Math.round(Number(tbr[1]) * (tbr[2] ? 1000 : 1) * 100) / 100 : 0;
+    return { duration, width: size ? Number(size[1]) : 0, height: size ? Number(size[2]) : 0, fps };
+}
+
+/** Duration, size and fps of a media file, from the bundled ffmpeg instead of ffprobe. */
+export function probeWithFfmpeg(file: string, timeoutMs = 30_000): Promise<MediaProbe> {
+    return new Promise((resolve, reject) => {
+        // Exits 1 ("At least one output file must be specified") after printing the banner.
+        execFile(ffmpegPath(), ["-hide_banner", "-i", file], { timeout: timeoutMs }, (err, _stdout, stderr) => {
+            if (err?.killed) return reject(err);
+            try {
+                resolve(parseFfmpegBanner(String(stderr ?? "")));
+            } catch (e) {
+                reject(e);
+            }
+        });
+    });
 }

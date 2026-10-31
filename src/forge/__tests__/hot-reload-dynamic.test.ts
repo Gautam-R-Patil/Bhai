@@ -40,8 +40,8 @@ describe("hot-reload supports dynamic items", () => {
 
     beforeEach(() => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-hr-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
         consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
         consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     });
@@ -50,12 +50,12 @@ describe("hot-reload supports dynamic items", () => {
         consoleLogSpy.mockRestore();
         consoleWarnSpy.mockRestore();
         rmSync(tmpDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("hotReloadItem accepts type='dynamic' without throwing", async () => {
-        const dynDir = join(process.env.ATLAS_HOME!, "store", "dynamic", "demo");
+        const dynDir = join(process.env.BHAI_HOME!, "store", "dynamic", "demo");
         mkdirSync(dynDir, { recursive: true });
         writeFileSync(join(dynDir, "handler.js"), "module.exports = async () => 'ok';");
         writeFileSync(join(dynDir, "schema.json"), JSON.stringify({ type: "object", properties: {} }));

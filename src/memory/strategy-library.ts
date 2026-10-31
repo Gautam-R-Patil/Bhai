@@ -8,13 +8,13 @@
 // and the recovery approaches for different task types.
 //
 // Three loops feed into this:
-//   1. IMMEDIATE: recordToolRecovery() saves fallback paths during task execution
-//   2. POST-SESSION: extractStrategies() called during reflection to distill patterns
-//   3. CROSS-SESSION: getStrategy() called by orchestrator to plan with past knowledge
+//   1. agent.ts saveStrategy()s a multi-tool task when it completes
+//   2. the overlay's thumbs up/down reinforceStrategy()s the latest one
+//   3. getStrategyContext() hands a matching strategy to the next similar turn
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getBhaiHome } from "../config/paths.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -38,7 +38,7 @@ interface StrategyStore {
 
 // ── State ─────────────────────────────────────
 
-const DATA_DIR = join(homedir(), ".atlas", "data");
+const DATA_DIR = join(getBhaiHome(), "data");
 const STORE_FILE = join(DATA_DIR, "strategy-library.json");
 const MAX_STRATEGIES = 200;
 const SAVE_DEBOUNCE_MS = 3000;

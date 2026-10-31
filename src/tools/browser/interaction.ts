@@ -12,7 +12,7 @@ import { checkAuthWall } from "./auth-wall.js";
 import { getCurrentMode } from "./browser-backend.js";
 import { quickCaptchaCheck } from "./captcha.js";
 import {
-    ATLAS_HUD_JS,
+    BHAI_HUD_JS,
     buildElementsText,
     getActivePage,
     getActivePageIndex,
@@ -143,7 +143,7 @@ export const browserClickAt: ToolDefinition = {
                     ? `🖱 Clicking "${(lastElementMap.find((e) => e.label === Number(input.label))?.text || "").substring(0, 30) || `#${input.label}`}"`
                     : `🖱 Clicking (${Math.round(x)}, ${Math.round(y)})`;
             await page
-                .evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: hudLabel, done: false })})`)
+                .evaluate(`(${BHAI_HUD_JS})(${JSON.stringify({ label: hudLabel, done: false })})`)
                 .catch(() => {});
 
             const modifiers: string[] = [];
@@ -180,7 +180,7 @@ export const browserClickAt: ToolDefinition = {
             const attemptRecovery = async () => {
                 console.log("Attempting error recovery: Dismissing active modal/overlay");
                 await page.keyboard.press("Escape");
-                await page.waitForTimeout(300);
+                await waitForPageReady(page, 1000);
             };
 
             try {
@@ -215,13 +215,16 @@ export const browserClickAt: ToolDefinition = {
                                 const live = await liveCenter(handle);
                                 if (!live) return JSON.stringify({ error: VANISHED, raw_error: errMsg });
                                 executionMethod = "coordinates_fallback";
-                                await page.waitForTimeout(150);
                                 await (input.double_click
                                     ? page.mouse.dblclick(live.x, live.y)
                                     : page.mouse.click(live.x, live.y));
                             }
                         } else if (gone || /detached|not attached|not visible/.test(errMsg)) {
                             return JSON.stringify({ error: VANISHED, raw_error: errMsg });
+                        } else if (/command "click_at" timed out/.test(errMsg)) {
+                            // The click may still land (an alert() the extension can't close holds it), and a
+                            // second one would land too once the owner closes it: report the failed click.
+                            throw handleErr;
                         } else if (/not enabled|disabled/i.test(errMsg)) {
                             // Clicking it anyway "succeeds" and does nothing.
                             return JSON.stringify({
@@ -232,7 +235,6 @@ export const browserClickAt: ToolDefinition = {
                             const live = await liveCenter(handle);
                             if (!live) return JSON.stringify({ error: VANISHED, raw_error: errMsg });
                             executionMethod = "coordinates_fallback";
-                            await page.waitForTimeout(150);
                             await (input.double_click
                                 ? page.mouse.dblclick(live.x, live.y)
                                 : page.mouse.click(live.x, live.y));
@@ -286,7 +288,7 @@ export const browserClickAt: ToolDefinition = {
 
             // Record success for native loop/rate tracker
             recordBrowserAction("click", page.url(), String(input.label ?? `${x},${y}`), true);
-            await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
+            await page.evaluate(`(${BHAI_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
 
             return JSON.stringify({
                 success: true,
@@ -437,9 +439,8 @@ export const browserRightClick: ToolDefinition = {
             const y = input.y as number;
 
             await agentCursor(page, { x, y }, "right");
-            await page.waitForTimeout(200);
             await page.mouse.click(x, y, { button: "right" });
-            await page.waitForTimeout(200);
+            await waitForPageReady(page, 1000); // a page-drawn context menu
             invalidateCache();
 
             return JSON.stringify({ success: true, right_clicked_at: { x, y } });
@@ -560,7 +561,7 @@ export const browserDrag: ToolDefinition = {
             if (input.shift) await page.keyboard.up("Shift");
             if (input.ctrl) await page.keyboard.up("Control");
 
-            await page.waitForTimeout(200);
+            await waitForPageReady(page, 1000);
             invalidateCache();
 
             return JSON.stringify({
@@ -738,7 +739,7 @@ export const browserType: ToolDefinition = {
                     } else {
                         await page.mouse.click(el.x, el.y);
                     }
-                    await page.waitForTimeout(300);
+                    await waitForPageReady(page, 1500);
                 } else {
                     return JSON.stringify({
                         error: `Label ${input.label} not found. Run browser_scan to refresh elements.`,
@@ -747,7 +748,7 @@ export const browserType: ToolDefinition = {
             } else if (input.x !== undefined && input.y !== undefined) {
                 await agentCursor(page, { x: input.x as number, y: input.y as number }, "click");
                 await page.mouse.click(input.x as number, input.y as number);
-                await page.waitForTimeout(300);
+                await waitForPageReady(page, 1500);
             }
 
             // A saved secret (vault.ts) is typed only after its origin check, here, after the click above.
@@ -766,7 +767,6 @@ export const browserType: ToolDefinition = {
                         const clear = input.clear_first !== false;
                         if (clear) {
                             await page.keyboard.press("ControlOrMeta+a");
-                            await page.waitForTimeout(50);
                         }
                         const refused = await typeVaultText(page, input.text as string, clear);
                         if (refused) return JSON.stringify({ error: refused });
@@ -850,7 +850,6 @@ export const FOCUS_KIND_JS = `(() => {
 async function typeHumanLike(page: any, text: string, clear: boolean): Promise<void> {
     if (clear) {
         await page.keyboard.press("ControlOrMeta+a"); // cross-platform; selects the field only
-        await page.waitForTimeout(50);
     }
     // Rust humanTypingDelayMs gives realistic WPM-based delays per character
     // Fall back to 35ms uniform if native unavailable
@@ -1159,7 +1158,7 @@ export const browserKeyboard: ToolDefinition = {
 
                 // Enter submits forms / sends messages: let the page settle before reporting.
                 if (key === "Enter") await waitForPageReady(page, 1500);
-                else await page.waitForTimeout(150);
+                else await waitForPageReady(page, 1000);
                 invalidateCache();
                 return JSON.stringify({ success: true, combo, url: page.url(), ...takePageEvents() });
             }
@@ -1203,7 +1202,7 @@ export const browserScrollElement: ToolDefinition = {
             if (!el) {
                 return JSON.stringify({ error: `Label ${input.label} not found. Run browser_scan first.` });
             }
-            if (!el.handle) {
+            if (typeof el.handle?.evaluate !== "function") {
                 return JSON.stringify({
                     error: `No DOM handle for label ${input.label}. Run browser_scan to refresh.`,
                 });

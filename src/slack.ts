@@ -7,10 +7,13 @@
 // Handles @mentions and DMs, threads long conversations,
 // formats with Block Kit, and processes file uploads.
 
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import type { App, SayFn } from "@slack/bolt";
 import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
-import { runAgent, type MediaAttachment, type ChannelContext } from "./agent.js";
+import { registerImageDelivery } from "./media/image-jobs.js";
+import { runAgent, type GeneratedImage, type MediaAttachment, type ChannelContext } from "./agent.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { mapStepStatus, parseStepLine } from "./step-status.js";
 
@@ -43,6 +46,16 @@ function parseSlackOwners(): Set<string> {
 export function isPlatformOwner(channel: "slack", userId: string): boolean {
     if (channel !== "slack") return false;
     return parseSlackOwners().has(userId);
+}
+
+/**
+ * Owner powers and private memory (forget, pins, corrections) only for the owner in a
+ * one-to-one DM with Bhai (an IM channel, id "D…"): a channel, group DM or thread reply
+ * is read by everyone in it.
+ */
+export function slackChannelContext(channel: string, userId: string): ChannelContext {
+    const owner = channel.startsWith("D") && isPlatformOwner("slack", userId);
+    return { channel: "slack", userId, isOwner: owner, isPrivate: owner };
 }
 
 // F7: per-sender inbound rate limit.
@@ -86,6 +99,17 @@ export async function initSlack(llm: LLMClient): Promise<void> {
         token: botToken,
         appToken: appToken,
         socketMode: true,
+    });
+    registerImageDelivery("slack", async (to, images, text, ownerDm) => {
+        // A scheduled task's: the owner's DM, as its own result goes.
+        if (to === "owner") return sendSlackProactiveMessage(text, images);
+        if (!slackApp) return false;
+        const [channel, thread_ts] = to.split(":");
+        const say = ((m: { text: string }) =>
+            slackApp?.client.chat.postMessage({ channel, thread_ts, text: m.text })) as unknown as SayFn;
+        await say({ text });
+        await sendImages(images, say, channel, thread_ts, ownerDm);
+        return true;
     });
 
     // -- Handle @mentions in channels --
@@ -219,10 +243,9 @@ async function handleSlackMessage(
             }
         };
 
-        // Owner powers only in a DM (Slack DM channel ids start with "D"): a channel or
-        // thread reply is read by everyone in it.
-        const senderIsOwner = channel.startsWith("D") && isPlatformOwner("slack", slackUserId || "");
-        const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, { channel: "slack", userId: slackUserId || "", userName: undefined, isOwner: senderIsOwner });
+        const ctx = { ...slackChannelContext(channel, slackUserId || ""), replyTo: `${channel}:${threadTs}` };
+        const senderIsOwner = ctx.isOwner;
+        const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, ctx);
 
         // Clean the response
         const cleanText = slackStuckReplyText(result, senderIsOwner, channel)
@@ -240,6 +263,8 @@ async function handleSlackMessage(
                     await slackApp.client.chat.delete({ channel, ts: statusMessageTs });
                 } catch { /* */ }
             }
+            // Paid-for images still arrive when the reply itself is empty.
+            await sendImages(result.images, say, channel, threadTs, senderIsOwner);
             return;
         }
 
@@ -272,6 +297,8 @@ async function handleSlackMessage(
             }
         }
 
+        await sendImages(result.images, say, channel, threadTs, senderIsOwner);
+
         console.log(`[SLACK] Responded (${result.toolCalls} tool calls, ${cleanText.length} chars)`);
     } catch (err) {
         console.error("[SLACK] Error handling message:", (err as Error).message);
@@ -283,6 +310,36 @@ async function handleSlackMessage(
         } catch { /* */ }
     } finally {
         activeThreads.delete(threadKey);
+    }
+}
+
+/**
+ * The turn's generated images, uploaded into the reply's thread as one message. Without the
+ * files:write scope the upload fails: the owner gets one line saying where they were saved
+ * instead. Never throws.
+ */
+export async function sendImages(
+    images: GeneratedImage[] | undefined,
+    say: SayFn,
+    channel: string,
+    threadTs: string | undefined,
+    senderIsOwner: boolean,
+): Promise<void> {
+    if (!images?.length) return;
+    try {
+        if (!slackApp) throw new Error("Slack not connected");
+        const file_uploads = await Promise.all(
+            images.map(async (img) => ({ file: await readFile(img.path), filename: basename(img.path) })),
+        );
+        await slackApp.client.files.uploadV2({ channel_id: channel, thread_ts: threadTs, file_uploads });
+    } catch (err) {
+        console.warn("[SLACK] Failed to upload images:", (err as Error).message);
+        const noScope = (err as { data?: { error?: string } }).data?.error === "missing_scope";
+        if (senderIsOwner)
+            await say({
+                text: `Couldn't post the image here${noScope ? " (the Slack app needs the files:write scope)" : ""}; it's saved at ${images.map((i) => i.path).join(", ")}`,
+                thread_ts: threadTs,
+            }).catch(() => {});
     }
 }
 
@@ -480,8 +537,9 @@ function splitSlackMessage(text: string, maxLen: number): string[] {
  * Send a proactive message to a Slack channel or DM.
  * Used by the heartbeat/notification system.
  */
-export async function sendSlackProactiveMessage(message: string): Promise<boolean> {
-    if (!slackApp) return false;
+export async function sendSlackProactiveMessage(message: string, images?: GeneratedImage[]): Promise<boolean> {
+    const app = slackApp;
+    if (!app) return false;
 
     // Proactive messages carry the owner's private data: to the owner's DM. The default
     // channel is used only when no owner id is set (it may be shared).
@@ -491,17 +549,21 @@ export async function sendSlackProactiveMessage(message: string): Promise<boolea
 
     try {
         if (ownerId) {
-            const opened = await slackApp.client.conversations.open({ users: ownerId });
+            const opened = await app.client.conversations.open({ users: ownerId });
             channelId = opened.channel?.id;
             if (!channelId) return false;
         }
         if (!channelId) return false;
         const blocks = formatBlockKit(message);
-        await slackApp.client.chat.postMessage({
+        await app.client.chat.postMessage({
             channel: channelId,
             blocks,
             text: message,
         });
+        // The images follow as their own message; a failed upload tells only the owner's DM where they're saved.
+        const to = channelId;
+        const say = ((m: { text: string }) => app.client.chat.postMessage({ channel: to, text: m.text })) as unknown as SayFn;
+        await sendImages(images, say, to, undefined, !!ownerId);
         return true;
     } catch (err) {
         console.error("[SLACK] Failed to send proactive message:", (err as Error).message);

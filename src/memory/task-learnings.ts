@@ -50,7 +50,7 @@ interface LearningsStore {
 
 // ── Storage ───────────────────────────────────
 
-const STORE_PATH = path.join(process.env.ATLAS_DATA_DIR || path.resolve("data"), "task-learnings.json");
+const STORE_PATH = path.join(process.env.BHAI_DATA_DIR || path.resolve("data"), "task-learnings.json");
 let store: LearningsStore = { learnings: [] };
 let counter = 0;
 

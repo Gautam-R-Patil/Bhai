@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 // Same-origin proxies — accounts:listAll / getStats / updateAccount /
 // addCredits / deleteAccount are internalQuery/internalMutation in
 // convex/accounts.ts (NOT reachable via /api/query). The /api/users/*
-// Next.js routes (server-side) hold ATLAS_ADMIN_KEY and forward to the
+// Next.js routes (server-side) hold BHAI_ADMIN_KEY and forward to the
 // admin-key-gated Convex routes.
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(input, {

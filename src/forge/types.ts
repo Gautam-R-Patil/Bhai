@@ -65,7 +65,7 @@ export interface SynthesisFailureReport {
     attempts: number;
     finalDiagnosis: string;
     failureReason: "exhausted_attempts" | "sast_unrecoverable" | "parse_unrecoverable" | "budget_exceeded";
-    reportPath: string; // ~/.atlas/store/dynamic/_failed/<ts>_<slug>.json
+    reportPath: string; // ~/.bhai/store/dynamic/_failed/<ts>_<slug>.json
 }
 
 // ── Tool metadata (what library.ts returns) ───────

@@ -83,7 +83,7 @@ export async function checkBattery(): Promise<{ alert: string | null; state: Bat
 // 2. CALENDAR MONITOR (Apple Calendar via osascript)
 // ═══════════════════════════════════════════════
 
-interface CalendarEvent {
+export interface CalendarEvent {
     title: string;
     startTime: string;
     endTime: string;
@@ -102,8 +102,48 @@ export async function checkUpcomingEvents(): Promise<{ alert: CalendarEvent | nu
     }
 
     try {
-        // Get events in the next 30 minutes using JXA
-        const script = `
+        const events = await listUpcomingEvents();
+        const now = Date.now();
+
+        // Find first event within 15 minutes that we haven't alerted about
+        const upcoming = events.find(ev => {
+            if (ev.minutesUntil > 15 || ev.minutesUntil < 0) return false;
+            const lastAlert = lastCalendarAlert[ev.title] || 0;
+            // Don't re-alert within 20 minutes for same event
+            if (now - lastAlert < 20 * 60 * 1000) return false;
+            return true;
+        });
+
+        if (upcoming) {
+            lastCalendarAlert[upcoming.title] = now;
+            // Clean up old entries
+            for (const [title, ts] of Object.entries(lastCalendarAlert)) {
+                if (now - ts > 60 * 60 * 1000) delete lastCalendarAlert[title];
+            }
+            return { alert: upcoming, events };
+        }
+
+        return { alert: null, events };
+    } catch {
+        return { alert: null, events: [] };
+    }
+}
+
+// One Calendar read shared by everyone asking at the same time (monitors, environment sensors).
+let calendarInflight: Promise<CalendarEvent[]> | null = null;
+
+/** Apple Calendar events starting in the next 30 minutes (macOS; [] elsewhere). Throws when Calendar can't be read. */
+export function listUpcomingEvents(): Promise<CalendarEvent[]> {
+    if (!IS_MAC) return Promise.resolve([]);
+    calendarInflight ??= readUpcomingEvents().finally(() => {
+        calendarInflight = null;
+    });
+    return calendarInflight;
+}
+
+async function readUpcomingEvents(): Promise<CalendarEvent[]> {
+    // Get events in the next 30 minutes using JXA
+    const script = `
 const app = Application("Calendar");
 const now = new Date();
 const soon = new Date(now.getTime() + 30 * 60 * 1000);
@@ -134,37 +174,14 @@ try {
 
 JSON.stringify(results);`;
 
-        const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", script], { timeout: 10000 });
-        const rawEvents: Array<{ title: string; startTime: string; endTime: string; location: string; notes: string }> = JSON.parse(stdout.trim() || "[]");
+    const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", script], { timeout: 10000 });
+    const rawEvents: Array<{ title: string; startTime: string; endTime: string; location: string; notes: string }> = JSON.parse(stdout.trim() || "[]");
 
-        const now = Date.now();
-        const events: CalendarEvent[] = rawEvents.map(ev => ({
-            ...ev,
-            minutesUntil: Math.round((new Date(ev.startTime).getTime() - now) / 60000),
-        }));
-
-        // Find first event within 15 minutes that we haven't alerted about
-        const upcoming = events.find(ev => {
-            if (ev.minutesUntil > 15 || ev.minutesUntil < 0) return false;
-            const lastAlert = lastCalendarAlert[ev.title] || 0;
-            // Don't re-alert within 20 minutes for same event
-            if (now - lastAlert < 20 * 60 * 1000) return false;
-            return true;
-        });
-
-        if (upcoming) {
-            lastCalendarAlert[upcoming.title] = now;
-            // Clean up old entries
-            for (const [title, ts] of Object.entries(lastCalendarAlert)) {
-                if (now - ts > 60 * 60 * 1000) delete lastCalendarAlert[title];
-            }
-            return { alert: upcoming, events };
-        }
-
-        return { alert: null, events };
-    } catch {
-        return { alert: null, events: [] };
-    }
+    const now = Date.now();
+    return rawEvents.map(ev => ({
+        ...ev,
+        minutesUntil: Math.round((new Date(ev.startTime).getTime() - now) / 60000),
+    }));
 }
 
 // ═══════════════════════════════════════════════
@@ -289,6 +306,7 @@ export async function checkClipboardForUrl(): Promise<{ url: string | null }> {
 export interface MonitorResults {
     batteryAlert: string | null;
     calendarAlert: CalendarEvent | null;
+    upcomingEventCount: number; // Calendar events starting in the next 30 minutes
     diskAlert: string | null;
     appChanged: { from: string; to: string } | null;
     clipboardUrl: string | null;
@@ -311,6 +329,7 @@ export async function runAllMonitors(frontmostApp: string): Promise<MonitorResul
     return {
         batteryAlert: battery.alert,
         calendarAlert: calendar.alert,
+        upcomingEventCount: calendar.events.length,
         diskAlert: disk.alert,
         appChanged: appChange.changed ? { from: appChange.from, to: appChange.to } : null,
         clipboardUrl: clipboard.url,

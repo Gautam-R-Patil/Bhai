@@ -168,7 +168,7 @@ async function searchWikimedia(query: string, count: number): Promise<StockImage
     url.searchParams.set("iiurlwidth", "1600");
 
     const res = await fetch(url.toString(), {
-        headers: { "User-Agent": "Bhai/1.0 web-designer (commons@atlas)" },
+        headers: { "User-Agent": "Bhai/1.0 web-designer (commons@bhai)" },
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { query?: { pages?: Record<string, Record<string, unknown>> } };

@@ -2,16 +2,28 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { noteFrontAfterStep } from "../screen/frontmost.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
-import { currentSwarmRun, currentSwarmStep, isPaymentCall, outsideSwarm, shellText, swarmGate } from "../agents/swarm-context.js";
+import { getBhaiHome } from "../config/paths.js";
+import {
+    currentSwarmRun,
+    currentSwarmStep,
+    isExternalSideEffect,
+    isPaymentCall,
+    MONEY_PRESS_TOOLS,
+    outsideSwarm,
+    shellText,
+    swarmGate,
+} from "../agents/swarm-context.js";
 import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { checkConsent } from "../security/consent.js";
+import { type Control, describeControls, judge } from "../skills/site/page-driver.js";
 import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
+import { packageConfigPath } from "../store/installer.js";
 import { sideloadSkillTool } from "../store/sideload.js";
 import {
     contactLookupTool,
@@ -28,6 +40,7 @@ import {
     osDrag,
     remindersTool,
     windowManage,
+    calculatorTool,
 } from "./app-integrations.js";
 import { appleNotesTool } from "./apple-notes.js";
 import { askOwnerTool } from "./ask-owner.js";
@@ -36,11 +49,10 @@ import { blenderScript } from "./blender.js";
 import { brandAudit } from "./brand-audit.js";
 import { captchaAfterAction } from "./browser/captcha.js";
 import { browserMark } from "./browser/mark.js";
-import { getActivePage } from "./browser/core.js";
+import { getActivePage, getLastElementMap } from "./browser/core.js";
 import {
     browserAnalyze,
     browserBack,
-    browserCacheActions,
     browserChromeStatus,
     browserClick,
     browserClickAt,
@@ -55,7 +67,6 @@ import {
     browserParallelActions,
     browserParallelTabs,
     browserRecallStrategy,
-    browserReplayActions,
     browserRightClick,
     browserRunJs,
     browserSaveStrategy,
@@ -101,10 +112,9 @@ import { walkthroughTool } from "./coding/walkthrough.js";
 import { webAssetDownload } from "./coding/web-asset-download.js";
 import { write } from "./coding/write.js";
 import { coldOutreach } from "./cold-outreach.js";
-import { computerUseTool, setComputerUseLLM } from "./computer-use-tool.js";
 import { createTool, listDynamicTools, setRegistryRef } from "./create-tool.js";
 import { credentialSetup } from "./credential-setup.js";
-import { cronTool } from "./cron-tool.js";
+import { cronTool, isNoOutwardCaller } from "./cron-tool.js";
 import {
     cancelDeepResearch,
     checkDeepResearch,
@@ -113,15 +123,27 @@ import {
     deepResearch,
     getResearchStatusSnippet,
     initDeepResearch,
+    resumeInterruptedResearch,
     setDeepResearchLLM,
     setDeepResearchNotifier,
     setDeepResearchProgress,
     setOverlayResearchProgress,
+    setOverlayResearchResult,
 } from "./deep-research.js";
 import { documentTools, initDocumentTools } from "./document.js";
 import { emailSend } from "./email-tool.js";
-import { compressFiles, fileMetadata, findFiles, openInApp, runShortcut, screenRecord, trashManager } from "./file-utils.js";
-import { deleteFile, listDirectory } from "./files.js";
+import {
+    compressFiles,
+    fileMetadata,
+    findFiles,
+    openInApp,
+    resolveHomePath,
+    runShortcut,
+    screenRecord,
+    trashManager,
+} from "./file-utils.js";
+import { deleteFile, fileManage, listDirectory } from "./files.js";
+import { imageEdit, pdfEdit } from "./media-files.js";
 import { approveDynamicToolTool, revokeDynamicToolTool } from "./forge-approval.js";
 import { generateImage } from "./generate-image.js";
 import { getCurrentTime, type ToolDefinition } from "./get-current-time.js";
@@ -129,6 +151,7 @@ import { gifSearch } from "./gif-search.js";
 import { githubTool } from "./github-api.js";
 import { gitmcpDocs } from "./gitmcp.js";
 import { gmailTool, googleAccounts, googleCalendarTool } from "./google-api.js";
+import { importMemory } from "./import-memory.js";
 import {
     linuxOsClick,
     linuxOsContext,
@@ -242,7 +265,7 @@ import {
     videoSearchBroll,
 } from "./video-studio.js";
 import { weatherTool } from "./weather.js";
-import { webSearch } from "./web-search.js";
+import { webRead, webSearch } from "./web-search.js";
 import { listWebhooks, registerWebhook } from "./webhook.js";
 import {
     powerShellScript,
@@ -257,7 +280,7 @@ import {
 } from "./windows.js";
 
 // ── Store Tools Constants ────────────────────────
-const STORE_TOOLS_PATH = path.join(homedir(), ".atlas", "store", "tools");
+const STORE_TOOLS_PATH = path.join(getBhaiHome(), "store", "tools");
 
 export { setIngestLLM } from "../documents/ingest.js";
 export { setCampaignPlannerLLM } from "../marketing/campaign-planner.js";
@@ -279,15 +302,16 @@ export {
     clearSwarmProgress,
     getResearchStatusSnippet,
     initDeepResearch,
+    resumeInterruptedResearch,
     setCodeActionExecutor,
     setCodeActionLLM,
-    setComputerUseLLM,
     setDeepResearchLLM,
     setDeepResearchNotifier,
     setDeepResearchProgress,
     setLongTaskLLM,
     setLongTaskProgress,
     setOverlayResearchProgress,
+    setOverlayResearchResult,
     setSwarmLLM,
     setSwarmProgress,
 };
@@ -308,7 +332,8 @@ registry.set(memoryStore.schema.function.name, memoryStore);
 registry.set(memorySearch.schema.function.name, memorySearch);
 registry.set(memoryList.schema.function.name, memoryList);
 registry.set(memoryForget.schema.function.name, memoryForget);
-if (process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
+registry.set(importMemory.schema.function.name, importMemory);
+if (process.env.BHAI_NO_SESSION_SEARCH !== "true") {
     registry.set(sessionSearch.schema.function.name, sessionSearch);
 }
 
@@ -487,6 +512,10 @@ registry.set(grep.schema.function.name, grep);
 registry.set(glob.schema.function.name, glob);
 registry.set(listDirectory.schema.function.name, listDirectory);
 registry.set(deleteFile.schema.function.name, deleteFile);
+registry.set(fileManage.schema.function.name, fileManage);
+registry.set(calculatorTool.schema.function.name, calculatorTool);
+registry.set(imageEdit.schema.function.name, imageEdit);
+registry.set(pdfEdit.schema.function.name, pdfEdit);
 
 // Plan mode tools
 registry.set(enterPlanModeTool.schema.function.name, enterPlanModeTool);
@@ -509,6 +538,7 @@ registry.set(scaffoldProject.schema.function.name, scaffoldProject);
 
 // Web & browser tools
 registry.set(webSearch.schema.function.name, webSearch);
+registry.set(webRead.schema.function.name, webRead);
 registry.set(browserNavigate.schema.function.name, browserNavigate);
 registry.set(browserScan.schema.function.name, browserScan);
 registry.set(browserClickAt.schema.function.name, browserClickAt);
@@ -535,8 +565,6 @@ registry.set(browserUploadFile.schema.function.name, browserUploadFile);
 registry.set(browserMultiAction.schema.function.name, browserMultiAction);
 registry.set(browserScrollElement.schema.function.name, browserScrollElement);
 registry.set(browserParallelTabs.schema.function.name, browserParallelTabs);
-registry.set(browserReplayActions.schema.function.name, browserReplayActions);
-registry.set(browserCacheActions.schema.function.name, browserCacheActions);
 registry.set(browserParallelActions.schema.function.name, browserParallelActions);
 registry.set(browserSetMode.schema.function.name, browserSetMode);
 registry.set(browserChromeStatus.schema.function.name, browserChromeStatus);
@@ -621,9 +649,6 @@ registry.set(mdToPdfTool.schema.function.name, mdToPdfTool);
 registry.set(screenRecordTool.schema.function.name, screenRecordTool);
 registry.set(demoProjectTool.schema.function.name, demoProjectTool);
 
-// Computer use agent (desktop automation)
-registry.set(computerUseTool.schema.function.name, computerUseTool);
-
 // WhatsApp messaging tools
 registry.set(whatsappSendTool.schema.function.name, whatsappSendTool);
 registry.set(contactLookupTool.schema.function.name, contactLookupTool);
@@ -666,11 +691,11 @@ for (const n of SEND_TOOLS) {
  * burns an iteration on a guaranteed "WhatsApp is not connected" before the
  * agent reroutes to GUI automation — so hide it until connected. Re-evaluated
  * per message (getToolSchemas* is not boot-cached) so it reappears once linked.
- * Emergency rollback: ATLAS_NO_WHATSAPP_TOOL_GATING=true.
+ * Emergency rollback: BHAI_NO_WHATSAPP_TOOL_GATING=true.
  */
 function isToolOfferable(name: string): boolean {
-    if (name.startsWith("vault_")) return process.env.ATLAS_NO_VAULT !== "true";
-    if (process.env.ATLAS_NO_WHATSAPP_TOOL_GATING === "true") return true;
+    if (name.startsWith("vault_")) return process.env.BHAI_NO_VAULT !== "true";
+    if (process.env.BHAI_NO_WHATSAPP_TOOL_GATING === "true") return true;
     if (name === "whatsapp_send" || name === "whatsapp_sticker" || name === "whatsapp_group_info") {
         return getWhatsAppStatus() === "connected";
     }
@@ -710,13 +735,17 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_scroll: 10_000,
     browser_scan: 20_000,
     browser_screenshot: 15_000,
-    // Covers the solver tiers plus the human hand-off wait (ATLAS_CAPTCHA_HANDOFF_MS, 5 min).
+    // Covers the solver tiers plus the human hand-off wait (BHAI_CAPTCHA_HANDOFF_MS, 5 min).
     // Shell/system tools - variable execution time
     shell: 60_000, // Shell commands can take a while
     run_code: 30_000,
     // Research/network tools
     web_search: 20_000,
+    web_read: 60_000, // up to 3 tries of a 15s fetch, plus PDF parsing
     deep_research: 300_000, // 5 minutes for deep research
+    import_memory: 300_000, // one model call per ~12K chars of a large export, then a dedupe check per fact
+    generate_image: 200_000, // waits up to 150s for the server's image queue, then hands the job to media/image-jobs.ts
+    create_presentation: 360_000, // outline + AI slide images (waited for up to 4 min, then stock) + render
     // File operations (coding primitives)
     read: 10_000,
     edit: 10_000,
@@ -738,7 +767,13 @@ async function executeWithTimeout<T>(promise: Promise<T>, timeoutMs: number, too
     let timeoutId: NodeJS.Timeout;
     const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
-            reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs / 1000}s`));
+            // The handler isn't cancelled: a change it makes may still land. Saying so keeps
+            // the model from repeating an event, a push or a purchase that went through.
+            reject(
+                new Error(
+                    `Tool "${toolName}" timed out after ${timeoutMs / 1000}s and may still finish in the background. If it changes something, check whether it happened before running it again.`,
+                ),
+            );
         }, timeoutMs);
     });
 
@@ -771,6 +806,140 @@ async function livePaymentHost(): Promise<string> {
     }
 }
 
+// ── Money-word gate for raw browser presses ──
+// A hijacked model can skip site_task and press "Place order" with the browser
+// tools. Each press is judged on the live page by the Site Skill commit guard
+// (page-driver describeControls + judge); a money-word control needs the owner's
+// yes in their next message, like a site_task confirm, and a swarm never presses
+// one (isPaymentCall). Anything else runs as before.
+// ponytail: judged here, pressed a moment later by the tool (the TOCTOU of
+// page-driver's guard); blind to browser_run_js / js_eval, os_* clicks, a control
+// inside an iframe, and a label with no money word ("Continue"). A target the page
+// doesn't show within the tool's own wait is refused, not waved through (a
+// multi_action step after its own navigate included: press it in its own call).
+// A click-time in-page listener would close the TOCTOU.
+type Press = { sel?: string; text?: string; label?: number; x?: number; y?: number; form?: boolean };
+const LOCATE_MS = 5000; // how long browser_click waits for its target (interaction.ts)
+/** The key a press sends, as the tools read it: the last "+" part trimmed, Playwright's "\n" / "\r" as Enter. */
+const keyOf = (k: unknown): string => {
+    if (typeof k !== "string") return "";
+    const last = k.length > 1 ? (k.split("+").pop() ?? "") : k;
+    return /^[\r\n]$/.test(last) ? "Enter" : last === " " ? " " : last.trim();
+};
+const isPressKey = (k: unknown) => /^(Enter|NumpadEnter|Space| )$/i.test(keyOf(k)); // presses the focused control; Enter also submits its form
+const isSpace = (k: unknown) => /^(Space| )$/i.test(keyOf(k));
+const hasNewline = (t: unknown) => /[\r\n]/.test(String(t ?? ""));
+
+/** The controls a browser tool call would press: its click target, and the focused element for Enter/Space. */
+function pressesOf(name: string, a: Record<string, unknown>): Press[] {
+    const clicks = a.label !== undefined || (a.x !== undefined && a.y !== undefined);
+    const at: Press = clicks ? { label: a.label as number, x: a.x as number, y: a.y as number } : {};
+    if (name === "browser_click")
+        return a.text ? [{ text: String(a.text) }] : a.selector ? [{ sel: String(a.selector) }] : [];
+    if (name === "browser_click_at") return clicks ? [at] : [];
+    if (name === "browser_keyboard") {
+        if (hasNewline(a.text)) return [{ form: true }];
+        const key = [a.combo, a.hold].find(isPressKey);
+        return key ? [{ form: !isSpace(key) }] : [];
+    }
+    if (name === "browser_type") {
+        const out: Press[] = clicks ? [at] : [];
+        if (isPressKey(a.key)) out.push({ ...at, form: !isSpace(a.key) });
+        if (a.press_enter || hasNewline(a.text)) out.push({ ...at, form: true });
+        return out;
+    }
+    if (name !== "browser_multi_action") return [];
+    let acts = a.actions;
+    if (typeof acts === "string") {
+        try {
+            acts = JSON.parse(acts);
+        } catch {
+            return []; // the tool refuses it too
+        }
+    }
+    if (!Array.isArray(acts)) return [];
+    return (acts as Array<Record<string, unknown>>).flatMap((act): Press[] => {
+        // The tool's own order: label, then x/y, then selector, then text.
+        if (act.action === "click")
+            return act.label !== undefined || (act.x !== undefined && act.y !== undefined)
+                ? pressesOf("browser_click_at", act)
+                : act.selector
+                  ? [{ sel: String(act.selector) }]
+                  : act.text
+                    ? [{ text: String(act.text) }]
+                    : [];
+        if (act.action === "keyboard") return pressesOf("browser_keyboard", { combo: act.combo });
+        if (act.action === "type") {
+            const typed = pressesOf("browser_type", { label: act.label, key: act.key, text: act.text });
+            if (!act.selector) return typed;
+            const sel = { sel: String(act.selector) }; // clicked first, then the keys go to it
+            return [sel, ...typed.map((p) => ({ ...p, ...sel }))];
+        }
+        if (act.action === "if_visible")
+            return pressesOf("browser_multi_action", {
+                actions: [...((act.then_actions as unknown[]) ?? []), ...((act.else_actions as unknown[]) ?? [])],
+            });
+        return [];
+    });
+}
+
+/** What pressing `p` would press on the page; null when its target isn't there within the tool's own wait. */
+// biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
+async function controlsOf(page: any, p: Press): Promise<Control[] | null> {
+    const fn = String(describeControls);
+    if (p.text || p.sel) {
+        const loc = p.text ? page.getByText(p.text, { exact: false }).first() : page.locator(p.sel).first();
+        if (typeof loc.withEl === "function")
+            return (await page.evaluate(loc.withEl(`return el ? (${fn})(el, ${!!p.form}) : null;`))) ?? null; // Chrome bridge: no wait, its click has none either
+        return loc.evaluate(describeControls, !!p.form, { timeout: LOCATE_MS });
+    }
+    const el = p.label !== undefined ? getLastElementMap().find((e) => e.label === p.label) : undefined;
+    if (p.label !== undefined && !el) return []; // the tool refuses an unknown label
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright ElementHandle or Locator
+    const h = el?.handle as any;
+    if (typeof h?.evaluate === "function") return h.evaluate(describeControls, !!p.form, { timeout: LOCATE_MS });
+    const x = el?.x ?? p.x;
+    const y = el?.y ?? p.y;
+    const target =
+        x !== undefined && y !== undefined
+            ? `document.elementFromPoint(${Number(x)}, ${Number(y)}) || document.body`
+            : "null";
+    return (await page.evaluate(`(${fn})(${target}, ${!!p.form})`)) ?? [];
+}
+
+/**
+ * Why this browser call would press a money-word control on the live page ("" when it
+ * wouldn't; null when a target it names isn't on the page, so it can't be judged).
+ */
+async function browserMoneyPress(name: string, args: Record<string, unknown>): Promise<string | null> {
+    if (!MONEY_PRESS_TOOLS.has(name)) return "";
+    const presses = pressesOf(name, args);
+    if (!presses.length) return "";
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
+    let page: any;
+    try {
+        page = await getActivePage();
+    } catch {
+        return ""; // no browser: the tool fails on its own
+    }
+    for (const p of presses) {
+        // A text the model asked to click counts as its label: "Place order" is gated wherever it lands.
+        const said: Control[] = p.text ? [{ labels: [p.text], submitLike: true }] : [];
+        const seen = await controlsOf(page, p).catch(() => null);
+        const why = judge([...said, ...(seen ?? [])], []);
+        if (!why) {
+            if (seen === null) return null; // fail closed: it may render "Place order" a moment later
+            continue;
+        }
+        let host = "";
+        try {
+            host = new URL(page.url()).host;
+        } catch {}
+        return host ? `${why} on ${host}` : why;
+    }
+    return "";
+}
+
 function stableJson(v: unknown): string {
     if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
     if (v && typeof v === "object") {
@@ -795,7 +964,6 @@ const NO_PAGE_CHECK = new Set([
     "browser_close",
     "browser_save_strategy",
     "browser_recall_strategy",
-    "browser_cache_actions",
     "browser_batch_fetch",
     "browser_connect_electron",
     "browser_network_requests",
@@ -805,6 +973,70 @@ const NO_PAGE_CHECK = new Set([
 ]);
 // Tools that wait on the owner and must end when Stop is pressed (they read input._signal).
 const STOPPABLE_TOOLS = new Set(["site_task"]);
+
+/** Tools that move the front app on purpose (os_* tools are matched by prefix). */
+const FOCUS_TOOLS = new Set([
+    "app_manager",
+    "open_in_app",
+    "open_settings",
+    "window_manage",
+    "apple_script",
+    "run_shortcut",
+]);
+/** Arguments that hold paths: path, file_path, paths, archive_path, output_dir, folder, target… */
+const PATH_ARG =
+    /^(paths?|file_?paths?|target|folder|dir|directory|cwd|archive_path|output(_dir|_path)?|source|dest(ination)?)$/i;
+const HOMEISH = /^(~|\/Users\/|\/home\/|[A-Za-z]:[\\/]Users)/;
+// Names models use for the same thing: a required key that's missing is filled from one of these.
+// gpt-4.1-nano called write with "path" five times and was refused each time ("file_path: expected string").
+const ARG_ALIASES: Record<string, string[]> = {
+    file_path: ["path", "filepath", "file", "filename", "target"],
+    path: ["file_path", "folder", "dir", "directory", "target"],
+    content: ["text", "body", "contents", "data"],
+    query: ["q", "search", "text", "term"],
+    pattern: ["query", "glob", "q", "search"],
+    url: ["link", "href", "website"],
+    text: ["content", "message", "value"],
+};
+
+/** Copies an alias into each required key the call left out. */
+export function withArgAliases(name: string, input: Record<string, unknown>): Record<string, unknown> {
+    const required = (registry.get(name)?.schema.function.parameters as { required?: string[] } | undefined)?.required;
+    let out = input;
+    for (const key of required ?? []) {
+        if (out[key] !== undefined) continue;
+        const alias = ARG_ALIASES[key]?.find((a) => out[a] !== undefined);
+        if (alias) out = { ...out, [key]: out[alias] };
+    }
+    return out;
+}
+
+/** A path whose name came back garbled (control characters where "×" or "—" were: gpt-4.1-nano,
+ *  six tries at "Bhai × TinyFish — Pitch Deck.pdf"), as the one file in its folder with the
+ *  same letters and digits. Only garbled names: a new file is never redirected onto another. */
+function ungarble(p: string): string {
+    const name = path.basename(p);
+    if (!/[\p{Cc}\uFFFD]/u.test(name) || fs.existsSync(p)) return p;
+    const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    try {
+        const same = fs.readdirSync(path.dirname(p)).filter((n) => key(n) === key(name));
+        return same.length === 1 ? path.join(path.dirname(p), same[0]) : p;
+    } catch {
+        return p;
+    }
+}
+
+/** Path arguments with the home folder resolved (see resolveHomePath); everything else as is. */
+export function withHomePaths(input: Record<string, unknown>): Record<string, unknown> {
+    let out = input;
+    for (const [k, v] of Object.entries(input)) {
+        if (!PATH_ARG.test(k)) continue;
+        const fix = (x: unknown) => (typeof x === "string" ? ungarble(HOMEISH.test(x) ? resolveHomePath(x) : x) : x);
+        const fixed = Array.isArray(v) ? v.map(fix) : fix(v);
+        if (JSON.stringify(fixed) !== JSON.stringify(v)) out = { ...out, [k]: fixed };
+    }
+    return out;
+}
 
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const startTime = Date.now();
@@ -884,6 +1116,15 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         return JSON.stringify({ error: rateCheck.reason });
     }
 
+    // A run steered by unvetted content (the research follow-up) never acts outside the
+    // machine: the prompt asked it to check with the owner first, but only this enforces it.
+    if (isNoOutwardCaller() && isExternalSideEffect(name, input)) {
+        auditLog({ tool: name, args: input, success: false, cached: false, durationMs: 0, error: "no_outward_run" });
+        return JSON.stringify({
+            error: "This background run can't send, post, buy, book or delete anything. Put what you'd do in your final message; the owner can say go.",
+        });
+    }
+
     // Irreversible actions need the owner's OK first (security/consent.ts):
     // refused and recorded the first time; allowed when the same call returns
     // with confirmed: true after the owner said yes in a new message.
@@ -895,19 +1136,38 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     // so a yes for site A can't let the card be typed on site B (the tab can't be
     // swapped between the ask and the confirm). Overwrites any model-supplied `site`.
     if (name === "vault_authorize_payment") actionArgs.site = await livePaymentHost();
+    // A raw browser press on "Place order" / "Pay now" is an order: the owner's yes, never a swarm's.
+    // The control's label and host are part of the consent key, so a yes covers that control only.
+    const moneyPress = await browserMoneyPress(name, actionArgs);
+    if (moneyPress === null)
+        return JSON.stringify({
+            error: "The control this would press isn't on the page now, so it can't be checked for a payment button. Wait for it (browser_scan), then press it in its own call.",
+        });
     // shell_exec runs `command` plus its `args` array: judge the whole line.
-    const confirmCheck = requiresConfirmation(
-        name,
-        name.startsWith("shell_exec") ? { ...actionArgs, command: shellText(name, actionArgs) } : actionArgs,
-    );
+    const confirmCheck = moneyPress
+        ? {
+              needsConfirmation: true,
+              warningMessage: `⚠️ This presses a ${moneyPress}: it places an order or pays. The owner must say yes first.`,
+          }
+        : requiresConfirmation(
+              name,
+              name.startsWith("shell_exec") ? { ...actionArgs, command: shellText(name, actionArgs) } : actionArgs,
+          );
     if (
         confirmCheck.needsConfirmation &&
         // The swarm gate stands in for this inside a swarm. A payment is refused there
         // outright, without checkConsent: recording an ask the owner never sees would let
         // an unrelated "ok" mid-run grant a sub-agent's confirmed retry.
         (currentSwarmRun()
-            ? isPaymentCall(name, actionArgs)
-            : checkConsent(consentKey(name, actionArgs), confirmed === true) !== "granted")
+            ? isPaymentCall(name, actionArgs, moneyPress)
+            : checkConsent(
+                  consentKey(name, moneyPress ? { ...actionArgs, money_control: moneyPress } : actionArgs),
+                  confirmed === true,
+                  {
+                      // Money: the yes must answer this very ask, not a later "ok" about something else.
+                      nextTurnOnly: isPaymentCall(name, actionArgs, moneyPress),
+                  },
+              ) !== "granted")
     ) {
         console.log(`  ⚠️  ${name} needs the owner's OK first`);
         auditLog({
@@ -922,7 +1182,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // record it: swarm_task tells the main agent to make it itself (isPaymentHold).
         const run = currentSwarmRun();
         if (run) {
-            const where = String(actionArgs.site ?? actionArgs.skill ?? "unknown site");
+            const where = String(actionArgs.site ?? actionArgs.skill ?? (moneyPress || "unknown site"));
             const amount = actionArgs.amount !== undefined ? ` for ${String(actionArgs.amount)}` : "";
             const summary = `${name} → ${where}${amount} (a payment or order can't be approved inside a swarm: do it yourself after the owner's OK)`;
             run.blocked.push({ step: currentSwarmStep()?.stepId, tool: name, summary });
@@ -940,6 +1200,10 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         });
     }
     if (confirmCheck.needsConfirmation) input = actionArgs;
+
+    // "~/Downloads" or "/Users/your_username/…" from a model: each tool path.resolve()s
+    // its path, so "~" became "<cwd>/~/Downloads". Resolve the home once, for all of them.
+    input = withHomePaths(withArgAliases(name, input));
 
     // Zod schema validation — validate input before execution
     const validation = validateToolInput(name, input);
@@ -983,7 +1247,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             });
             return JSON.stringify({ error: reason, blocked_by_hook: true });
         }
-        if (pre.modifiedInput && vault) console.warn(`[TOOL] PreToolUse hook rewrite ignored: ${name} types a saved secret`);
+        if (pre.modifiedInput && vault)
+            console.warn(`[TOOL] PreToolUse hook rewrite ignored: ${name} types a saved secret`);
         else if (pre.modifiedInput) effectiveInput = pre.modifiedInput;
     } catch (err) {
         console.warn(`[TOOL] PreToolUse hook chain errored for ${name}: ${(err as Error).message}`);
@@ -1008,6 +1273,9 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         // tool's own timeout; Stop still ends it.
         if (name.startsWith("browser_") && !NO_PAGE_CHECK.has(name)) result = await captchaAfterAction(result, stop);
         const durationMs = Date.now() - startTime;
+
+        // What's in front after a screen step: os_type puts it back if another app takes it.
+        if (process.platform === "darwin" && (/^os_/.test(name) || FOCUS_TOOLS.has(name))) await noteFrontAfterStep();
 
         // Cache the result if eligible; any other call may have changed local state.
         if (isCacheable(name, effectiveInput)) {
@@ -1117,13 +1385,13 @@ export async function loadStoreTools(): Promise<void> {
  * Register a single store tool (for hot-reload)
  */
 export async function registerStoreTool(toolPath: string): Promise<void> {
-    const configPath = path.join(toolPath, "atlas.config.json");
+    const configPath = packageConfigPath(toolPath); // bhai.config.json, or a pre-rename atlas.config.json
     const handlerPath = path.join(toolPath, "dist", "handler.js");
     const handlerTsPath = path.join(toolPath, "handler.ts"); // For dev tools without build step
 
     // Validate structure
     if (!fs.existsSync(configPath)) {
-        throw new Error(`Missing atlas.config.json in ${toolPath}`);
+        throw new Error(`Missing bhai.config.json in ${toolPath}`);
     }
 
     // Check for handler - either compiled or source

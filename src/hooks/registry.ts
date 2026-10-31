@@ -3,8 +3,9 @@
 // See LICENSE.md for details.
 
 // ── Hooks Registry ────────────────────────────
-// Loads hook configs from ~/.atlas/hooks.json (user-global) and
-// .atlas/hooks.json (project-local). Config format:
+// Loads hook configs from ~/.bhai/hooks.json (user-global) and
+// .bhai/hooks.json (project-local; the old .atlas/hooks.json is still read
+// when there is no .bhai one). Config format:
 //
 //   {
 //     "PreToolUse": [
@@ -24,8 +25,8 @@
 // captured. Non-zero exit = log + skip (never fatal).
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
+import { getBhaiHome } from "../config/paths.js";
 import { BUILTIN_HOOKS } from "./built-in.js";
 
 // ── Types ─────────────────────────────────────
@@ -105,12 +106,15 @@ export function loadHooks(projectRoot?: string): void {
     const merged: HooksByEvent = {};
     const sources: string[] = [];
 
-    const userPath = path.join(homedir(), ".atlas", "hooks.json");
-    const projectPath = path.join(projectRoot ?? process.cwd(), ".atlas", "hooks.json");
+    const userPath = path.join(getBhaiHome(), "hooks.json");
+    const projectDir = projectRoot ?? process.cwd();
+    const projectPath =
+        [".bhai", ".atlas"].map((d) => path.join(projectDir, d, "hooks.json")).find((p) => existsSync(p)) ??
+        path.join(projectDir, ".bhai", "hooks.json");
 
     // ── Built-in hooks — registered first so user hooks fire after them
     // and can override or extend their behavior. Disabled via env.
-    if (process.env.ATLAS_DISABLE_BUILTIN_HOOKS !== "true") {
+    if (process.env.BHAI_DISABLE_BUILTIN_HOOKS !== "true") {
         let builtinCount = 0;
         for (const event of Object.keys(BUILTIN_HOOKS) as HookEvent[]) {
             const defs = BUILTIN_HOOKS[event];

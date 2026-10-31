@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { preflight } from "./preflight.js";
 
-const TMP = join(tmpdir(), `atlas-preflight-test-${Date.now()}`);
+const TMP = join(tmpdir(), `bhai-preflight-test-${Date.now()}`);
 const EXISTING_FILE = join(TMP, "exists.txt");
 const MISSING_FILE = join(TMP, "missing.txt");
 
@@ -112,7 +112,7 @@ describe("preflight — shell tools", () => {
     });
 
     it("shell_exec: 'rm -rf /tmp/something' does NOT trigger the catch-all", () => {
-        expect(preflight("shell_exec", { command: "rm -rf /tmp/atlas-cache" })).toBeNull();
+        expect(preflight("shell_exec", { command: "rm -rf /tmp/bhai-cache" })).toBeNull();
         expect(preflight("shell_exec", { command: "rm -rf /home/user/build" })).toBeNull();
     });
 
@@ -133,5 +133,19 @@ describe("preflight — fail-open", () => {
 
     it("malformed args shape → null (doesn't throw)", () => {
         expect(() => preflight("read", { file_path: 123 as unknown as string })).not.toThrow();
+    });
+});
+
+describe("preflight — ~ paths", () => {
+    it("expands ~/ in place instead of refusing it as relative", async () => {
+        const { homedir } = await import("node:os");
+        const { join } = await import("node:path");
+        const args: Record<string, unknown> = { file_path: "~/no-such-file-for-preflight.txt" };
+        const hint = preflight("read", args);
+        expect(args.file_path).toBe(join(homedir(), "no-such-file-for-preflight.txt"));
+        expect(hint?.reason).toMatch(/does not exist/); // checked as the real path, not refused as relative
+        const bare: Record<string, unknown> = { file_path: "~" };
+        preflight("write", bare);
+        expect(bare.file_path).toBe("~"); // a bare ~ isn't turned into the whole home folder
     });
 });

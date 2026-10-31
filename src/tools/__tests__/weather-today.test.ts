@@ -1,0 +1,60 @@
+// © 2024-2026 TRUSCOR Private Limited. All rights reserved.
+// "Should I take an umbrella?" needs today's rain chance, not just this minute's conditions.
+import { afterEach, expect, it, vi } from "vitest";
+import { dayLabel, weatherTool } from "../weather.js";
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+});
+
+it("current weather includes today's high, low and rain chance", async () => {
+    const hour = (chanceofrain: string) => ({ time: "0", tempC: "20", tempF: "68", chanceofrain, chanceofsnow: "0", weatherDesc: [{ value: "Sunny" }] });
+    const wttr = {
+        current_condition: [{ temp_C: "19", temp_F: "66", FeelsLikeC: "21", FeelsLikeF: "70", weatherDesc: [{ value: "Haze" }], humidity: "80",
+            windspeedKmph: "4", windspeedMiles: "2", winddir16Point: "WSW", winddirDegree: "253", uvIndex: "0", visibility: "5", visibilityMiles: "3", pressure: "1015", pressureInches: "30" }],
+        weather: [{ date: "2026-10-31", maxtempC: "30", maxtempF: "86", mintempC: "19", mintempF: "66", uvIndex: "10",
+            astronomy: [{ sunrise: "06:13 AM", sunset: "05:54 PM" }], hourly: [hour("5"), hour("15"), hour("0"), hour("0"), hour("0")] }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(wttr), { status: 200 })));
+    const r = JSON.parse(String(await weatherTool.handler({ action: "current", location: "Bengaluru" })));
+    expect(r.current.temperature).toBe("19°C");
+    expect(r.today).toMatchObject({ max_temp: "30°C", min_temp: "19°C", precipitation_chance: "15%" });
+});
+
+it("the Open-Meteo fallback answers for the city asked about, not the owner's location", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        urls.push(url);
+        if (url.includes("wttr.in")) return new Response("busy", { status: 503 });
+        if (url.includes("geocoding-api")) {
+            return new Response(JSON.stringify({ results: [{ latitude: 51.5, longitude: -0.12, name: "London", country: "United Kingdom" }] }));
+        }
+        return new Response(JSON.stringify({ current_weather: { temperature: 11, windspeed: 9, winddirection: 200, weathercode: 3 } }));
+    }));
+    const r = JSON.parse(String(await weatherTool.handler({ action: "current", location: "London" })));
+    expect(urls.at(-1)).toContain("latitude=51.5&longitude=-0.12");
+    expect(r).toMatchObject({ success: true, location: "London, United Kingdom", temperature_c: 11 });
+});
+
+it("a stalled wttr.in times out and reaches the fallback", async () => {
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+        const c = new AbortController();
+        setTimeout(() => c.abort(), 10);
+        return c.signal;
+    });
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+        if (url.includes("wttr.in")) {
+            return new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ current_weather: { temperature: 24, windspeed: 5, winddirection: 90, weathercode: 1 } })));
+    }));
+    const r = JSON.parse(String(await weatherTool.handler({ action: "current", location: "19.07,72.88" })));
+    expect(r).toMatchObject({ success: true, temperature_c: 24, source: "open-meteo-fallback" });
+}, 2000);
+
+it("forecast days say today, tomorrow or the weekday", () => {
+    expect(dayLabel("2026-10-31", "2026-10-31")).toBe("today");
+    expect(dayLabel("2026-11-01", "2026-10-31")).toBe("tomorrow");
+    expect(dayLabel("2026-11-02", "2026-10-31")).toBe("Monday");
+});

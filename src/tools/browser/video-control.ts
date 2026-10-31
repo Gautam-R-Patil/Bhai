@@ -298,7 +298,14 @@ export const browserVideoControl: ToolDefinition = {
                                 verification = { verified_muted: nowMuted };
                             }
                             if (action === "seek") {
-                                await page.waitForTimeout(400); // let seek settle
+                                await page
+                                    .waitForFunction(
+                                        /* javascript-obfuscator:disable */ () =>
+                                            !document.querySelector("video")?.seeking,
+                                        /* javascript-obfuscator:enable */ undefined,
+                                        { timeout: 2000, polling: 100 },
+                                    )
+                                    .catch(() => {});
                                 const nowTime = await page
                                     .evaluate(`(async()=>{ ${YT_API.get_time} })()`)
                                     .catch(() => null);
@@ -420,7 +427,14 @@ export const browserVideoControl: ToolDefinition = {
                             .catch(
                                 () => page.mouse.click(640, 400), // fallback: click center of viewport
                             );
-                        await page.waitForTimeout(200);
+                        await page
+                            .waitForFunction(
+                                /* javascript-obfuscator:disable */ () =>
+                                    !!document.activeElement?.closest("#movie_player"),
+                                /* javascript-obfuscator:enable */ undefined,
+                                { timeout: 1000, polling: 50 },
+                            )
+                            .catch(() => {});
                     }
 
                     let keyUsed = "";
@@ -508,14 +522,12 @@ export const browserVideoControl: ToolDefinition = {
                         .waitForFunction(
                             /* javascript-obfuscator:disable */ (sel: string) => {
                                 const el = document.querySelector(sel);
-                                return el && parseFloat(window.getComputedStyle(el).opacity) > 0.1;
+                                return el && parseFloat(window.getComputedStyle(el).opacity) > 0.9; // faded in
                             },
                             /* javascript-obfuscator:enable */ controlSel,
                             { timeout: 3000, polling: 100 },
                         )
                         .catch(() => {}); // non-fatal — try click anyway
-
-                    await page.waitForTimeout(300);
 
                     // Determine which button to click
                     const selectors: string[] = [];

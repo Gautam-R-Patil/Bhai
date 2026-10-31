@@ -47,9 +47,9 @@ describe("tokenOverlap — echo detection", () => {
         // The log showed pending = "Yeah, opening WhatsApp now." (28 chars)
         // Bhai just said: "Yeah, opening WhatsApp now." (27 chars, identical)
         // Token overlap is 100%; echo filter catches it.
-        const atlasSaid = normalizeForEcho("Yeah, opening WhatsApp now.");
+        const bhaiSaid = normalizeForEcho("Yeah, opening WhatsApp now.");
         const userHeard = normalizeForEcho("Yeah, opening WhatsApp now.");
-        expect(tokenOverlap(userHeard, atlasSaid)).toBe(1);
+        expect(tokenOverlap(userHeard, bhaiSaid)).toBe(1);
     });
 
     it("single-word candidates can't trigger (≥2 chars required)", () => {

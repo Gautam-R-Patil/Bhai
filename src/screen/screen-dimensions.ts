@@ -371,7 +371,7 @@ export async function captureRegionToFile(r: Rect, out: string, type: "png" | "j
 
 /** captureRegionToFile into memory. */
 export async function captureRegion(r: Rect): Promise<Buffer | null> {
-    const out = join(tmpdir(), `atlas_region_${randomBytes(6).toString("hex")}.png`);
+    const out = join(tmpdir(), `bhai_region_${randomBytes(6).toString("hex")}.png`);
     try {
         return (await captureRegionToFile(r, out)) ? await fs.readFile(out) : null;
     } catch {

@@ -8,6 +8,7 @@
 //
 // Output: writes `native/bench-results.json` with per-module timings.
 
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { __testOnlyBfsWithAdjacency, type ActivationResult } from "../src/memory/spreading-activation.js";

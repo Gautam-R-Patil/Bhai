@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Hermetic: point ATLAS_WORKSPACE at a temp dir that EXISTS, and resetModules so
+// Hermetic: point BHAI_WORKSPACE at a temp dir that EXISTS, and resetModules so
 // paths.ts re-resolves its CACHED workspace path into the sandbox (other test
 // files in the same worker may have already cached the real workspace).
 let workspace: string;
@@ -16,16 +16,16 @@ let project: string;
 
 beforeEach(() => {
     vi.resetModules();
-    workspace = mkdtempSync(join(tmpdir(), "atlas-ws-"));
-    project = mkdtempSync(join(tmpdir(), "atlas-proj-"));
-    process.env.ATLAS_WORKSPACE = workspace;
-    delete process.env.ATLAS_NO_AUTO_CHECKPOINT;
+    workspace = mkdtempSync(join(tmpdir(), "bhai-ws-"));
+    project = mkdtempSync(join(tmpdir(), "bhai-proj-"));
+    process.env.BHAI_WORKSPACE = workspace;
+    delete process.env.BHAI_NO_AUTO_CHECKPOINT;
 });
 afterEach(() => {
     rmSync(workspace, { recursive: true, force: true });
     rmSync(project, { recursive: true, force: true });
-    delete process.env.ATLAS_WORKSPACE;
-    delete process.env.ATLAS_NO_AUTO_CHECKPOINT;
+    delete process.env.BHAI_WORKSPACE;
+    delete process.env.BHAI_NO_AUTO_CHECKPOINT;
 });
 
 function gitAvailable(): boolean {
@@ -38,7 +38,7 @@ function gitAvailable(): boolean {
 }
 
 function storeDir(): string {
-    return join(workspace, ".atlas-checkpoints");
+    return join(workspace, ".bhai-checkpoints");
 }
 function onlyStore(): string {
     const { readdirSync } = require("node:fs") as typeof import("node:fs");
@@ -107,6 +107,17 @@ describe.runIf(gitAvailable())("checkpoint-manager", () => {
         expect(listCheckpoints(project).length).toBeGreaterThan(before); // safety commit added
     });
 
+    it("keeps using a pre-rename .atlas-checkpoints store (never moved), so old checkpoints stay listed", async () => {
+        const { ensureCheckpoint, listCheckpoints } = await import("./checkpoint-manager.js");
+        writeFileSync(join(project, "a.txt"), "v1");
+        await ensureCheckpoint(project, "before rename");
+        const { renameSync } = require("node:fs") as typeof import("node:fs");
+        renameSync(storeDir(), join(workspace, ".atlas-checkpoints"));
+        expect(listCheckpoints(project).map((c) => c.subject)).toEqual([expect.stringContaining("before rename")]);
+        expect(existsSync(join(workspace, ".atlas-checkpoints"))).toBe(true);
+        expect(existsSync(storeDir())).toBe(false);
+    });
+
     it("rejects an invalid sha", async () => {
         const { ensureCheckpoint, restoreCheckpoint } = await import("./checkpoint-manager.js");
         writeFileSync(join(project, "a.txt"), "v1");
@@ -115,8 +126,8 @@ describe.runIf(gitAvailable())("checkpoint-manager", () => {
         expect(restoreCheckpoint(project, "deadbeef").success).toBe(false); // valid form, unknown commit
     });
 
-    it("kill-switch ATLAS_NO_AUTO_CHECKPOINT=true creates no store", async () => {
-        process.env.ATLAS_NO_AUTO_CHECKPOINT = "true";
+    it("kill-switch BHAI_NO_AUTO_CHECKPOINT=true creates no store", async () => {
+        process.env.BHAI_NO_AUTO_CHECKPOINT = "true";
         const { ensureCheckpoint } = await import("./checkpoint-manager.js");
         writeFileSync(join(project, "a.txt"), "v1");
         await ensureCheckpoint(project, "test");

@@ -39,10 +39,10 @@ const BROWSER_PROFILE_DIR = path.join(getDataDir(), "browser-profile");
 // profile directory is preserved so cookies/logins survive the close, and
 // the next browser-tool call lazily relaunches via the existing init path
 // — adds ~3s latency to that single first call but releases all RAM in the
-// meantime. ATLAS_BROWSER_IDLE_CLOSE_MS=0 disables.
+// meantime. BHAI_BROWSER_IDLE_CLOSE_MS=0 disables.
 const _IDLE_CLOSE_MS_DEFAULT = 30 * 60_000;
 const _idleCloseEnabled = (() => {
-    const raw = process.env.ATLAS_BROWSER_IDLE_CLOSE_MS;
+    const raw = process.env.BHAI_BROWSER_IDLE_CLOSE_MS;
     if (raw === undefined) return _IDLE_CLOSE_MS_DEFAULT;
     const n = Number(raw);
     if (!Number.isFinite(n) || n <= 0) return 0;
@@ -224,7 +224,7 @@ export async function getBrowser(): Promise<BrowserContext> {
 
     _browserInitPromise = (async (): Promise<BrowserContext> => {
         if (!pw) {
-            pw = await import("playwright");
+            pw = await import("playwright-core");
         }
         // Ensure profile directory exists
         if (!fs.existsSync(BROWSER_PROFILE_DIR)) {
@@ -250,7 +250,7 @@ export async function getBrowser(): Promise<BrowserContext> {
         // Stealth args: remove bot fingerprints without bypassCSP (which breaks Playwright internals).
         // Renderer sandbox is INTENTIONALLY left enabled (we no longer pass --no-sandbox) so a single
         // malicious page-render exploit (V8/Skia/WebGL) cannot escalate to Bhai host RCE. Set
-        // ATLAS_BROWSER_NO_SANDBOX=true only on Linux containers where userns is unavailable.
+        // BHAI_BROWSER_NO_SANDBOX=true only on Linux containers where userns is unavailable.
         const stealthArgs = [
             "--disable-blink-features=AutomationControlled", // removes navigator.webdriver
             "--disable-infobars",
@@ -264,7 +264,7 @@ export async function getBrowser(): Promise<BrowserContext> {
             "--lang=en-US,en",
             "--accept-lang=en-US,en;q=0.9",
         ];
-        if (process.env.ATLAS_BROWSER_NO_SANDBOX === "true") {
+        if (process.env.BHAI_BROWSER_NO_SANDBOX === "true") {
             stealthArgs.unshift("--no-sandbox");
         }
 
@@ -275,7 +275,7 @@ export async function getBrowser(): Promise<BrowserContext> {
             deviceScaleFactor: 1, // consistent across Retina/non-Retina on all platforms
             userAgent: ua,
             locale: "en-US",
-            timezoneId: "America/New_York",
+            // No timezoneId: the machine's own, so it matches the owner's IP.
             // Deny all permission prompts upfront — prevents OS-level dialogs blocking automation
             permissions: [],
             args: stealthArgs,
@@ -403,9 +403,10 @@ export const GET_FORM_STATE_JS = `() => {
 }`;
 
 // ── Scroll to ref (OpenCLI scrollToRefJs) ────────────────────────────────────
-// Scroll a data-atlas-id (or CSS selector) into view with instant behavior.
+// Scroll a data-bhai-id (or CSS selector) into view with instant behavior. An extension from
+// before the rename stamps data-atlas-id instead.
 export const SCROLL_TO_ELEMENT_JS = `(selector) => {
-    const el = document.querySelector('[data-atlas-id="' + selector + '"]')
+    const el = document.querySelector('[data-bhai-id="' + selector + '"],[data-atlas-id="' + selector + '"]')
              || document.querySelector(selector);
     if (el) el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'nearest' });
     return !!el;
@@ -468,13 +469,13 @@ export const CLICK_INDICATOR_JS = `
     const ring = document.createElement('div');
     ring.style.cssText = \`position:fixed;left:\${x-24}px;top:\${y-24}px;width:48px;height:48px;
         border-radius:50%;border:2px solid \${border};pointer-events:none;z-index:2147483646;
-        animation:atlasRipple 0.6s cubic-bezier(.4,0,.2,1) forwards;\`;
+        animation:bhaiRipple 0.6s cubic-bezier(.4,0,.2,1) forwards;\`;
 
     // Center dot
     const dot = document.createElement('div');
     dot.style.cssText = \`position:fixed;left:\${x-4}px;top:\${y-4}px;width:8px;height:8px;
         border-radius:50%;background:\${solid};pointer-events:none;z-index:2147483647;
-        animation:atlasDot 0.4s cubic-bezier(.4,0,.2,1) forwards;\`;
+        animation:bhaiDot 0.4s cubic-bezier(.4,0,.2,1) forwards;\`;
 
     // Crosshair lines (20px each side)
     const mkLine = (horiz) => {
@@ -483,25 +484,25 @@ export const CLICK_INDICATOR_JS = `
             ? \`left:\${x-12}px;top:\${y-1}px;width:24px;height:2px;\`
             : \`left:\${x-1}px;top:\${y-12}px;width:2px;height:24px;\`;
         l.style.cssText = \`position:fixed;\${s}background:\${solid};opacity:0.7;pointer-events:none;
-            z-index:2147483647;animation:atlasFade 0.5s ease-out forwards;\`;
+            z-index:2147483647;animation:bhaiFade 0.5s ease-out forwards;\`;
         return l;
     };
 
     // Inject keyframes once
-    if (!document.getElementById('__atlasKF')) {
+    if (!document.getElementById('__bhaiKF')) {
         const st = document.createElement('style');
-        st.id = '__atlasKF';
+        st.id = '__bhaiKF';
         st.textContent = \`
-            @keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}
-            @keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}
-            @keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}
+            @keyframes bhaiRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}
+            @keyframes bhaiDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}
+            @keyframes bhaiFade{0%{opacity:.8}100%{opacity:0}}
         \`;
         document.head.appendChild(st);
     }
 
     [ring, dot, mkLine(true), mkLine(false)].forEach(el => document.body.appendChild(el));
     setTimeout(() => [ring, dot].forEach(el => el.remove()), 650);
-    setTimeout(() => document.querySelectorAll('[style*="atlasFade"]').forEach(e => e.remove()), 550);
+    setTimeout(() => document.querySelectorAll('[style*="bhaiFade"]').forEach(e => e.remove()), 550);
 };
 `;
 
@@ -518,17 +519,17 @@ export const SCROLL_INDICATOR_JS = `
         padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;
         background:rgba(15,23,42,0.85);color:#94a3b8;border:1px solid #334155;
         pointer-events:none;z-index:2147483647;backdrop-filter:blur(4px);
-        animation:atlasScrollFade 0.7s ease-out forwards;
+        animation:bhaiScrollFade 0.7s ease-out forwards;
     \`;
-    let kf = document.getElementById('__atlasKF');
+    let kf = document.getElementById('__bhaiKF');
     if (!kf) {
         kf = document.createElement('style');
-        kf.id = '__atlasKF';
-        kf.textContent = '@keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}@keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}@keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}';
+        kf.id = '__bhaiKF';
+        kf.textContent = '@keyframes bhaiRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}@keyframes bhaiDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}@keyframes bhaiFade{0%{opacity:.8}100%{opacity:0}}';
         document.head.appendChild(kf);
     }
-    if (!kf.textContent.includes('atlasScrollFade')) {
-        kf.textContent += '@keyframes atlasScrollFade{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(' + (direction==='up'?-1:1)*16 + 'px)}}';
+    if (!kf.textContent.includes('bhaiScrollFade')) {
+        kf.textContent += '@keyframes bhaiScrollFade{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(' + (direction==='up'?-1:1)*16 + 'px)}}';
     }
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 750);
@@ -537,9 +538,9 @@ export const SCROLL_INDICATOR_JS = `
 
 // Bhai action HUD: floating pill at top-right showing current action.
 // Persists while action runs, fades out on completion.
-export const ATLAS_HUD_JS = `
+export const BHAI_HUD_JS = `
 ({label, done, maxWidth}) => {
-    const ID = '__atlasHUD';
+    const ID = '__bhaiHUD';
     let hud = document.getElementById(ID);
     if (done) {
         if (hud) { hud.style.opacity = '0'; setTimeout(() => hud?.remove(), 300); }
@@ -549,8 +550,8 @@ export const ATLAS_HUD_JS = `
         hud = document.createElement('div');
         hud.id = ID;
         // Icon + text row
-        hud.innerHTML = '<span id="__atlasHUDdot" style="width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;animation:atlasPulse 1.2s ease-in-out infinite;flex-shrink:0"></span>' +
-                        '<span id="__atlasHUDtxt" style="margin-left:7px;font-size:11px;font-weight:500;color:#e2e8f0;letter-spacing:0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px"></span>';
+        hud.innerHTML = '<span id="__bhaiHUDdot" style="width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;animation:bhaiPulse 1.2s ease-in-out infinite;flex-shrink:0"></span>' +
+                        '<span id="__bhaiHUDtxt" style="margin-left:7px;font-size:11px;font-weight:500;color:#e2e8f0;letter-spacing:0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px"></span>';
         hud.style.cssText = \`
             position:fixed;top:10px;right:10px;display:flex;align-items:center;
             padding:6px 12px;border-radius:20px;
@@ -560,18 +561,18 @@ export const ATLAS_HUD_JS = `
             box-shadow:0 4px 20px rgba(0,0,0,0.4);
             transition:opacity 0.3s ease;opacity:0;
         \`;
-        const kf = document.getElementById('__atlasKF');
-        const pp = '@keyframes atlasPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}';
-        if (kf) { if(!kf.textContent.includes('atlasPulse')) kf.textContent += pp; }
+        const kf = document.getElementById('__bhaiKF');
+        const pp = '@keyframes bhaiPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}';
+        if (kf) { if(!kf.textContent.includes('bhaiPulse')) kf.textContent += pp; }
         else {
             const s = document.createElement('style');
-            s.id='__atlasKF'; s.textContent = pp;
+            s.id='__bhaiKF'; s.textContent = pp;
             document.head.appendChild(s);
         }
         document.body.appendChild(hud);
         requestAnimationFrame(() => { hud.style.opacity = '1'; });
     }
-    const txt = document.getElementById('__atlasHUDtxt');
+    const txt = document.getElementById('__bhaiHUDtxt');
     if (txt) { txt.textContent = label; txt.style.maxWidth = (maxWidth || 200) + 'px'; }
 };
 `;
@@ -957,7 +958,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
             seenCoords.add(sKey);
             const sText = sel.innerText?.replace(/\\n/g, ' ').substring(0, 40) ||
                           sel.getAttribute?.('aria-label') || '';
-            candidateMap.push({ index: -1, x: sx, y: sy, width: sRect.width, height: sRect.height, tag: sTag, text: sText.trim(), score: 10 });
+            candidateMap.push({ index: -1, node: sel, x: sx, y: sy, width: sRect.width, height: sRect.height, tag: sTag, text: sText.trim(), score: 10 });
         }
     }
 
@@ -969,50 +970,50 @@ export const SCAN_FRAME_JS = `function scanFrame() {
     document.querySelectorAll('.monaco-editor').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = 'atlas-editor-monaco-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, editorType: 'monaco' });
+        const eid = 'bhai-editor-monaco-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, editorType: 'monaco' });
     });
     // CodeMirror 6
     document.querySelectorAll('.cm-editor').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = 'atlas-editor-cm6-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror6' });
+        const eid = 'bhai-editor-cm6-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror6' });
     });
     // CodeMirror 5
     document.querySelectorAll('.CodeMirror').forEach((el, i) => {
         if (el.closest('.cm-editor')) return;
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = 'atlas-editor-cm5-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror5' });
+        const eid = 'bhai-editor-cm5-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, editorType: 'codemirror5' });
     });
     // Ace
     document.querySelectorAll('.ace_editor').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = 'atlas-editor-ace-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, editorType: 'ace' });
+        const eid = 'bhai-editor-ace-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, editorType: 'ace' });
     });
     // Quill
     document.querySelectorAll('.ql-editor[contenteditable]').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = 'atlas-editor-quill-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, editorType: 'quill' });
+        const eid = 'bhai-editor-quill-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, editorType: 'quill' });
     });
     // TinyMCE
     document.querySelectorAll('.tox-tinymce').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = 'atlas-editor-tinymce-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, editorType: 'tinymce' });
+        const eid = 'bhai-editor-tinymce-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, editorType: 'tinymce' });
     });
     // ProseMirror / Tiptap
     document.querySelectorAll('.ProseMirror[contenteditable]').forEach((el, i) => {
@@ -1020,25 +1021,25 @@ export const SCAN_FRAME_JS = `function scanFrame() {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
         const type = isTiptap ? 'tiptap' : 'prosemirror';
-        const eid = 'atlas-editor-' + type + '-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (' + (isTiptap ? 'Tiptap' : 'ProseMirror') + ')', score: 25, editorType: type });
+        const eid = 'bhai-editor-' + type + '-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (' + (isTiptap ? 'Tiptap' : 'ProseMirror') + ')', score: 25, editorType: type });
     });
     // Slate
     document.querySelectorAll('[data-slate-editor]').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = 'atlas-editor-slate-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, editorType: 'slate' });
+        const eid = 'bhai-editor-slate-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, editorType: 'slate' });
     });
     // Draft.js
     document.querySelectorAll('.DraftEditor-root').forEach((el, i) => {
         const rect = el.getBoundingClientRect();
         if (rect.width < 50 || rect.height < 50) return;
-        const eid = 'atlas-editor-draftjs-' + edTs + '-' + i;
-        el.setAttribute('data-atlas-id', eid);
-        editorDetections.push({ index: -1, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, editorType: 'draftjs' });
+        const eid = 'bhai-editor-draftjs-' + edTs + '-' + i;
+        el.setAttribute('data-bhai-id', eid);
+        editorDetections.push({ index: -1, node: el, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: rect.width, height: rect.height, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, editorType: 'draftjs' });
     });
 
     // Merge: editors first, then deduplicate by coords
@@ -1057,11 +1058,10 @@ export const SCAN_FRAME_JS = `function scanFrame() {
 
     // Cap at 150 elements — more than enough for any page, saves token budget.
     const finalMap = candidateMap.slice(0, 150).map((c, i) => {
-        const id = 'atlas-el-' + Date.now() + '-' + i;
-        if (c.index >= 0) {
-            const el = els[c.index];
-            el.setAttribute('data-atlas-id', id);
-        }
+        const id = 'bhai-el-' + Date.now() + '-' + i;
+        // Editors and shadow-DOM hits aren't in els: without the id they get no handle and are dropped.
+        const el = c.index >= 0 ? els[c.index] : c.node;
+        if (el) el.setAttribute('data-bhai-id', id);
         return {
             label: -1,
             x: c.x,
@@ -1069,7 +1069,7 @@ export const SCAN_FRAME_JS = `function scanFrame() {
             tag: c.tag,
             text: c.text,
             score: c.score,
-            atlasId: id,
+            bhaiId: id,
             editorType: c.editorType
         };
     });
@@ -1100,7 +1100,7 @@ async function batchDisposeHandles(elements: InteractiveElement[]): Promise<void
 async function ocrFallbackScan(page: Page): Promise<InteractiveElement[]> {
     try {
         const screenshotBuffer = await withAgentUIHidden(page, () => page.screenshot({ type: "png", fullPage: false }));
-        const tmpPath = path.join(tmpdir(), `atlas-ocr-fallback-${Date.now()}.png`);
+        const tmpPath = path.join(tmpdir(), `bhai-ocr-fallback-${Date.now()}.png`);
         fs.writeFileSync(tmpPath, screenshotBuffer);
 
         const ocrResult = await runOCR(tmpPath);
@@ -1123,7 +1123,7 @@ async function ocrFallbackScan(page: Page): Promise<InteractiveElement[]> {
                 y: Math.round(r.bounds.y + r.bounds.height / 2),
                 tag: "ocr-text",
                 text: r.text.substring(0, 40).trim(),
-                atlasId: `atlas-ocr-${Date.now()}-${i}`,
+                bhaiId: `bhai-ocr-${Date.now()}-${i}`,
                 isOCRElement: true,
             }));
     } catch (err) {
@@ -1292,7 +1292,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                         y: Math.round(box.y + box.height / 2),
                         tag: p.role,
                         text: p.name.substring(0, 60),
-                        atlasId: p.ref ? `aria-${p.ref}` : `aria-${p.idx}`,
+                        bhaiId: p.ref ? `aria-${p.ref}` : `aria-${p.idx}`,
                         handle,
                     });
                 }
@@ -1327,7 +1327,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
         tag: string;
         text: string;
         score: number;
-        atlasId: string;
+        bhaiId: string;
         frameIndex: number;
         editorType?: string;
         handle?: unknown;
@@ -1421,28 +1421,28 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
     }));
 
     // Parallel handle fetching (18-20x faster than sequential)
-    // ariaSnapshot elements (atlasId starts with "aria-") skip DOM handle lookup —
-    // they have no data-atlas-id in the DOM. Their handle is the aria-ref locator
+    // ariaSnapshot elements (bhaiId starts with "aria-") skip DOM handle lookup —
+    // they have no data-bhai-id in the DOM. Their handle is the aria-ref locator
     // (when the snapshot had refs); otherwise coordinate clicking is used.
     const handleResults = await Promise.all(
         labeled.map(async (item) => {
-            if (item.atlasId?.startsWith("aria-")) {
+            if (item.bhaiId?.startsWith("aria-")) {
                 return {
                     label: item.label,
                     x: item.x,
                     y: item.y,
                     tag: item.tag,
                     text: item.text,
-                    atlasId: item.atlasId,
+                    bhaiId: item.bhaiId,
                     handle: item.handle,
                     editorType: item.editorType,
                 } as InteractiveElement;
             }
-            // SCAN_FRAME_JS path: look up data-atlas-id DOM handle for precise clicking
+            // SCAN_FRAME_JS path: look up data-bhai-id DOM handle for precise clicking
             try {
                 const frame = allFrames[item.frameIndex];
                 if (!frame) return null;
-                const handle = await frame.$(`[data-atlas-id="${item.atlasId}"]`);
+                const handle = await frame.$(`[data-bhai-id="${item.bhaiId}"]`);
                 if (!handle) return null;
                 return {
                     label: item.label,
@@ -1450,7 +1450,7 @@ export async function getInteractiveElements(page: Page, forceRefresh = false): 
                     y: item.y,
                     tag: item.tag,
                     text: item.text,
-                    atlasId: item.atlasId,
+                    bhaiId: item.bhaiId,
                     handle,
                     editorType: item.editorType,
                 } as InteractiveElement;

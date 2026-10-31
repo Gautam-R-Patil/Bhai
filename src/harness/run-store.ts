@@ -35,8 +35,8 @@ import { snapshotConfig, formatRegistrySummary } from "./registry.js";
 import { readCandidateTraces } from "./trace-store.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ATLAS_DATA_DIR = process.env.ATLAS_DATA_DIR || join(__dirname, "../../data");
-const RUNS_BASE_DIR = join(ATLAS_DATA_DIR, "harness/runs");
+const BHAI_DATA_DIR = process.env.BHAI_DATA_DIR || join(__dirname, "../../data");
+const RUNS_BASE_DIR = join(BHAI_DATA_DIR, "harness/runs");
 
 // ── HarnessRunStore ─────────────────────────────────────────────────────────
 

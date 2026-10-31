@@ -65,17 +65,17 @@ function makeCtx(
     };
 }
 
-const ORIG_ENV = process.env.ATLAS_NO_META_INTERVENTIONS;
+const ORIG_ENV = process.env.BHAI_NO_META_INTERVENTIONS;
 
 beforeEach(() => {
     replanMock.mockClear();
     multiCriticMock.mockClear();
-    delete process.env.ATLAS_NO_META_INTERVENTIONS;
+    delete process.env.BHAI_NO_META_INTERVENTIONS;
 });
 
 afterEach(() => {
-    if (ORIG_ENV === undefined) delete process.env.ATLAS_NO_META_INTERVENTIONS;
-    else process.env.ATLAS_NO_META_INTERVENTIONS = ORIG_ENV;
+    if (ORIG_ENV === undefined) delete process.env.BHAI_NO_META_INTERVENTIONS;
+    else process.env.BHAI_NO_META_INTERVENTIONS = ORIG_ENV;
 });
 
 describe("applyIntervention — hot-loop safety", () => {
@@ -89,8 +89,8 @@ describe("applyIntervention — hot-loop safety", () => {
         expect(multiCriticMock).not.toHaveBeenCalled();
     });
 
-    it("ATLAS_NO_META_INTERVENTIONS=true reverts to nudge-only (no-op)", async () => {
-        process.env.ATLAS_NO_META_INTERVENTIONS = "true";
+    it("BHAI_NO_META_INTERVENTIONS=true reverts to nudge-only (no-op)", async () => {
+        process.env.BHAI_NO_META_INTERVENTIONS = "true";
         const ctx = makeCtx("replan"); // would otherwise be a paid arm
         await applyIntervention(ctx);
         expect(ctx.state.forcedModel).toBeNull();

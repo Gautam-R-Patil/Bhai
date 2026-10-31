@@ -18,16 +18,16 @@ const NATIVE = isNativeAvailable();
 
 describe.skipIf(!NATIVE)("Phase 4 end-to-end smoke", () => {
     let tmpHome: string;
-    const ORIG_ATLAS_HOME = process.env.ATLAS_HOME;
+    const ORIG_BHAI_HOME = process.env.BHAI_HOME;
 
     beforeEach(() => {
-        tmpHome = mkdtempSync(join(tmpdir(), "atlas-phase4-smoke-"));
-        process.env.ATLAS_HOME = tmpHome;
+        tmpHome = mkdtempSync(join(tmpdir(), "bhai-phase4-smoke-"));
+        process.env.BHAI_HOME = tmpHome;
     });
 
     afterEach(() => {
-        if (ORIG_ATLAS_HOME === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = ORIG_ATLAS_HOME;
+        if (ORIG_BHAI_HOME === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = ORIG_BHAI_HOME;
         rmSync(tmpHome, { recursive: true, force: true });
     });
 
@@ -35,12 +35,12 @@ describe.skipIf(!NATIVE)("Phase 4 end-to-end smoke", () => {
         const { installPersistedTool, invokePersistedTool, uninstallPersistedTool } = await import(
             "../sandbox-supervisor.js"
         );
-        const { createHash } = await import("node:crypto");
+        const { readManifest } = await import("../manifest.js");
         const slug = "phase4_doubler";
-        const handlerCode = "return { doubled: input.x * 2 };";
-        // Hash must match what sandbox-supervisor writes (the wrapped form).
-        const wrapped = `module.exports = async function(input) {\n${handlerCode}\n};\n`;
-        const handlerHash = createHash("sha256").update(wrapped).digest("hex").substring(0, 16);
+        // Same (input, utils, console) contract as session tools.
+        const handlerCode = "return { doubled: input.x * 2, sep: utils.path.sep, req: typeof require('os').homedir };";
+        // Any well-formed value: installPersistedTool pins the hash of the bytes it writes.
+        const handlerHash = "0000000000000000";
         await installPersistedTool(
             slug,
             handlerCode,
@@ -56,10 +56,11 @@ describe.skipIf(!NATIVE)("Phase 4 end-to-end smoke", () => {
             },
         );
 
+        expect(readManifest(slug)?.handlerHash).not.toBe(handlerHash);
         const result = await invokePersistedTool(slug, { x: 21 });
         expect(result.ok).toBe(true);
         if (result.ok) {
-            expect((result.result as { doubled: number }).doubled).toBe(42);
+            expect(result.result).toEqual({ doubled: 42, sep: join("a", "b")[1], req: "function" });
         }
 
         await uninstallPersistedTool(slug);

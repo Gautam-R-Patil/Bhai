@@ -14,36 +14,28 @@ const execFileAsync = promisify(execFile);
 
 // ── DND Detection ─────────────────────────────
 
-export async function isDNDActive(): Promise<boolean> {
-    if (IS_MAC) {
-        try {
-            // Check macOS Focus/DND mode via defaults
-            const { stdout } = await execFileAsync("defaults", [
-                "read", "com.apple.controlcenter", "NSStatusItem Visible FocusModes",
-            ], { timeout: 3000 });
-            // Returns "1" when Focus is active/visible
-            if (stdout.trim() === "1") {
-                // Double-check with the actual assertion state
-                const { stdout: assertStdout } = await execFileAsync("osascript", [
-                    "-e", 'do shell script "defaults -currentHost read ~/Library/Preferences/ByHost/com.apple.notificationcenterui doNotDisturb 2>/dev/null || echo 0"',
-                ], { timeout: 3000 });
-                return assertStdout.trim() === "1";
-            }
-            return false;
-        } catch {
-            // Alternative: check for active Focus assertions
-            try {
-                const { stdout } = await execFileAsync("plutil", [
-                    "-extract", "dnd_prefs", "raw",
-                    "-o", "-",
-                    `${process.env.HOME}/Library/DoNotDisturb/DB/Assertions.json`,
-                ], { timeout: 3000 });
-                return stdout.trim().length > 10; // Has active assertions
-            } catch {
-                return false; // Assume not in DND if detection fails
-            }
-        }
+/**
+ * macOS: a Focus the owner switched on is an assertion record in
+ * ~/Library/DoNotDisturb/DB/Assertions.json (data[0].storeAssertionRecords); when it ends
+ * only invalidation records remain. The old checks read a menu-bar key and a pre-Big Sur
+ * flag that no longer exist, so Focus was never seen. null = can't tell: the folder needs
+ * Full Disk Access ("Operation not permitted" without it), or the file is missing.
+ */
+export async function macFocusActive(
+    file = `${process.env.HOME}/Library/DoNotDisturb/DB/Assertions.json`,
+): Promise<boolean | null> {
+    try {
+        const { readFile } = await import("node:fs/promises");
+        const data = JSON.parse(await readFile(file, "utf8")) as { data?: Array<{ storeAssertionRecords?: unknown[] }> };
+        const records = data?.data?.[0]?.storeAssertionRecords;
+        return Array.isArray(records) && records.length > 0;
+    } catch {
+        return null;
     }
+}
+
+export async function isDNDActive(): Promise<boolean> {
+    if (IS_MAC) return (await macFocusActive()) === true;
 
     if (IS_WIN) {
         // Windows Focus Assist detection is not reliably scriptable.
@@ -87,6 +79,10 @@ const IMPORTANT_PATTERNS = [
     /\burgent\b/i,
     /\bemergency\b/i,
     /⚠️.*critical/i,
+    // A research the owner asked for: its answer, and word that it stopped, failed or picked up again
+    /^📚 Research ready/,
+    /^(?:❌|⚠️) Research on "/,
+    /^🔬 Picking up the research/,
 ];
 
 export function isImportantMessage(message: string): boolean {

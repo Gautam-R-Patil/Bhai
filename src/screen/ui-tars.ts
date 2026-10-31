@@ -31,7 +31,7 @@ function isSafeScreenshotPath(p: string): boolean {
     const abs = resolve(p);
     const cwd = resolve("");
     // Reject filesystem-root and unreasonably short paths from the allowlist —
-    // ATLAS_WORKSPACE="/" would otherwise let every absolute path pass startsWith.
+    // BHAI_WORKSPACE="/" would otherwise let every absolute path pass startsWith.
     const isMeaningfulDir = (d: string): boolean => {
         if (!d || d === cwd) return false;
         if (d === "/" || d === "\\" || /^[A-Za-z]:\\?$/.test(d)) return false;
@@ -45,8 +45,8 @@ function isSafeScreenshotPath(p: string): boolean {
         resolve(process.env.HOME || "", "Desktop", "Bhai Files"),
         resolve(process.env.HOME || "", "Documents", "Bhai Files"),
         resolve(process.env.HOME || "", "Bhai Files"),
-        resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
-        process.env.ATLAS_WORKSPACE ? resolve(process.env.ATLAS_WORKSPACE) : "",
+        resolve(process.env.HOME || "", "Library", "Caches", "bhai"),
+        process.env.BHAI_WORKSPACE ? resolve(process.env.BHAI_WORKSPACE) : "",
     ].filter(isMeaningfulDir);
     return allowedDirs.some((d) => abs === d || abs.startsWith(`${d}/`) || abs.startsWith(`${d}\\`));
 }
@@ -84,7 +84,7 @@ export interface UITarsOptions {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-// Default UI-TARS GGUF when no ATLAS_UI_TARS_TAG is set. The Lucy-in-the-Sky
+// Default UI-TARS GGUF when no BHAI_UI_TARS_TAG is set. The Lucy-in-the-Sky
 // quant is verified-working for VISION inference (grounds a real screenshot in
 // ~3s, conf ~0.96). The previously-default mradermacher quant pulls + runs text
 // fine but CRASHES on image inference (broken mmproj → GGML_ASSERT/500), so it
@@ -166,9 +166,9 @@ export async function groundClick(
 ): Promise<UITarsGroundingResult> {
     // Honour the wizard's persisted choice — install can pull either
     // ui-tars:1.5-7b (canonical Ollama 1.5 release) or ui-tars:7b depending
-    // on which tag the registry serves. ATLAS_UI_TARS_TAG is written by
+    // on which tag the registry serves. BHAI_UI_TARS_TAG is written by
     // installer/phases.js after a successful pull.
-    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
+    const model = opts.model || process.env.BHAI_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const start = Date.now();
@@ -193,9 +193,9 @@ export async function groundClick(
         // Retina/window full-res frames are 2-3MP — the vision encoder pass scales
         // with pixel count, so this is the single biggest per-call inference saving.
         // imageWidth/Height are the SENT dims so toScreenCoords scales by what the
-        // model actually saw. ATLAS_NO_UITARS_DOWNSCALE opts out (fail-open to full-res).
+        // model actually saw. BHAI_NO_UITARS_DOWNSCALE opts out (fail-open to full-res).
         const scaled = await downscaleForVision(await fs.readFile(screenshotPath), {
-            maxSide: process.env.ATLAS_NO_UITARS_DOWNSCALE === "true" ? Number.POSITIVE_INFINITY : VISION_MAX_SIDE,
+            maxSide: process.env.BHAI_NO_UITARS_DOWNSCALE === "true" ? Number.POSITIVE_INFINITY : VISION_MAX_SIDE,
         });
         const buf = scaled.buf;
         imageWidth = scaled.width;
@@ -216,7 +216,7 @@ Respond with ONLY a JSON object of the form: {"x": <pixel_x>, "y": <pixel_y>, "c
     // keeps the ~5GB model resident so subsequent clicks skip the cold reload —
     // the dominant cost on the first call. num_predict 64 is ample for the tiny
     // {x,y,confidence,reasoning} JSON (was 256).
-    const keepAlive = opts.keepAlive ?? process.env.ATLAS_UITARS_KEEP_ALIVE ?? "30m";
+    const keepAlive = opts.keepAlive ?? process.env.BHAI_UITARS_KEEP_ALIVE ?? "30m";
     const requestBody = JSON.stringify({
         model,
         prompt,
@@ -323,7 +323,7 @@ export function clearUITarsAvailCache(): void {
 export async function isUITarsAvailable(
     opts: { model?: string; host?: string } = {},
 ): Promise<{ available: boolean; reason?: string; modelTag?: string }> {
-    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
+    const model = opts.model || process.env.BHAI_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
     const cacheKey = `${host}|${model}`;
     const cached = _availCache.get(cacheKey);
@@ -387,7 +387,7 @@ const SMOKE_PNG_B64 =
 export async function isUITarsHealthy(
     opts: { model?: string; host?: string; timeoutMs?: number } = {},
 ): Promise<{ healthy: boolean; reason?: string }> {
-    const model = opts.model || process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
+    const model = opts.model || process.env.BHAI_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
     const host = opts.host || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
     const cacheKey = `${host}|${model}`;
     const cached = _healthCache.get(cacheKey);
@@ -420,7 +420,7 @@ export async function isUITarsHealthy(
                 // Keep resident after the probe — this doubles as the boot warm-up
                 // so the first REAL click reuses the loaded model instead of paying
                 // the ~5GB cold reload.
-                keep_alive: process.env.ATLAS_UITARS_KEEP_ALIVE ?? "30m",
+                keep_alive: process.env.BHAI_UITARS_KEEP_ALIVE ?? "30m",
                 options: { num_predict: 32, temperature: 0.0 },
             }),
             signal: controller.signal,

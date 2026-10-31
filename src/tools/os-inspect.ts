@@ -15,12 +15,15 @@
 import {
     AX_PERMISSION_ERROR,
     type AxFlatElement,
+    type AxNode,
     dumpAccessibilityTree,
     flattenInteractive,
     isAxPermissionError,
     matchElementByLabel,
 } from "../screen/ax-dump.js";
-import { getFrontmostApp } from "../screen/frontmost.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { getFrontmostApp, pidOfApp } from "../screen/frontmost.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
 /** Ids older than this are re-resolved by label before clicking: the UI may have moved. */
@@ -36,6 +39,26 @@ interface InspectCache {
     wasFront: boolean;
     depth: number;
     timestamp: number;
+    /** The elements a query-filtered inspect listed (their ids are not 1..n). */
+    shown?: AxFlatElement[];
+}
+
+/** Elements whose label (or a static text's value) shares words with the query, best first. */
+export function matchElements<T extends { label?: string | null; value?: string | null; role: string }>(
+    all: T[],
+    query: string,
+): T[] {
+    const words = (t: string) => t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+    const want = [...new Set(words(query))].filter((w) => w.length > 1 || /\d/.test(w));
+    if (!want.length) return [];
+    return all
+        .map((e) => {
+            const have = new Set(words(`${e.label ?? ""} ${e.role === "AXStaticText" ? (e.value ?? "") : ""}`));
+            return { e, hit: want.filter((w) => have.has(w)).length / want.length };
+        })
+        .filter((x) => x.hit > 0)
+        .sort((a, b) => b.hit - a.hit)
+        .map((x) => x.e);
 }
 
 // Roles whose AX value is their state (checked, slider position, typed text): it
@@ -59,16 +82,64 @@ export function getLastInspect(): InspectCache | null {
     return _lastInspect;
 }
 
+/** Elements inside a container (window, outline, group…) whose label matches the query's words. */
+export function elementsInside<T extends { path: number[] }>(root: AxNode | undefined, all: T[], query: string): T[] {
+    if (!root) return [];
+    return all.filter((e) => {
+        let n: AxNode | undefined = root;
+        for (const i of e.path.slice(0, -1)) {
+            n = n?.children[i];
+            if (n?.label && matchElements([{ label: n.label, role: n.role ?? "" }], query).length) return true;
+        }
+        return false;
+    });
+}
+
+/** A running app's pid by name on any OS (0 when it isn't running); the UIA and AT-SPI dumps take a pid too. */
+export async function pidOfAppAnyOs(app: string): Promise<number> {
+    if (process.platform === "darwin") return pidOfApp(app);
+    const run = promisify(execFile);
+    try {
+        if (process.platform === "win32") {
+            // Single-quoted literal: no $() or backtick expansion; ' is doubled.
+            const name = `'${app.replace(/\.exe$/i, "").replace(/['\u2018\u2019]/g, "''")}'`;
+            const { stdout } = await run(
+                "powershell",
+                ["-NoProfile", "-Command", `(Get-Process -Name ${name} -ErrorAction SilentlyContinue | Where-Object MainWindowHandle -ne 0 | Select-Object -First 1).Id`],
+                { timeout: 4000 },
+            );
+            return Number(stdout.trim()) || 0;
+        }
+        const { stdout } = await run("pgrep", ["-n", "-i", "-x", app], { timeout: 2000 });
+        return Number(stdout.trim().split("\n")[0]) || 0;
+    } catch {
+        return 0; // pgrep exits 1 when nothing matches
+    }
+}
+
+const WINDOW_ROLE = /^(AXWindow|Window|window|frame|dialog)$/;
+/** Titles of the app's windows (top two levels of the tree), front first as AX lists them. */
+export function windowTitles(root: AxNode | undefined): string[] {
+    const out: string[] = [];
+    for (const n of [root, ...(root?.children ?? [])])
+        if (n && WINDOW_ROLE.test(n.role ?? "") && n.label) out.push(truncate(n.label, 80));
+    return out.slice(0, 8);
+}
+
 export const osInspect: ToolDefinition = {
     schema: {
         type: "function",
         function: {
             name: "os_inspect",
             description:
-                "FAST cross-OS accessibility tree dump. Returns a numbered list of interactive elements (buttons, links, text fields, etc.) for the focused app. ~100-300ms typical. After this, use os_click_id with the label number to click. PREFERRED over screenshot+grid for native apps — no vision call needed.",
+                "FAST cross-OS accessibility tree dump. Returns a numbered list of interactive elements (buttons, links, text fields, etc.) for the focused app, or for `app` without bringing it forward (read a background window: Finder's sidebar, a dialog). ~100-300ms typical. After this, use os_click_id with the label number to click. PREFERRED over screenshot+grid and over AppleScript 'entire contents' for native apps — no vision call needed.",
             parameters: {
                 type: "object",
                 properties: {
+                    app: {
+                        type: "string",
+                        description: "Name of a running app to inspect without switching to it (e.g. 'Finder', 'notepad'). Default: frontmost app.",
+                    },
                     pid: {
                         type: "number",
                         description: "Optional process ID to inspect. Default: frontmost app.",
@@ -76,6 +147,11 @@ export const osInspect: ToolDefinition = {
                     depth: {
                         type: "number",
                         description: "Max tree depth (default 20, max 30). Higher = more elements but slower.",
+                    },
+                    query: {
+                        type: "string",
+                        description:
+                            "Only the elements matching these words (labels, and on-screen text), best first, e.g. 'save' or 'wi-fi toggle'. A much smaller result than the full list: use it when you know what you're looking for.",
                     },
                     max_elements: {
                         type: "number",
@@ -89,7 +165,14 @@ export const osInspect: ToolDefinition = {
     },
 
     async handler(input) {
-        const pid = typeof input.pid === "number" ? input.pid : 0;
+        let pid = typeof input.pid === "number" ? input.pid : 0;
+        // Asked to read Finder's sidebar in the background, the model had no pid and fell back to
+        // AppleScript 'entire contents' (slow, came back empty). A name is what it has.
+        const app = typeof input.app === "string" ? input.app.trim() : "";
+        if (!pid && app) {
+            pid = await pidOfAppAnyOs(app);
+            if (!pid) return JSON.stringify({ success: false, error: `${app} isn't running.`, hint: "Open it with app_manager first." });
+        }
         const depth = typeof input.depth === "number" ? Math.max(1, Math.min(30, input.depth)) : DEFAULT_INSPECT_DEPTH;
         const maxElements =
             typeof input.max_elements === "number" ? Math.max(5, Math.min(500, input.max_elements)) : 60;
@@ -113,7 +196,13 @@ export const osInspect: ToolDefinition = {
             }
 
             const all = flattenInteractive(dump);
-            const elements = all.slice(0, maxElements);
+            // A query returns only the matching elements (ids unchanged, so os_click_id works):
+            // a few hundred characters instead of the whole window.
+            const query = typeof input.query === "string" ? input.query.trim() : "";
+            let elements = query ? matchElements(all, query).slice(0, Math.min(maxElements, 15)) : all.slice(0, maxElements);
+            // "sidebar" labels no element, but Finder's sidebar rows sit inside an AXOutline labelled
+            // "sidebar": with no element match, list what's inside a matching container.
+            if (query && !elements.length) elements = elementsInside(dump.root, all, query).slice(0, maxElements);
 
             _lastInspect = {
                 elements: all, // os_click_id text= can match past the listed cap
@@ -122,6 +211,7 @@ export const osInspect: ToolDefinition = {
                 wasFront: !pid || (await getFrontmostApp())?.pid === dump.pid,
                 depth,
                 timestamp: Date.now(),
+                ...(query ? { shown: elements } : {}),
             };
 
             // SECURITY: summary uses `label`, and `value` only for read-only static text (a
@@ -146,20 +236,38 @@ export const osInspect: ToolDefinition = {
 
             // Phase 2 finding: empty AT-SPI tree on Linux often means Electron/Chromium without
             // --force-renderer-accessibility. Surface this as a hint.
-            let hint: string | undefined;
+            let hint: string | undefined =
+                query && !elements.length
+                    ? `Nothing matches "${query}" (a query matches element labels, not areas like "sidebar" or "toolbar"). Call os_inspect without query for the full list.`
+                    : undefined;
+            // Finder with every window closed returned its menu bar only, and Bhai said it couldn't
+            // read the sidebar "without bringing Finder forward". Say what's actually true.
+            if (app && dump.source === "swift" && !windowTitles(dump.root).length) {
+                hint = `${app} has no open windows, only its menu bar. Say so; opening a window would mean switching to it.`;
+            }
             if (dump.source === "pyatspi" && all.length === 0) {
                 hint =
                     "Empty tree — if targeting an Electron/Chromium app (VS Code, Slack, browsers), relaunch with --force-renderer-accessibility for AT-SPI to populate.";
             }
             if (dump.partial) {
-                hint =
-                    "Incomplete list: the app stopped answering mid-read, so some elements are missing. Retry os_inspect, or take a screenshot instead.";
+                // The walk stops at a 3 s budget (dump_ax.swift). Ran to it: a big window (Finder
+                // on Downloads, ~3000 elements), not a hung app; what's listed is accurate. Said
+                // as "the app stopped answering", the model called even the sidebar it read unverified.
+                const why =
+                    dump.elapsedMs >= 2500
+                        ? `Big window: the read stopped after ${all.length} elements, so ones further down the tree are missing. Everything listed (and the window titles) is accurate. To find one element, call os_inspect with query="its words".`
+                        : "Incomplete list: the app stopped answering mid-read, so some elements are missing. Retry os_inspect, or take a screenshot instead.";
+                // A query that matched nothing keeps its own advice first: "sidebar" labels no element,
+                // and with only the big-window note the model gave up instead of listing everything.
+                hint = hint ? `${hint} ${why}` : why;
             }
 
             return JSON.stringify({
                 success: true,
                 app: dump.app,
                 pid: dump.pid,
+                // The elements are buttons and rows; "what's this window called?" needs the titles.
+                windows: windowTitles(dump.root),
                 elapsed_ms: dump.elapsedMs,
                 source: dump.source,
                 element_count: lines.length,
@@ -167,7 +275,7 @@ export const osInspect: ToolDefinition = {
                 truncated: all.length > lines.length,
                 elements: summary,
                 hint,
-                tip: `Use os_click_id with id=<number> to click an element. Or query by text: os_click_id with text="<query>". Cache TTL: ${Math.round(INSPECT_CACHE_TTL_MS / 1000)}s.`,
+                tip: `${query && elements.length ? `To click "${truncate(elements[0].label || elements[0].role, 40)}": os_click_id id=${elements[0].id} (the number in brackets, not its place in this list). ` : ""}Use os_click_id with id=<number> to click an element. Or query by text: os_click_id with text="<query>". Cache TTL: ${Math.round(INSPECT_CACHE_TTL_MS / 1000)}s.`,
             });
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
@@ -219,6 +327,18 @@ export const osClickId: ToolDefinition = {
 
         let el: AxFlatElement | null = null;
         if (id !== null) {
+            // os_inspect query="BhaiEval" listed [195] "BhaiEval"; gpt-4.1-nano clicked id=1
+            // (the first in the list), which was "Recents".
+            const shown = cache.shown;
+            if (shown?.length && id <= shown.length && !shown.some((e) => e.id === id)) {
+                return JSON.stringify({
+                    success: false,
+                    error: `Not clicked: id=${id} wasn't in your last os_inspect list. Ids are the numbers in brackets: ${shown
+                        .slice(0, 5)
+                        .map((e) => `[${e.id}] "${truncate(e.label || e.role, 40)}"`)
+                        .join(", ")}.`,
+                });
+            }
             el = cache.elements.find((e) => e.id === id) || null;
             if (!el)
                 return JSON.stringify({

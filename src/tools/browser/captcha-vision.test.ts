@@ -63,7 +63,7 @@ function mouse(onClick: (x: number, y: number) => void = () => {}) {
 }
 
 beforeEach(() => {
-    process.env.ATLAS_CAPTCHA_MODELS = "azure/gpt-6-luna,xai/grok-4.7";
+    process.env.BHAI_CAPTCHA_MODELS = "azure/gpt-6-luna,xai/grok-4.7";
 });
 
 describe("parseAnswer", () => {
@@ -263,7 +263,7 @@ describe("model voting on tiles", () => {
 
     it("takes the first two models' answer when they agree, without asking the third", async () => {
         vi.useFakeTimers();
-        process.env.ATLAS_CAPTCHA_MODELS = "a,b,c";
+        process.env.BHAI_CAPTCHA_MODELS = "a,b,c";
         let done = false;
         const { m, page } = tilePage(() => (done = true));
         const chat = vi.fn(async (req: { modelOverride?: string }) => ({
@@ -279,7 +279,7 @@ describe("model voting on tiles", () => {
 
     it("lets the third model break a tie, tile by tile", async () => {
         vi.useFakeTimers();
-        process.env.ATLAS_CAPTCHA_MODELS = "a,b,c";
+        process.env.BHAI_CAPTCHA_MODELS = "a,b,c";
         let done = false;
         const { m, page } = tilePage(() => (done = true));
         const say: Record<string, string> = {

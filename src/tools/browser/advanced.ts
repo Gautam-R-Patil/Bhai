@@ -8,6 +8,7 @@
 import { getResourceLimits } from "../../utils/system-resources.js";
 import type { ToolDefinition } from "../get-current-time.js";
 import { agentCursor, withAgentUIHidden } from "./agent-cursor.js";
+import { getCurrentMode } from "./browser-backend.js";
 import {
     buildElementsText,
     getActivePage,
@@ -104,7 +105,11 @@ export const browserParallelTabs: ToolDefinition = {
             const closeNewTabs = (input.close_new_tabs as boolean) || false;
 
             // ── Resource-aware concurrency ────────────
-            const { maxParallelTabs, reason: resourceInfo } = getResourceLimits();
+            const limits = getResourceLimits();
+            const resourceInfo = limits.reason;
+            // The owner's Chrome has one page proxy (Bhai's tab): concurrent gotos on it race and
+            // every result reads whichever page loaded last. Run those tabs one after another.
+            const maxParallelTabs = getCurrentMode() === "chrome" ? 1 : limits.maxParallelTabs;
             const existingTabCount = context.pages().length;
 
             console.log(
@@ -182,7 +187,7 @@ export const browserParallelTabs: ToolDefinition = {
                                         }
                                         if (cx !== undefined && cy !== undefined) {
                                             await page.mouse.click(cx, cy);
-                                            await page.waitForTimeout(500);
+                                            await waitForPageReady(page, 1500);
                                         }
                                         break;
                                     }
@@ -207,7 +212,7 @@ export const browserParallelTabs: ToolDefinition = {
                                     }
                                     case "scroll": {
                                         await page.mouse.wheel(0, 500);
-                                        await page.waitForTimeout(300);
+                                        await waitForPageReady(page, 1000); // lazy-loaded content
                                         break;
                                     }
                                     case "extract": {
@@ -644,20 +649,17 @@ export const browserMultiAction: ToolDefinition = {
                                 const cx = box.x + box.width / 2;
                                 const cy = box.y + box.height / 2;
                                 await page.mouse.click(cx, cy);
-                                await page.waitForTimeout(200);
                             }
                         } else if (act.label !== undefined) {
                             const el = lastElementMap.find((e) => e.label === (act.label as number));
                             if (el) {
                                 await agentCursor(page, el, "click");
                                 await page.mouse.click(el.x, el.y);
-                                await page.waitForTimeout(200);
                             }
                         }
                         if (act.text) {
                             await agentCursor(page, null, "type");
                             await page.keyboard.press("ControlOrMeta+a"); // cross-platform (Ctrl on Win/Linux, Cmd on Mac)
-                            await page.waitForTimeout(80);
                             // `clear`: the Chrome extension replaces the content itself (its synthetic Ctrl+A selects nothing); Playwright ignores it.
                             await page.keyboard.type(act.text as string, { delay: 25, clear: true });
                             return { success: true };
@@ -694,9 +696,7 @@ export const browserMultiAction: ToolDefinition = {
                         await agentCursor(page, null, "scroll");
                         await page.mouse.wheel(deltaX, deltaY);
                         invalidateCache();
-                        setLastElementMap([]); // clear stale positions after scroll
-                        // Allow DOM to settle before final_scan ariaSnapshot runs
-                        await new Promise((r) => setTimeout(r, 500));
+                        setLastElementMap([]); // clear stale positions after scroll (the settle runs between actions and before final_scan)
                         return { success: true };
                     }
                     case "keyboard": {
@@ -707,9 +707,7 @@ export const browserMultiAction: ToolDefinition = {
                             for (const mod of modifiers) await page.keyboard.down(mod);
                             await page.keyboard.press(key);
                             for (const mod of modifiers.reverse()) await page.keyboard.up(mod);
-                            // Let DOM settle after keyboard action (e.g. form submit, dialog dismiss)
-                            await new Promise((r) => setTimeout(r, 150));
-                            return { success: true };
+                            return { success: true }; // settled between actions and before final_scan
                         }
                         return { success: false, error: "No combo provided" };
                     }
@@ -926,9 +924,9 @@ export const browserMultiAction: ToolDefinition = {
                         }
                     }
 
-                    // Smart wait between actions (reduced from 800ms to 150ms for speed)
+                    // Let the page settle between actions (the last one settles before the final scan)
                     if (i < actions.length - 1 && actions[i + 1].action !== "wait") {
-                        await page.waitForTimeout(150);
+                        await waitForPageReady(page, 1000);
                     }
                 } catch (e) {
                     hadError = true;

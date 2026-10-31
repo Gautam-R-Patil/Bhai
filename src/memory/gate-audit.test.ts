@@ -17,7 +17,7 @@ describe("gate-audit", () => {
     let auditPath: string;
 
     beforeEach(() => {
-        tmpDir = mkdtempSync(join(tmpdir(), "atlas-gate-audit-"));
+        tmpDir = mkdtempSync(join(tmpdir(), "bhai-gate-audit-"));
         auditPath = join(tmpDir, "memory-gate.jsonl");
         __setAuditPathForTesting(auditPath);
     });

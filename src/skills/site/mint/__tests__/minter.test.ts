@@ -227,10 +227,10 @@ async function recordOrder(opts: Parameters<typeof startShop>[0] = {}): Promise<
 }
 
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
-    process.env.ATLAS_DATA_DIR = tmp(); // run log, fixtures: never the repo's data/
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+    process.env.BHAI_DATA_DIR = tmp(); // run log, fixtures: never the repo's data/
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;
@@ -239,8 +239,8 @@ beforeAll(async () => {
     traceDir = await recordOrder({ otp: true });
 }, 60_000);
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
-    delete process.env.ATLAS_DATA_DIR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_DATA_DIR;
     await browser?.close();
 });
 
@@ -501,6 +501,7 @@ describe("the static gate", () => {
     it.for([
         ["a generated class", '{ sel: "#q" }', '{ sel: ".css-1x2y3z input" }', "selector"],
         ["a CSS-module class", '{ sel: "#search" }', '{ sel: "button.Search__btn_3kXq" }', "selector"],
+        ["data-bhai-id", '{ sel: "#search" }', '{ sel: "[data-bhai-id=\\"12\\"]" }', "selector"],
         ["data-atlas-id", '{ sel: "#search" }', '{ sel: "[data-atlas-id=\\"12\\"]" }', "selector"],
         [
             "require",

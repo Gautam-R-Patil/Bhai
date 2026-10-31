@@ -146,7 +146,7 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 - **Action cache can't replay correctly** (ids include `Date.now()`, no post-condition, stats self-inflate). Delete it. `action-cache.ts`. S.
 - **Browser-memory strategies are injected on stop-word matches** with labels that mean nothing next session. `browser-memory.ts:357,382,443`. S.
 - **`browser_type` select-alls whole documents** in Docs/Notion. In Chrome mode it appends and never submits. `interaction.ts:719`, `background.js:1209,1417`. M, high.
-- **Stealth fingerprint contradicts itself**: UA says Chrome 131 on Chromium 145, timezone is hard-coded to New York, service workers are blocked. `core.ts:214-262`. S.
+- **Stealth fingerprint contradicts itself**: UA says Chrome 131 on Chromium 145, timezone is hard-coded to New York, service workers are blocked. `core.ts:214-262`. S. *Partly fixed: the browser and the research search browser use the machine's timezone.*
 - **No login/OTP detection or handoff**; only CAPTCHA has one. Add `detectAuthWall` and reuse the CAPTCHA handoff banner. `captcha.ts:597`. S, high.
 
 ## Reliability: computer use (round 2)
@@ -157,11 +157,11 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 - **`modifiers` and `button` are silently dropped on every platform**, so a shift-click becomes a plain click reported as success. `os-computer-action.ts:223,254,273`. S, high.
 - **Dock, Spotlight and Control Center are AX-invisible** because only the frontmost app is dumped and `AXDockItem` isn't interactive. `ax-dump.ts:203`. S, high.
 - **`os_inspect` default depth 12 hides most web content** (links sit at depth 17). Depth 20 costs the same 0.37s. `os-inspect.ts:71`. S.
-- **AX dump walks minimized windows**, which can win the match and cause a misclick. `dump_ax.swift:157`. S.
+- **AX dump walks minimized windows**, which can win the match and cause a misclick. `dump_ax.swift:157`. S. *Fixed: a minimized window keeps its slot but not its contents.*
 - **No `AXPress`/`AXScrollToVisible`**, so off-screen list items always fall to vision. Add press/reveal to the Swift helper. M, high.
 - **Windows paste mangles non-ASCII.** `os_type` is a PowerShell injection from untrusted text. `os-computer-action.ts:650`, `windows.ts:539`. S, high.
 - **Linux key names no-op** (`enter` vs `Return`) but report success. Wayland hold/drag can't work. `os-computer-action.ts:740,837`. S.
-- **AX permission error is hidden behind the negative cache** after the first call. `ax-dump.ts:100`, `os-inspect.ts:84`. S.
+- **AX permission error is hidden behind the negative cache** after the first call. `ax-dump.ts:100`, `os-inspect.ts:84`. S. *Fixed: first and cached failures return the same `AX_PERMISSION_ERROR`, and `os_inspect` gives the grant hint for both.*
 - **Tool tips and `rules-windows.md` name tools that don't exist on that platform**, or contradict `rules-mac.md`. S.
 - **Dead `computer_use` agent** (~800 lines, broken AppleScript). Delete it. S.
 
@@ -191,8 +191,8 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 - **Ad-hoc signed, not notarized.** Gatekeeper blocks it, TCC grants go stale, and auto-update can't install. `desktop/package.json:203`. M, high (needs a Developer ID).
 - **Session fetch has no timeout**, so captive-portal Wi-Fi hangs boot forever. `session.ts:136`. S, high.
 - **Bot crashes and the "gave up restarting" state are never shown.** `main.js:1405`, `panel.html:1909`. S, high.
-- **No overlay streaming**, and an error wipes the user's typed prompt. `overlay-chat.ts:956`, `overlay.html:3178`. M, high.
-- **Overlay is a single reply box** with no scrollback, no headings and no numbered lists. M.
+- **No overlay streaming**, and an error wipes the user's typed prompt. `overlay-chat.ts:956`, `overlay.html:3178`. M, high. *Retry fixed: an error keeps the prompt, Enter resends it. Streaming is out of Phase 4.*
+- **Overlay is a single reply box** with no scrollback, no headings and no numbered lists. M. *Fixed: the last 10 turns of the session stay above the reply; headings render and code is no longer rewritten. Numbered lists read fine as plain lines.*
 - **Hotkey during boot says "press again"** instead of showing a splash. `main.js:1964`. S.
 - **Permission probe only logs**; the UI never learns that Accessibility is stale. `macos-permissions.ts:108`. S.
 - **Two optional server syncs block boot serially**, costing up to 50s. `index.ts:201-236`. S.
@@ -209,20 +209,20 @@ Owner direction for this round: Bhai needs **solid memory**, **very solid task r
 - **LSP never sends `didChange`**, so post-edit diagnostics are stale. The codebase index never refreshes after the agent's own edits. `lsp.ts:412,733`. S, high.
 - **Walkthrough summarizes the last 10 unrelated commits** while the agent is told never to commit. `walkthrough.ts:89`. S.
 - **`demo_project` misses Flask/Django/requirements.txt** and reports the wrong port when Vite bumps. `demo-project.ts:73-148`. M.
-- **Forge verifier sandbox differs from production**, and always-pass expectations are allowed. `sandbox-runner.ts`, `verifier.ts:439`. M, high.
-- **Forge lookup reuses wrong, unapproved or unregistered tools.** Dedup is never called. `orchestrator.ts:181-345`, `lookup.ts:99`. S, high.
-- **Synthesized and approved tools are never offered to the model.** They are in no router category. `tool-router.ts:1660-1860`. M, high.
+- **Forge verifier sandbox differs from production**, and always-pass expectations are allowed. `sandbox-runner.ts`, `verifier.ts:439`. M, high. *Fixed: verifier, session and persisted tools share one `(input, utils, console)` contract on one runtime; side-effect tests always fail and all-bare-`throws` suites count as self-bait. Persisted installs now pin the hash of the written handler.js.*
+- **Forge lookup reuses wrong, unapproved or unregistered tools.** Dedup is never called. `orchestrator.ts:181-345`, `lookup.ts:99`. S, high. *Fixed: a hit is reused only while its tool is registered in this process; `dedup.ts` deleted.*
+- **Synthesized and approved tools are never offered to the model.** They are in no router category. `tool-router.ts:1660-1860`. M, high. *Fixed: dynamic tools are scored like MCP tools, and a successful create/approve reselects the next iteration.*
 - **Verifier and `code_action` pass host functions into LLM code before approval** (`parseInt.constructor` is the host Function). `sandbox-runner.ts:28`, `code-action-agent.ts:35`. S, high (security).
-- **Approval message asks the user to type a function call.** `approval-gate.ts:54-91`. S.
+- **Approval message asks the user to type a function call.** `approval-gate.ts:54-91`. S. *Fixed: create_tool says to ask in plain words; approval takes the owner's own yes (`ownerApproved`); `approval-gate.ts` deleted.*
 
 ## Reliability: voice, research, security
 
 - **STT fallback sends audio to the proxy, which drops it.** Without OpenAI or Groq keys, voice notes "transcribe" to nothing or to hallucinated text. `transcribe.ts:63`, `convex/claude.ts:39`. S, high.
-- **ElevenLabs uses an English-only model and sends MP3 labelled ogg/opus PTT.** `elevenlabs.ts:14-36`, `whatsapp.ts:736`. S, high.
-- **Voice replies read markdown and markers aloud.** `stripTtsMarkup` exists but is used only in live voice. `whatsapp.ts:734`. S.
+- **ElevenLabs uses an English-only model and sends MP3 labelled ogg/opus PTT.** `elevenlabs.ts:14-36`, `whatsapp.ts:736`. S, high. *Fixed: `eleven_multilingual_v2`, MP3 pinned and sent as `audio/mpeg`; only Ogg/Opus goes as a voice note.*
+- **Voice replies read markdown and markers aloud.** `stripTtsMarkup` exists but is used only in live voice. `whatsapp.ts:734`. S. *Fixed: `textToSpeech` strips markup for every caller; headings too.*
 - **Hybrid barge-in cancels the audio but not the in-flight turn**, so the old answer resumes mid-sentence. `live/session.ts:597`. S, high.
 - **Research URL dedup is byte-exact**, so one article counts as "3 sources". `executor.ts:137`. S, high.
-- **Research fetch failures are silent**, 4xx responses are retried, PDFs and JS shells are dropped, and there's no browser fallback. `fetcher.ts:121-170`. M, high.
+- **Research fetch failures are silent**, 4xx responses are retried, PDFs and JS shells are dropped, and there's no browser fallback. `fetcher.ts:121-170`. M, high. *Partly fixed: a 4xx (other than 408/429) or a blocked URL is no longer retried.*
 - **Per-page LLM analysis runs serially** after a parallel fetch. `executor.ts:208`. S, high.
 - **Synthesis never sees source URLs**, so citations can't link. `analysis.ts:393,437`. S, high.
 - **Research crash checkpoints are deleted on boot**, never resumed. `persistence.ts:116-163`. M.

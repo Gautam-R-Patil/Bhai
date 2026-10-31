@@ -49,7 +49,7 @@ const ACTIVATION_THRESHOLD = 0.15; // Minimum activation to keep
 // (CPU work per marshalled byte is too low — V8 inlines tight BFS loops
 // extremely well, and there's no SIMD win available for pointer-chasing).
 // If/when a workload with >1000-node induced graphs appears, re-bench.
-const NATIVE_ENABLED = process.env.ATLAS_NATIVE_SPREADING === "true";
+const NATIVE_ENABLED = process.env.BHAI_NATIVE_SPREADING === "true";
 
 // ── Types ─────────────────────────────────────
 
@@ -125,7 +125,7 @@ export function spreadActivation(seedScores: Map<number, number>, db: Database |
     if (seedEntities.size === 0) return [];
 
     // ── Phase 2: BFS with bounded branching ──
-    // Native path is opt-IN behind ATLAS_NATIVE_SPREADING=true — bench shows
+    // Native path is opt-IN behind BHAI_NATIVE_SPREADING=true — bench shows
     // FFI + JSON-serialization overhead dominates BFS savings on the typical
     // <50-node induced graphs. Falls back to TS when native is unavailable
     // or the env var is unset.

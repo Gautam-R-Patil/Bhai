@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 
 import { describe, expect, it } from "vitest";
-import { applyPendingPrune, pushNudge, runWithTurnNudges, stripTurnNudges } from "./agent.js";
+import { applyPendingPrune, pushNudge, pushRetry, runWithTurnNudges, stripTurnNudges } from "./agent.js";
 import type { ChatCompletionMessageParam } from "./llm.js";
 
 const msg = (content: string): ChatCompletionMessageParam => ({ role: "user", content });
@@ -33,6 +33,19 @@ describe("applyPendingPrune", () => {
 });
 
 describe("turn nudges", () => {
+    it("a retry's draft reply and steering note don't outlive the turn, and don't pose as the owner", () => {
+        const history: ChatCompletionMessageParam[] = [msg("remind me in 3 minutes")];
+        const owned = new Set<object>();
+        runWithTurnNudges(owned, () => pushRetry(history, "Set for 7:43.", "If it is done, give your final answer."));
+        expect(history[2]).toMatchObject({
+            role: "user",
+            content: expect.stringMatching(/^\[Automatic check, not from the owner\]/),
+        });
+        history.push({ role: "assistant", content: "Done — 7:43." });
+        stripTurnNudges(history, owned);
+        expect(history.map((m) => m.content)).toEqual(["remind me in 3 minutes", "Done — 7:43."]);
+    });
+
     it("a turn strips only its own nudges, not an overlapping turn's", () => {
         const history: ChatCompletionMessageParam[] = [msg("hi")];
         const a = new Set<object>();

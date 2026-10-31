@@ -15,7 +15,7 @@ import { _resetBriefingStateForTests, maybeEmitMorningBoundary } from "./heartbe
 describe("heartbeat morning boundary emission", () => {
     let events: BoundaryEvent[] = [];
     let unsub: (() => void) | null = null;
-    const origFlag = process.env.ATLAS_PROACTIVE_V3_SOURCES;
+    const origFlag = process.env.BHAI_PROACTIVE_V3_SOURCES;
 
     beforeEach(() => {
         events = [];
@@ -28,14 +28,14 @@ describe("heartbeat morning boundary emission", () => {
     afterEach(() => {
         unsub?.();
         if (origFlag === undefined) {
-            delete process.env.ATLAS_PROACTIVE_V3_SOURCES;
+            delete process.env.BHAI_PROACTIVE_V3_SOURCES;
         } else {
-            process.env.ATLAS_PROACTIVE_V3_SOURCES = origFlag;
+            process.env.BHAI_PROACTIVE_V3_SOURCES = origFlag;
         }
     });
 
     it("emits morning_window when V3 flag is set and target minute reached in primary window", () => {
-        process.env.ATLAS_PROACTIVE_V3_SOURCES = "true";
+        process.env.BHAI_PROACTIVE_V3_SOURCES = "true";
         const emitted = maybeEmitMorningBoundary({
             minutesNow: 8 * 60,
             todayStr: "2026-05-08",
@@ -47,7 +47,7 @@ describe("heartbeat morning boundary emission", () => {
     });
 
     it("does not emit when V3 flag is off", () => {
-        process.env.ATLAS_PROACTIVE_V3_SOURCES = "false";
+        process.env.BHAI_PROACTIVE_V3_SOURCES = "false";
         const emitted = maybeEmitMorningBoundary({
             minutesNow: 8 * 60,
             todayStr: "2026-05-08",
@@ -59,7 +59,7 @@ describe("heartbeat morning boundary emission", () => {
     });
 
     it("does not emit when target minute is not yet reached", () => {
-        process.env.ATLAS_PROACTIVE_V3_SOURCES = "true";
+        process.env.BHAI_PROACTIVE_V3_SOURCES = "true";
         const emitted = maybeEmitMorningBoundary({
             minutesNow: 7 * 60,
             todayStr: "2026-05-08",
@@ -70,7 +70,7 @@ describe("heartbeat morning boundary emission", () => {
     });
 
     it("emits catch-up when past 10am and not yet sent today", () => {
-        process.env.ATLAS_PROACTIVE_V3_SOURCES = "true";
+        process.env.BHAI_PROACTIVE_V3_SOURCES = "true";
         const emitted = maybeEmitMorningBoundary({
             minutesNow: 11 * 60,
             todayStr: "2026-05-08",
@@ -82,7 +82,7 @@ describe("heartbeat morning boundary emission", () => {
     });
 
     it("deduplicates — second call same day does not re-emit", () => {
-        process.env.ATLAS_PROACTIVE_V3_SOURCES = "true";
+        process.env.BHAI_PROACTIVE_V3_SOURCES = "true";
         const first = maybeEmitMorningBoundary({
             minutesNow: 8 * 60,
             todayStr: "2026-05-08",

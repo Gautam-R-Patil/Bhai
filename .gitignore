@@ -83,7 +83,23 @@ desktop/hostinger-upload/
 # Individual test files that should ship with the repo go here so
 # they survive the broad ignore. Add a new entry when you commit a
 # test you want to keep.
+# Session 2026-10-31: launch guards (no fixed sleeps, no macOS-only calls in the browser path)
+!src/tools/browser/bridge-guards.test.ts
+# Session 2026-10-31: WhatsApp media and chat actions
+!src/whatsapp-media.test.ts
 # Session 2026-10-29: personalization/soul pure-logic fixes
+!src/llm-stream-frames.test.ts
+!src/llm-stream.test.ts
+!src/llm-stream-client.test.ts
+!src/stream-filter.test.ts
+!src/turn-events.test.ts
+!src/agent-turn-events.test.ts
+!src/overlay/turn-relay.test.ts
+!src/overlay/overlay-chat-turns.test.ts
+!src/overlay/turn-view.test.ts
+!src/chrome-extension-turn-view.test.ts
+!desktop/tests/chat-turn-view.test.js
+!desktop/tests/live-line-delay.test.js
 !src/prompts/identity-guard.test.ts
 !src/serious-mode.test.ts
 !src/proactive/timed-quiet.test.ts
@@ -94,11 +110,41 @@ desktop/hostinger-upload/
 !src/memory/relationship.test.ts
 !src/memory/identity.test.ts
 !src/voice/live/prompt-builder.test.ts
+!src/owner-dm-private.test.ts
+# Session 2026-10-29: bot RAM/CPU runtime track
+!src/proactive/activity.test.ts
+!src/overlay/overlay-placeholder.test.ts
+!src/network-health.test.ts
+!src/utils/bounded-map.test.ts
+!src/proactive/monitors-calendar.test.ts
+!src/overlay/overlay-drawer-idle.test.ts
+!src/proactive/inbox/deferred-timer.test.ts
+!src/tools/scheduled-cron-timer.test.ts
+!src/tool-router.category-cache.test.ts
+!src/security/pii-memo-idle.test.ts
+!src/memory/codebase-app-bundle.test.ts
+!src/__tests__/location-gps-backoff.test.ts
+!src/video-studio/util/ffprobe-pick.test.ts
+# Session 2026-10-29: desktop RAM/CPU runtime track
+!desktop/tests/mascot-loop.test.js
+!desktop/tests/file-memo.test.js
+!desktop/tests/compile-cache.test.js
+# Session 2026-10-29: packaging track
+!desktop/tests/prune-bot-modules.test.js
+!desktop/tests/protect-source.test.js
+!desktop/tests/after-sign.test.js
+!desktop/tests/update-feed.test.js
 # Session 2026-10-29: Phase 0 + Phase 1 reliability regression tests
+!src/tools/google-api-clients.test.ts
+!src/video-studio/util/ffmpeg-bin.test.ts
+!desktop/tests/bot-deps.test.js
+!src/__tests__/notifications/push.test.ts
+!src/tools/__tests__/shell-kill-pid.test.ts
 !src/memory/playbooks.test.ts
 !src/screen/grid-overlay.test.ts
 !src/tools/send-ledger.test.ts
 !convex/stt.test.ts
+!convex/llmStream.test.ts
 !src/agent.reliability.test.ts
 !src/agent.contract.test.ts
 !src/overlay/contract-line.test.ts
@@ -106,6 +152,9 @@ desktop/hostinger-upload/
 !src/agent.prune-order.test.ts
 !src/account-guard.test.ts
 !src/tool-router.assemble.test.ts
+!src/tool-router-analytics.test.ts
+!src/__tests__/network-watcher.test.ts
+!src/utils/macos-permissions.test.ts
 !src/channel-text.test.ts
 !src/telegram-batch.test.ts
 !src/step-status.test.ts
@@ -119,7 +168,6 @@ desktop/hostinger-upload/
 !src/security/sensitive-paths.test.ts
 !src/tools/coding/git-op.test.ts
 !src/tools/os-computer-action-keys.test.ts
-!src/tools/browser/action-cache.test.ts
 !src/tools/browser/active-tab.test.ts
 !src/tools/browser/auth-wall-reload.test.ts
 !src/tools/browser/auth-wall.test.ts
@@ -135,6 +183,12 @@ desktop/hostinger-upload/
 !src/agents/sub-agent-hold.test.ts
 !src/tools/swarm-tool-gate.test.ts
 !src/stuck-reply-surface.test.ts
+!src/tools/coding/edit.test.ts
+!src/tools/coding/lsp.test.ts
+!src/tools/coding/walkthrough.test.ts
+!src/tools/coding/demo-project.test.ts
+!src/tools/forge-approval.test.ts
+!src/forge/__tests__/dynamic-registry.test.ts
 # Session 2026-10-28: security, consent, Site Skills, computer use, proactive, memory
 !src/security/loopback.test.ts
 !src/security/tool-access.test.ts
@@ -239,6 +293,11 @@ desktop/hostinger-upload/
 !src/tools/browser/secret-fields.test.ts
 !src/overlay/overlay-turns.test.ts
 !src/overlay/overlay-task-drawer.test.ts
+!src/security/outbound-files.test.ts
+!src/forge/__tests__/approval-and-hash.test.ts
+!src/tools/shell-args.test.ts
+!src/tools/outbound-input.test.ts
+!src/voice/live/tool-bridge-mask.test.ts
 !src/tools/browser/bridge-heartbeat.test.ts
 !src/tools/browser/extension-frame-offset.test.ts
 !src/tools/mac-wifi.test.ts
@@ -261,7 +320,6 @@ desktop/hostinger-upload/
 !src/screen/__tests__/grid-overlay.test.ts
 !src/screen/__tests__/computer-action.test.ts
 !src/agents/__tests__/
-!src/agents/__tests__/computer-use-agent.test.ts
 !src/tools/__tests__/
 !src/tools/__tests__/os-computer-action.test.ts
 !src/tools/__tests__/os-grounding.test.ts
@@ -294,7 +352,6 @@ desktop/hostinger-upload/
 !src/agents/tool-call-guardrail.test.ts
 !src/agents/metacognition.test.ts
 !src/agents/complexity-classifier.test.ts
-!src/agents/blackboard.test.ts
 !src/memory/spreading-activation.parity.test.ts
 !src/memory/value-gate.parity.test.ts
 !src/security/secrets-sanitizer.parity.test.ts
@@ -370,6 +427,7 @@ desktop/hostinger-upload/
 !src/memory/strategy-library.test.ts
 !src/memory/sleep-gate.test.ts
 !src/memory/goals.test.ts
+!src/widget/widget-turns.test.ts
 !src/proactive/heartbeat-morning-boundary.test.ts
 !desktop/tests/
 !desktop/tests/auth-helpers.test.js
@@ -459,3 +517,26 @@ ip-filings-india/
 
 # Launch-video renders and work files (/brag); kept on disk, not in git
 brag-output/
+!src/session-device-secret.test.ts
+!src/tools/scheduled-persist.test.ts
+!src/cron/store.test.ts
+!src/overlay/notify-requested.test.ts
+!src/tools/web-search-grace.test.ts
+!src/proactive/sources/_shared/daily-done.test.ts
+!src/tools/web-search-claude-backup.test.ts
+!src/research/finding-filter.test.ts
+!src/research/memorable-findings.test.ts
+!src/tools/autostart-confirm.test.ts
+!src/owner-delivery.ts
+!src/owner-delivery.test.ts
+!src/tools/browser-strategy-match.test.ts
+!src/skills/relevant-skills.test.ts
+!src/proactive/dnd-focus.test.ts
+# Session 2026-10-31: launch step 2 (global stop)
+!src/tools/site-task-stop.test.ts
+# Session 2026-10-31: launch step 2 (prompt injection)
+!src/tools/site-task-injection.e2e.test.ts
+# Session 2026-10-31: launch step 2 (bridge loop)
+!src/skills/site/__tests__/bridge-loop.e2e.test.ts
+# Session 2026-10-31: launch step 2 (review fixes)
+!src/skills/site/__tests__/page-driver.test.ts

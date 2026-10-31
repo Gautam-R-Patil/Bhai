@@ -20,8 +20,10 @@ const execFileAsync = promisify(execFile);
 
 // ── Helper: run AppleScript ───────────────────
 
-async function runAS(script: string, timeout = 10000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_app_${Date.now()}.scpt`);
+// 25s: a cold Reminders launch took over 10s, and the kill read as "Command failed" with no
+// reason. (Not retried: the first attempt may have gone through, and a retry would duplicate.)
+async function runAS(script: string, timeout = 25000): Promise<string> {
+    const tmpFile = join(tmpdir(), `bhai_app_${Date.now()}.scpt`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout });
@@ -29,6 +31,8 @@ async function runAS(script: string, timeout = 10000): Promise<string> {
         return stdout.trim();
     } catch (err) {
         await fs.unlink(tmpFile).catch(() => {});
+        if ((err as { killed?: boolean }).killed)
+            throw new Error(`The app didn't answer within ${timeout / 1000}s (it may still be starting). Check whether it happened before trying again.`);
         throw err;
     }
 }
@@ -40,7 +44,7 @@ function asStr(s: string): string {
 }
 
 async function runJXA(script: string, timeout = 10000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_app_${Date.now()}.js`);
+    const tmpFile = join(tmpdir(), `bhai_app_${Date.now()}.js`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout });
@@ -75,12 +79,20 @@ async function getStorefront(): Promise<string> {
  */
 export async function playCatalogTrack(query: string): Promise<{ track: string; artist: string } | { error: string }> {
     const country = await getStorefront();
+    // limit=1 often comes back empty for a query limit=5 answers ("blinding lights the
+    // weeknd": 0 vs 3), so take five and keep the one whose title and artist the query names.
     const res = await fetch(
-        `https://itunes.apple.com/search?entity=song&limit=1&country=${country}&term=${encodeURIComponent(query)}`,
+        `https://itunes.apple.com/search?entity=song&limit=5&country=${country}&term=${encodeURIComponent(query)}`,
         { signal: AbortSignal.timeout(5000) },
     );
-    const hit = ((await res.json()) as { results?: { trackName: string; artistName: string; trackViewUrl: string }[] })
-        .results?.[0];
+    const results =
+        ((await res.json()) as { results?: { trackName: string; artistName: string; trackViewUrl: string }[] }).results ??
+        [];
+    const words = new Set(query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+    const named = (t: string) => (t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => words.has(w)).length;
+    const hit = results
+        .map((r, i) => ({ r, score: named(r.trackName) * 2 + named(r.artistName) - i * 0.1 }))
+        .sort((a, b) => b.score - a.score)[0]?.r;
     if (!hit) return { error: "not found in the Apple Music catalog" };
     if (!hit.trackViewUrl.startsWith("https://music.apple.com/")) return { error: "unexpected catalog link" };
     await execFileAsync("open", [hit.trackViewUrl.replace(/^https:/, "music:")], { timeout: 5000 });
@@ -92,6 +104,8 @@ tell application "System Events" to tell process "Music"
             repeat with sa in (scroll areas of splitter group 1 of window 1)
                 repeat with t in (tables of sa whose description is "track list")
                     repeat with r in (rows of t whose selected is true)
+                        -- The keystroke goes to the frontmost app: make sure that's Music.
+                        set frontmost to true
                         set focused of t to true
                         key code 36
                         return "ok"
@@ -104,14 +118,78 @@ tell application "System Events" to tell process "Music"
     return "no_row"
 end tell`);
     if (pressed !== "ok") return { error: "the song page did not load in Music" };
-    for (let i = 0; i < 15; i++) {
+    // Up to ~5s: a cold catalog stream can take that long. Music may title the track a
+    // little differently from the search API ("Starboy" vs "Starboy (feat. Daft Punk)").
+    const want = hit.trackName.toLowerCase();
+    for (let i = 0; i < 25; i++) {
         await new Promise((r) => setTimeout(r, 200));
-        const now = await runAS(
-            `tell application "Music" to if player state is playing then return name of current track`,
-        ).catch(() => "");
-        if (now.toLowerCase() === hit.trackName.toLowerCase()) return { track: hit.trackName, artist: hit.artistName };
+        const playing = `tell application "Music" to if player state is playing then return name of current track`;
+        const now = (await runAS(playing).catch(() => "")).toLowerCase();
+        if (now && (now.includes(want) || want.includes(now))) return { track: hit.trackName, artist: hit.artistName };
     }
     return { error: `opened "${hit.trackName}" but it did not start (Apple Music subscription needed?)` };
+}
+
+/**
+ * What an app shows once it's in front: its front window, or that it has none yet, and
+ * any dialog blocking input with its text and buttons. Without this, models typed into
+ * TextEdit's file picker, or into an unsaved-changes alert, and reported success.
+ * Waits up to ~2s for a just-launched app's first window.
+ */
+const WINDOW_BUTTONS = /^(close|minimize|full screen|zoom)$/i;
+async function describeWindows(pid: number, pressedNew = false): Promise<Record<string, unknown>> {
+    const { dumpAccessibilityTree, flattenInteractive, axPerformAction } = await import("../screen/ax-dump.js");
+    type Node = import("../screen/ax-dump.js").AxNode;
+    for (let i = 0; i < 5; i++) {
+        const dump = await dumpAccessibilityTree({ pid, depth: 6, timeoutMs: 3000, budgetMs: 1500 }).catch(() => null);
+        if (!dump || dump.error) return {};
+        const windows = dump.root.children.filter((n) => n.role === "AXWindow");
+        if (!windows.length) {
+            await new Promise((r) => setTimeout(r, 250));
+            continue;
+        }
+        const collect = (n: Node, role: string, out: string[]) => {
+            const t = (role === "AXButton" ? n.label : n.value || n.label)?.trim();
+            if (n.role === role && t && !out.includes(t) && out.length < 6) out.push(t.slice(0, 120));
+            for (const c of n.children) collect(c, role, out);
+            return out;
+        };
+        // Alerts, sheets, and the standard file panels (TextEdit opens on its Open panel).
+        const dialog =
+            windows.find((w) => w.subrole === "AXDialog" || w.subrole === "AXSystemDialog") ??
+            windows[0].children.find((c) => c.role === "AXSheet") ??
+            (/^(open|save|save as|export|print)$/i.test(windows[0].label ?? "") ? windows[0] : undefined);
+        // An app that launches on its Open panel (TextEdit, Preview) is wanted for a new
+        // document: given a note to handle the panel, small models typed into its search
+        // box or escaped it and typed into no window. Opening a file later replaces the
+        // untouched blank document.
+        if (!pressedNew && dialog === windows[0] && /^open$/i.test(dialog.label ?? "")) {
+            const button = flattenInteractive(dump).find(
+                (e) => e.role === "AXButton" && /^new document$/i.test(e.label.trim()),
+            );
+            if (button && (await axPerformAction(pid, button, "press").catch(() => ({ ok: false }))).ok) {
+                await new Promise((r) => setTimeout(r, 300));
+                return {
+                    ...(await describeWindows(pid, true)),
+                    opened: "a new blank document (the app had opened on its Open panel)",
+                };
+            }
+        }
+        return {
+            window: windows[0].label || "(untitled)",
+            ...(dialog
+                ? {
+                      dialog: {
+                          title: dialog.label || undefined,
+                          text: collect(dialog, "AXStaticText", []),
+                          buttons: collect(dialog, "AXButton", []).filter((b) => !WINDOW_BUTTONS.test(b)),
+                      },
+                      note: "A dialog is in front and takes the input: handle it first (click one of its buttons, or press escape to cancel it).",
+                  }
+                : {}),
+        };
+    }
+    return { window: null, note: "The app has no window yet: open one (e.g. os_type combo='command+n')." };
 }
 
 export const musicControl: ToolDefinition = {
@@ -326,6 +404,8 @@ export const calendarTool: ToolDefinition = {
                         action === "today"
                             ? new Date().toISOString().split("T")[0]
                             : (input.date as string) || new Date().toISOString().split("T")[0];
+                    // Goes into the JXA script as code: a date and nothing else.
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return JSON.stringify({ error: "date must be YYYY-MM-DD." });
 
                     const result = await runJXA(
                         `
@@ -375,6 +455,12 @@ JSON.stringify(events);`,
                     const calName = (input.calendar_name as string) || "";
                     const location = (input.location as string) || "";
                     const notes = (input.notes as string) || "";
+                    // The times go into the JXA script unescaped: only a date and time get in
+                    // (x"); ObjC.import("stdlib"); $.system("…"); (" would otherwise run as code).
+                    const TIME = /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$/;
+                    if (!TIME.test(startTime) || !TIME.test(endTime)) {
+                        return JSON.stringify({ error: "start_time and end_time must be 'YYYY-MM-DD HH:MM'." });
+                    }
 
                     const escaped = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
@@ -414,6 +500,72 @@ JSON.stringify({ title: "${escaped(title)}", start: "${startTime}", end: "${endT
 // 4. REMINDERS TOOL
 // ═══════════════════════════════════════════════
 
+/**
+ * "tomorrow 10am", "today at 5:30 pm", "friday 9am", "in 2 hours", "2026-10-31 10:00" → a local
+ * Date, or null. gpt-4.1-nano passed "2023-10-09 10:00" for "tomorrow at 10am" (it had no clock).
+ */
+export function parseWhen(text: string, now = new Date()): Date | null {
+    const t = text.trim().toLowerCase();
+    const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ t](\d{1,2}):(\d{2}))?/.exec(t);
+    if (iso) return new Date(+iso[1], +iso[2] - 1, +iso[3], +(iso[4] ?? 9), +(iso[5] ?? 0));
+    const rel = /\bin (\d+) (minute|min|hour|hr|day)s?\b/.exec(t);
+    if (rel) {
+        const unit = rel[2].startsWith("d") ? 864e5 : rel[2].startsWith("h") ? 36e5 : 6e4;
+        return new Date(now.getTime() + Number(rel[1]) * unit);
+    }
+    const d = new Date(now);
+    const weekday = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].findIndex((w) =>
+        t.includes(w),
+    );
+    const clock = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/.exec(t) ?? /\b(\d{1,2}):(\d{2})\b/.exec(t);
+    if (/\btomorrow\b/.test(t)) d.setDate(d.getDate() + 1);
+    else if (weekday >= 0) d.setDate(d.getDate() + ((weekday - d.getDay() + 7) % 7 || 7));
+    else if (!/\b(today|tonight|noon)\b/.test(t) && !clock) return null;
+    let h = /\bnoon\b/.test(t) ? 12 : /\btonight\b/.test(t) ? 20 : 9;
+    let m = 0;
+    if (clock) {
+        h = Number(clock[1]) % (clock[3] ? 12 : 24);
+        if (clock[3] === "pm") h += 12;
+        m = Number(clock[2] ?? 0);
+    }
+    d.setHours(h, m, 0, 0);
+    return d;
+}
+
+/** The fast way to drive an app, returned when it's brought forward. Given a plan to "click the
+ *  buttons", gpt-4.1-nano pressed Calculator's keys one by one in the wrong order. */
+const APP_TIPS: Record<string, string> = {
+    Calculator:
+        "Use the calculator tool (expression '17*23'): it enters it and returns the result. Or type the whole expression in one os_type call (text '17*23', key 'return'). Don't click its buttons one by one.",
+};
+
+/** An AppleScript date built field by field: `date "<string>"` parses by the Mac's locale. */
+function asDate(d: Date): string {
+    return `(my mkDate(${d.getFullYear()}, ${d.getMonth() + 1}, ${d.getDate()}, ${d.getHours()}, ${d.getMinutes()}))`;
+}
+const AS_MKDATE = `
+on mkDate(y, mo, dd, h, mi)
+    set d to current date
+    set day of d to 1
+    set year of d to y
+    set month of d to mo
+    set day of d to dd
+    set hours of d to h
+    set minutes of d to mi
+    set seconds of d to 0
+    return d
+end mkDate`;
+
+/** The due date, or why it can't be one. */
+function dueFrom(text: string): { date?: Date; error?: string } {
+    const now = new Date();
+    const date = parseWhen(text, now);
+    if (!date) return { error: `Couldn't read "${text}" as a time: use e.g. "tomorrow 10am", "friday 9am", "in 2 hours" or "2026-11-02 14:30".` };
+    if (date.getTime() < now.getTime() - 60_000)
+        return { error: `${date.toLocaleString()} is in the past (it's ${now.toLocaleString()} now). Use a future time, e.g. "tomorrow 10am".` };
+    return { date };
+}
+
 export const remindersTool: ToolDefinition = {
     schema: {
         type: "function",
@@ -442,7 +594,8 @@ export const remindersTool: ToolDefinition = {
                     title: { type: "string", description: "Reminder text (for 'create'), or new title (for 'edit')" },
                     due_date: {
                         type: "string",
-                        description: "Due date in 'YYYY-MM-DD HH:MM' format (for 'create' or 'edit')",
+                        description:
+                            "When it's due, in words or as a date: 'tomorrow 10am', 'friday 9am', 'in 2 hours', '2026-11-02 14:30' (for 'create' or 'edit')",
                     },
                     list_name: { type: "string", description: "Reminders list name (default: default list)" },
                     reminder_name: {
@@ -476,11 +629,13 @@ export const remindersTool: ToolDefinition = {
 
                     let script: string;
                     if (dueDate) {
-                        script = `
+                        const due = dueFrom(dueDate);
+                        if (!due.date) return JSON.stringify({ success: false, error: due.error });
+                        script = `${AS_MKDATE}
 tell application "Reminders"
     ${listName ? `set targetList to list "${escaped(listName)}"` : "set targetList to default list"}
     tell targetList
-        set newReminder to make new reminder with properties {name:"${escaped(title)}", due date:date "${asStr(dueDate)}"}
+        set newReminder to make new reminder with properties {name:"${escaped(title)}", due date:${asDate(due.date)}}
     end tell
     return name of newReminder
 end tell`;
@@ -569,13 +724,15 @@ end tell`);
                     if (!newTitle && !newDueDate)
                         return JSON.stringify({ error: "Provide 'title' and/or 'due_date' to update." });
                     const escapedName = asStr(reminderName);
-                    let editScript = `
+                    const due = newDueDate ? dueFrom(newDueDate) : {};
+                    if (newDueDate && !due.date) return JSON.stringify({ success: false, error: due.error });
+                    let editScript = `${AS_MKDATE}
 tell application "Reminders"
     set targetReminders to (reminders whose name is "${escapedName}" and completed is false)
     if (count of targetReminders) > 0 then
         set r to item 1 of targetReminders`;
                     if (newTitle) editScript += `\n        set name of r to "${asStr(newTitle)}"`;
-                    if (newDueDate) editScript += `\n        set due date of r to date "${asStr(newDueDate)}"`;
+                    if (due.date) editScript += `\n        set due date of r to ${asDate(due.date)}`;
                     editScript += `
         return name of r
     else
@@ -720,7 +877,16 @@ tell application "Messages"
 end tell`,
                         15000,
                     );
-                    return JSON.stringify({ success: true, action: "send", to, preview: text.substring(0, 50) });
+                    // Messages' send only queues it: a number not on iMessage, or no network,
+                    // fails later ("Not Delivered"), and chat.db needs Full Disk Access to check.
+                    return JSON.stringify({
+                        success: true,
+                        action: "send",
+                        to,
+                        preview: text.substring(0, 50),
+                        delivered: "unconfirmed",
+                        note: "Handed to Messages. Delivery isn't confirmed: check the conversation in Messages (no red 'Not Delivered') before telling the owner it was sent.",
+                    });
                 }
 
                 case "read_recent": {
@@ -1020,6 +1186,17 @@ $.CGEventPost($.kCGHIDEventTap, upEvent);
 // 8. APP MANAGER
 // ═══════════════════════════════════════════════
 
+type AppEntry = { name: string; frontmost: boolean; visible: boolean };
+/** One entry per app: two processes with one name (the owner's Chrome and Bhai's) were listed twice. */
+export function mergeAppsByName(apps: AppEntry[]): AppEntry[] {
+    const byName = new Map<string, AppEntry>();
+    for (const a of apps) {
+        const had = byName.get(a.name);
+        byName.set(a.name, had ? { name: a.name, frontmost: had.frontmost || a.frontmost, visible: had.visible || a.visible } : { ...a });
+    }
+    return [...byName.values()];
+}
+
 export const appManager: ToolDefinition = {
     schema: {
         type: "function",
@@ -1071,15 +1248,10 @@ export const appManager: ToolDefinition = {
                         );
                         const procs = JSON.parse(result.trim() || "[]");
                         const arr = Array.isArray(procs) ? procs : [procs];
-                        return JSON.stringify({
-                            success: true,
-                            count: arr.length,
-                            apps: arr.map((p: Record<string, unknown>) => ({
-                                name: p.ProcessName,
-                                frontmost: false,
-                                visible: true,
-                            })),
-                        });
+                        const apps = mergeAppsByName(
+                            arr.map((p: Record<string, unknown>) => ({ name: String(p.ProcessName), frontmost: false, visible: true })),
+                        );
+                        return JSON.stringify({ success: true, count: apps.length, apps });
                     }
                     case "quit":
                         if (!app) return JSON.stringify({ error: "Provide 'app' name to quit." });
@@ -1119,7 +1291,7 @@ const apps = procs.map(p => ({
     visible: p.visible(),
 }));
 JSON.stringify(apps);`);
-                    const apps = JSON.parse(result || "[]");
+                    const apps = mergeAppsByName(JSON.parse(result || "[]"));
                     return JSON.stringify({ success: true, count: apps.length, apps });
                 }
 
@@ -1177,6 +1349,8 @@ end tell`);
                             app,
                             frontmost: front.name,
                             pid: front.pid,
+                            ...(await describeWindows(front.pid)),
+                            ...(APP_TIPS[front.name] ? { tip: APP_TIPS[front.name] } : {}),
                         });
                     }
                     return JSON.stringify({ success: true, action: "activate", app });
@@ -1187,6 +1361,74 @@ end tell`);
             }
         } catch (err) {
             return JSON.stringify({ success: false, error: (err as Error).message });
+        }
+    },
+};
+
+/** "123 times 45" → "123*45"; null when it isn't plain arithmetic Calculator can take. */
+export function calcExpression(text: string): string | null {
+    const expr = text
+        .toLowerCase()
+        .replace(/\bmultiplied by\b|\btimes\b|\bx\b|×/g, "*")
+        .replace(/\bdivided by\b|÷/g, "/")
+        .replace(/\bplus\b/g, "+")
+        .replace(/\bminus\b|[−–]/g, "-")
+        .replace(/(\d),(?=\d{3}\b)/g, "$1") // 1,234 → 1234
+        .replace(/=+\s*$/, "")
+        .trim();
+    return expr && /^[\d\s.+\-*/()%]+$/.test(expr) ? expr : null;
+}
+
+/**
+ * Calculator in one call: open it, clear it, enter the expression, read the result off its
+ * display. Weak models pressed its keys out of order, typed sums into TextEdit, or wandered
+ * into its menus; this way every model gets the right number.
+ */
+export const calculatorTool: ToolDefinition = {
+    schema: {
+        type: "function",
+        function: {
+            name: "calculator",
+            description:
+                "Work something out in the Calculator app in one step: opens Calculator, enters the expression and returns the result on its display. Use this whenever the user wants Calculator used (instead of clicking its keys). Operators: + - * / ( ) %.",
+            parameters: {
+                type: "object",
+                properties: {
+                    expression: { type: "string", description: "e.g. '17*23+100' or '123 times 45'" },
+                },
+                required: ["expression"],
+            },
+        },
+    },
+    async handler(input) {
+        if (!IS_MAC) return JSON.stringify({ success: false, error: "calculator drives the macOS Calculator app." });
+        const expr = calcExpression(String(input.expression ?? ""));
+        if (!expr) return JSON.stringify({ success: false, error: `Use digits and + - * / ( ) % only (got "${input.expression}").` });
+        try {
+            const { waitForFrontmost } = await import("../screen/frontmost.js");
+            await execFileAsync("open", ["-a", "Calculator"], { timeout: 5000 });
+            const front = await waitForFrontmost("Calculator", 5000);
+            if (!front) return JSON.stringify({ success: false, error: "Calculator didn't come to the front." });
+            // Clear (it keeps its last entry, even across a relaunch), enter, evaluate.
+            await runAS('tell application "System Events" to repeat 2 times\nkey code 53\ndelay 0.05\nend repeat');
+            const { typeTextMac } = await import("./os-computer-action.js");
+            await typeTextMac(expr);
+            await runAS('tell application "System Events" to key code 36');
+            await new Promise((r) => setTimeout(r, 200));
+            const { dumpAccessibilityTree } = await import("../screen/ax-dump.js");
+            const dump = await dumpAccessibilityTree({ pid: front.pid, depth: 12 });
+            let result = "";
+            let shown = "";
+            const stack = dump.error ? [] : [dump.root];
+            for (let n = stack.pop(); n; n = stack.pop()) {
+                if (n.role === "AXStaticText" && n.label === "Edit field") result = (n.value ?? "").trim();
+                if (n.role === "AXStaticText" && n.label === "Last Expression") shown = (n.value ?? "").trim();
+                stack.push(...n.children);
+            }
+            if (!result) return JSON.stringify({ success: false, error: "Couldn't read Calculator's display." });
+            return JSON.stringify({ success: true, expression: shown || expr, result });
+        } catch (err) {
+            return JSON.stringify({ success: false, error: (err as Error).message.slice(0, 200) });
         }
     },
 };

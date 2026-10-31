@@ -56,17 +56,17 @@ function mergePersonalize(prefs, update) {
     return next;
 }
 
-// E3d-3: derive the ATLAS_* env keys that map a personalize block into .env.enc.
+// E3d-3: derive the BHAI_* env keys that map a personalize block into .env.enc.
 // Returns a flat kv object suitable for saveEnvKVs().
 function envKVsFromPersonalize(p) {
     const out = {};
     if (!p) return out;
-    if (p.hotkey) out.ATLAS_OVERLAY_HOTKEY = String(p.hotkey);
-    if (p.voice && p.voice.backend) out.ATLAS_LIVE_VOICE_BACKEND = String(p.voice.backend);
-    if (p.voice && p.voice.name) out.ATLAS_LIVE_VOICE_NAME = String(p.voice.name);
+    if (p.hotkey) out.BHAI_OVERLAY_HOTKEY = String(p.hotkey);
+    if (p.voice && p.voice.backend) out.BHAI_LIVE_VOICE_BACKEND = String(p.voice.backend);
+    if (p.voice && p.voice.name) out.BHAI_LIVE_VOICE_NAME = String(p.voice.name);
     if (p.wakeWord) {
-        out.ATLAS_WAKE_WORD_ENABLED = p.wakeWord.enabled ? "true" : "false";
-        out.ATLAS_WAKE_WORD_PHRASE = String(p.wakeWord.phrase || "Hey Bhai");
+        out.BHAI_WAKE_WORD_ENABLED = p.wakeWord.enabled ? "true" : "false";
+        out.BHAI_WAKE_WORD_PHRASE = String(p.wakeWord.phrase || "Hey Bhai");
     }
     return out;
 }

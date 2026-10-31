@@ -8,10 +8,11 @@
 //
 // Usage:
 //   npx tsx scripts/eval-captcha.ts [--type recaptcha|hcaptcha|turnstile|all] [--runs 20] [--tier waterfall|vision]
-// Models for the vision solver: ATLAS_CAPTCHA_MODELS (default: Astra + Terra, GPT-5.4 breaks ties). Needs a
-// Bhai session (ATLAS_OTPLESS_USER_ID). Writes data/captcha-eval/<time>.json.
+// Models for the vision solver: BHAI_CAPTCHA_MODELS (default: Astra + Terra, GPT-5.4 breaks ties). Needs a
+// Bhai session (BHAI_OTPLESS_USER_ID). Writes data/captcha-eval/<time>.json.
 
 // Load the tool registry first, in the app's order: captcha.ts sits inside an import cycle.
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import "../src/tools/index.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -44,8 +45,8 @@ const kinds = (typeArg === "all" ? Object.keys(DEMOS) : [typeArg]) as Kind[];
 type Run = { kind: Kind; ok: boolean; method: string; ms: number; modelCalls: number; error?: string };
 
 async function main() {
-    process.env.ATLAS_CAPTCHA_HANDOFF_MS = "0";
-    if (!(await initSession())) throw new Error("initSession failed: set ATLAS_OTPLESS_USER_ID (Bhai sign-in)");
+    process.env.BHAI_CAPTCHA_HANDOFF_MS = "0";
+    if (!(await initSession())) throw new Error("initSession failed: set BHAI_OTPLESS_USER_ID (Bhai sign-in)");
     const llm = createLLMClient(loadConfig());
     let calls = 0;
     setCaptchaLLM({ ...llm, chat: (...a: Parameters<typeof llm.chat>) => (calls++, llm.chat(...a)) });
@@ -107,7 +108,7 @@ async function main() {
     const dir = path.join(getDataDir(), "captcha-eval");
     mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
-    writeFileSync(file, JSON.stringify({ models: process.env.ATLAS_CAPTCHA_MODELS ?? "default", tier, results }, null, 2));
+    writeFileSync(file, JSON.stringify({ models: process.env.BHAI_CAPTCHA_MODELS ?? "default", tier, results }, null, 2));
     console.log(`\nSaved ${file}`);
     await ctx.close().catch(() => {});
     process.exit(0);

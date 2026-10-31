@@ -11,7 +11,7 @@ let shop: Awaited<ReturnType<typeof startShop>>;
 beforeAll(async () => {
     shop = await startShop();
     try {
-        const { chromium } = await import("playwright");
+        const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
     } catch (e) {
         if (process.env.CI || process.env.SITE_E2E_REQUIRE_BROWSER) throw e;
@@ -100,12 +100,12 @@ describe("agent cursor", { retry: 2 }, () => {
         await page.goto(`${shop.url}results?q=dal`);
         await page.waitForFunction(`!!document.getElementById("${AGENT_UI_HOST_ID}")`, undefined, { timeout: 2000 });
         await page.evaluate(`(${AGENT_UI_JS})({ end: true })`);
-        process.env.ATLAS_NO_AGENT_CURSOR = "true";
+        process.env.BHAI_NO_AGENT_CURSOR = "true";
         try {
             await agentCursor(page, { x: 50, y: 50 }, "click");
             expect(await hosts(page)).toBe(0);
         } finally {
-            delete process.env.ATLAS_NO_AGENT_CURSOR;
+            delete process.env.BHAI_NO_AGENT_CURSOR;
         }
         await page.context().close();
     });

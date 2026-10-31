@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { ProactiveIntent } from "../../proactive/intent.js";
 import type { CronCallerContext } from "../../tools/cron-tool.js";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-digest-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-digest-"));
 
 let sqlite: typeof import("../sqlite.js");
 let forget: typeof import("../forget.js");
@@ -40,7 +40,7 @@ const stated = (content: string, ago: string | null = "-1 day", category = "gene
 const exists = (id: number) => !!raw.prepare("SELECT 1 FROM memories WHERE id = ?").get(id);
 const collect = (now: number) => src.MEMORY_DIGEST.collectIntents({ now } as never);
 const writeState = (s: object) =>
-    fs.writeFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "memory-digest.json"), JSON.stringify(s));
+    fs.writeFileSync(path.join(process.env.BHAI_DATA_DIR as string, "memory-digest.json"), JSON.stringify(s));
 const forgetItem = async (ctx: CronCallerContext, n: number) =>
     JSON.parse(
         await cron.runWithCallerContext({ isPrivate: true, ...ctx }, () => tools.memoryForget.handler({ digest_item: n })),
