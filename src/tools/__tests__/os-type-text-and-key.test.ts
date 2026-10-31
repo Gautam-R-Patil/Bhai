@@ -9,12 +9,17 @@ const events = vi.hoisted(() => {
     return [] as string[];
 });
 const front = vi.hoisted(() => ({ window: "" as string, sheet: false }));
-const bg = vi.hoisted(() => ({ front: "Terminal", insert: { ok: true } as { ok: boolean; error?: string } }));
+const bg = vi.hoisted(() => ({
+    front: "Terminal",
+    insert: { ok: true } as { ok: boolean; error?: string },
+    raises: true,
+}));
 vi.mock("../../screen/frontmost.js", async (orig) => ({
     ...(await orig<typeof import("../../screen/frontmost.js")>()),
     getFrontmostApp: async () => ({ name: bg.front, bundleName: `${bg.front}.app`, bundleId: "x", pid: 1 }),
     pidOfApp: async () => 42,
     waitForFrontmost: async (app: string) => {
+        if (!bg.raises) return null;
         bg.front = app;
         return { name: app, pid: 42 };
     },
@@ -121,6 +126,16 @@ describe("os_type with text and key together", () => {
         const f = JSON.parse(await osType.handler({ text: "hello", app: "Google Chrome", delay_ms: 1 }));
         expect(events).toEqual(["type:hello"]);
         expect(f.brought_forward).toMatch(/not_applied/);
+
+        // It never came forward (cold launch, misspelled name): the user's window gets nothing.
+        events.length = 0;
+        bg.front = "Slack";
+        bg.raises = false;
+        const n = JSON.parse(await osType.handler({ text: "see you at 6", app: "WhatsApp", delay_ms: 1 }));
+        bg.raises = true;
+        expect(n.success).toBe(false);
+        expect(events).toEqual([]);
+        expect(bg.front).toBe("Slack");
 
         // Already in front: typed as usual.
         events.length = 0;

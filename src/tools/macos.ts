@@ -560,6 +560,11 @@ export const osType: ToolDefinition = {
                 // Web content, a terminal, no field: bring it forward and type as usual.
                 await execFileAsync("open", ["-a", bgApp], { timeout: 5000 }).catch(() => {});
                 if (await waitForFrontmost(bgApp, 5000)) raisedFor = `${bgApp} (background typing: ${r.error})`;
+                else
+                    return JSON.stringify({
+                        success: false,
+                        error: `${bgApp} didn't come to the front, so nothing was typed (${r.error}).`,
+                    });
             }
         } else if (bgApp && (input.key || input.combo)) {
             // A key for a named app goes to that app: gpt-4.1-nano sent key "return" with app
