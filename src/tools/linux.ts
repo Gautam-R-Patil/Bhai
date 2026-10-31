@@ -441,13 +441,16 @@ export const linuxOsType: ToolDefinition = {
             if (input.text) {
                 const text = input.text as string;
 
-                if (tool === "xdotool") {
-                    await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", "12", text], {
-                        timeout: 15000,
-                    });
-                } else {
-                    await execFileAsync("ydotool", ["type", text], { timeout: 15000 });
-                }
+                // Over stdin, not argv: argv text starting with '-' is read as options
+                // ('--file ~/.ssh/id_rsa' would type that file), and argv shows in ps.
+                const args =
+                    tool === "xdotool"
+                        ? ["type", "--clearmodifiers", "--delay", "12", "--file", "-"]
+                        : ["type", "--file", "-"];
+                const typing = execFileAsync(tool, args, { timeout: 15000 });
+                typing.child.stdin?.on("error", () => {}); // EPIPE if it died first: the rejection reports it
+                typing.child.stdin?.end(text, "utf-8");
+                await typing;
 
                 return JSON.stringify({
                     success: true,
