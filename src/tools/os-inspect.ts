@@ -240,6 +240,11 @@ export const osInspect: ToolDefinition = {
                 query && !elements.length
                     ? `Nothing matches "${query}" (a query matches element labels, not areas like "sidebar" or "toolbar"). Call os_inspect without query for the full list.`
                     : undefined;
+            // Finder with every window closed returned its menu bar only, and Bhai said it couldn't
+            // read the sidebar "without bringing Finder forward". Say what's actually true.
+            if (app && dump.source === "swift" && !windowTitles(dump.root).length) {
+                hint = `${app} has no open windows, only its menu bar. Say so; opening a window would mean switching to it.`;
+            }
             if (dump.source === "pyatspi" && all.length === 0) {
                 hint =
                     "Empty tree — if targeting an Electron/Chromium app (VS Code, Slack, browsers), relaunch with --force-renderer-accessibility for AT-SPI to populate.";

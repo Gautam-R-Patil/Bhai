@@ -32,7 +32,8 @@ describe("os_inspect window titles", () => {
 describe.skipIf(process.platform !== "darwin")("os_inspect partial reads", () => {
     const tree = (elapsedMs: number) => ({
         app: "Finder", pid: 4242, trusted: true, depth: 20, partial: true, elapsedMs, source: "swift",
-        root: { role: "AXApplication", label: "Finder", x: 0, y: 0, w: 0, h: 0, focusable: false, enabled: true, children: [] },
+        root: { role: "AXApplication", label: "Finder", x: 0, y: 0, w: 0, h: 0, focusable: false, enabled: true,
+            children: [{ role: "AXWindow", label: "Downloads", x: 0, y: 0, w: 0, h: 0, focusable: false, enabled: true, children: [] }] },
     });
     it("a read that ran to the budget is a big window, not a hung app", async () => {
         dump.mockResolvedValueOnce(tree(3050));
@@ -72,5 +73,18 @@ describe.skipIf(process.platform === "win32")("os_inspect app off macOS", () => 
         } finally {
             Object.defineProperty(process, "platform", { value: real });
         }
+    });
+});
+
+describe.skipIf(process.platform !== "darwin")("os_inspect an app with no windows", () => {
+    it("says the app has no open windows", async () => {
+        dump.mockResolvedValueOnce({
+            app: "Finder", pid: 4242, trusted: true, depth: 20, elapsedMs: 150, source: "swift",
+            root: { role: "AXApplication", label: "Finder", x: 0, y: 0, w: 0, h: 0, focusable: false, enabled: true,
+                children: [{ role: "AXMenuBar", label: "", x: 0, y: 0, w: 0, h: 0, focusable: false, enabled: true, children: [] }] },
+        });
+        const r = JSON.parse(String(await osInspect.handler({ app: "Finder" })));
+        expect(r.windows).toEqual([]);
+        expect(r.hint).toMatch(/Finder has no open windows/);
     });
 });
