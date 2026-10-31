@@ -11,6 +11,8 @@
 // No images = POST /images/generations (JSON); images = POST /images/edits
 // (multipart, each as "image[]").
 
+import { v } from "convex/values";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import { decodeBase64 } from "./stt";
 
 export const IMAGE_MAX_INPUTS = 4;
@@ -32,6 +34,53 @@ export const IMAGE_CREDIT_COST: Record<ImageQuality, number> = { low: 1, medium:
 export function imageCreditCost(quality: ImageQuality, n: number): number {
     return IMAGE_CREDIT_COST[quality] * n;
 }
+
+// ── Per-account limits: the deployment's ~2 requests a minute are shared by every install ──
+/** Requests a minute per account (sessions.checkRequestRateLimit). */
+export const IMAGE_MAX_PER_MINUTE = 6;
+/**
+ * Images in flight per account. Counted by images, not requests, so one count-4 ask fits whether it
+ * goes as one n=4 call or as the client's four parallel n=1 calls (transparent or high quality).
+ */
+export const IMAGE_MAX_IN_FLIGHT = 4;
+/** Past CALL_BUDGET_MS plus the route's own work: a slot whose action died stops counting. */
+const IN_FLIGHT_STALE_MS = 5 * 60_000;
+
+// One request_rate_limits row per account: requestCount = images in flight, windowStart = the last take.
+const inFlightKey = (accountId: string) => `image_inflight|${accountId}`;
+const inFlightRow = (ctx: MutationCtx, accountId: string) =>
+    ctx.db
+        .query("request_rate_limits")
+        .withIndex("by_key", (q) => q.eq("key", inFlightKey(accountId)))
+        .unique();
+
+/** Takes `n` in-flight images for the account; false = at the cap. Every true needs a releaseImageSlot. */
+export const acquireImageSlot = internalMutation({
+    args: { accountId: v.string(), n: v.number() },
+    handler: async (ctx, { accountId, n }): Promise<boolean> => {
+        const row = await inFlightRow(ctx, accountId);
+        const now = Date.now();
+        // ponytail: a leaked slot clears only after a quiet IN_FLIGHT_STALE_MS; per-request lease rows if that bites.
+        const held = row && now - row.windowStart < IN_FLIGHT_STALE_MS ? row.requestCount : 0;
+        if (held + n > IMAGE_MAX_IN_FLIGHT) return false;
+        if (row) await ctx.db.patch(row._id, { windowStart: now, requestCount: held + n });
+        else
+            await ctx.db.insert("request_rate_limits", {
+                key: inFlightKey(accountId),
+                windowStart: now,
+                requestCount: n,
+            });
+        return true;
+    },
+});
+
+export const releaseImageSlot = internalMutation({
+    args: { accountId: v.string(), n: v.number() },
+    handler: async (ctx, { accountId, n }) => {
+        const row = await inFlightRow(ctx, accountId);
+        if (row) await ctx.db.patch(row._id, { requestCount: Math.max(0, row.requestCount - n) });
+    },
+});
 
 export interface ImageConfig {
     endpoint: string;

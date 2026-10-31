@@ -787,7 +787,7 @@ export interface AgentResponse {
     partialText?: string;
     /** The owner's Stop ended this turn (a Stop that lands after the answer leaves it unset). */
     stopped?: boolean;
-    /** Images generate_image made this turn, for the channel to show (unset on stuck turns). */
+    /** Images generate_image made this turn, for the channel to show. */
     images?: GeneratedImage[];
 }
 
@@ -1671,8 +1671,9 @@ export async function runAgent(
         }
         // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
         if (caller.storedMemory && channelContext?.isPrivate === true && res) res.memoryUndo = caller.storedMemory;
-        // The requester's own images, any chat; a stuck turn shows its report instead.
-        if (res && !res.stuck && caller.generatedImages?.length) res.images = caller.generatedImages;
+        // The requester's own images, any chat, stuck turn or not: they're made and paid for, and
+        // send_file skipped them as already shown.
+        if (res && caller.generatedImages?.length) res.images = caller.generatedImages;
         return res;
     };
     if (!isForked) {

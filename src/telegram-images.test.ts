@@ -1,7 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Generated images on Telegram: the follow-up buttons, how files go out, albums as one turn,
 // and the "sending a photo…" action while generate_image runs.
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -10,7 +10,12 @@ import type { GeneratedImage } from "./agent.js";
 
 const dir = mkdtempSync(join(tmpdir(), "tg-images-"));
 process.env.ATLAS_DATA_DIR = dir;
-const { bufferMediaGroup, chatActionFor, imageKeyboard, sendImages } = await import("./telegram.js");
+process.env.ATLAS_WORKSPACE = dir;
+const { bufferMediaGroup, chatActionFor, imageCallbackMessage, imageKeyboard, sendImages } = await import(
+    "./telegram.js"
+);
+const { noteGeneratedImages, runWithCallerContext } = await import("./tools/cron-tool.js");
+const { sendFileTool, setTelegramContext } = await import("./tools/send-file.js");
 
 const labels = (images: GeneratedImage[]) =>
     imageKeyboard(images).inline_keyboard.flat().map((b) => b.text);
@@ -52,8 +57,50 @@ it("offers Undo only when an edit has a before file", () => {
     const base = { path: "/x.png", mimeType: "image/png", prompt: "p" };
     expect(labels([{ ...base, kind: "generated" }])).toEqual(["🔁 Another version", "✨ HD"]);
     expect(labels([{ ...base, kind: "edited", sourcePath: "/before.png" }])).toContain("↩️ Undo");
+    expect(labels([{ ...base, kind: "undo", sourcePath: "/after.png" }])).toContain("↩️ Undo"); // steps further back
     // A combine of several photos has no single before image to go back to.
     expect(labels([{ ...base, kind: "edited" }])).not.toContain("↩️ Undo");
+});
+
+it("buttons name their image, so a tap after a restart or newer images acts on that file", () => {
+    const images = join(dir, "Images");
+    mkdirSync(images, { recursive: true });
+    const made = join(images, "a_cat_1761900000000.jpg");
+    const before = join(images, "a_cat_original_1761900000000.jpg");
+    writeFileSync(made, "x");
+    writeFileSync(before, "x");
+    writeFileSync(join(images, "a_cat_1761900099999.jpg"), "x"); // a newer image
+    const data = imageKeyboard([{ path: made, mimeType: "image/jpeg", prompt: "p", kind: "edited", sourcePath: before }])
+        .inline_keyboard.flat()
+        .map((b) => (b as { callback_data: string }).callback_data);
+    expect(data.slice(0, 2).every((d) => /^img:(again|hq):[0-9a-f]{12}$/.test(d))).toBe(true);
+    // Undo stays plain: generate_image's undo walks the saved history (an undo of an undo goes further back).
+    expect(data[2]).toBe("img:undo");
+    expect(imageCallbackMessage(data[0])).toBe(`Make one more version of that image: ${made}`);
+    expect(imageCallbackMessage(data[1])).toBe(`Make that image again, one copy, in high quality: ${made}`);
+    expect(imageCallbackMessage(data[2])).toBe("Undo that last image edit");
+    // Old buttons and ids whose file is gone: the plain message, as before.
+    expect(imageCallbackMessage("img:again")).toBe("Make one more version of that image");
+    expect(imageCallbackMessage("img:hq:000000000000")).toBe("Make that image again, one copy, in high quality");
+    // Anything else in the callback data is refused, never read as a path.
+    for (const bad of ["img:again:../../etc", "img:hq:ABCDEF012345", "img:again:0123456789ab:x", "img:redo", "img:undo:0123456789ab"])
+        expect(imageCallbackMessage(bad)).toBeUndefined();
+});
+
+it("send_file skips an image generate_image already showed this turn, sends it where the chat can't show images", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "tg-send-")), "made.jpg"); // outside the data dir
+    writeFileSync(file, "x");
+    const sent: string[] = [];
+    setTelegramContext({ api: { sendPhoto: async () => sent.push("photo") } }, 1);
+    const run = (conversationKey: string) =>
+        runWithCallerContext({ isOwner: true, conversationKey }, async () => {
+            noteGeneratedImages([{ path: file, mimeType: "image/jpeg", prompt: "p", kind: "generated" }]);
+            return JSON.parse(await sendFileTool.handler({ file_path: file }));
+        });
+    expect(await run("telegram:1")).toEqual({ success: true, note: "already shown in the chat" });
+    expect(sent).toEqual([]);
+    expect(await run("matrix:1")).toMatchObject({ success: true, type: "photo" });
+    expect(sent).toEqual(["photo"]);
 });
 
 it("shows 'sending a photo' while generate_image runs, typing otherwise", () => {

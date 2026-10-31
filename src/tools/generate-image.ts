@@ -17,7 +17,9 @@ import { encryptedFetch } from "../crypto-transport.js";
 import {
     currentGenerated,
     type InboundImage,
+    lastGeneratedBatch,
     lastInboundImages,
+    OWNER_IMAGE_KEY,
     pushGenerated,
     undoGenerated,
 } from "../media/image-memory.js";
@@ -391,7 +393,7 @@ export const generateImage: ToolDefinition = {
                 "  Keep the prompt short; don't list every object to preserve. For a remove/erase/add-a-small-object edit set local true.",
                 '- Combine photos ("put me and my dog together", "use this logo on this shirt"): source "attached" uses every image the user sent this turn; say in the prompt how each one is used.',
                 '- Change the image you just made ("make it brighter", "now in blue"): source "last".',
-                '- Variations ("give me a few options"): count 2-4.',
+                '- Variations ("give me a few options"): count 2-4. To change one of them ("edit the second one", "make the 3rd one brighter"): source "variation N" (1-based, in the order they came back).',
                 '- Another version / higher quality of an EDIT: source = that result\'s source_path with the same prompt (not "last"). Of a created image: same prompt, no source.',
                 '- HD of the current image: source "last", quality high, prompt "Re-render this exact image with finer detail; keep composition, subjects, colors and text identical."',
                 '- Undo ("go back", "undo that"): undo true; no other fields needed.',
@@ -410,7 +412,7 @@ export const generateImage: ToolDefinition = {
                     source: {
                         type: "string",
                         description:
-                            'Omit to create from scratch. "attached" = the image(s) the user sent (this turn, else the last one they sent). "last" = the last image you made or edited here. Or an absolute path to an image file in Bhai\'s files folder (owner only).',
+                            'Omit to create from scratch. "attached" = the image(s) the user sent (this turn, else the last one they sent). "last" = the last image you made or edited here. "variation N" = the Nth image (1-based) of the last batch of variations. Or an absolute path to an image file in Bhai\'s files folder (owner only).',
                     },
                     aspect: {
                         type: "string",
@@ -448,12 +450,14 @@ export const generateImage: ToolDefinition = {
 
     async handler(input) {
         const key = turnConversationKey() ?? "default";
+        // The owner's versions follow them across channels; a photo they send stays in its chat (key).
+        const history = callerIsOwner() === true ? OWNER_IMAGE_KEY : key;
         const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
         const started = Date.now();
 
         if (input.undo === true) {
-            const current = currentGenerated(key);
-            const prev = undoGenerated(key, fs.existsSync);
+            const current = currentGenerated(history);
+            const prev = undoGenerated(history, fs.existsSync);
             if (!prev) return err("There's no earlier version to go back to in this chat.");
             console.log(`  🎨 generate_image: undo → ${path.basename(prev)}`);
             const mimeType = mimeForPath(prev);
@@ -480,10 +484,19 @@ export const generateImage: ToolDefinition = {
             if (!imgs.length) return err("I don't see a photo to edit. Ask the user to send it here.");
             raw = imgs.slice(0, 4).map((i) => ({ buffer: Buffer.from(i.base64, "base64") }));
         } else if (source === "last") {
-            const last = currentGenerated(key);
+            const last = currentGenerated(history);
             if (!last || !fs.existsSync(last))
                 return err("I haven't made an image in this chat yet. Ask what to create, or for the photo to edit.");
             raw = [{ buffer: fs.readFileSync(last), file: last }];
+        } else if (/^variation\s*#?\d+$/i.test(source)) {
+            const batch = lastGeneratedBatch(history);
+            const n = Number(source.match(/\d+/)?.[0]);
+            if (!batch) return err('I haven\'t made several variations here. Use source "last" for the last image.');
+            if (n < 1 || n > batch.length)
+                return err(`There were ${batch.length} variations; pick variation 1 to ${batch.length}.`);
+            const file = batch[n - 1];
+            if (!fs.existsSync(file)) return err(`Variation ${n} isn't on disk any more. Ask which image to use.`);
+            raw = [{ buffer: fs.readFileSync(file), file }];
         } else if (source) {
             const p = allowedSourcePath(source);
             if (typeof p !== "string") return err(p.error);
@@ -561,7 +574,7 @@ export const generateImage: ToolDefinition = {
             let sourcePath = raw.length === 1 ? raw[0].file : undefined;
             if (raw.length === 1 && !sourcePath)
                 sourcePath = save(prepared[0].buffer, prepared[0].mimeType, `${slug}_original`, stamp);
-            if (sourcePath && currentGenerated(key) !== sourcePath) pushGenerated(key, sourcePath);
+            if (sourcePath && currentGenerated(history) !== sourcePath) pushGenerated(history, sourcePath);
 
             const files: Array<{ file_path: string; mime_type: string }> = [];
             for (const [i, img] of images.entries())
@@ -576,7 +589,10 @@ export const generateImage: ToolDefinition = {
                     mime_type: img.mimeType,
                 });
             // One history entry per call: undo after variations goes back past all of them, "last" = the last one.
-            pushGenerated(key, files[files.length - 1].file_path);
+            pushGenerated(
+                history,
+                files.map((f) => f.file_path),
+            );
             const kind = isEdit ? "edited" : "generated";
             // The turn's reply carries them (AgentResponse.images), also when a sub-agent made them.
             noteGeneratedImages(

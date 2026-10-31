@@ -2,7 +2,8 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
+import { promises as fs, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename as nodeBasename } from "node:path";
 import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
@@ -44,7 +45,7 @@ import {
 } from "./channel-text.js";
 import { getThinkingLevel, handleCommand, initCommands } from "./commands/index.js";
 import { getConvexSiteUrl } from "./config/keys.js";
-import { getDataDir, getDownloadsDir } from "./config/paths.js";
+import { getDataDir, getDownloadsDir, getImagesDir } from "./config/paths.js";
 import type { Config } from "./config.js";
 import { encryptedFetch } from "./crypto-transport.js";
 import type { LLMClient } from "./llm.js";
@@ -215,19 +216,46 @@ export function chatActionFor(progress: string): "typing" | "upload_photo" {
     return /Editing your photo|Painting the image/.test(progress) ? "upload_photo" : "typing";
 }
 
+/** A file's id in an image button's callback data: its name's hash, found again in the Images folder. */
+const imageId = (file: string) => createHash("sha1").update(nodeBasename(file)).digest("hex").slice(0, 12);
+
 /** The one-tap follow-ups under a generated image; the callback data maps to IMAGE_ACTIONS. */
 export function imageKeyboard(images: GeneratedImage[]): InlineKeyboard {
-    const kb = new InlineKeyboard().text("🔁 Another version", "img:again").text("✨ HD", "img:hq");
-    // Undo only when there is a before file to go back to (a combine of photos has none).
-    return images.some((img) => img.kind !== "generated" && img.sourcePath) ? kb.text("↩️ Undo", "img:undo") : kb;
+    // The buttons name their image, so a tap after a restart or after newer images acts on this one.
+    const id = imageId(images[images.length - 1].path);
+    const kb = new InlineKeyboard().text("🔁 Another version", `img:again:${id}`).text("✨ HD", `img:hq:${id}`);
+    // Undo only when there is a before file to go back to (a combine of photos has none). It stays
+    // plain: generate_image's undo walks the saved history, so naming a file would fight it.
+    const canUndo = images.some((img) => img.kind !== "generated" && img.sourcePath);
+    return canUndo ? kb.text("↩️ Undo", "img:undo") : kb;
 }
 
 /** An image button's tap becomes the owner's next message, like the stuck-report buttons. */
-const IMAGE_ACTIONS = new Map([
-    ["img:again", "Make one more version of that image"],
-    ["img:hq", "Make that image again, one copy, in high quality"],
-    ["img:undo", "Undo that last image edit"],
-]);
+const IMAGE_ACTIONS: Record<string, string> = {
+    again: "Make one more version of that image",
+    hq: "Make that image again, one copy, in high quality",
+    undo: "Undo that last image edit",
+};
+
+/**
+ * img:again|hq[:<id>] or img:undo → the owner's next message, naming the file the id finds in the
+ * Images folder. No id (an old button) or no such file: the plain message.
+ */
+export function imageCallbackMessage(data: string): string | undefined {
+    const m = /^img:(?:(again|hq)(?::([0-9a-f]{12}))?|(undo))$/.exec(data);
+    if (!m) return undefined;
+    let file: string | undefined;
+    if (m[2])
+        try {
+            const dir = getImagesDir();
+            const name = readdirSync(dir).find((n) => imageId(n) === m[2]);
+            if (name) file = join(dir, name);
+        } catch {
+            /* no Images folder: the plain message */
+        }
+    const action = m[1] ?? m[3];
+    return file ? `${IMAGE_ACTIONS[action]}: ${file}` : IMAGE_ACTIONS[action];
+}
 
 /** sendPhoto re-encodes to a ≤1280px JPEG: past that, the full file goes too. */
 const PHOTO_MAX_EDGE = 1280;
@@ -1559,7 +1587,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         if (data.startsWith("img:")) {
             await ctx.answerCallbackQuery().catch(() => {});
             await ctx.editMessageReplyMarkup().catch(() => {});
-            const message = IMAGE_ACTIONS.get(data);
+            const message = imageCallbackMessage(data);
             const imgMsg = ctx.callbackQuery.message;
             if (message && chatId && imgMsg)
                 bufferMessage(ctx, chatId, imgMsg.message_id, message, imgMsg.caption ?? imgMsg.reply_to_message?.text);

@@ -3,14 +3,16 @@
 // See LICENSE.md for details.
 
 // Per-conversation image memory for generate_image: the photos the user sent
-// last ("edit this" one message later) and the versions Bhai made (for "last"
-// and undo). In-process only; a restart forgets it.
+// last ("edit this" one message later, in memory only) and the versions Bhai made
+// (for "last", "variation N" and undo; file paths only, kept in data/ across restarts).
 
 import { execFile } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { getDataDir } from "../config/paths.js";
 
 export interface InboundImage {
     base64: string;
@@ -27,13 +29,49 @@ const MAX_IMAGE_BASE64 = 11_200_000;
 const READABLE = /^image\/(jpeg|png|webp|gif)$/;
 
 const inbound = new Map<string, { images: InboundImage[]; at: number }>();
-const generated = new Map<string, string[]>();
+// Each entry is one generate_image call's output: one path, or a batch of variations.
+const generated = new Map<string, string[][]>();
+let loaded = false;
 
-/** Re-insert as newest and drop the oldest key past the cap (Map keeps insertion order). */
+/** The owner's generated history, shared by every channel (guests keep their conversation key). */
+export const OWNER_IMAGE_KEY = "owner";
+
+const historyFile = () => path.join(getDataDir(), "image-history.json");
+
+/** Loads the saved history once, dropping files that are gone. */
+function load(): void {
+    if (loaded) return;
+    loaded = true;
+    try {
+        const saved = JSON.parse(fsSync.readFileSync(historyFile(), "utf8")) as Record<string, string[][]>;
+        for (const [key, stack] of Object.entries(saved)) {
+            const kept = stack.map((e) => e.filter((p) => fsSync.existsSync(p))).filter((e) => e.length);
+            // A retried load keeps what was made meanwhile, newest last.
+            if (kept.length) generated.set(key, [...kept, ...(generated.get(key) ?? [])].slice(-MAX_HISTORY));
+        }
+    } catch (e) {
+        // Only a missing file is an empty history; anything else retries, so a save can't wipe the file.
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") loaded = false;
+    }
+}
+
+function persist(): void {
+    if (!loaded) return; // the saved history couldn't be read: don't overwrite it
+    const file = historyFile();
+    try {
+        fsSync.mkdirSync(path.dirname(file), { recursive: true });
+        fsSync.writeFileSync(`${file}.tmp`, JSON.stringify(Object.fromEntries(generated)), { mode: 0o600 });
+        fsSync.renameSync(`${file}.tmp`, file);
+    } catch (e) {
+        console.log(`  🎨 image history: can't save (${(e as Error).message})`);
+    }
+}
+
+/** Re-insert as newest and drop the oldest key past the cap (Map keeps insertion order); never the owner's. */
 function touch<V>(map: Map<string, V>, key: string, value: V): void {
     map.delete(key);
     map.set(key, value);
-    if (map.size > MAX_KEYS) map.delete(map.keys().next().value as string);
+    if (map.size > MAX_KEYS) map.delete([...map.keys()].find((k) => k !== OWNER_IMAGE_KEY) as string);
 }
 
 export function conversationKey(channel: string, userId: string): string {
@@ -93,23 +131,37 @@ export function lastInboundImages(key: string): InboundImage[] {
     return e.images;
 }
 
-export function pushGenerated(key: string, path: string): void {
+/** One call's result: a single version, or a batch of variations (one undo step, "last" = its last one). */
+export function pushGenerated(key: string, paths: string | string[]): void {
+    load();
     const stack = generated.get(key) ?? [];
-    stack.push(path);
+    stack.push(typeof paths === "string" ? [paths] : paths);
     if (stack.length > MAX_HISTORY) stack.shift();
     touch(generated, key, stack);
+    persist();
 }
 
 export function currentGenerated(key: string): string | undefined {
-    return generated.get(key)?.at(-1);
+    load();
+    return generated.get(key)?.at(-1)?.at(-1);
+}
+
+/** The newest batch of variations still in the history ("variation N"), or undefined. */
+export function lastGeneratedBatch(key: string): string[] | undefined {
+    load();
+    const stack = generated.get(key) ?? [];
+    for (let i = stack.length - 1; i >= 0; i--) if (stack[i].length > 1) return stack[i];
+    return undefined;
 }
 
 /** Drops the current version; returns the one before it (undefined when there is none, history untouched). */
 export function undoGenerated(key: string, usable: (path: string) => boolean = () => true): string | undefined {
+    load();
     const stack = generated.get(key);
-    const prev = stack?.at(-2);
+    const prev = stack?.at(-2)?.at(-1);
     // A deleted earlier version leaves the history where it was.
     if (!stack || !prev || !usable(prev)) return undefined;
     stack.pop();
+    persist();
     return prev;
 }

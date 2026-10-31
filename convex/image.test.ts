@@ -1,15 +1,20 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+    acquireImageSlot,
     callAzureImage,
+    IMAGE_MAX_IN_FLIGHT,
     IMAGE_MAX_INPUT_BYTES,
+    IMAGE_MAX_PER_MINUTE,
     ImageError,
     imageConfigFromEnv,
     imageCreditCost,
     imageErrorResponse,
     type ImageRequest,
+    releaseImageSlot,
     validateImageRequest,
 } from "./image";
+import { checkRequestRateLimit } from "./sessions";
 
 const cfg = { endpoint: "https://res.openai.azure.com/openai/v1", apiKey: "k", deployment: "gpt-image-2.5-sunburst" };
 const ok = (n = 1) =>
@@ -239,5 +244,62 @@ describe("server image generation", () => {
             const err = await callAzureImage(cfg, valid({ prompt: "x" }), reset).catch((e) => e);
             expect(imageErrorResponse(err)).toEqual({ status: 429, body: { error: "image_busy", retryAfter: 60 } });
         });
+    });
+});
+
+describe("per-account image limits", () => {
+    // In-memory request_rate_limits: enough for these mutations (by_key lookups only).
+    const fakeCtx = () => {
+        const rows: any[] = [];
+        return {
+            rows,
+            db: {
+                query: () => ({
+                    withIndex: (_i: string, f: (q: any) => void) => {
+                        let key: unknown;
+                        f({ eq: (_k: string, val: unknown) => (key = val) });
+                        return { unique: async () => rows.find((r) => r.key === key) ?? null };
+                    },
+                }),
+                insert: async (_t: string, doc: any) => void rows.push({ _id: String(rows.length), ...doc }),
+                patch: async (id: string, f: any) => void Object.assign(rows.find((r) => r._id === id), f),
+            },
+        };
+    };
+    const run = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+    afterEach(() => vi.useRealTimers());
+
+    it("fits one count-4 ask split into four n=1 calls, refuses a fifth, and frees on release", async () => {
+        const ctx = fakeCtx();
+        const a = { accountId: "acct1", n: 1 };
+        for (let i = 0; i < IMAGE_MAX_IN_FLIGHT; i++) expect(await run(acquireImageSlot, ctx, a)).toBe(true);
+        expect(await run(acquireImageSlot, ctx, a)).toBe(false);
+        expect(await run(acquireImageSlot, ctx, { accountId: "acct2", n: 4 })).toBe(true); // per account
+        await run(releaseImageSlot, ctx, a);
+        expect(await run(acquireImageSlot, ctx, { ...a, n: 2 })).toBe(false); // counted by images
+        expect(await run(acquireImageSlot, ctx, a)).toBe(true);
+    });
+
+    it("stops counting a slot whose action died, after the stale window", async () => {
+        vi.useFakeTimers();
+        const ctx = fakeCtx();
+        expect(await run(acquireImageSlot, ctx, { accountId: "a", n: 4 })).toBe(true);
+        expect(await run(acquireImageSlot, ctx, { accountId: "a", n: 1 })).toBe(false);
+        vi.advanceTimersByTime(5 * 60_000);
+        expect(await run(acquireImageSlot, ctx, { accountId: "a", n: 1 })).toBe(true);
+        await run(releaseImageSlot, ctx, { accountId: "a", n: 4 }); // a late release never goes negative
+        expect(ctx.rows[0].requestCount).toBe(0);
+    });
+
+    it("refuses past the per-minute cap with the seconds left in the window", async () => {
+        vi.useFakeTimers();
+        const ctx = fakeCtx();
+        const args = { key: "image|a", windowMs: 60_000, maxRequests: IMAGE_MAX_PER_MINUTE };
+        for (let i = 0; i < IMAGE_MAX_PER_MINUTE; i++)
+            expect((await run(checkRequestRateLimit, ctx, args)).limited).toBe(false);
+        vi.advanceTimersByTime(15_000);
+        expect(await run(checkRequestRateLimit, ctx, args)).toEqual({ limited: true, retryAfterMs: 45_000 });
+        vi.advanceTimersByTime(45_000);
+        expect((await run(checkRequestRateLimit, ctx, args)).limited).toBe(false);
     });
 });

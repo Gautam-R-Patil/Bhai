@@ -155,6 +155,9 @@ export function noteGeneratedImages(images: GeneratedImage[]): void {
     for (const img of images) if (!ctx.generatedImages.some((g) => g.path === img.path)) ctx.generatedImages.push(img);
 }
 
+/** What generate_image made this turn (noteGeneratedImages). */
+export const turnGeneratedImages = (): GeneratedImage[] => _callerStorage.getStore()?.generatedImages ?? [];
+
 /** The current turn's caller: true owner, false guest/contact, undefined outside any turn (background work). */
 export function callerIsOwner(): boolean | undefined {
     return _callerStorage.getStore()?.isOwner;

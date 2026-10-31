@@ -20,7 +20,12 @@ vi.mock("../../crypto-transport.js", () => ({ encryptedFetch: h.fetch }));
 vi.mock("../../session.js", () => ({ getSessionToken: async () => "tok", handleAuthError: async () => "tok2" }));
 vi.mock("../../config/keys.js", () => ({ getConvexSiteUrl: () => "https://site.test" }));
 
-import { currentGenerated, pushGenerated } from "../../media/image-memory.js";
+import {
+    currentGenerated,
+    OWNER_IMAGE_KEY as OWNER,
+    pushGenerated,
+    rememberInboundImages,
+} from "../../media/image-memory.js";
 import { type CronCallerContext, runWithCallerContext } from "../cron-tool.js";
 import { blendLocal, editSizeFor, generateImage } from "../generate-image.js";
 
@@ -53,7 +58,7 @@ describe("generate_image", () => {
         expect(readFileSync(file).length).toBeLessThanOrEqual(Buffer.from(jpeg, "base64").length);
         expect((await sharp(file).metadata()).format).toBe("jpeg");
         expect(res.note).toMatch(/already shown/);
-        expect(currentGenerated(key)).toBe(file);
+        expect(currentGenerated(OWNER)).toBe(file);
         const [url, init] = h.fetch.mock.calls[0];
         expect(url).toBe("https://site.test/api/image");
         expect(JSON.parse(init.body)).toEqual({ prompt: "A red fox in snow", size: "1024x1024", quality: "medium", n: 1 });
@@ -97,23 +102,82 @@ describe("generate_image", () => {
             { turnImages: [{ base64: jpeg, mimeType: "image/jpeg" }], message: "make it blue, give me 2" },
         );
         expect(res.images).toHaveLength(2);
-        expect(currentGenerated(key)).toBe(res.images[1].file_path);
+        expect(currentGenerated(OWNER)).toBe(res.images[1].file_path);
         const undo = await runWithCallerContext({ isOwner: true, conversationKey: key }, () =>
             generateImage.handler({ prompt: "", undo: true }),
         );
         expect(JSON.parse(undo as string).images[0].file_path).toBe(res.source_path);
     });
 
+    it("the owner's versions follow them across channels; a contact's stay in their chat", async () => {
+        h.fetch.mockImplementation(async () => reply(200, { images: [{ data: jpeg, mimeType: "image/jpeg" }] }));
+        const made = (await call({ prompt: "A lighthouse" }, { conversationKey: "telegram:42" })).res.images[0].file_path;
+        const { res } = await call({ prompt: "Make it brighter", source: "last" }, { conversationKey: "overlay:local" });
+        expect(res.source_path).toBe(made);
+        expect(JSON.parse(h.fetch.mock.calls[1][1].body).images).toHaveLength(1);
+        // A photo sent on Telegram is still only "attached" there.
+        rememberInboundImages("telegram:42", [{ base64: jpeg, mimeType: "image/jpeg" }]);
+        expect((await call({ prompt: "x", source: "attached" }, { conversationKey: "overlay:local" })).res.error).toMatch(/don't see a photo/);
+        const guest = { isOwner: false, conversationKey: "telegram:guest:7" };
+        expect((await call({ prompt: "x", source: "last" }, guest)).res.error).toMatch(/haven't made an image/);
+    });
+
+    it("\"variation N\" edits that one of the last batch; undo walks back to before the batch", async () => {
+        const before = join(h.ws, "before.jpg");
+        writeFileSync(before, Buffer.from(jpeg, "base64"));
+        pushGenerated(OWNER, before);
+        h.fetch.mockResolvedValue(
+            reply(200, { images: [1, 2, 3].map(() => ({ data: jpeg, mimeType: "image/jpeg" })) }),
+        );
+        const batch = (await call({ prompt: "A logo", count: 3 }, { message: "give me 3 logo options" })).res.images.map(
+            (i: { file_path: string }) => i.file_path,
+        );
+        expect(batch).toHaveLength(3);
+        h.fetch.mockImplementation(async () => reply(200, { images: [{ data: jpeg, mimeType: "image/jpeg" }] }));
+        const edit = (await call({ prompt: "Make it brighter", source: "variation 2" })).res;
+        expect(edit.source_path).toBe(batch[1]);
+        // The batch is still there after editing one of it.
+        expect((await call({ prompt: "x", source: "Variation 3" })).res.source_path).toBe(batch[2]);
+        expect((await call({ prompt: "x", source: "variation 4" })).res.error).toMatch(/There were 3 variations; pick variation 1 to 3/);
+        expect(h.fetch).toHaveBeenCalledTimes(3);
+        // Each edit's "before" is its variation: undo shows it, then the edit before, then the batch.
+        const undo = async () => (await call({ prompt: "", undo: true })).res.images?.[0].file_path;
+        expect(await undo()).toBe(batch[2]);
+        expect(await undo()).toBe(edit.images[0].file_path);
+        expect(await undo()).toBe(batch[1]);
+        expect(await undo()).toBe(batch[2]); // the batch, shown by its last image
+        expect(await undo()).toBe(before); // what was current before the batch
+        expect((await call({ prompt: "x", source: "variation 1" })).res.error).toMatch(/several variations/);
+    });
+
+    it("made versions survive a restart (missing files dropped); sent photos never reach disk", async () => {
+        const keep = join(h.ws, "keep.jpg");
+        const gone = join(h.ws, "gone.jpg");
+        writeFileSync(keep, "x");
+        writeFileSync(gone, "x");
+        pushGenerated("restart", [keep, gone]);
+        pushGenerated("restart", gone);
+        rememberInboundImages("restart", [{ base64: "U0VDUkVU", mimeType: "image/jpeg" }]);
+        rmSync(gone);
+        expect(readFileSync(join(process.env.ATLAS_DATA_DIR as string, "image-history.json"), "utf8")).not.toContain("U0VDUkVU");
+        vi.resetModules();
+        const fresh = await import("../../media/image-memory.js");
+        expect(fresh.currentGenerated("restart")).toBe(keep);
+        expect(fresh.lastGeneratedBatch("restart")).toBeUndefined();
+        expect(fresh.lastInboundImages("restart")).toEqual([]);
+        expect(fresh.currentGenerated(OWNER)).toBe(currentGenerated(OWNER));
+    });
+
     it("\"last\" with nothing made yet says so, without calling the server", async () => {
-        const { res } = await call({ prompt: "make it blue", source: "last" });
+        const { res } = await call({ prompt: "make it blue", source: "last" }, { isOwner: false });
         expect(res.error).toMatch(/haven't made an image/);
         expect(h.fetch).not.toHaveBeenCalled();
     });
 
     it("undo goes back one version for free", async () => {
-        const key = "test:undo";
-        pushGenerated(key, join(h.ws, "v1.jpg"));
-        pushGenerated(key, join(h.ws, "v2.jpg"));
+        const key = "telegram:undo";
+        pushGenerated(OWNER, join(h.ws, "v1.jpg"));
+        pushGenerated(OWNER, join(h.ws, "v2.jpg"));
         writeFileSync(join(h.ws, "v1.jpg"), "x");
         const out = JSON.parse(
             (await runWithCallerContext({ isOwner: true, conversationKey: key }, () =>
@@ -123,7 +187,7 @@ describe("generate_image", () => {
         expect(out).toMatchObject({ success: true, kind: "undo", source_path: join(h.ws, "v2.jpg") });
         expect(out.images[0]).toEqual({ file_path: join(h.ws, "v1.jpg"), mime_type: "image/jpeg" });
         expect(h.fetch).not.toHaveBeenCalled();
-        expect((await call({ prompt: "", undo: true })).res.error).toMatch(/no earlier version/);
+        expect((await call({ prompt: "", undo: true }, { isOwner: false })).res.error).toMatch(/no earlier version/);
     });
 
     it("refuses a path outside Bhai's folders, and any path for a non-owner", async () => {
@@ -139,9 +203,10 @@ describe("generate_image", () => {
 
     it("a safety block (422) suggests rephrasing", async () => {
         h.fetch.mockResolvedValue(reply(422, { error: "blocked_by_safety", message: "content filter" }));
-        const { key, res } = await call({ prompt: "something risky" });
+        const before = currentGenerated(OWNER);
+        const { res } = await call({ prompt: "something risky" });
         expect(res.error).toMatch(/safety filter.*Rephrase/s);
-        expect(currentGenerated(key)).toBeUndefined();
+        expect(currentGenerated(OWNER)).toBe(before);
     });
 
     it("two parallel calls with the same prompt in the same millisecond both save", async () => {

@@ -19,7 +19,15 @@ import {
   transcribeWithProvider,
 } from "./stt";
 import { encodeBase64, speakWithProvider, TTS_CREDIT_COST, TTS_MAX_CHARS, ttsConfigFromEnv } from "./tts";
-import { callAzureImage, imageConfigFromEnv, imageCreditCost, imageErrorResponse, validateImageRequest } from "./image";
+import {
+  callAzureImage,
+  IMAGE_MAX_PER_MINUTE,
+  ImageError,
+  imageConfigFromEnv,
+  imageCreditCost,
+  imageErrorResponse,
+  validateImageRequest,
+} from "./image";
 import {
   generateServerKeyPair,
   deriveSharedKey,
@@ -1002,7 +1010,8 @@ http.route({
 // (E2E): { prompt, images?, size?, quality?, n?, background? }; images = edit.
 // Credits are taken before the call and refunded on any failure; when not every
 // image fits in the response, only the delivered ones are charged. 200 =
-// { images, credits, dropped? }; 429 = { error: "image_busy", retryAfter }.
+// { images, credits, dropped? }; 429 = { error: "image_busy", retryAfter } (the
+// deployment is busy, or this account is over its share; see image.ts limits).
 // ══════════════════════════════════════════════════════════════════════════
 
 http.route({
@@ -1031,47 +1040,68 @@ http.route({
     const req = validateImageRequest(body);
     if ("error" in req) return reply({ error: req.error }, req.status);
 
-    const cost = imageCreditCost(req.quality, req.n);
-    const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
-      otplessUserId: account.otplessUserId,
-      amount: cost,
-    });
-    if (!deducted?.success) return reply({ error: "insufficient_credits" }, 402);
-
-    const startedAt = Date.now();
-    const log = (status: "success" | "failed", credits: number, errorMessage?: string) =>
-      ctx
-        .runMutation(internal.llmCallLog.record, {
-          accountId: account.accountId,
-          otplessUserId: account.otplessUserId,
-          model: `image:${cfg.deployment}`,
-          status,
-          credits,
-          latencyMs: Date.now() - startedAt,
-          errorMessage,
-          hasMedia: true,
-        })
-        .catch(() => {});
-    try {
-      const { images, dropped } = await callAzureImage(cfg, req);
-      const charged = imageCreditCost(req.quality, images.length);
-      // await: buildResponse is async, so a failed encrypt must land in the (full) refund path.
-      const res = await reply({ images, credits: charged, ...(dropped ? { dropped } : {}) }, 200);
-      if (charged < cost) {
-        await ctx
-          .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost - charged })
-          .catch((e: unknown) => console.error("[Image] partial refund failed:", e));
-      }
-      await log("success", charged);
-      return res;
-    } catch (err) {
-      await ctx
-        .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost })
-        .catch((e: unknown) => console.error("[Image] refund failed:", e));
-      const { status, body: errBody } = imageErrorResponse(err);
-      console.error(`[Image] ${errBody.error}:`, (err as Error)?.message);
-      await log("failed", 0, (err as Error)?.message);
+    // Per account, before any credits move: requests a minute, then images in flight (convex/image.ts).
+    const busy = (retryAfter: number) => {
+      const { status, body: errBody } = imageErrorResponse(new ImageError("busy", "account limit", retryAfter));
       return reply(errBody, status);
+    };
+    const minute = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
+      key: `image|${account.accountId}`,
+      windowMs: 60_000,
+      maxRequests: IMAGE_MAX_PER_MINUTE,
+    });
+    if (minute.limited) return busy(Math.max(1, Math.ceil((minute.retryAfterMs ?? 60_000) / 1000)));
+    const slot = { accountId: account.accountId, n: req.n };
+    // The slot frees as calls finish (~30-120s); 30s is a fair guess.
+    if (!(await ctx.runMutation(internal.image.acquireImageSlot, slot))) return busy(30);
+
+    try {
+      const cost = imageCreditCost(req.quality, req.n);
+      const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+        otplessUserId: account.otplessUserId,
+        amount: cost,
+      });
+      if (!deducted?.success) return reply({ error: "insufficient_credits" }, 402);
+
+      const startedAt = Date.now();
+      const log = (status: "success" | "failed", credits: number, errorMessage?: string) =>
+        ctx
+          .runMutation(internal.llmCallLog.record, {
+            accountId: account.accountId,
+            otplessUserId: account.otplessUserId,
+            model: `image:${cfg.deployment}`,
+            status,
+            credits,
+            latencyMs: Date.now() - startedAt,
+            errorMessage,
+            hasMedia: true,
+          })
+          .catch(() => {});
+      try {
+        const { images, dropped } = await callAzureImage(cfg, req);
+        const charged = imageCreditCost(req.quality, images.length);
+        // await: buildResponse is async, so a failed encrypt must land in the (full) refund path.
+        const res = await reply({ images, credits: charged, ...(dropped ? { dropped } : {}) }, 200);
+        if (charged < cost) {
+          await ctx
+            .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost - charged })
+            .catch((e: unknown) => console.error("[Image] partial refund failed:", e));
+        }
+        await log("success", charged);
+        return res;
+      } catch (err) {
+        await ctx
+          .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost })
+          .catch((e: unknown) => console.error("[Image] refund failed:", e));
+        const { status, body: errBody } = imageErrorResponse(err);
+        console.error(`[Image] ${errBody.error}:`, (err as Error)?.message);
+        await log("failed", 0, (err as Error)?.message);
+        return reply(errBody, status);
+      }
+    } finally {
+      await ctx
+        .runMutation(internal.image.releaseImageSlot, slot)
+        .catch((e: unknown) => console.error("[Image] slot release failed:", e));
     }
   }),
 });
