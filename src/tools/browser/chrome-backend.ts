@@ -54,6 +54,11 @@ export async function waitBridgeReady(maxMs = 3000, quietMs = 300, since = 0): P
     }
 }
 
+// Modifier keys held with keyboard.down(): CDP doesn't carry key state into a mouse event, so
+// clicks send them along (a ctrl/cmd-click was a plain click in the owner's Chrome).
+const heldModifiers = new Set<string>();
+const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
+
 // Playwright's selectOption also takes { label } / { value }; the extension matches plain strings.
 type SelectValue = string | { value?: string; label?: string };
 function selectValues(value: SelectValue | SelectValue[]): string[] {
@@ -234,12 +239,17 @@ export class ChromePageProxy {
     mouse = {
         click: async (x: number, y: number, opts?: { button?: string }) => {
             const [cx, cy] = await this.intoView(x, y);
-            await sendBridgeCommand("click_at", { x: cx, y: cy, button: opts?.button || "left" });
+            await sendBridgeCommand("click_at", {
+                x: cx,
+                y: cy,
+                button: opts?.button || "left",
+                modifiers: [...heldModifiers],
+            });
             await this.syncTab();
         },
         dblclick: async (x: number, y: number) => {
             const [cx, cy] = await this.intoView(x, y);
-            await sendBridgeCommand("click_at", { x: cx, y: cy, doubleClick: true });
+            await sendBridgeCommand("click_at", { x: cx, y: cy, doubleClick: true, modifiers: [...heldModifiers] });
             await this.syncTab();
         },
         // wheel() — maps deltaX/deltaY to the Chrome extension's scroll command.
@@ -281,8 +291,10 @@ export class ChromePageProxy {
         },
         down: async (key: string) => {
             await sendBridgeCommand("keyboard", { key, action: "down" });
+            if (MODIFIER_KEYS.has(key)) heldModifiers.add(key);
         },
         up: async (key: string) => {
+            heldModifiers.delete(key);
             await sendBridgeCommand("keyboard", { key, action: "up" });
         },
         // vaultRules: the text holds a saved secret; the extension types it only
@@ -441,13 +453,13 @@ export class ChromeLocatorProxy {
     async click(opts?: { timeout?: number }): Promise<void> {
         const el = await this.findElement();
         if (!el.found) throw new Error(`Element not found: ${this.selector}`);
-        await sendBridgeCommand("click_at", { x: el.x, y: el.y });
+        await sendBridgeCommand("click_at", { x: el.x, y: el.y, modifiers: [...heldModifiers] });
     }
 
     async dblclick(): Promise<void> {
         const el = await this.findElement();
         if (!el.found) throw new Error(`Element not found: ${this.selector}`);
-        await sendBridgeCommand("click_at", { x: el.x, y: el.y, doubleClick: true });
+        await sendBridgeCommand("click_at", { x: el.x, y: el.y, doubleClick: true, modifiers: [...heldModifiers] });
     }
 
     async fill(text: string): Promise<void> {
