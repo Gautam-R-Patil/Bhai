@@ -79,7 +79,13 @@
         type.className = "btn btn-secondary";
         type.setAttribute("data-action", "type");
         type.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12"/></svg><span>' + (Copy.get("ready-hub", "type") || "Type") + '</span>';
-        actions.appendChild(launch); actions.appendChild(talk); actions.appendChild(type);
+        // Memory import: the Memory tab opens its "Import from another AI" dialog for #memory:import.
+        const importMem = document.createElement("button");
+        importMem.type = "button";
+        importMem.className = "btn btn-secondary";
+        importMem.setAttribute("data-action", "import-memory");
+        importMem.textContent = Copy.get("ready-hub", "import_memory") || "Bring what ChatGPT knows about you";
+        actions.appendChild(launch); actions.appendChild(talk); actions.appendChild(type); actions.appendChild(importMem);
         root.appendChild(actions);
 
         const actionsErr = document.createElement("p");
@@ -367,6 +373,11 @@
                 if (typeof atlas.showOverlay === "function") atlas.showOverlay();
                 else if (errEl) errEl.textContent = "Overlay unavailable.";
             });
+        }
+
+        const importBtn = body.querySelector('[data-action="import-memory"]');
+        if (importBtn) {
+            importBtn.addEventListener("click", function () { window.location.href = "panel.html#memory:import"; });
         }
 
         // Mount the "Try this" rotating strip.

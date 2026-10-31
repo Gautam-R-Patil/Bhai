@@ -41,6 +41,11 @@ export function setMemoryLLM(llm: LLMClient): void {
     memoryLLM = llm;
 }
 
+/** The boot LLM client given to setMemoryLLM (null before boot). */
+export function getMemoryLLM(): LLMClient | null {
+    return memoryLLM;
+}
+
 // ── Compatibility wrapper ─────────────────────
 // Wraps better-sqlite3 to expose the same .exec() / .run() interface
 // that all memory modules expect (originally from sql.js).

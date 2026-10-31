@@ -810,6 +810,302 @@
         }
     }
 
+    // ── Import from another AI ─────────────
+    // Step 1: pick the app, copy the export prompt into it, paste its answer
+    // (or choose an export file). Step 2: review the facts Bhai pulled out.
+    // Step 3: save the checked ones. Extraction/saving run in the bot.
+    const IMPORT_CAP = 300; // the bot saves at most this many per import (memory-import.ts MAX_SAVE)
+    function _openImportModal() {
+        if (document.querySelector(".studio-import")) return; // already open
+        const opener = document.activeElement;
+        const backdrop = document.createElement("div");
+        backdrop.className = "studio-modal-backdrop";
+        backdrop.innerHTML = `
+            <div class="studio-modal studio-import" role="dialog" aria-modal="true" aria-labelledby="studioImportTitle">
+                <div class="studio-import-head">
+                    <div class="studio-modal-title" id="studioImportTitle">Import from another AI</div>
+                    <button class="btn-icon" data-close aria-label="Close">✕</button>
+                </div>
+                <div data-body></div>
+            </div>
+        `;
+        document.body.appendChild(backdrop);
+        const body = backdrop.querySelector("[data-body]");
+        const close = () => {
+            backdrop.remove();
+            if (opener && typeof opener.focus === "function") opener.focus();
+        };
+        backdrop._close = close; // the studio's Escape handler closes through this
+        backdrop.querySelector("[data-close]").addEventListener("click", close);
+        // Only a press that started on the backdrop closes: a text selection dragged out of the dialog doesn't.
+        let downOnBackdrop = false;
+        backdrop.addEventListener("mousedown", (e) => { downOnBackdrop = e.target === backdrop; });
+        backdrop.addEventListener("click", (e) => { if (e.target === backdrop && downOnBackdrop) close(); });
+
+        const st = { loading: true, sources: [], prompt: "", source: "chatgpt", text: "", file: null, facts: [], result: null };
+        const label = (id) => (st.sources.find((s) => s.id === id) || {}).label || "the other app";
+        const errorHtml = (msg) => `<div class="studio-import-error" role="alert">${_escapeHtml(msg)}</div>`;
+
+        function renderPick(err) {
+            const src = st.sources.find((s) => s.id === st.source);
+            body.innerHTML = `
+                <div class="studio-modal-body">Bring over what another assistant knows about you. Pick the app:</div>
+                <div class="studio-modal-options" role="radiogroup" aria-label="App">
+                    ${st.sources.map((s) => `<button class="studio-modal-option${s.id === st.source ? " active" : ""}" role="radio" aria-checked="${s.id === st.source}" data-src="${_escapeHtml(s.id)}">${_escapeHtml(s.label)}</button>`).join("")}
+                </div>
+                ${src ? `<div class="studio-import-hint">${_escapeHtml(src.hint)}</div>` : ""}
+                <div class="studio-import-step">
+                    <span>1. Paste this into ${_escapeHtml(label(st.source))}</span>
+                    <button class="btn btn-secondary btn-sm" data-copy ${st.prompt ? "" : "disabled"}>Copy</button>
+                </div>
+                <textarea class="clean-input studio-import-prompt" readonly rows="4" aria-label="Prompt to copy">${_escapeHtml(st.prompt || (st.loading ? "Loading…" : ""))}</textarea>
+                <div class="studio-import-step"><span>2. Paste its answer here</span></div>
+                <textarea class="clean-input studio-import-paste" rows="6" placeholder="Paste the answer…" aria-label="Answer from the other app" data-paste>${_escapeHtml(st.text)}</textarea>
+                <div class="studio-import-file">
+                    <span>or</span>
+                    <button class="btn btn-secondary btn-sm" data-file>Choose file…</button>
+                    <span class="studio-import-filename">${st.file ? _escapeHtml(st.file.name) : ".txt, .md, .json or an export .zip"}</span>
+                    ${st.file ? '<button class="btn-icon" data-unfile aria-label="Remove file">✕</button>' : ""}
+                </div>
+                ${err ? errorHtml(err) : ""}
+                <div class="studio-modal-actions">
+                    <button class="btn btn-secondary btn-sm" data-cancel>Cancel</button>
+                    <button class="btn btn-primary btn-sm" data-next>Find memories</button>
+                </div>
+            `;
+            const next = body.querySelector("[data-next]");
+            const paste = body.querySelector("[data-paste]");
+            const sync = () => { next.disabled = !(st.text.trim() || st.file); };
+            sync();
+            body.querySelectorAll("[data-src]").forEach((b) => b.addEventListener("click", () => {
+                st.source = b.getAttribute("data-src");
+                renderPick();
+                body.querySelector(`[data-src="${CSS.escape(st.source)}"]`)?.focus();
+            }));
+            // Whichever input was set last wins: typing drops a chosen file, picking a file clears the paste.
+            paste.addEventListener("input", () => {
+                st.text = paste.value;
+                if (st.file && st.text.trim()) {
+                    st.file = null;
+                    body.querySelector("[data-unfile]")?.remove();
+                    body.querySelector(".studio-import-filename").textContent = ".txt, .md, .json or an export .zip";
+                }
+                sync();
+            });
+            body.querySelector("[data-copy]").addEventListener("click", async (e) => {
+                try {
+                    await navigator.clipboard.writeText(st.prompt);
+                    e.target.textContent = "Copied";
+                } catch {
+                    body.querySelector(".studio-import-prompt").select();
+                }
+            });
+            body.querySelector("[data-file]").addEventListener("click", async () => {
+                const res = await window.atlas.studio.pickImportFile();
+                if (res && !res.canceled) { st.file = { path: res.path, name: res.name }; st.text = ""; renderPick(); }
+            });
+            body.querySelector("[data-unfile]")?.addEventListener("click", () => { st.file = null; renderPick(); });
+            body.querySelector("[data-cancel]").addEventListener("click", close);
+            next.addEventListener("click", preview);
+            (next.disabled ? paste : next).focus(); // the re-render dropped focus
+        }
+
+        async function preview() {
+            body.innerHTML = `
+                <div class="studio-import-busy" role="status">
+                    <span class="studio-import-spinner" aria-hidden="true"></span>
+                    Reading it and picking out what's about you… a big export can take a few minutes.
+                </div>
+            `;
+            backdrop.querySelector("[data-close]").focus();
+            let res;
+            try {
+                res = await window.atlas.studio.importPreview(
+                    st.text.trim() ? { text: st.text, source: st.source } : { filePath: st.file.path, source: st.source },
+                );
+            } catch (err) {
+                res = { success: false, error: err.message };
+            }
+            if (!backdrop.isConnected) return;
+            if (!res?.success) return renderPick(res?.error || "Something went wrong. Try again.");
+            if (res.detectedSource) st.source = res.detectedSource;
+            // New facts first, checked up to the per-import cap; ones Bhai already has go last, unchecked.
+            const facts = res.facts || [];
+            st.facts = [...facts.filter((f) => !f.known), ...facts.filter((f) => f.known)];
+            st.facts.forEach((f, i) => { f.keep = !f.known && i < IMPORT_CAP; });
+            st.counts = res;
+            renderReview();
+        }
+
+        function renderReview(err) {
+            const c = st.counts;
+            const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+            const fresh = st.facts.filter((f) => !f.known);
+            const known = st.facts.length - fresh.length;
+            const left = [];
+            if (c.droppedInstructions) left.push(plural(c.droppedInstructions, "instruction-like line"));
+            if (c.droppedSensitive) left.push(plural(c.droppedSensitive, "sensitive item"));
+            const summary = [`${fresh.length} new`];
+            if (known) summary.push(`${known} Bhai already knows`);
+            if (left.length) summary.push(`${left.join(" and ")} left out`);
+            if (c.truncated) {
+                summary.push(/_conversations$/.test(c.kind) ? "only the newest chats were read"
+                    : c.kind === "claude_memory" ? "only part of it was read"
+                    : "only the first part was read — import the rest separately");
+            }
+            const notes = [];
+            if (c.failedChunks > 0) {
+                notes.push(`<div class="studio-import-note" role="alert">${c.failedChunks} of ${plural(c.chunks || c.failedChunks, "part")} couldn't be read. <button class="btn btn-secondary btn-sm" data-retry>Try again</button></div>`);
+            }
+            if (c.incomplete) {
+                notes.push(`<div class="studio-import-note">It says there's more — type "continue" there and paste the rest too.</div>`);
+            }
+            body.innerHTML = `
+                <div class="studio-modal-body">${_escapeHtml(summary.join(" · "))}.${fresh.length ? " Uncheck anything you don't want Bhai to remember." : ""}</div>
+                ${notes.join("")}
+                ${fresh.length ? `<label class="studio-import-all"><input type="checkbox" data-all /> Select all</label>` : ""}
+                ${st.facts.length ? `
+                    <ul class="studio-import-list">
+                        ${st.facts.map((f, i) => `
+                            <li${f.known ? ' class="known"' : ""}><label>
+                                <input type="checkbox" data-i="${i}" ${f.keep ? "checked" : ""} ${f.known ? "disabled" : ""} />
+                                <span class="studio-import-fact">${_escapeHtml(f.content)}</span>
+                                ${f.known ? '<span class="studio-pill studio-import-known">already knows</span>' : ""}
+                                <span class="studio-pill">${_escapeHtml(f.category)}</span>
+                            </label></li>
+                        `).join("")}
+                    </ul>
+                ` : '<div class="studio-empty">Nothing about you turned up in that. Try pasting the full answer.</div>'}
+                <div class="studio-import-hint" data-cap hidden>${IMPORT_CAP} per import. Uncheck some to pick others, or import the rest after.</div>
+                ${err ? errorHtml(err) : ""}
+                <div class="studio-modal-actions">
+                    <button class="btn btn-secondary btn-sm" data-back>Back</button>
+                    ${fresh.length ? '<button class="btn btn-primary btn-sm" data-save></button>' : ""}
+                </div>
+            `;
+            const save = body.querySelector("[data-save]");
+            const all = body.querySelector("[data-all]");
+            const boxes = [...body.querySelectorAll("[data-i]")];
+            const sync = () => {
+                const n = fresh.filter((f) => f.keep).length;
+                const full = n >= IMPORT_CAP;
+                if (save) { save.textContent = `Import ${n}`; save.disabled = n === 0; }
+                if (all) {
+                    all.checked = n === Math.min(fresh.length, IMPORT_CAP);
+                    all.indeterminate = n > 0 && !all.checked;
+                }
+                // At the cap, the unchecked new facts can't be checked until one is unchecked.
+                boxes.forEach((box) => {
+                    const f = st.facts[Number(box.getAttribute("data-i"))];
+                    if (!f.known) box.disabled = full && !f.keep;
+                });
+                body.querySelector("[data-cap]").hidden = !(full && fresh.length > IMPORT_CAP);
+            };
+            sync();
+            for (const box of boxes) {
+                box.addEventListener("change", () => {
+                    st.facts[Number(box.getAttribute("data-i"))].keep = box.checked;
+                    sync();
+                });
+            }
+            all?.addEventListener("change", () => {
+                let room = all.checked ? IMPORT_CAP : 0;
+                fresh.forEach((f) => { f.keep = room-- > 0; });
+                boxes.forEach((box) => { box.checked = st.facts[Number(box.getAttribute("data-i"))].keep; });
+                sync();
+            });
+            body.querySelector("[data-retry]")?.addEventListener("click", preview);
+            body.querySelector("[data-back]").addEventListener("click", () => renderPick());
+            (save || body.querySelector("[data-back]")).focus();
+            save?.addEventListener("click", async () => {
+                // Freeze the review while saving: no second save, and no Back/Try again to replace the Done screen.
+                body.querySelectorAll("input, button").forEach((el) => { el.disabled = true; });
+                save.textContent = "Importing…";
+                const facts = fresh.filter((f) => f.keep).map(({ content, category, tags, importance }) => ({ content, category, tags, importance }));
+                let res;
+                try {
+                    res = await window.atlas.studio.importSave(facts, st.source);
+                } catch (err) {
+                    res = { success: false, error: err.message };
+                }
+                if (res?.success) refresh(); // even if the modal was closed meanwhile
+                if (!backdrop.isConnected) return;
+                if (!res?.success) return renderReview(res?.error || "Couldn't save. Try again.");
+                renderDone(res, facts);
+            });
+        }
+
+        function renderDone(res, sent) {
+            const parts = [`Added ${res.added || 0}`];
+            if (res.duplicates) parts.push(`${res.duplicates} already known`);
+            if (res.rejected) parts.push(`${res.rejected} skipped`);
+            const msg = res.added
+                ? `${parts.join(", ")}. You can remove any of them here in Memory.`
+                : res.duplicates && !res.rejected
+                  ? "Nothing new: Bhai already knew all of these."
+                  : `${parts.join(", ")}.`;
+            // ponytail: the save result has ids, not contents, so a duplicate or rejected fact can show here; fine for a preview of 5.
+            const top = res.added
+                ? [...sent].sort((a, b) => (b.importance || 0) - (a.importance || 0)).slice(0, Math.min(5, res.added))
+                : [];
+            const ids = Array.isArray(res.ids) ? res.ids : [];
+            body.innerHTML = `
+                ${top.length ? `
+                    <div class="studio-modal-body">Bhai now knows things like:</div>
+                    <ul class="studio-import-list studio-import-added">
+                        ${top.map((f) => `<li><span class="studio-import-fact">${_escapeHtml(f.content)}</span></li>`).join("")}
+                    </ul>
+                ` : ""}
+                <div class="studio-modal-body" role="status" data-msg>${_escapeHtml(msg)}</div>
+                ${res.overCap > 0 ? `<div class="studio-import-note">${res.overCap} more weren't saved (${IMPORT_CAP} per import) — import again to add them.</div>` : ""}
+                <div class="studio-modal-actions">
+                    ${ids.length ? '<button class="btn btn-secondary btn-sm" data-undo>Undo this import</button>' : ""}
+                    <button class="btn btn-primary btn-sm" data-done>Done</button>
+                </div>
+            `;
+            const done = body.querySelector("[data-done]");
+            done.addEventListener("click", close);
+            body.querySelector("[data-undo]")?.addEventListener("click", async (e) => {
+                const undo = e.currentTarget;
+                undo.disabled = true;
+                undo.textContent = "Undoing…";
+                let r;
+                try {
+                    r = await window.atlas.studio.bulkForget(ids, "import_undo");
+                } catch (err) {
+                    r = { success: false, error: err.message };
+                }
+                if (r?.success) refresh();
+                if (!backdrop.isConnected) return;
+                if (!r?.success) {
+                    undo.disabled = false;
+                    undo.textContent = "Undo this import";
+                    body.querySelector("[data-msg]").textContent = `Couldn't undo: ${r?.error || "unknown error"}. Try again.`;
+                    return;
+                }
+                body.innerHTML = `
+                    <div class="studio-modal-body" role="status">Undone. Nothing from this import is in Bhai's memory now.</div>
+                    <div class="studio-modal-actions"><button class="btn btn-primary btn-sm" data-done>Done</button></div>
+                `;
+                body.querySelector("[data-done]").addEventListener("click", close);
+                body.querySelector("[data-done]").focus();
+            });
+            done.focus();
+        }
+
+        renderPick();
+        backdrop.querySelector("[data-close]").focus();
+        window.atlas.studio.importPrompt().then((res) => {
+            st.loading = false;
+            if (!backdrop.isConnected || !body.querySelector("[data-paste]")) return;
+            if (!res?.success) return renderPick(res?.error || "Couldn't reach Bhai.");
+            st.sources = res.sources || [];
+            st.prompt = res.prompt || "";
+            renderPick();
+            body.querySelector(".studio-modal-option.active")?.focus();
+        }).catch((err) => { st.loading = false; renderPick(err.message); });
+    }
+
     function isNumericNs(ns) {
         return ns === "mem" || ns === "ent" || ns === "goal";
     }
@@ -972,6 +1268,7 @@
                 if (state.graph) _renderGraph();
             });
         });
+        $("studioImportOpen")?.addEventListener("click", _openImportModal);
         const deletedBtn = $("studioDeletedToggle");
         const deletedPane = $("studioDeletedPane");
         if (deletedBtn && deletedPane) {
@@ -1278,7 +1575,8 @@
         // Escape — clear selection / close detail / close modal
         if (event.key === "Escape") {
             if (modalOpen) {
-                modalOpen.remove();
+                if (typeof modalOpen._close === "function") modalOpen._close();
+                else modalOpen.remove();
                 return;
             }
             if (state.selectedId) {
@@ -1474,5 +1772,5 @@
         if (container) container.innerHTML = "";
     }
 
-    window.MemoryStudio = { mount, refresh, pause, destroy };
+    window.MemoryStudio = { mount, refresh, pause, destroy, openImport: _openImportModal };
 })();

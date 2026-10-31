@@ -100,12 +100,13 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     memory: {
         description:
-            "Remembering information, storing facts, searching past memories, forgetting something the user asks me to forget, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections. Searching the raw text of past conversation transcripts by keyword.",
+            "Remembering information, storing facts, searching past memories, forgetting something the user asks me to forget, importing memories or what another AI assistant (ChatGPT, Claude, Gemini...) knows about the user, recalling what the user told me before, remembering preferences, saving notes, managing knowledge and identity information about the user. Self-editing core memory sections: reading, replacing, appending, and deleting content from identity, traits, preferences, or custom memory sections. Searching the raw text of past conversation transcripts by keyword.",
         tools: [
             "memory_store",
             "memory_search",
             "memory_list",
             "memory_forget",
+            "import_memory",
             "session_search",
             "identity_view",
             "identity_update",
@@ -827,6 +828,13 @@ const NAMED_TOOLS: { pattern: RegExp; tool: string; category: string }[] = [
     },
     { pattern: /\b(empty|clear)\b.{0,12}\b(the |my )?(trash|bin)\b/i, tool: "trash_manager", category: "file_system" },
     { pattern: /\bapple notes?\b|\bnotes app\b|\b(a|new) note\b/i, tool: "apple_notes", category: "scheduling" },
+    // "Import my memory from ChatGPT", "bring over what Claude knows about me".
+    {
+        pattern:
+            /\b(import|bring (?:over|in)|transfer|migrate|carry over|pull in)\b.{0,40}\b(memor(?:y|ies)|what \S+(?: \S+)? knows? about me)\b|\b(chat ?gpt|claude|gemini|grok|perplexity|muse|instinct|pi|character\.?ai|copilot|meta ai)\b.{0,40}\b(memor(?:y|ies)|data export|knows? about me)\b/i,
+        tool: "import_memory",
+        category: "memory",
+    },
     // A file named in the request ("Read task.txt and…") got no file tools at all.
     { pattern: /\b[\w-]+\.(txt|md|csv|json|log|pdf|docx?|rtf|html?)\b/i, tool: "read", category: "file_system" },
     // Format and size only. A bare "make" is gone: "make a picture of a cat" and "make the

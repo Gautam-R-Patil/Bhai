@@ -1119,6 +1119,7 @@
                         <h2 class="tab-title">Memory</h2>
                     </div>
                     <div style="display:flex;gap:8px">
+                        <button class="btn btn-secondary btn-sm" id="studioImportOpen">Import from another AI</button>
                         <button class="btn btn-secondary btn-sm" id="studioDeletedToggle">View deleted</button>
                         <button class="btn btn-secondary btn-sm" id="studioAdvancedToggle">Show advanced</button>
                         <button class="btn btn-primary btn-sm" id="studioRecomputeInsights">Recompute insights</button>
@@ -1481,7 +1482,13 @@
             if (tabId === 'research') { loadResearch(); researchPoll = setInterval(loadResearch, 5000); }
             if (tabId === 'memory') {
                 loadStudio().then(() => {
-                    if (tabEl.classList.contains('active')) window.MemoryStudio?.mount();
+                    if (!tabEl.classList.contains('active')) return;
+                    window.MemoryStudio?.mount();
+                    // #memory:import (Ready Hub's "Bring what ChatGPT knows about you") opens the import too, once.
+                    if (location.hash === '#memory:import') {
+                        history.replaceState(null, '', '#memory');
+                        window.MemoryStudio?.openImport?.();
+                    }
                 }).catch(() => { /* retried on the next visit */ });
             } else if (window.MemoryStudio && typeof window.MemoryStudio.pause === 'function') {
                 window.MemoryStudio.pause();

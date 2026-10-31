@@ -4271,6 +4271,83 @@ function registerIPC() {
         }
     });
 
+    // ── Memory import (from ChatGPT, Claude, …) ─────────────
+    // Extraction and saving run in the bot (src/memory/memory-import.ts) behind
+    // the overlay server's owner token. The renderer may only make the bot read
+    // the file the owner just picked in the native dialog.
+    let _importPickedPath = null;
+    const IMPORT_MAX_BYTES = 200 * 1024 * 1024;
+    // A big paste or export is ~30 model parts, 3 at a time, each allowed 90 s (memory-import.ts).
+    const IMPORT_PREVIEW_MS = 600_000;
+
+    // node:http, not fetch: Node's fetch stops waiting for headers at 300 s, and the bot only
+    // answers a preview once extraction is done.
+    function _importCallBot(route, body, timeoutMs) {
+        let tok = "";
+        try { tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim(); } catch { /* bot never started */ }
+        if (!tok) return Promise.resolve({ success: false, error: "Bhai isn't running. Start Bhai and try again." });
+        const data = body ? JSON.stringify(body) : null;
+        return new Promise((resolve) => {
+            const fail = (err) => resolve({
+                success: false,
+                error: err.name === "AbortError" ? "That took too long. Try importing a smaller part." : "Bhai isn't running. Start Bhai and try again.",
+            });
+            const req = require("http").request(`${OVERLAY_URL}/api/memory/import/${route}`, {
+                method: data ? "POST" : "GET",
+                headers: { Authorization: `Bearer ${tok}`, ...(data ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } : {}) },
+                signal: AbortSignal.timeout(timeoutMs),
+            }, (res) => {
+                let raw = "";
+                res.setEncoding("utf8");
+                res.on("data", (c) => { raw += c; });
+                res.on("error", fail);
+                res.on("end", () => {
+                    let json = {};
+                    try { json = JSON.parse(raw); } catch { /* not JSON */ }
+                    if (res.statusCode < 200 || res.statusCode > 299) {
+                        resolve({ success: false, error: json.error || (res.statusCode === 413 ? "That's too big to import." : `Bhai answered ${res.statusCode}`) });
+                    } else resolve({ success: !json.error, ...json });
+                });
+            });
+            req.on("error", fail);
+            req.end(data ?? undefined);
+        });
+    }
+
+    ipcMain.handle("memory:import-prompt", () => _importCallBot("prompt", null, 5000));
+
+    ipcMain.handle("memory:import-pick-file", async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            title: "Choose your export",
+            filters: [{ name: "Exports", extensions: ["txt", "md", "json", "zip"] }],
+            properties: ["openFile"],
+        });
+        if (result.canceled || !result.filePaths.length) return { canceled: true };
+        _importPickedPath = result.filePaths[0];
+        return { canceled: false, path: _importPickedPath, name: path.basename(_importPickedPath) };
+    });
+
+    ipcMain.handle("memory:import-preview", async (_, opts) => {
+        const { text, filePath, source } = opts || {};
+        if (typeof text === "string" && text.trim()) {
+            if (text.length > 20 * 1024 * 1024) return { success: false, error: "That's too much text. Try a smaller part." };
+            return _importCallBot("preview", { text, source }, IMPORT_PREVIEW_MS);
+        }
+        if (!filePath || filePath !== _importPickedPath) return { success: false, error: "Choose the file again." };
+        // Export .zips go as they are: the bot picks conversations.json (or the biggest text) out itself.
+        try {
+            if (fs.statSync(filePath).size > IMPORT_MAX_BYTES) return { success: false, error: "That file is too big to import." };
+        } catch (err) {
+            return { success: false, error: `Couldn't read that file: ${err.message}` };
+        }
+        return _importCallBot("preview", { path: filePath, source }, IMPORT_PREVIEW_MS);
+    });
+
+    ipcMain.handle("memory:import-save", (_, facts, source) => {
+        if (!Array.isArray(facts) || !facts.length) return { success: false, error: "Nothing selected." };
+        return _importCallBot("save", { facts, source }, 120_000);
+    });
+
     // Setup: save user profile
     ipcMain.handle("setup:save-profile", async (_, profile) => {
         try {

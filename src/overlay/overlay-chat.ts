@@ -468,6 +468,11 @@ export function initOverlayChat(llm: LLMClient): void {
             });
             res.end(getWidgetScript(wsUrl));
 
+        // ── Import memory from another AI (desktop Memory Studio; owner token only) ──
+        } else if (url.pathname.startsWith("/api/memory/import/")) {
+            const { handleMemoryImportRoute } = await import("./memory-import-routes.js");
+            await handleMemoryImportRoute(req, res, url.pathname, authorizeRequest(req), llmClient);
+
         // ── Push notification subscription endpoint ──
         } else if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
             if (!authorizeRequest(req)) {

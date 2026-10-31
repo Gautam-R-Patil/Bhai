@@ -80,7 +80,21 @@ const CURATED_CATEGORIES = new Set([
 
 const HIGH_IMPORTANCE_THRESHOLD = 8;
 
-export function hardAllow(_content: string, source: Source, importance: number, category: string): AllowDecision {
+// Facts the owner picked to save (memory import): the LLM value gate must not drop them.
+// Keyed by content because remember() doesn't pass tags or a caller to the gate.
+const ownerReviewed = new Set<string>();
+
+export async function withOwnerReviewed<T>(content: string, fn: () => Promise<T>): Promise<T> {
+    ownerReviewed.add(content);
+    try {
+        return await fn();
+    } finally {
+        ownerReviewed.delete(content);
+    }
+}
+
+export function hardAllow(content: string, source: Source, importance: number, category: string): AllowDecision {
+    if (ownerReviewed.has(content)) return { allow: true, reason: "owner_reviewed" };
     if (source === "reflection") return { allow: true, reason: "source_reflection" };
     if (source === "consolidation") return { allow: true, reason: "source_consolidation" };
     if (importance >= HIGH_IMPORTANCE_THRESHOLD) return { allow: true, reason: "high_importance" };

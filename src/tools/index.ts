@@ -148,6 +148,7 @@ import { gifSearch } from "./gif-search.js";
 import { githubTool } from "./github-api.js";
 import { gitmcpDocs } from "./gitmcp.js";
 import { gmailTool, googleAccounts, googleCalendarTool } from "./google-api.js";
+import { importMemory } from "./import-memory.js";
 import {
     linuxOsClick,
     linuxOsContext,
@@ -328,6 +329,7 @@ registry.set(memoryStore.schema.function.name, memoryStore);
 registry.set(memorySearch.schema.function.name, memorySearch);
 registry.set(memoryList.schema.function.name, memoryList);
 registry.set(memoryForget.schema.function.name, memoryForget);
+registry.set(importMemory.schema.function.name, importMemory);
 if (process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
     registry.set(sessionSearch.schema.function.name, sessionSearch);
 }
@@ -738,6 +740,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     web_search: 20_000,
     web_read: 60_000, // up to 3 tries of a 15s fetch, plus PDF parsing
     deep_research: 300_000, // 5 minutes for deep research
+    import_memory: 300_000, // one model call per ~12K chars of a large export, then a dedupe check per fact
     generate_image: 200_000, // a high-quality Azure edit takes up to ~3 min (its fetch gives up at 190s)
     // File operations (coding primitives)
     read: 10_000,

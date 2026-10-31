@@ -39,6 +39,11 @@ contextBridge.exposeInMainWorld("atlas", {
         forgetLog: (limit) => ipcRenderer.invoke("memory:studio-forget-log", limit),
         insights: () => ipcRenderer.invoke("memory:studio-insights"),
         recomputeInsights: () => ipcRenderer.invoke("memory:studio-recompute-insights"),
+        // Import what another AI (ChatGPT, Claude, …) knows about the owner.
+        importPrompt: () => ipcRenderer.invoke("memory:import-prompt"),
+        importPreview: (opts) => ipcRenderer.invoke("memory:import-preview", opts),
+        importSave: (facts, source) => ipcRenderer.invoke("memory:import-save", facts, source),
+        pickImportFile: () => ipcRenderer.invoke("memory:import-pick-file"),
     },
 
     // ── Setup ─────────────────────────────────
