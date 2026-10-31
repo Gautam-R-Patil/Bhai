@@ -72,8 +72,10 @@ function inline(s) {
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*(?!\s)([^*\n]+)(?<!\s)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*(?!\s)([^*\n]+)(?<!\s)\*(?!\*)/g, '$1<em>$2</em>')
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/(?<![="'>\w])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+    // One pass for [label](url) and bare URLs, so a URL inside a finished link's href
+    // (a Wayback link, ?url=...) is never autolinked again.
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(?<![="'>\w])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/g,
+      (_, label, href, bare) => `<a href="${href || bare}" target="_blank" rel="noopener noreferrer">${label || bare}</a>`);
 }
 
 function renderMarkdown(text) {

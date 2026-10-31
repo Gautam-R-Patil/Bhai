@@ -222,3 +222,18 @@ describe("the panel's own turn across a worker restart", () => {
         expect(restorePanelTurn({ ...saved, restoredAt: 0 }, now).restoredAt).toBe(now);
     });
 });
+
+describe("side panel markdown links", () => {
+    const md = vm.createContext({});
+    vm.runInContext(`${panelFn("escapeHtml")}${panelFn("inline")}`, md);
+    const a = (href: string, text: string) => `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+
+    it("a link whose URL holds another URL stays one link", () => {
+        const url = "https://web.archive.org/web/2020/https://example.com/page";
+        expect(md.inline(`[snapshot](${url})`)).toBe(a(url, "snapshot"));
+    });
+
+    it("bare URLs still autolink", () => {
+        expect(md.inline("see https://example.com/x.")).toBe(`see ${a("https://example.com/x", "https://example.com/x")}.`);
+    });
+});
