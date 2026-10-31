@@ -610,6 +610,10 @@ const OUT_OF_CREDITS_REPLY =
 
 // ── Milestone tool descriptions ───────────────
 
+/** "Answer in two sentences", "one line", "briefly": the owner asked for a short answer. */
+export const askedToBeBrief = (text: string): boolean =>
+    /\b(one|two|three|1|2|3) (line|lines|sentence|sentences|words?)\b|\b(briefly|in short|tl;?dr|short answer|quick answer)\b/i.test(text);
+
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
     browser_navigate: (a) => `🌐 Opening ${((a.url as string) || "").substring(0, 60)}...`,
     web_search: (a) => `🔍 Searching: "${a.query || ""}"`,
@@ -3956,7 +3960,15 @@ PLAN:`,
                 STOP_WORDS.some((w) => lastUserText.includes(w)) && lastUserText.split(" ").length <= 10;
 
             // 6. Is the user's message simple enough that it probably doesn't need tool use?
-            const isSimpleUserMessage = lastUserText.split(" ").length <= 6;
+            // A one-step ask (the classifier said simple, not multi-step) or one that asked to be
+            // short ("two sentences", "one line"): a short answer after one search is the job done.
+            // The nudge re-sent the whole context to a Pro model to say so (20 times in a day).
+            const cls = toolSelection.classification;
+            const isSimpleUserMessage =
+                lastUserText.split(" ").length <= 6 ||
+                (cls?.tier === "simple" && !cls.multi_step) ||
+                cls?.tier === "chat" ||
+                askedToBeBrief(lastUserText);
 
             // ── Smart Delegation Detection ─────────────────────────────
             // Instead of brittle regex, analyze the CONTEXT to determine if the
