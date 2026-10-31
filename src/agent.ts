@@ -519,6 +519,17 @@ export function finalReplyText(raw: string, channelContext?: ChannelContext): st
 }
 
 /**
+ * The question an orchestrator plan asks the owner first, or null. Only the ASK_USER marker the
+ * plan prompt defines counts: ordinary steps like "see which apps are running" are not questions.
+ */
+export function planAskQuestion(planText: string): string | null {
+    if (!/\bASK_USER\b/i.test(planText.split("\n").slice(0, 3).join("\n"))) return null;
+    const question =
+        planText.match(/ASK_USER[:\s]*["']?([^"'\n]+)/i)?.[1] || planText.split("\n").find((l) => l.includes("?"));
+    return question?.trim() || null;
+}
+
+/**
  * Anti-giving-up guard: an action task the reply hands back to the user (or gives up on)
  * right after a tool failure. Returns how many recent tool results failed when it should
  * force a retry, else 0. A stuck report ([[STUCK]]) is the agreed hand-off, so never over it.
@@ -3614,21 +3625,8 @@ PLAN:`,
                 }
 
                 if (planText.length > 20) {
-                    // Check if orchestrator wants to ask the user a question
-                    const firstLines = planText.split("\n").slice(0, 3).join(" ").toLowerCase();
-                    const isAskingUser =
-                        firstLines.includes("ask_user") ||
-                        firstLines.includes("ask the user") ||
-                        firstLines.includes("which ") ||
-                        firstLines.includes("clarify");
-
-                    if (isAskingUser) {
-                        // Extract the question and inject as the agent's response
-                        const questionMatch = planText.match(/(?:ASK_USER|ask the user)[:\s]*["']?([^"'\n]+)/i);
-                        const question =
-                            questionMatch?.[1] ||
-                            planText.split("\n").find((l) => l.includes("?")) ||
-                            "Could you clarify what you mean?";
+                    const question = planAskQuestion(planText);
+                    if (question) {
                         iterationMessages.push({
                             role: "system" as const,
                             content: `[ORCHESTRATOR] The task is ambiguous. Ask the user this question before proceeding: "${question.trim()}"\nDo NOT guess or assume — relay this question to the user.`,

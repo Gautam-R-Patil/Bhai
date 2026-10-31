@@ -8,6 +8,7 @@ import {
     asksLeaveToLook,
     finalReplyText,
     isDeferrable,
+    planAskQuestion,
     planToolsBlock,
     toolFailed,
 } from "./agent.js";
@@ -99,6 +100,19 @@ describe("antiGivingUpFailures", () => {
         expect(antiGivingUpFailures([msg(q), search], q, reply, 1)).toBe(0);
         // "error":null is not a failure even on an action task
         expect(antiGivingUpFailures([msg("find the fold"), search], "find the fold", reply, 1)).toBe(0);
+    });
+});
+
+describe("planAskQuestion", () => {
+    it("asks only on the ASK_USER marker, not on ordinary 'which' steps", () => {
+        expect(
+            planAskQuestion(
+                "1. app_manager action='list' to see which apps are running.\n2. app_manager activate WhatsApp\n3. os_type the message",
+            ),
+        ).toBeNull();
+        expect(planAskQuestion('1. ASK_USER "Which song did you mean: Pink Floyd or NF?"\n2. spotify play')).toBe(
+            "Which song did you mean: Pink Floyd or NF?",
+        );
     });
 });
 
