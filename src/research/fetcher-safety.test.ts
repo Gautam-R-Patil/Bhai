@@ -144,6 +144,15 @@ describe("fetched page text", () => {
         expect(await page("<p>Hello xhtml</p>", "application/xhtml+xml")).toContain("Hello xhtml");
     });
 
+    it("reads JSON, feeds, CSV and Markdown as text; names a missing content type", async () => {
+        expect(await page('{"tag_name":"v1.2.0"}', "application/json; charset=utf-8")).toBe('{"tag_name":"v1.2.0"}');
+        expect(await page("<rss><item>news</item></rss>", "application/rss+xml")).toContain("<item>news</item>");
+        expect(await page("a,b\n1,2", "text/csv")).toBe("a,b\n1,2");
+        expect(await page("# Title", "text/markdown")).toBe("# Title");
+        expect(await page("<svg/>", "image/svg+xml")).toBe("[Non-text content: image/svg+xml]");
+        expect(await page("??", "")).toBe("[Non-text content: unknown type]");
+    });
+
     it("drops whole comments and decodes numeric entities", async () => {
         const text = await page("<p>kept</p><!-- <div>old > markup</div> --><p>it&#8217;s &mdash; &#x1F600;</p>", "text/html");
         expect(text).not.toContain("markup");

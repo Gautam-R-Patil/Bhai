@@ -277,11 +277,13 @@ async function fetchPageContentOnce(url: string): Promise<string | null> {
             const text = await extractText(Buffer.from(buf)).catch(() => "");
             return text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().substring(0, MAX_CONTENT_PER_PAGE) || null;
         }
-        const plain = contentType.includes("text/plain");
-        if (!plain && !contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
+        const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
+        // JSON APIs, RSS/Atom feeds, sitemaps, CSV and Markdown are text too; read them as-is.
+        const plain = !isHtml && /^text\/|^application\/([\w.-]+\+)?(json|xml|javascript|csv)\b/.test(contentType);
+        if (!plain && !isHtml) {
             clearTimeout(timeout);
             response.body?.cancel().catch(() => {});
-            return `[Non-text content: ${contentType}]`;
+            return `[Non-text content: ${contentType || "unknown type"}]`;
         }
 
         // Byte-capped streaming read + charset-aware decode. Bounds memory
