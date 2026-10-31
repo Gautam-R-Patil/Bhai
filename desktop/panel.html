@@ -5060,6 +5060,9 @@
         // Simple markdown to HTML converter
         function renderMarkdown(text) {
             if (!text) return '';
+            // Chat-bar markers (a reply logged from the chat bar): a collapse becomes a bold title over its
+            // content; buttons and widgets are the chat bar's alone. Escaped, they showed as raw <!--…-->.
+            text = text.replace(/<!--\s*COLLAPSE:([^>]*?)-->\n?/g, '**$1**\n').replace(/<!--\s*\/COLLAPSE\s*-->/g, '').replace(/<!--\s*(?:QUICK_ACTIONS|WIDGET)\b[\s\S]*?-->/g, '');
             // Code is set aside first: the emphasis and line-break rules mangled it (a*b*c in
             // a report's code turned italic, its newlines into <br>).
             const code = [];

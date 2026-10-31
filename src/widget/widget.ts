@@ -282,6 +282,8 @@ export function getWidgetScript(wsUrl: string): string {
 
   // -- Markdown (simple) --
   function renderMarkdown(text) {
+    // Chat-bar markers: a collapse becomes a bold title over its content; buttons and widgets are dropped.
+    text = String(text).replace(/<!--\\s*COLLAPSE:([^>]*?)-->\\n?/g, "**$1**\\n").replace(/<!--\\s*\\/COLLAPSE\\s*-->/g, "").replace(/<!--\\s*(?:QUICK_ACTIONS|WIDGET)\\b[\\s\\S]*?-->/g, "");
     var s = text
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
