@@ -884,6 +884,9 @@ export function initOverlayChat(llm: LLMClient): void {
                 } else if (msg.type === "file_attach" && msg.name && msg.base64) {
                     // File drag-and-dropped into overlay
                     await handleFileAttachment(ws, msg.name, msg.base64, msg.mimeType || "application/octet-stream", msg.text || "");
+                } else if (typeof msg.type === "string" && msg.type.startsWith("voice_") && !wsIsOwner(ws)) {
+                    // The mic and its transcripts are the owner's, never a web-widget visitor's.
+                    return;
                 } else if (msg.type === "voice_start") {
                     await startVoiceCapture(ws);
                 } else if (msg.type === "voice_stop") {
