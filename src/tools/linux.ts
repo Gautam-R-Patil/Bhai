@@ -333,19 +333,20 @@ export const linuxOsClick: ToolDefinition = {
                         await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
                             timeout: 3000,
                         });
-                        await execFileAsync("ydotool", ["click", "0xC0"], { timeout: 3000 }); // right click
+                        // ydotool click codes: button | 0x40 down | 0x80 up (0xC0 left, 0xC1 right)
+                        await execFileAsync("ydotool", ["click", "0xC1"], { timeout: 3000 });
                         break;
                     case "double_click":
                         await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
                             timeout: 3000,
                         });
-                        await execFileAsync("ydotool", ["click", "0x40", "0x40"], { timeout: 3000 });
+                        await execFileAsync("ydotool", ["click", "0xC0", "0xC0"], { timeout: 3000 });
                         break;
                     default: // click
                         await execFileAsync("ydotool", ["mousemove", "--absolute", "-x", String(x), "-y", String(y)], {
                             timeout: 3000,
                         });
-                        await execFileAsync("ydotool", ["click", "0x40"], { timeout: 3000 }); // left click
+                        await execFileAsync("ydotool", ["click", "0xC0"], { timeout: 3000 });
                         break;
                 }
                 return JSON.stringify({ success: true, action, x, y, method: "ydotool" });
