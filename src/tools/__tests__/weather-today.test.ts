@@ -1,7 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // "Should I take an umbrella?" needs today's rain chance, not just this minute's conditions.
 import { afterEach, expect, it, vi } from "vitest";
-import { weatherTool } from "../weather.js";
+import { dayLabel, weatherTool } from "../weather.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -17,4 +17,10 @@ it("current weather includes today's high, low and rain chance", async () => {
     const r = JSON.parse(String(await weatherTool.handler({ action: "current", location: "Bengaluru" })));
     expect(r.current.temperature).toBe("19°C");
     expect(r.today).toMatchObject({ max_temp: "30°C", min_temp: "19°C", precipitation_chance: "15%" });
+});
+
+it("forecast days say today, tomorrow or the weekday", () => {
+    expect(dayLabel("2026-10-31", "2026-10-31")).toBe("today");
+    expect(dayLabel("2026-11-01", "2026-10-31")).toBe("tomorrow");
+    expect(dayLabel("2026-11-02", "2026-10-31")).toBe("Monday");
 });
