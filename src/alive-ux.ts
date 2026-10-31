@@ -252,11 +252,11 @@ export function getErrorMessage(type: keyof typeof ERROR_MESSAGES, context?: str
 export function categorizeError(error: Error | string): keyof typeof ERROR_MESSAGES {
     const msg = typeof error === "string" ? error.toLowerCase() : error.message.toLowerCase();
 
-    if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("ETIMEDOUT")) return "network_timeout";
-    if (msg.includes("permission") || msg.includes("EACCES") || msg.includes("not permitted")) return "permission_denied";
+    if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("etimedout")) return "network_timeout";
+    if (msg.includes("permission") || msg.includes("eacces") || msg.includes("not permitted")) return "permission_denied";
     if (msg.includes("rate limit") || msg.includes("429") || msg.includes("too many")) return "rate_limited";
-    if (msg.includes("credit") || msg.includes("quota") || msg.includes("exceeded")) return "out_of_credits";
-    if (msg.includes("ENOENT") || msg.includes("not found") || msg.includes("no such file")) return "file_not_found";
+    if (msg.includes("credit") || msg.includes("quota")) return "out_of_credits";
+    if (msg.includes("enoent") || msg.includes("no such file")) return "file_not_found";
     if (msg.includes("screenshot") || msg.includes("screen capture")) return "screenshot_failed";
     if (msg.includes("audio") || msg.includes("transcri")) return "audio_failed";
     if (msg.includes("browser") || msg.includes("playwright") || msg.includes("puppeteer")) return "browser_failed";
