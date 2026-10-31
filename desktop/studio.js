@@ -804,6 +804,8 @@
         document.body.appendChild(backdrop);
         const body = backdrop.querySelector("[data-body]");
         const close = () => {
+            if (st.busy) cancelPreview(); // closing while it reads stops the reading too
+            clearTimeout(st.estTimer);
             backdrop.remove();
             if (opener && typeof opener.focus === "function") opener.focus();
         };
@@ -827,11 +829,117 @@
             file: null,
             facts: [],
             result: null,
+            busy: false,
+            run: 0, // bumped by each preview and by Cancel, so a stale answer is dropped
+            est: "", // "About N parts · ~N credits" for the current input
+            estRun: 0,
+            estTimer: null,
         };
         const label = (id) => st.sources.find((s) => s.id === id)?.label || "the other app";
         const errorHtml = (msg) => `<div class="studio-import-error" role="alert">${_escapeHtml(msg)}</div>`;
 
-        function renderPick(err) {
+        // How big the job is before running it. Advisory only: errors just hide the line.
+        function estimate(delay) {
+            clearTimeout(st.estTimer);
+            const run = ++st.estRun;
+            st.est = "";
+            const line = body.querySelector("[data-est]");
+            if (line) line.hidden = true;
+            const input = st.text.trim()
+                ? { text: st.text, source: st.source }
+                : st.file
+                  ? { filePath: st.file.path, source: st.source }
+                  : null;
+            if (!input || !window.bhai.studio.importEstimate) return;
+            st.estTimer = setTimeout(async () => {
+                let res;
+                try {
+                    res = await window.bhai.studio.importEstimate(input);
+                } catch {
+                    return;
+                }
+                const parts = Number(res?.chunks ?? res?.parts);
+                const credits = Number(res?.credits);
+                if (run !== st.estRun || !res?.success || !(parts > 0)) return;
+                const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+                st.est = `About ${plural(parts, "part")}${credits >= 0 ? ` · ~${plural(Math.ceil(credits), "credit")}` : ""}`;
+                const el = body.querySelector("[data-est]");
+                if (el) {
+                    el.textContent = st.est;
+                    el.hidden = false;
+                }
+            }, delay);
+        }
+
+        function useFile(file) {
+            st.file = file;
+            st.text = "";
+            renderPick();
+            estimate(0);
+        }
+
+        // Dropped on the pick step: text files are read here, a .zip goes by its path (main checks it).
+        const DROP_TEXT_MAX = 20 * 1024 * 1024;
+        async function onDrop(file) {
+            const ext = (file.name.match(/\.[^.]+$/)?.[0] || "").toLowerCase();
+            if (ext === ".zip") {
+                let res;
+                try {
+                    res = await window.bhai.studio.importUseDropped(file);
+                } catch (err) {
+                    res = { success: false, error: err.message };
+                }
+                if (!backdrop.isConnected || st.busy) return;
+                return res?.success
+                    ? useFile({ path: res.path, name: res.name })
+                    : renderPick(res?.error || "Choose the file instead.");
+            }
+            if (![".txt", ".md", ".json"].includes(ext))
+                return renderPick("Drop a .txt, .md, .json or export .zip file.");
+            if (file.size > DROP_TEXT_MAX)
+                return renderPick("That file is too big to drop here. Use Choose file… instead.");
+            let text;
+            try {
+                text = await file.text();
+            } catch {
+                return renderPick("Couldn't read that file. Use Choose file… instead.");
+            }
+            if (!backdrop.isConnected || st.busy) return;
+            st.text = text;
+            st.file = null;
+            renderPick();
+            estimate(0);
+        }
+        const modal = backdrop.querySelector(".studio-import");
+        const onPick = () => !!body.querySelector("[data-paste]");
+        let dragDepth = 0;
+        // The backdrop takes every drop, so a file let go beside the dialog doesn't open in the window.
+        backdrop.addEventListener("dragenter", (e) => {
+            e.preventDefault();
+            if (onPick() && ++dragDepth === 1) modal.classList.add("dropping");
+        });
+        backdrop.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = onPick() ? "copy" : "none";
+        });
+        backdrop.addEventListener("dragleave", () => {
+            if (dragDepth > 0 && --dragDepth === 0) modal.classList.remove("dropping");
+        });
+        backdrop.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dragDepth = 0;
+            modal.classList.remove("dropping");
+            const file = e.dataTransfer.files?.[0];
+            if (file && onPick()) onDrop(file);
+        });
+
+        function cancelPreview() {
+            st.run++;
+            st.busy = false;
+            window.bhai.studio.importCancel?.().catch(() => {});
+        }
+
+        function renderPick(err, note) {
             const src = st.sources.find((s) => s.id === st.source);
             body.innerHTML = `
                 <div class="studio-modal-body">Bring over what another assistant knows about you. Pick the app:</div>
@@ -849,11 +957,13 @@
                 <div class="studio-import-file">
                     <span>or</span>
                     <button class="btn btn-secondary btn-sm" data-file>Choose file…</button>
-                    <span class="studio-import-filename">${st.file ? _escapeHtml(st.file.name) : ".txt, .md, .json or an export .zip"}</span>
+                    <span class="studio-import-filename">${st.file ? _escapeHtml(st.file.name) : ".txt, .md, .json or an export .zip — or drop it here"}</span>
                     ${st.file ? '<button class="btn-icon" data-unfile aria-label="Remove file">✕</button>' : ""}
                 </div>
+                ${note ? `<div class="studio-import-note" role="status">${_escapeHtml(note)}</div>` : ""}
                 ${err ? errorHtml(err) : ""}
                 <div class="studio-modal-actions">
+                    <span class="studio-import-estimate" data-est aria-live="polite" ${st.est ? "" : "hidden"}>${_escapeHtml(st.est)}</span>
                     <button class="btn btn-secondary btn-sm" data-cancel>Cancel</button>
                     <button class="btn btn-primary btn-sm" data-next>Find memories</button>
                 </div>
@@ -877,9 +987,11 @@
                 if (st.file && st.text.trim()) {
                     st.file = null;
                     body.querySelector("[data-unfile]")?.remove();
-                    body.querySelector(".studio-import-filename").textContent = ".txt, .md, .json or an export .zip";
+                    body.querySelector(".studio-import-filename").textContent =
+                        ".txt, .md, .json or an export .zip — or drop it here";
                 }
                 sync();
+                estimate(400);
             });
             body.querySelector("[data-copy]").addEventListener("click", async (e) => {
                 try {
@@ -891,15 +1003,12 @@
             });
             body.querySelector("[data-file]").addEventListener("click", async () => {
                 const res = await window.bhai.studio.pickImportFile();
-                if (res && !res.canceled) {
-                    st.file = { path: res.path, name: res.name };
-                    st.text = "";
-                    renderPick();
-                }
+                if (res && !res.canceled) useFile({ path: res.path, name: res.name });
             });
             body.querySelector("[data-unfile]")?.addEventListener("click", () => {
                 st.file = null;
                 renderPick();
+                estimate(0);
             });
             body.querySelector("[data-cancel]").addEventListener("click", close);
             next.addEventListener("click", preview);
@@ -912,8 +1021,17 @@
                     <span class="studio-import-spinner" aria-hidden="true"></span>
                     Reading it and picking out what's about you… a big export can take a few minutes.
                 </div>
+                <div class="studio-modal-actions">
+                    <button class="btn btn-secondary btn-sm" data-stop>Cancel</button>
+                </div>
             `;
-            backdrop.querySelector("[data-close]").focus();
+            body.querySelector("[data-stop]").addEventListener("click", () => {
+                cancelPreview();
+                renderPick(null, "Stopped. Nothing was imported.");
+            });
+            body.querySelector("[data-stop]").focus();
+            const run = ++st.run;
+            st.busy = true;
             let res;
             try {
                 res = await window.bhai.studio.importPreview(
@@ -924,7 +1042,8 @@
             } catch (err) {
                 res = { success: false, error: err.message };
             }
-            if (!backdrop.isConnected) return;
+            if (!backdrop.isConnected || run !== st.run) return; // closed or cancelled meanwhile
+            st.busy = false;
             if (!res?.success) return renderPick(res?.error || "Something went wrong. Try again.");
             if (res.detectedSource) st.source = res.detectedSource;
             // New facts first, checked up to the per-import cap; ones Bhai already has go last, unchecked.
@@ -950,7 +1069,7 @@
             if (left.length) summary.push(`${left.join(" and ")} left out`);
             if (c.truncated) {
                 summary.push(
-                    /_conversations$/.test(c.kind)
+                    /_conversations$/.test(c.kind) || c.kind === "gemini_activity"
                         ? "only the newest chats were read"
                         : c.kind === "claude_memory"
                           ? "only part of it was read"
@@ -981,7 +1100,11 @@
                                 (f, i) => `
                             <li${f.known ? ' class="known"' : ""}><label>
                                 <input type="checkbox" data-i="${i}" ${f.keep ? "checked" : ""} ${f.known ? "disabled" : ""} />
-                                <span class="studio-import-fact">${_escapeHtml(f.content)}</span>
+                                ${
+                                    f.known
+                                        ? `<span class="studio-import-fact">${_escapeHtml(f.content)}</span>`
+                                        : `<span class="studio-import-fact editable" tabindex="0" role="button" data-edit="${i}" title="Click to edit">${_escapeHtml(f.content)}</span>`
+                                }
                                 ${f.known ? '<span class="studio-pill studio-import-known">already knows</span>' : ""}
                                 <span class="studio-pill">${_escapeHtml(f.category)}</span>
                             </label></li>
@@ -1037,6 +1160,50 @@
                 });
                 sync();
             });
+            // Click or Enter on a new fact edits it in place: Enter or leaving keeps it, Escape puts it back.
+            const editFact = (span) => {
+                const f = st.facts[Number(span.getAttribute("data-edit"))];
+                const input = document.createElement("input");
+                input.className = "clean-input studio-import-edit";
+                // A preview fact can run past 300 with its " (as of YYYY)"; don't cut what's already there.
+                const max = Math.max(300, f.content.length);
+                input.maxLength = max;
+                input.value = f.content;
+                input.setAttribute("aria-label", "Edit this memory");
+                span.replaceWith(input);
+                input.focus();
+                input.select();
+                let done = false;
+                const finish = (keep) => {
+                    if (done) return;
+                    done = true;
+                    const text = input.value.replace(/\s+/g, " ").trim().slice(0, max);
+                    if (keep && text && text !== f.content) f.content = text;
+                    span.textContent = f.content;
+                    input.replaceWith(span);
+                    span.focus();
+                };
+                input.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter" || e.key === "Escape") {
+                        e.preventDefault();
+                        e.stopPropagation(); // Escape here cancels the edit, not the dialog
+                        finish(e.key === "Enter");
+                    }
+                });
+                input.addEventListener("blur", () => finish(true));
+            };
+            for (const span of body.querySelectorAll("[data-edit]")) {
+                span.addEventListener("click", (e) => {
+                    e.preventDefault(); // inside the row's label: edit, don't toggle
+                    editFact(span);
+                });
+                span.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        editFact(span);
+                    }
+                });
+            }
             body.querySelector("[data-retry]")?.addEventListener("click", preview);
             body.querySelector("[data-back]").addEventListener("click", () => renderPick());
             (save || body.querySelector("[data-back]")).focus();

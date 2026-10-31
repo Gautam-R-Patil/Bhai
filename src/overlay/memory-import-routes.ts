@@ -4,13 +4,15 @@
 
 // ── /api/memory/import/* — the desktop's "Import from another AI" ──
 // Owner-token only (never the web widget): preview reads a file the desktop picked and
-// shows what's in it; save adds facts to the owner's memory. /api/memory/search is the
+// shows what's in it (estimate: how many parts and credits that takes, no model call);
+// save adds facts to the owner's memory. /api/memory/search is the
 // Memory page's search box: ids of the memories recall() finds for a query, by meaning.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import type { LLMClient } from "../llm.js";
 import {
+    estimateImport,
     extractMemoryFacts,
     MEMORY_EXPORT_PROMPT,
     MEMORY_IMPORT_SOURCES,
@@ -53,6 +55,27 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 
+/** The export a preview or estimate is about: pasted `text`, or the file at `path` the desktop picked. */
+async function exportFrom(
+    req: IncomingMessage,
+): Promise<{ raw: string; filename?: string; source?: string } | { status: number; error: string }> {
+    const body = JSON.parse(await readBoundedBody(req, PREVIEW_BODY_LIMIT)) as Record<string, unknown>;
+    let raw = str(body.text) ?? "";
+    let filename = str(body.filename);
+    const filePath = str(body.path);
+    if (filePath) {
+        if (!path.isAbsolute(filePath)) return { status: 400, error: "path must be absolute" };
+        const file = await readImportFile(filePath);
+        if ("error" in file) return { status: 400, error: file.error };
+        raw = file.raw;
+        filename ??= file.filename;
+    } else if (raw.length > MAX_TEXT_CHARS) {
+        return { status: 413, error: "That text is over 20 MB." };
+    }
+    if (!raw.trim()) return { status: 400, error: "Paste the export or choose a file." };
+    return { raw, filename, source: str(body.source) };
+}
+
 export async function handleMemoryImportRoute(
     req: IncomingMessage,
     res: ServerResponse,
@@ -66,23 +89,20 @@ export async function handleMemoryImportRoute(
         if (pathname === "/api/memory/import/prompt" && req.method === "GET") {
             return send(res, 200, { prompt: MEMORY_EXPORT_PROMPT, sources: MEMORY_IMPORT_SOURCES });
         }
-        if (pathname === "/api/memory/import/preview" && req.method === "POST") {
-            const body = JSON.parse(await readBoundedBody(req, PREVIEW_BODY_LIMIT)) as Record<string, unknown>;
-            const source = str(body.source);
-            let raw = str(body.text) ?? "";
-            let filename = str(body.filename);
-            const filePath = str(body.path);
-            if (filePath) {
-                if (!path.isAbsolute(filePath)) return send(res, 400, { error: "path must be absolute" });
-                const file = await readImportFile(filePath);
-                if ("error" in file) return send(res, 400, { error: file.error });
-                raw = file.raw;
-                filename ??= file.filename;
-            } else if (raw.length > MAX_TEXT_CHARS) {
-                return send(res, 413, { error: "That text is over 20 MB." });
-            }
-            if (!raw.trim()) return send(res, 400, { error: "Paste the export or choose a file." });
-            return send(res, 200, await extractMemoryFacts({ raw, filename, source, llm: llm ?? undefined }));
+        if (
+            (pathname === "/api/memory/import/preview" || pathname === "/api/memory/import/estimate") &&
+            req.method === "POST"
+        ) {
+            const x = await exportFrom(req);
+            if ("error" in x) return send(res, x.status, { error: x.error });
+            if (pathname === "/api/memory/import/estimate") return send(res, 200, estimateImport(x.raw, x.filename));
+            // The client went away (dialog closed, app quit) before the answer: start no more parts.
+            // res, not req: req's "close" fires once its body is read.
+            const ac = new AbortController();
+            res.on("close", () => {
+                if (!res.writableEnded) ac.abort();
+            });
+            return send(res, 200, await extractMemoryFacts({ ...x, llm: llm ?? undefined, signal: ac.signal }));
         }
         if (pathname === "/api/memory/import/save" && req.method === "POST") {
             const body = JSON.parse(await readBoundedBody(req, SAVE_BODY_LIMIT)) as Record<string, unknown>;

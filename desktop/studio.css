@@ -906,3 +906,39 @@
 .studio-import-note .btn {
     margin-left: auto;
 }
+
+/* Size of the job, beside Find memories: advisory, never blocks it. */
+.studio-import-estimate {
+    margin-right: auto;
+    align-self: center;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* A file dragged over the pick step. */
+.studio-modal.studio-import.dropping {
+    outline: 2px dashed var(--accent-primary);
+    outline-offset: -6px;
+}
+
+/* New facts on review: click or Enter to edit in place. */
+.studio-import-fact.editable {
+    cursor: text;
+    border-radius: var(--radius-sm);
+}
+
+.studio-import-fact.editable:hover {
+    background: var(--fill-hover);
+}
+
+.studio-import-fact.editable:focus-visible {
+    outline: 2px solid var(--accent-ring);
+    outline-offset: 1px;
+}
+
+.studio-import-list input.studio-import-edit {
+    flex: 1;
+    min-width: 0;
+    margin: -5px 0; /* keeps the row's height while editing */
+    font-size: 12px;
+}

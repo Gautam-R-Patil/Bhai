@@ -4414,15 +4414,18 @@ function registerIPC() {
     // A big paste or export is ~30 model parts, 3 at a time, each allowed 90 s (memory-import.ts).
     const IMPORT_PREVIEW_MS = 600_000;
 
+    // The preview in flight, so Cancel can drop its connection; the bot stops starting parts when it closes.
+    let _importPreviewReq = null;
+
     // node:http, not fetch: Node's fetch stops waiting for headers at 300 s, and the bot only
     // answers a preview once extraction is done.
-    function _importCallBot(route, body, timeoutMs) {
+    function _importCallBot(route, body, timeoutMs, cancelable = false) {
         let tok = "";
         try { tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim(); } catch { /* bot never started */ }
         if (!tok) return Promise.resolve({ success: false, error: "Bhai isn't running. Start Bhai and try again." });
         const data = body ? JSON.stringify(body) : null;
         return new Promise((resolve) => {
-            const fail = (err) => resolve({
+            const fail = (err) => resolve(req._canceled ? { success: false, canceled: true, error: "Stopped." } : {
                 success: false,
                 error: err.name === "AbortError" ? "That took too long. Try importing a smaller part." : "Bhai isn't running. Start Bhai and try again.",
             });
@@ -4444,8 +4447,29 @@ function registerIPC() {
                 });
             });
             req.on("error", fail);
+            if (cancelable) {
+                _importPreviewReq = req;
+                req.on("close", () => { if (_importPreviewReq === req) _importPreviewReq = null; });
+            }
             req.end(data ?? undefined);
         });
+    }
+
+    // Preview and estimate take the same input: pasted text, or the file the owner picked or dropped.
+    function _importInput(opts) {
+        const { text, filePath, source } = opts || {};
+        if (typeof text === "string" && text.trim()) {
+            if (text.length > 20 * 1024 * 1024) return { error: "That's too much text. Try a smaller part." };
+            return { body: { text, source } };
+        }
+        if (!filePath || filePath !== _importPickedPath) return { error: "Choose the file again." };
+        // Export .zips go as they are: the bot picks conversations.json (or the biggest text) out itself.
+        try {
+            if (fs.statSync(filePath).size > IMPORT_MAX_BYTES) return { error: "That file is too big to import." };
+        } catch (err) {
+            return { error: `Couldn't read that file: ${err.message}` };
+        }
+        return { body: { path: filePath, source } };
     }
 
     ipcMain.handle("memory:import-prompt", () => _importCallBot("import/prompt", null, 5000));
@@ -4461,20 +4485,45 @@ function registerIPC() {
         return { canceled: false, path: _importPickedPath, name: path.basename(_importPickedPath) };
     });
 
-    ipcMain.handle("memory:import-preview", async (_, opts) => {
-        const { text, filePath, source } = opts || {};
-        if (typeof text === "string" && text.trim()) {
-            if (text.length > 20 * 1024 * 1024) return { success: false, error: "That's too much text. Try a smaller part." };
-            return _importCallBot("import/preview", { text, source }, IMPORT_PREVIEW_MS);
+    // An export .zip dropped on the import dialog counts as picked, like one chosen in the dialog
+    // (the preload resolves the path from the dropped File; text files are read in the renderer).
+    ipcMain.handle("memory:import-use-dropped", (_, filePath) => {
+        if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return { success: false, error: "Choose the file instead." };
+        if (path.extname(filePath).toLowerCase() !== ".zip") {
+            return { success: false, error: "Drop a .txt, .md, .json or export .zip file." };
         }
-        if (!filePath || filePath !== _importPickedPath) return { success: false, error: "Choose the file again." };
-        // Export .zips go as they are: the bot picks conversations.json (or the biggest text) out itself.
         try {
-            if (fs.statSync(filePath).size > IMPORT_MAX_BYTES) return { success: false, error: "That file is too big to import." };
-        } catch (err) {
-            return { success: false, error: `Couldn't read that file: ${err.message}` };
+            if (!fs.statSync(filePath).isFile()) return { success: false, error: "That isn't a file." };
+        } catch {
+            return { success: false, error: "Couldn't find that file. Choose it instead." };
         }
-        return _importCallBot("import/preview", { path: filePath, source }, IMPORT_PREVIEW_MS);
+        _importPickedPath = filePath;
+        return { success: true, path: filePath, name: path.basename(filePath) };
+    });
+
+    ipcMain.handle("memory:import-estimate", (_, opts) => {
+        const input = _importInput(opts);
+        if (input.error) return { success: false, error: input.error };
+        return _importCallBot("import/estimate", input.body, 30_000);
+    });
+
+    ipcMain.handle("memory:import-preview", (_, opts) => {
+        const input = _importInput(opts);
+        if (input.error) return { success: false, error: input.error };
+        if (_importPreviewReq) { // one preview at a time
+            _importPreviewReq._canceled = true;
+            _importPreviewReq.destroy();
+        }
+        return _importCallBot("import/preview", input.body, IMPORT_PREVIEW_MS, true);
+    });
+
+    ipcMain.handle("memory:import-cancel", () => {
+        const req = _importPreviewReq;
+        _importPreviewReq = null;
+        if (!req) return { success: true, canceled: false };
+        req._canceled = true;
+        req.destroy();
+        return { success: true, canceled: true };
     });
 
     ipcMain.handle("memory:import-save", (_, facts, source) => {

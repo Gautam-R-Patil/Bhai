@@ -136,6 +136,18 @@ describe("readImportFile: data export zips", () => {
         expect(await readImportFile(many)).not.toHaveProperty("error");
     });
 
+    it("Google Takeout: the Gemini Apps MyActivity.json, not other products' bigger ones", async () => {
+        const p = writeZip("takeout.zip", [
+            { name: "Takeout/My Activity/Search/MyActivity.json", data: `[{"title":"${"s".repeat(5000)}"}]` },
+            { name: "Takeout/My Activity/Gemini Apps/MyActivity.json", data: '[{"header":"Gemini Apps","title":"Prompted hi"}]' },
+            { name: "Takeout/archive_browser.html", data: "<html></html>" },
+        ]);
+        const r = await readImportFile(p);
+        if ("error" in r) throw new Error(r.error);
+        expect(r.filename).toBe("MyActivity.json");
+        expect(r.raw).toContain("Prompted hi");
+    });
+
     it("accepts a picked file under ~/Downloads-like places; refuses other extensions", async () => {
         expect(await readImportFile(path.join(os.homedir(), "Downloads", "no-such-export.zip"))).toEqual({
             error: expect.stringMatching(/^File not found/),
@@ -167,6 +179,15 @@ describe("import_memory tool", () => {
         );
         expect(r.success).toBe(false);
         expect(r.error).toMatch(/"import it"/);
+    });
+
+    it("an export too big to read in one go here is refused with its size and cost", async () => {
+        const text = Array.from({ length: 40 }, (_, i) => `[unknown] - line ${i} ${"y".repeat(1200)}`).join("\n");
+        const r = await run({ isOwner: true, isPrivate: true, message: "import my memories" }, { text });
+        expect(r.success).toBe(false);
+        expect(r.parts).toBeGreaterThan(15);
+        expect(r.credits).toBe(r.parts);
+        expect(r.error).toMatch(/desktop app.*smaller pieces/);
     });
 
     it("the prompt step adds paste-first guidance on Telegram and WhatsApp only", async () => {

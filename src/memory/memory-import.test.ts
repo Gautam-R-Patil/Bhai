@@ -374,6 +374,107 @@ describe("extractMemoryFacts: known facts, Claude memories", () => {
     });
 });
 
+describe("estimate, cancel, role-play, Gemini Takeout", () => {
+    it("the estimate counts exactly the parts extraction sends, with no model call", async () => {
+        const memo = Array.from({ length: 6 }, (_, i) => `Fact ${i} ${"z".repeat(800)}`).join("\n");
+        const convos = Array.from({ length: 3 }, (_, i) =>
+            chatgptConvo(`Chat ${i}`, 1_700_000_000 + i, [["user", `I garden ${i} ${"g".repeat(1400)}`]]),
+        );
+        for (const raw of [
+            memo,
+            JSON.stringify([{ conversations_memory: memo }]),
+            JSON.stringify(convos),
+            "   ",
+        ]) {
+            const est = mi.estimateImport(raw);
+            const llm = stubLLM(() => '{"facts":[]}');
+            const r = await mi.extractMemoryFacts({ raw, llm });
+            expect(est.chunks).toBe(r.chunks);
+            expect(vi.mocked(llm.chat).mock.calls).toHaveLength(r.chunks);
+            expect(est.credits).toBe(est.chunks * mi.IMPORT_CREDITS_PER_CHUNK);
+        }
+        expect(mi.IMPORT_CREDITS_PER_CHUNK).toBe(1); // Sonnet, convex/credit_cost.ts
+        expect(mi.estimateImport("```\n[unknown] - x y z\n```\nThere are more.")).toMatchObject({
+            chunks: 1,
+            kind: "text",
+            incomplete: true,
+            truncated: false,
+        });
+    });
+
+    it("cancel: no new part starts once aborted, finished parts are dropped, nothing is saved", async () => {
+        const raw = Array.from({ length: 12 }, (_, i) => `[unknown] - line ${i} ${"y".repeat(800)}`).join("\n");
+        const ac = new AbortController();
+        const llm = stubLLM(async () => {
+            await new Promise((r) => setTimeout(r, 5));
+            ac.abort(); // while the first parts are in flight
+            return JSON.stringify({ facts: [{ content: "Lives in Pune", category: "personal" }] });
+        });
+        const r = await mi.extractMemoryFacts({ raw, llm, signal: ac.signal });
+        expect(r.error).toBe("Cancelled.");
+        expect(r.facts).toEqual([]);
+        expect(r.chunks).toBeGreaterThan(3);
+        expect(vi.mocked(llm.chat).mock.calls).toHaveLength(3); // the first 3 in flight, then none
+        expect(vi.mocked(llm.chat).mock.calls[0][0]).toHaveProperty("signal", ac.signal);
+
+        const remember = vi.mocked(sqlite.remember);
+        remember.mockClear();
+        const ac2 = new AbortController();
+        ac2.abort();
+        const imp = await mi.importMemories({ raw: "Lives in Pune", llm, signal: ac2.signal });
+        expect(imp).toMatchObject({ error: "Cancelled.", added: 0 });
+        expect(remember).not.toHaveBeenCalled();
+    });
+
+    it("the role-play caveat goes in for Character.ai only", async () => {
+        const prompts: string[] = [];
+        const llm = stubLLM((p) => {
+            prompts.push(p);
+            return '{"facts":[]}';
+        });
+        await mi.extractMemoryFacts({ raw: "Lives in Pune", source: "character_ai", llm });
+        await mi.extractMemoryFacts({ raw: "Lives in Pune", source: "chatgpt", llm });
+        await mi.extractMemoryFacts({ raw: "Lives in Pune", llm });
+        expect(prompts[0]).toMatch(/role-playing.*real self.*never their character's/);
+        expect(prompts[1]).not.toMatch(/role-play/);
+        expect(prompts[2]).not.toMatch(/role-play/);
+    });
+
+    it("Gemini's Takeout MyActivity.json: the owner's prompts only, newest first, dated; never Gemini's replies", () => {
+        const row = (title: string, time: string, extra: Record<string, unknown> = {}) => ({
+            header: "Gemini Apps",
+            title,
+            time,
+            products: ["Gemini Apps"],
+            safeHtmlItem: [{ html: "<p>GEMINI REPLY</p>" }],
+            ...extra,
+        });
+        const raw = JSON.stringify([
+            row("Prompted I live in Pune and work as a designer", "2025-01-02T10:00:00.000Z"),
+            row("Prompted My sister Riya is getting married in May", "2025-06-07T14:52:31.927Z"),
+            // A German account: localized prefix and product name.
+            { ...row("Eingegebener Prompt: Ich trinke morgens Filterkaffee", "2025-03-01T08:00:00Z"), header: "Gemini-Apps", products: ["Gemini-Apps"] },
+            row("Some other title kept as is", "2024-12-01T08:00:00Z"),
+        ]);
+        const r = mi.extractImportText(raw, "MyActivity.json");
+        expect(r.kind).toBe("gemini_activity");
+        expect(r.detectedSource).toBe("gemini");
+        expect(r.text).not.toContain("GEMINI REPLY");
+        expect(r.text).not.toContain("Prompted");
+        expect(r.text).not.toContain("Eingegebener");
+        expect(r.text.split("\n")).toEqual([
+            "## Gemini prompts",
+            "[2025-06-07] My sister Riya is getting married in May",
+            "[2025-03-01] Ich trinke morgens Filterkaffee",
+            "[2025-01-02] I live in Pune and work as a designer",
+            "[2024-12-01] Some other title kept as is",
+            "",
+        ]);
+        // Other products' activity isn't Gemini: plain JSON.
+        expect(mi.extractImportText(JSON.stringify([{ header: "Search", title: "Searched for x", products: ["Search"] }])).kind).toBe("json");
+    });
+});
+
 describe("saveImportedFacts", () => {
     it("adds new facts with plain remember (never smart write) and skips ones Bhai already knows", async () => {
         await sqlite.remember("Lives in Pune with his family", "personal", "", 6, "user", false);

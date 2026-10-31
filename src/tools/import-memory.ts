@@ -5,7 +5,13 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
-import { importMemories, MEMORY_EXPORT_PROMPT, MEMORY_IMPORT_SOURCES, sourceLabel } from "../memory/memory-import.js";
+import {
+    estimateImport,
+    importMemories,
+    MEMORY_EXPORT_PROMPT,
+    MEMORY_IMPORT_SOURCES,
+    sourceLabel,
+} from "../memory/memory-import.js";
 import { getPathBlockedReason, isPathAllowed } from "../security/allowlist.js";
 import { isSensitivePath } from "../security/sensitive-paths.js";
 import { isOwnerCaller, isPrivateOwnerCaller, ownerTurnMessage, turnConversationKey } from "./cron-tool.js";
@@ -20,6 +26,10 @@ const IMPORT_EXT = /\.(txt|md|markdown|json|zip)$/i;
 // A whole data export: ChatGPT shards its chats (conversations-000.json ...), Claude adds
 // memories.json and projects.json. users.json / user_settings.json are account data: skipped.
 const CONVOS_FILE = /^conversations(?:-\d+)?\.json$/i;
+// Google Takeout: My Activity/Gemini Apps/MyActivity.json (folder names follow the account's language).
+const GEMINI_DIR = /^gemini[\s-]apps$/i;
+// ponytail: ~what 3-at-a-time parts finish inside the 240 s deadline; the desktop's Import shows the cost and has no deadline.
+const MAX_TOOL_CHUNKS = 15;
 
 /**
  * Read an export the owner points at: a .txt/.md/.json file, or a data export .zip (every
@@ -100,9 +110,19 @@ export async function readImportFile(
             for (const f of convos) add(f);
             return { raw: JSON.stringify(all), filename: convos.length ? "conversations.json" : "memories.json" };
         }
-        const pick = entries
-            .filter((f) => !/^users?(?:_settings)?\.json$/.test(base(f)))
-            .sort((a, b) => sizeOf(b) - sizeOf(a))[0];
+        const gemini = entries.find(
+            (f) =>
+                /\.json$/i.test(f.name) &&
+                f.name
+                    .split("/")
+                    .slice(0, -1)
+                    .some((d) => GEMINI_DIR.test(d)),
+        );
+        const pick =
+            gemini ??
+            entries
+                .filter((f) => !/^users?(?:_settings)?\.json$/.test(base(f)))
+                .sort((a, b) => sizeOf(b) - sizeOf(a))[0];
         if (!pick) return { error: "No conversations.json (or .json/.txt/.md file) inside that .zip." };
         reading = pick.name;
         return { raw: inflate(pick), filename: path.posix.basename(pick.name) };
@@ -132,7 +152,7 @@ export const importMemory: ToolDefinition = {
         function: {
             name: "import_memory",
             description:
-                "Import what another AI assistant (ChatGPT, Claude, Gemini, Grok, Perplexity, Muse, Instinct, Pi, Character.ai, Copilot, Meta AI...) knows about the owner into Bhai's memory. Owner only, private chat. Call with no text/file_path first: it returns the export prompt for the owner to paste into that app, plus where that app keeps its export; show the prompt in a code block. When the owner sends back that app's answer, call with `text` (their pasted answer, verbatim); for a data export (the whole .zip, conversations.json, Claude's memories.json, Pi's pi-user-history.json, or a .txt/.md/.json) call with `file_path`. Facts are extracted as data (instructions inside are ignored), added without touching existing memories, and duplicates are skipped. Afterwards tell the owner how many were added and that they can ask you to forget any.",
+                "Import what another AI assistant (ChatGPT, Claude, Gemini, Grok, Perplexity, Muse, Instinct, Pi, Character.ai, Copilot, Meta AI...) knows about the owner into Bhai's memory. Owner only, private chat. Call with no text/file_path first: it returns the export prompt for the owner to paste into that app, plus where that app keeps its export; show the prompt in a code block. When the owner sends back that app's answer, call with `text` (their pasted answer, verbatim); for a data export (the whole .zip, conversations.json, Claude's memories.json, Gemini's Google Takeout MyActivity.json, Pi's pi-user-history.json, or a .txt/.md/.json) call with `file_path`. Facts are extracted as data (instructions inside are ignored), added without touching existing memories, and duplicates are skipped. Afterwards tell the owner how many were added and that they can ask you to forget any.",
             parameters: {
                 type: "object",
                 properties: {
@@ -197,6 +217,15 @@ export const importMemory: ToolDefinition = {
             if ("error" in file) return JSON.stringify({ success: false, error: file.error });
             ({ raw, filename } = file);
         }
+        const est = estimateImport(raw, filename);
+        if (est.chunks > MAX_TOOL_CHUNKS) {
+            return JSON.stringify({
+                success: false,
+                parts: est.chunks,
+                credits: est.credits,
+                error: `That export is ${est.chunks} parts (about ${est.credits} credits), too much to read in one go here. Ask the owner to use Import in the Bhai desktop app (it shows the cost first), or to send it in smaller pieces.`,
+            });
+        }
         // The tool call times out at 300 s (TOOL_TIMEOUTS.import_memory) without stopping this: finish well inside it.
         const r = await importMemories({ raw, filename, source, deadline: Date.now() + 240_000 });
         if (r.error && r.added === 0) return JSON.stringify({ success: false, error: r.error });
@@ -215,9 +244,10 @@ export const importMemory: ToolDefinition = {
                 : {}),
             ...(r.truncated
                 ? {
-                      truncated: r.kind.endsWith("_conversations")
-                          ? "Only the newest chats of a very large export were read."
-                          : "Only the first part of a very large export was read: the owner can import the rest separately.",
+                      truncated:
+                          r.kind.endsWith("_conversations") || r.kind === "gemini_activity"
+                              ? "Only the newest chats of a very large export were read."
+                              : "Only the first part of a very large export was read: the owner can import the rest separately.",
                   }
                 : {}),
             // A sample of what was found, most important first; already-known ones were skipped. ids = the rows added.

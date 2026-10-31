@@ -2,6 +2,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +11,7 @@ vi.mock("../memory/memory-import.js", () => ({
     MEMORY_EXPORT_PROMPT: "PROMPT",
     MEMORY_IMPORT_SOURCES: [{ id: "chatgpt", label: "ChatGPT", hint: "h" }],
     extractMemoryFacts: vi.fn(async () => ({ facts: [], chunks: 1 })),
+    estimateImport: vi.fn(() => ({ chunks: 4, credits: 4, kind: "text", truncated: false, incomplete: false })),
     saveImportedFacts: vi.fn(async () => ({ added: 0, duplicates: 0, rejected: 0, ids: [] })),
 }));
 vi.mock("../tools/import-memory.js", () => ({ readImportFile: vi.fn() }));
@@ -20,24 +22,37 @@ vi.mock("../memory/forget.js", () => ({
 }));
 
 const { handleMemoryImportRoute } = await import("./memory-import-routes.js");
+const mi = await import("../memory/memory-import.js");
 
-function call(method: string, pathname: string, scope: "native-overlay" | "web-widget" | null, body = "") {
+class FakeRes extends EventEmitter {
+    status = 0;
+    out = "";
+    writableEnded = false;
+    get headersSent() {
+        return this.status !== 0;
+    }
+    writeHead(s: number) {
+        this.status = s;
+    }
+    end(b: string) {
+        this.out = b;
+        this.writableEnded = true;
+    }
+}
+
+function call(
+    method: string,
+    pathname: string,
+    scope: "native-overlay" | "web-widget" | null,
+    body = "",
+    res = new FakeRes(),
+) {
     const req = Object.assign(new PassThrough(), { method, headers: {} }) as unknown as IncomingMessage;
     (req as unknown as PassThrough).end(body);
-    let status = 0;
-    let out = "";
-    const res = {
-        get headersSent() {
-            return status !== 0;
-        },
-        writeHead(s: number) {
-            status = s;
-        },
-        end(b: string) {
-            out = b;
-        },
-    } as unknown as ServerResponse;
-    return handleMemoryImportRoute(req, res, pathname, scope, null).then(() => ({ status, body: JSON.parse(out) }));
+    return handleMemoryImportRoute(req, res as unknown as ServerResponse, pathname, scope, null).then(() => ({
+        status: res.status,
+        body: JSON.parse(res.out),
+    }));
 }
 
 describe("/api/memory/import/*", () => {
@@ -54,6 +69,44 @@ describe("/api/memory/import/*", () => {
         expect((await call("POST", "/api/memory/import/save", "native-overlay", '{"facts":1}')).status).toBe(400);
         expect((await call("POST", "/api/memory/import/save", "native-overlay", '{"facts":[]}')).status).toBe(200);
         expect((await call("POST", "/api/memory/import/preview", "native-overlay", '{"path":"rel.json"}')).status).toBe(400);
+    });
+
+    it("estimates parts and credits for the owner only, with the preview's checks", async () => {
+        const body = '{"text":"[unknown] - Lives in Pune","source":"gemini"}';
+        expect((await call("POST", "/api/memory/import/estimate", "web-widget", body)).status).toBe(403);
+        expect(await call("POST", "/api/memory/import/estimate", "native-overlay", body)).toEqual({
+            status: 200,
+            body: { chunks: 4, credits: 4, kind: "text", truncated: false, incomplete: false },
+        });
+        expect(mi.estimateImport).toHaveBeenCalledWith("[unknown] - Lives in Pune", undefined);
+        expect(mi.extractMemoryFacts).not.toHaveBeenCalled();
+        expect((await call("POST", "/api/memory/import/estimate", "native-overlay", '{"path":"rel.json"}')).status).toBe(400);
+        expect((await call("POST", "/api/memory/import/estimate", "native-overlay", '{"text":" "}')).status).toBe(400);
+    });
+
+    it("preview: the client going away aborts the extraction; a normal answer doesn't", async () => {
+        let finish = () => {};
+        let signal: AbortSignal | undefined;
+        vi.mocked(mi.extractMemoryFacts).mockImplementationOnce(async (o) => {
+            signal = o.signal;
+            await new Promise<void>((r) => {
+                finish = r;
+            });
+            return { facts: [], chunks: 1 } as never;
+        });
+        const res = new FakeRes();
+        const done = call("POST", "/api/memory/import/preview", "native-overlay", '{"text":"Lives in Pune"}', res);
+        await vi.waitFor(() => expect(signal).toBeDefined());
+        expect(signal?.aborted).toBe(false);
+        res.emit("close");
+        expect(signal?.aborted).toBe(true);
+        finish();
+        await done;
+
+        const ok = new FakeRes();
+        await call("POST", "/api/memory/import/preview", "native-overlay", '{"text":"Lives in Pune"}', ok);
+        ok.emit("close");
+        expect(vi.mocked(mi.extractMemoryFacts).mock.lastCall?.[0].signal?.aborted).toBe(false);
     });
 
     it("undoes one import by its batch, for the owner only", async () => {

@@ -6,7 +6,7 @@
 // Secure bridge between renderer (HTML UI) and main process.
 // Exposes only specific IPC methods via contextBridge.
 
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("bhai", {
     // ── Window Controls ───────────────────────
@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld("bhai", {
         importSave: (facts, source) => ipcRenderer.invoke("memory:import-save", facts, source),
         importUndo: (batch) => ipcRenderer.invoke("memory:import-undo", batch),
         pickImportFile: () => ipcRenderer.invoke("memory:import-pick-file"),
+        importEstimate: (opts) => ipcRenderer.invoke("memory:import-estimate", opts),
+        importCancel: () => ipcRenderer.invoke("memory:import-cancel"),
+        // Takes the dropped File, never a path string: a File made in the page has no path, so only
+        // a real drop resolves to one. Main checks it before the bot may read it.
+        importUseDropped: (file) => ipcRenderer.invoke("memory:import-use-dropped", webUtils.getPathForFile(file)),
     },
 
     // ── Setup ─────────────────────────────────
