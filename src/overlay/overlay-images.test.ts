@@ -10,7 +10,7 @@ import type { AgentResponse } from "../agent.js";
 
 // Before overlay-chat is imported: paths.ts caches the workspace on first use.
 process.env.ATLAS_WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "overlay-images-"));
-const { _isScreenQueryForTest: isScreenQuery, imageQuickActions, overlayImages, revealablePath } = await import("./overlay-chat.js");
+const { _isScreenQueryForTest: isScreenQuery, imageQuickActions, overlayImages, revealablePath, saveSentPhoto } = await import("./overlay-chat.js");
 const { getImagesDir } = await import("../config/paths.js");
 
 const png = (file: string, alpha: boolean) =>
@@ -53,4 +53,13 @@ it("thumbnails the reply's images; the path and Finder only for the owner's own 
 it("an image reply's follow-up chips don't grab a screenshot", () => {
     for (const q of imageQuickActions([{ kind: "edited", before: "data:" }])) expect(isScreenQuery(q), q).toBe(false);
     expect(isScreenQuery("undo that")).toBe(true); // only the chips' own text
+});
+
+it("a photo the owner sends is kept for Chats' thumbnail; other files aren't", () => {
+    const saved = saveSentPhoto("../my fruit.JPG", Buffer.from("jpegbytes").toString("base64"), "image/jpeg");
+    expect(saved && path.dirname(saved)).toBe(path.join(getImagesDir(), "Sent"));
+    expect(saved && path.basename(saved)).toMatch(/^my_fruit_\d+\.jpg$/);
+    expect(saved && fs.readFileSync(saved, "utf8")).toBe("jpegbytes");
+    expect(saveSentPhoto("notes.pdf", "AAAA", "application/pdf")).toBeUndefined();
+    expect(saveSentPhoto("shot.heic", "AAAA", "image/heic")).toBeUndefined();
 });

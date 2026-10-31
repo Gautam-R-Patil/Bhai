@@ -1413,6 +1413,22 @@ export function droppedFileContext(fileName: string, base64: string, mimeType: s
     return `\n\nDocument "${safeName}" (${safeMime}) saved at ${savedPath}. Read it with your file tools.`;
 }
 
+/** The owner's attached photo, kept in Bhai Files/Images/Sent so Chats can show it; undefined for other files. */
+export function saveSentPhoto(fileName: string, base64: string, mimeType: string): string | undefined {
+    const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" }[mimeType];
+    if (!ext) return undefined; // HEIC etc.: Chats can't thumbnail them, the 📎 line stays
+    try {
+        const dir = join(getImagesDir(), "Sent");
+        mkdirSync(dir, { recursive: true });
+        const stem = basename(fileName).replace(/\.[^.]*$/, "").replace(/[^\w.-]+/g, "_").slice(0, 40) || "photo";
+        const file = join(dir, `${stem}_${Date.now()}.${ext}`);
+        writeFileSync(file, Buffer.from(base64, "base64"));
+        return file;
+    } catch {
+        return undefined;
+    }
+}
+
 async function handleFileAttachment(
     ws: WebSocket,
     fileName: string,
@@ -1435,7 +1451,15 @@ async function handleFileAttachment(
 
     console.log(`\n📎 [Overlay] File attached: ${fileName} (${mimeType})`);
     const chat = chatOf(ws);
-    logChatMessage(chat, "user", userText ? `${userText}\n📎 ${fileName}` : `📎 ${fileName}`);
+    const sentPhoto = wsIsOwner(ws) ? saveSentPhoto(fileName, base64, mimeType) : undefined;
+    // A saved photo shows as a thumbnail in Chats; only other files need the 📎 line.
+    logChatMessage(
+        chat,
+        "user",
+        sentPhoto ? userText : userText ? `${userText}\n📎 ${fileName}` : `📎 ${fileName}`,
+        undefined,
+        sentPhoto ? [sentPhoto] : undefined,
+    );
     const live = newTurn(ws, chat);
     sendToClient(ws, { type: "thinking", turn: live.turn });
 

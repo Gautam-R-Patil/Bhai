@@ -1672,9 +1672,11 @@
             const when = document.createElement('div');
             when.className = 'chats-when';
             when.textContent = new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-            row.append(bubble);
+            // The owner's photo sits above their words, as when sending it; Bhai's under its reply.
             const grid = chatImageGrid(images);
-            if (grid) row.append(grid);
+            if (grid && role === 'user') row.append(grid);
+            row.append(bubble);
+            if (grid && role !== 'user') row.append(grid);
             row.append(when);
             return row;
         }
