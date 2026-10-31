@@ -106,14 +106,11 @@ export function updateIdentityProfile(fields: Partial<UserProfile>, userId = DEF
     const current = getIdentityProfile(userId);
     const updated: UserProfile = { ...current };
 
-    if (fields.email !== undefined) updated.email = fields.email;
-    if (fields.name !== undefined) updated.name = fields.name;
-    if (fields.location !== undefined) updated.location = fields.location;
-    if (fields.current_location !== undefined) updated.current_location = fields.current_location;
-    if (fields.role !== undefined) updated.role = fields.role;
-    if (fields.company !== undefined) updated.company = fields.company;
-    if (fields.projects !== undefined) updated.projects = fields.projects;
-    if (fields.important_goals !== undefined) updated.important_goals = fields.important_goals;
+    // A key passed as undefined clears that field (core_memory_delete); a key left out keeps it.
+    // JSON.stringify below drops undefined values, here and in the merged preferences/extra.
+    for (const k of [...VERIFIABLE_FIELDS, "current_location", "projects", "important_goals"] as const) {
+        if (Object.hasOwn(fields, k)) Object.assign(updated, { [k]: fields[k] });
+    }
 
     if (fields.preferences) {
         updated.preferences = { ...current.preferences, ...fields.preferences };
