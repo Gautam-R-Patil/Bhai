@@ -43,7 +43,7 @@ const ACCEPT_BUTTON_TEXT = [
 
 // Least data first (the privacy default): reject or
 // decline when the banner offers it, accept only as the last option.
-const REJECT_BUTTON_TEXT = [
+export const REJECT_BUTTON_TEXT = [
     "Reject all",
     "Reject All",
     "Decline all",
@@ -107,27 +107,31 @@ const MODAL_CLOSE_SELECTORS = [
     "[data-testid*='dismiss']",
 ];
 
-/** True when the button sits in a cookie/consent banner (by its markup or a short cookie notice). */
+// A cookie/consent banner, by an ancestor's markup or its short cookie notice.
+// Cookie-banner signals only. A dialog, or a card that mentions the privacy
+// policy ("By clicking Continue you agree…"), is not one: the guard runs
+// unasked and must never advance a checkout or login.
+export const CONSENT_MARK = /cookie|consent|gdpr|onetrust|didomi|cookiebot|qc-cmp|truste|cmp-/i;
+export const CONSENT_TEXT = /\bcookies?\b|\bconsent\b/i;
+
+/** True when the button sits in a cookie/consent banner (within 6 ancestors). */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Locator
 async function inConsentContainer(btn: any): Promise<boolean> {
     return btn
         .evaluate(
-            /* javascript-obfuscator:disable */ (el: Element) => {
+            /* javascript-obfuscator:disable */ (el: Element, [mark, text]: [string, string]) => {
                 let n: Element | null = el;
                 for (let i = 0; i < 6 && n; i++) {
                     n = n.parentElement;
                     if (!n) break;
-                    // Cookie-banner signals only. A dialog, or a card that mentions the
-                    // privacy policy ("By clicking Continue you agree…"), is not one:
-                    // the guard runs unasked and must never advance a checkout or login.
                     const tag = `${n.id} ${typeof n.className === "string" ? n.className : ""} ${n.getAttribute("aria-label") || ""}`;
-                    if (/cookie|consent|gdpr|onetrust|didomi|cookiebot|qc-cmp|truste|cmp-/i.test(tag)) return true;
+                    if (new RegExp(mark, "i").test(tag)) return true;
                     const t = (n as HTMLElement).innerText || "";
-                    if (t.length < 600 && /\bcookies?\b|\bconsent\b/i.test(t)) return true;
+                    if (t.length < 600 && new RegExp(text, "i").test(t)) return true;
                 }
                 return false;
             },
-            /* javascript-obfuscator:enable */ undefined,
+            /* javascript-obfuscator:enable */ [CONSENT_MARK.source, CONSENT_TEXT.source],
         )
         .catch(() => false);
 }
@@ -167,22 +171,74 @@ export async function dismissCookieBanner(page: Page): Promise<boolean> {
     return false;
 }
 
+// A control that spends money; and an input that takes a one-time code (the
+// autocomplete hint, a row of one-character boxes, or a name / id / label /
+// placeholder that says so: "otp", "loginOtp", "one-time password",
+// "verification code", "passcode"; not "footprint"). Site Skills' page driver
+// uses both too.
+export const MONEY_WORDS = /\b(place (your )?order|pay( now)?|proceed to pay|book now|make payment)\b/i;
+export const IS_CODE_FIELD_JS = `((el) => el.tagName === "INPUT" && (el.autocomplete === "one-time-code" || el.maxLength === 1 ||
+  ((s) => /(?:^|[^a-zA-Z])otp|[a-z]Otp|OTP/.test(s) || /one.?time|verification.?code|pass.?code/i.test(s))(
+    [el.name, el.id, el.getAttribute("aria-label"), el.placeholder].join(" "))))`;
+
+// In the page: an overlay no automated dismissal may touch (no close click, no
+// Escape, no hiding) — a payment sheet, a site's own "Pay ₹249?" confirm, a
+// sign-in: it holds a frame, a password / card / one-time-code input, a
+// money-word control, or a price.
+export const KEEP_OVERLAY_JS = `((o) => {
+  const isCode = ${IS_CODE_FIELD_JS}, money = new RegExp(${JSON.stringify(MONEY_WORDS.source)}, "i");
+  if (o.matches("iframe,frame,object,embed") || o.querySelector("iframe,frame,object,embed")) return true;
+  for (const i of o.querySelectorAll("input"))
+    if (i.type === "password" || /^cc-/i.test(i.getAttribute("autocomplete") || "") || isCode(i)) return true;
+  if (/[₹$€£]\\s?\\d|\\bRs\\.?\\s?\\d|\\bINR\\b/i.test(o.innerText || "")) return true;
+  return [...o.querySelectorAll("button,a,[role=button],input[type=submit],input[type=button]")]
+    .some((c) => money.test([c.innerText, c.value, c.getAttribute("aria-label")].join(" ")));
+})`;
+
+// In the page: the overlays on top now — a dialog, or a fixed / absolute
+// element named like a modal — each stamped data-bhai-overlay unless it is a
+// keeper. Returns how many of each.
+const FIND_OVERLAYS_JS = `(() => {
+  const keep = ${KEEP_OVERLAY_JS};
+  const sel = "[class*='modal'],[class*='popup'],[class*='overlay']:not([class*='video']),[class*='newsletter'],[class*='subscribe-modal'],"
+    + "[class*='exit-intent'],[class*='backdrop'],[class*='dimmer'],[role=dialog],[role=alertdialog],[aria-modal=true]";
+  let open = 0, kept = 0;
+  for (const el of document.querySelectorAll("[data-bhai-overlay]")) el.removeAttribute("data-bhai-overlay");
+  for (const el of document.querySelectorAll(sel)) {
+    const s = getComputedStyle(el), r = el.getBoundingClientRect();
+    if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0" || !r.width || !r.height) continue;
+    if (s.position !== "fixed" && s.position !== "absolute" && !el.matches("[role=dialog],[role=alertdialog],[aria-modal=true]")) continue;
+    if (keep(el) || el.closest("[data-bhai-keep]")) { el.setAttribute("data-bhai-keep", ""); kept++; continue; }
+    el.setAttribute("data-bhai-overlay", "");
+    open++;
+  }
+  for (const el of document.querySelectorAll("[data-bhai-keep]")) el.removeAttribute("data-bhai-keep");
+  return { open, kept };
+})()`;
+
 export async function dismissOverlayModals(page: Page): Promise<void> {
-    // Escape key dismisses most modal implementations
-    try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (page as any).keyboard.press("Escape");
-        const { waitForPageReady } = await import("./core.js"); // core imports this module
-        await waitForPageReady(page, 1000);
-    } catch {
-        /* ignore */
+    // Only overlays that are open and not keepers: a page's own × (a cart's
+    // "Remove item") is never clicked, and a payment sheet is never closed or hidden.
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright Page
+    const p = page as any;
+    const found = (await p.evaluate(FIND_OVERLAYS_JS).catch(() => null)) as { open: number; kept: number } | null;
+    if (!found?.open) return;
+
+    // Escape dismisses most modal implementations; never while a keeper is open (it would close that too).
+    if (!found.kept) {
+        try {
+            await p.keyboard.press("Escape");
+            const { waitForPageReady } = await import("./core.js"); // core imports this module
+            await waitForPageReady(page, 1000);
+        } catch {
+            /* ignore */
+        }
     }
 
-    // Try close buttons
+    // Try close buttons, inside an open overlay only
     for (const sel of MODAL_CLOSE_SELECTORS) {
         try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const btn = (page as any).locator(sel).first();
+            const btn = p.locator(`[data-bhai-overlay] ${sel}`).first();
             if (await btn.isVisible({ timeout: 400 }).catch(() => false)) {
                 await btn.click();
                 return;
@@ -196,21 +252,9 @@ export async function dismissOverlayModals(page: Page): Promise<void> {
     // proves nothing (Tailwind's `backdrop-blur-*` sits on sticky headers), so a
     // candidate must be fixed/absolute, cover most of the viewport, and sit on top.
     try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (page as any).evaluate(
+        await p.evaluate(
             /* javascript-obfuscator:disable */ () => {
-                const sel = [
-                    "[class*='modal']",
-                    "[class*='popup']",
-                    "[class*='overlay']:not([class*='video'])",
-                    "[class*='newsletter']",
-                    "[class*='subscribe-modal']",
-                    "[class*='exit-intent']",
-                    "[class*='backdrop']",
-                    "[class*='dimmer']",
-                    "[role='dialog'][aria-modal='true']",
-                ].join(",");
-                for (const el of document.querySelectorAll(sel)) {
+                for (const el of document.querySelectorAll("[data-bhai-overlay]")) {
                     const s = window.getComputedStyle(el);
                     if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") continue;
                     if (s.position !== "fixed" && s.position !== "absolute") continue;

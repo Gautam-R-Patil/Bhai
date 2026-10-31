@@ -4,6 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { isDrift } from "../drift.js";
 import { type SiteAction, SkillHost } from "../host.js";
 import { MAX_STEPS, mintConsent, runSiteTask } from "../runtime.js";
 
@@ -765,6 +766,117 @@ describe("offline at the yes, a closed tab", () => {
             "never",
             1,
             [],
+        ]);
+    });
+});
+
+describe("an overlay over a target (the page driver's unblock / blocked_by_overlay)", () => {
+    // cartSkill, but the page after the submit says done.
+    const skillPath = withManifest(
+        cartSkill
+            .replace('|| phase === "after_confirm"', "")
+            .replace(
+                'return { fail: { reason: "x" } }',
+                'return phase === "after_confirm" ? { done: { summary: "ok" } } : { fail: { reason: "x" } }',
+            ),
+        manifest,
+    );
+    beforeAll(() => {
+        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+    });
+    afterAll(() => {
+        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+    });
+    // Select → confirm with `unblock`, logging snapshots, unblocks and the submit in order.
+    const toConfirm = async (unblock: () => Promise<boolean>, price = () => 249) => {
+        const log: string[] = [];
+        const base = pageDriver({ url: () => "https://shop.test/cart?id=p1", price });
+        const d = {
+            ...base,
+            snapshot: async () => {
+                log.push("snapshot");
+                return base.snapshot();
+            },
+            act: async (a: SiteAction) => {
+                log.push(a.target?.sel === "#checkout" ? "submit" : "act");
+                return base.act(a);
+            },
+            unblock: async () => {
+                log.push("unblock");
+                return unblock();
+            },
+        };
+        const c = await runSiteTask({ skillPath, phase: "select", driver: d });
+        expect(c.status).toBe("confirm");
+        log.length = 0;
+        return { c, d, log };
+    };
+
+    it("a click it can't clear stops at once: one try, ask_owner, not drift", async () => {
+        const clicker = withManifest(
+            `exports.step = () => ({ actions: [{ op: "click", target: { sel: "#captcha" } }] });`,
+            manifest,
+        );
+        const d = pageDriver({
+            onAct: () => {
+                throw new Error('blocked_by_overlay: kept "Confirm your order of ₹249"');
+            },
+        });
+        const r = await runSiteTask({ skillPath: clicker, phase: "select", driver: d });
+        expect([r.status, r.reason, r.retry, r.writeStatus, r.repairQueued, d.calls.length]).toEqual([
+            "failed",
+            'blocked_by_overlay: kept "Confirm your order of ₹249"',
+            "ask_owner",
+            "not_attempted",
+            undefined,
+            1, // not handed back to the skill to repeat into loop_identical_args (which reads as drift)
+        ]);
+        expect(isDrift(r.status, r.reason, r.writeStatus)).toBe(false);
+    });
+
+    it("over the submit after the yes: stopped before the mark, nothing sent", async () => {
+        const { c, d, log } = await toConfirm(async () => {
+            throw new Error('blocked_by_overlay: kept "Pay ₹249"');
+        });
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        expect([r.status, r.reason, r.writeStatus, r.retry, r.task.commit, log]).toEqual([
+            "failed",
+            'blocked_by_overlay: kept "Pay ₹249"',
+            "not_attempted",
+            "ask_owner",
+            undefined,
+            ["snapshot", "unblock"],
+        ]);
+        expect(() => mintConsent(r.task)).not.toThrow(); // nothing may exist: the owner can say yes again
+    });
+
+    it("cleared before the total is re-read: the re-read sees the page the click will hit, then one submit", async () => {
+        let dismissed = 0;
+        const { c, d, log } = await toConfirm(async () => ++dismissed === 1);
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        expect([r.status, r.writeStatus]).toEqual(["done", "applied"]);
+        // look, clear, look again (the skill's re-read runs on this one), then the submit.
+        expect(log.slice(0, 4)).toEqual(["snapshot", "unblock", "snapshot", "submit"]);
+    });
+
+    it("a dismissal that changed the total goes back to the owner, nothing sent", async () => {
+        let price = 249;
+        const { c, d, log } = await toConfirm(
+            async () => {
+                if (price === 299) return false;
+                price = 299; // "No thanks" also dropped a discount
+                return true;
+            },
+            () => price,
+        );
+        const r = await runSiteTask({ task: c.task, phase: "confirm", consentToken: mintConsent(c.task), driver: d });
+        expect([r.status, r.reason, r.confirm?.amount, r.writeStatus, r.task.commit, log.includes("submit")]).toEqual([
+            "confirm",
+            "total_changed",
+            299,
+            "not_attempted",
+            undefined,
+            false,
         ]);
     });
 });

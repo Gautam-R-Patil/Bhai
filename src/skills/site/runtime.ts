@@ -37,6 +37,10 @@
 //     behind. Before the write-ahead mark nothing was sent; after it the
 //     consented submit still goes out (it is the commit point) and the result
 //     says the order may have been placed;
+//   • an overlay over a target (a popup, a banner) is cleared by the driver
+//     outside the submit; over the submit, before the total is re-read; one it
+//     may not touch (a price, a card field, a commit) stops the task, nothing
+//     sent (blocked_by_overlay, ask_owner, not drift);
 //   • before the mark, a browser that reports itself offline is waited out
 //     (≤ 20 s, else network_error, nothing sent), and a tab the owner closed
 //     between calls is reopened at the task's last page; never after it
@@ -96,6 +100,12 @@ export interface PageDriver {
     html?(): Promise<string>;
     /** False while the browser itself reports no network (navigator.onLine); optional. */
     online?(): Promise<boolean>;
+    /**
+     * Clears an overlay over `action`'s target (never clicking it, a commit or a
+     * money control) and says whether it dismissed anything; throws
+     * `blocked_by_overlay` when one stays or must not be touched; optional.
+     */
+    unblock?(action: SiteAction, opts: { commits: SiteAction[]; domains?: string[] }): Promise<boolean>;
 }
 
 export type Phase = "search" | "select" | "confirm" | "after_confirm" | "resume";
@@ -217,7 +227,9 @@ export function retryOf(
         kind ??
         (r.startsWith("input_rejected") ? "input_rejected" : r.startsWith("needs_owner") ? "needs_owner" : undefined);
     if (k === "input_rejected") return "fix_input";
-    if (k === "needs_owner" || /^(spend_cap|consent_required|stopped)$/.test(r)) return "ask_owner"; // stopped: the owner pressed Stop
+    // stopped: the owner pressed Stop; blocked_by_overlay: a popup only the owner should answer
+    if (k === "needs_owner" || /^(spend_cap|consent_required|stopped)$/.test(r) || r.startsWith("blocked_by_overlay"))
+        return "ask_owner";
     if (
         k === "site_error" ||
         r === "network_error" ||
@@ -471,6 +483,8 @@ export async function runSiteTask(opts: {
                     if (signal?.aborted) throw e; // Stop: drive() ends as aborted/stopped
                     const msg = String((e as Error).message ?? e);
                     if (msg.startsWith("unconsented_submit")) return end("aborted", { reason: "unconsented_submit" });
+                    // Not the skill's to retry: the same click would hit the same overlay.
+                    if (msg.startsWith("blocked_by_overlay")) return end("failed", { reason: msg.slice(0, 120) });
                     if (msg.startsWith("refused:")) {
                         // pick: nothing on the page fits the input, or two fit equally.
                         let available: string[] = [];
@@ -509,6 +523,19 @@ export async function runSiteTask(opts: {
             return snap;
         };
 
+        // An overlay over the submit (a popup that opened after the yes) is cleared
+        // before the total is re-read, so the skill reads the page the click will hit.
+        const unblocked = async (a: SiteAction): Promise<boolean | SiteTaskResult> => {
+            try {
+                const commits = manifest.commits;
+                return !!(await live(async () => opts.driver.unblock?.(a, { commits, domains: manifest.domains })));
+            } catch (e) {
+                const msg = String((e as Error).message ?? e);
+                if (signal?.aborted || !msg.startsWith("blocked_by_overlay")) throw e;
+                return end("failed", { reason: msg.slice(0, 120) });
+            }
+        };
+
         // An answer after the question's TTL is never typed (a code that old is stale):
         // the page is read again and, if it still asks, the owner is asked for a fresh one.
         const late = opts.phase === "resume" && !!task.waitingUntil && Date.now() > task.waitingUntil;
@@ -530,8 +557,14 @@ export async function runSiteTask(opts: {
             for (let round = 0; round < 3; round++) {
                 halt();
                 task.stepCount++;
-                const snap = await look();
+                let snap = await look();
                 if ("status" in snap) return snap;
+                if (pageKey(snap.url) === pending.page) {
+                    const u = await unblocked(pending.submit);
+                    if (typeof u !== "boolean") return u;
+                    if (u) snap = await look(); // the page as it is now, after the dismissal
+                    if ("status" in snap) return snap;
+                }
                 pageUrl = snap.url;
                 if (pageKey(snap.url) !== pending.page) return end("failed", { reason: "page_changed" });
                 again = await live(() => host.call("select", { snapshot: snap, input: undefined, state: task.state }));

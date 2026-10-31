@@ -139,7 +139,10 @@ export const popupJs = (p: Popup, price = 249) => `(() => {
     const esc = (e) => { if (e.key === "Escape" && (p.kind === "escape" || p.kind === "keep")) close(p.kind === "keep" ? "keep-escape" : "escape"); };
     addEventListener("keydown", esc, true);
     o.onclick = (e) => { if (e.target === o) log("backdrop"); };
-    for (const b of o.querySelectorAll("button[data-e]")) b.onclick = () => (b.hasAttribute("data-stay") ? log : close)(b.dataset.e);
+    for (const b of o.querySelectorAll("button[data-e]")) b.onclick = () => {
+      if (b.hasAttribute("data-bhai-unblock")) log("bhai:" + b.dataset.e); // the page driver's dismissal, not the guard's
+      (b.hasAttribute("data-stay") ? log : close)(b.dataset.e);
+    };
     for (const i of o.querySelectorAll("input[data-e]")) i.oninput = () => log(i.dataset.e);
     document.body.append(o);
   };

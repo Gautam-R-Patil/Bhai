@@ -10,6 +10,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveScript } from "../../config/paths.js";
 import { AGENT_UI_HOST_ID, agentCursor } from "../../tools/browser/agent-cursor.js";
+import {
+    CONSENT_MARK,
+    CONSENT_TEXT,
+    IS_CODE_FIELD_JS,
+    KEEP_OVERLAY_JS,
+    MONEY_WORDS,
+    REJECT_BUTTON_TEXT,
+} from "../../tools/browser/popup-guard.js";
 import type { ExpectSpec, SiteAction } from "./host.js";
 import { type ActResult, type CommitVerdict, onSite, type PageDriver, type Snapshot } from "./runtime.js";
 
@@ -22,15 +30,12 @@ export const lib = createRequire(import.meta.url)(
     price(t: unknown): number | undefined;
     rank<T>(choices: T[], wanted: unknown): { best: T | null; ambiguous: T[] };
 };
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// A control that spends money (outside the consented submit, pressing one is
+// refused even when the manifest forgot to list it), and an input that takes
+// a one-time code: shared with the popup guard, which never dismisses either.
+export { IS_CODE_FIELD_JS, MONEY_WORDS };
 
-// In the page: an input that takes a one-time code. The autocomplete hint, a
-// row of one-character boxes, or a name / id / label / placeholder that says
-// so ("otp", "loginOtp", "OTP", "one-time password", "verification code",
-// "passcode"; not "footprint").
-export const IS_CODE_FIELD_JS = `((el) => el.tagName === "INPUT" && (el.autocomplete === "one-time-code" || el.maxLength === 1 ||
-  ((s) => /(?:^|[^a-zA-Z])otp|[a-z]Otp|OTP/.test(s) || /one.?time|verification.?code|pass.?code/i.test(s))(
-    [el.name, el.id, el.getAttribute("aria-label"), el.placeholder].join(" "))))`;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // A password's or one-time code's value never shows as element text (not to
 // the skill, not in a recorded trace); its label or placeholder still does.
@@ -116,9 +121,6 @@ const TYPE_CODE_JS = (sel: string, code: string) => `(() => {
   return row.every((box, n) => box.value === code.charAt(n)) ? "ok" : "readback_failed";
 })()`;
 
-// A control that spends money. Outside the consented submit, pressing one is
-// refused even when the manifest forgot to list it.
-export const MONEY_WORDS = /\b(place (your )?order|pay( now)?|proceed to pay|book now|make payment)\b/i;
 const norm = (s?: string | null) => (s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
 // ── pick ──────────────────────────────────────
@@ -373,6 +375,52 @@ const judge = (controls: Control[], commits: SiteAction[]): string => {
 // Keys that press the focused control; Enter also submits its form.
 const PRESSES = /^(Enter|NumpadEnter|Space| )$/;
 
+// ── unblock: an overlay over the target ───────
+// In the page: does the target (stamped data-bhai-target) get its own centre's
+// click? If not, the overlay on top (the outermost positioned or dialog
+// ancestor of what is hit) and what may be done about it:
+//   keep    never touched: it holds the target or a commit, or KEEP_OVERLAY_JS
+//           says so (a frame, a password / card / code input, a money word, a price);
+//   click   a cookie banner's reject (never its accept), else a close control,
+//           stamped data-bhai-unblock=`mark`;
+//   escape  no such control, but it says something;
+//   wait    an empty shield.
+const CLOSE_WORDS = /^(×|✕|✖|close|dismiss|no,? thanks|not now|maybe later|skip|later)$/i;
+const UNBLOCK_JS = (token: string, mark: string, commits: SiteAction[]) => `(() => {
+  const keep = ${KEEP_OVERLAY_JS}, mark = ${JSON.stringify(mark)};
+  const texts = ${JSON.stringify(commits.map((c) => norm(c.target?.text)).filter(Boolean))};
+  const sels = ${JSON.stringify(commits.flatMap((c) => (c.target?.sel ? [c.target.sel] : [])))};
+  const rejects = ${JSON.stringify(REJECT_BUTTON_TEXT.map(norm))};
+  const t = document.querySelector('[data-bhai-target="${token}"]');
+  const said = (o) => (o.innerText || "").replace(/\\s+/g, " ").trim();
+  const out = (state, o) => ({ state, url: location.href, text: o ? said(o).slice(0, 80) : "" });
+  if (!t) return out("clear");
+  t.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  const r = t.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || hit === t || t.contains(hit) || hit.contains(t)) return out("clear");
+  let o = null;
+  for (let n = hit; n && n !== document.body && n !== document.documentElement; n = n.parentElement)
+    if (/^(fixed|absolute|sticky)$/.test(getComputedStyle(n).position) || /^(dialog|alertdialog)$/.test(n.getAttribute("role") || "")
+      || n.getAttribute("aria-modal") === "true") o = n;
+  if (!o) return out("clear");
+  const label = (c) => [c.innerText, c.value, c.getAttribute("aria-label")].filter(Boolean).join(" ").replace(/\\s+/g, " ").trim();
+  const controls = [...o.querySelectorAll("button,a,[role=button],input[type=submit],input[type=button]")]
+    .filter((c) => { const b = c.getBoundingClientRect(); return b.width > 0 && b.height > 0; });
+  const commit = controls.some((c) => texts.includes(label(c).toLowerCase()))
+    || sels.some((s) => { try { return o.matches(s) || !!o.querySelector(s); } catch { return false; } });
+  if (o.contains(t) || commit || keep(o)) return out("keep", o);
+  const consent = (c) => { for (let n = c.parentElement, i = 0; i < 6 && n; i++, n = n.parentElement) {
+    if (new RegExp(${JSON.stringify(CONSENT_MARK.source)}, "i").test(n.id + " " + (typeof n.className === "string" ? n.className : "") + " " + (n.getAttribute("aria-label") || ""))) return true;
+    if (said(n).length < 600 && new RegExp(${JSON.stringify(CONSENT_TEXT.source)}, "i").test(said(n))) return true; } return false; };
+  const close = controls.find((c) => rejects.includes(label(c).toLowerCase()) && consent(c))
+    || controls.find((c) => new RegExp(${JSON.stringify(CLOSE_WORDS.source)}, "i").test(label(c))
+      || /^(close|dismiss)\\b/i.test(c.getAttribute("aria-label") || "") || c.matches("[data-dismiss],[data-close]"));
+  if (close) { close.setAttribute("data-bhai-unblock", mark); return out("click", o); }
+  return out(said(o) ? "escape" : "wait", o);
+})()`;
+const UNBLOCK_TRIES = 2; // dismissals per action: a popup that keeps coming back can slow a run, never loop it
+
 // Only what the user can see counts: a hidden mobile copy of a button is not a
 // second match. (The Chrome bridge proxy has no filter().)
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Locator or ChromeLocatorProxy
@@ -539,6 +587,12 @@ export function pageDriver(
             return snap;
         },
         html: () => page.evaluate(CAPTURE_JS) as Promise<string>,
+        // Clears an overlay over `a`'s target before the consented submit (the runtime calls it
+        // before re-reading the total). A target it can't find is left to that re-read.
+        async unblock(a, opts) {
+            const loc = await locate(a).catch(() => null);
+            return loc ? unblock(loc, opts.commits, opts.domains) : false;
+        },
         // A page that can't say (closed, the Chrome bridge) counts as online: the click goes as before.
         online: async () => (await page.evaluate("navigator.onLine").catch(() => true)) !== false,
         async act(
@@ -555,7 +609,7 @@ export function pageDriver(
             }
             const writes = opts?.submit ? watchWrites(p, opts.domains) : null;
             try {
-                const run = () => doAct(a, opts?.submit ? null : (opts?.commits ?? []));
+                const run = () => doAct(a, opts?.submit ? null : (opts?.commits ?? []), opts?.domains);
                 let outcome: string | undefined;
                 if (a.expect) outcome = await race(p, a.expect, run, opts?.domains);
                 else await run();
@@ -675,8 +729,95 @@ export function pageDriver(
             },
         };
     }
+    // A click outside the consented submit, through the commit guard; `go` is the last Stop check.
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright Locator or ChromeLocatorProxy
+    async function guardedClick(loc: any, a: SiteAction, commits: SiteAction[], go: () => void) {
+        if (typeof loc.elementHandle !== "function") {
+            await guardByLabel(loc, a, commits);
+            go();
+            await loc.click({ timeout });
+            return;
+        }
+        // Wait until it's clickable first (a disabled "Continue" may become
+        // "Place order"), then check and click that same node.
+        // ponytail: a relabel in the ms between the check and the click
+        // still slips by; a click-time in-page listener would close it.
+        await loc.click({ timeout, trial: true });
+        const h = await loc.elementHandle({ timeout });
+        try {
+            await guardCommit(h, commits);
+            go();
+            await h.click({ timeout });
+        } finally {
+            await h.dispose().catch(() => {});
+        }
+    }
+
+    /**
+     * Outside the consented submit only: an overlay over the target (a rate-us
+     * or newsletter popup, a cookie banner, an announcement) is dismissed — at
+     * most UNBLOCK_TRIES times per action, each click through the commit guard,
+     * a banner rejected and never accepted — and a self-removing shield is
+     * waited out (up to `timeout`). An overlay that must not be touched, or one
+     * that stays, ends the action with `blocked_by_overlay` before anything
+     * reaches the target. True when something was dismissed.
+     * ponytail: over the bridge, a popup that opens between this check and the
+     * click_at still takes the click (checkout itself is refused there).
+     */
+    // biome-ignore lint/suspicious/noExplicitAny: Playwright Locator or ChromeLocatorProxy
+    async function unblock(loc: any, commits: SiteAction[], domains?: string[]): Promise<boolean> {
+        const go = () => {
+            if (signal?.aborted) throw new Error("stopped");
+        };
+        const token = randomBytes(6).toString("hex");
+        // A locator that can't mark its element (a bare proxy) is not checked: the click goes as before.
+        const stamped =
+            typeof loc.withEl === "function" // Chrome bridge proxy: no handles
+                ? await page.evaluate(
+                      loc.withEl(`if (el) el.setAttribute("data-bhai-target", ${JSON.stringify(token)}); return !!el;`),
+                  )
+                : typeof loc.evaluate === "function" &&
+                  (await loc.evaluate(
+                      /* javascript-obfuscator:disable */ (el: Element, t: string) => {
+                          el.setAttribute("data-bhai-target", t);
+                          return true;
+                      },
+                      /* javascript-obfuscator:enable */ token,
+                      { timeout },
+                  ));
+        if (!stamped) return false;
+        const until = Date.now() + timeout;
+        let tries = 0;
+        for (;;) {
+            go();
+            const mark = `${token}.${tries}`;
+            // A page that navigated meanwhile: the action itself finds out.
+            const r = (await page.evaluate(UNBLOCK_JS(token, mark, commits)).catch(() => null)) as {
+                state: "clear" | "keep" | "click" | "escape" | "wait";
+                url: string;
+                text: string;
+            } | null;
+            if (!r || r.state === "clear") return tries > 0;
+            const what = r.text ? ` "${r.text}"` : "";
+            if (r.state === "keep" || !onSite(r.url, domains)) throw new Error(`blocked_by_overlay: kept${what}`);
+            if (tries < UNBLOCK_TRIES && (r.state === "click" || r.state === "escape")) {
+                tries++;
+                if (r.state === "escape") {
+                    go();
+                    await page.keyboard.press("Escape");
+                } else {
+                    const sel = `[data-bhai-unblock="${mark}"]`;
+                    await guardedClick(page.locator(sel).first(), { op: "click", target: { sel } }, commits, go);
+                }
+                continue;
+            }
+            if (Date.now() >= until) throw new Error(`blocked_by_overlay:${what || " something covers the target"}`);
+            await nap(100); // poll
+        }
+    }
+
     /** `commits` null = this is the consented submit, so no guard (and Stop doesn't hold it back). */
-    async function doAct(a: SiteAction, commits: SiteAction[] | null): Promise<void> {
+    async function doAct(a: SiteAction, commits: SiteAction[] | null, domains?: string[]): Promise<void> {
         // Up front (not even a trial click) and right before each dispatch, after
         // every wait: Stop keeps it from going out.
         const go = () => {
@@ -686,29 +827,13 @@ export function pageDriver(
         {
             if (a.op === "click" || a.op === "pick") {
                 const loc = a.op === "pick" ? await pickTarget(page, a, shown, timeout) : await locate(a);
+                if (commits) await unblock(loc, commits, domains);
                 await agentCursor(page, loc, "click"); // Bhai's cursor glides there first (owner can watch)
                 if (!commits) await loc.click({ timeout });
-                else if (typeof loc.elementHandle !== "function") {
-                    await guardByLabel(loc, a, commits);
-                    go();
-                    await loc.click({ timeout });
-                } else {
-                    // Wait until it's clickable first (a disabled "Continue" may become
-                    // "Place order"), then check and click that same node.
-                    // ponytail: a relabel in the ms between the check and the click
-                    // still slips by; a click-time in-page listener would close it.
-                    await loc.click({ timeout, trial: true });
-                    const h = await loc.elementHandle({ timeout });
-                    try {
-                        await guardCommit(h, commits);
-                        go();
-                        await h.click({ timeout });
-                    } finally {
-                        await h.dispose().catch(() => {});
-                    }
-                }
+                else await guardedClick(loc, a, commits, go);
             } else if (a.op === "type") {
                 const loc = await locate(a);
+                if (commits) await unblock(loc, commits, domains);
                 await agentCursor(page, loc, "type");
                 go();
                 await loc.fill(a.value ?? "", { timeout });
