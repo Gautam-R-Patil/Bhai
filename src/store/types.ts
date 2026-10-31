@@ -28,6 +28,8 @@ export interface StoreItem {
   developerId: string;
   version: string;
   changelog?: string;
+  minBhaiVersion?: string;
+  /** Pre-rename name of minBhaiVersion; read `minBhaiVersion ?? minAtlasVersion`. */
   minAtlasVersion?: string;
   contentFileId: string;
   iconFileId?: string;
@@ -120,6 +122,8 @@ export interface Submission {
   longDescription?: string;
   version: string;
   changelog?: string;
+  minBhaiVersion?: string;
+  /** Pre-rename name of minBhaiVersion; read `minBhaiVersion ?? minAtlasVersion`. */
   minAtlasVersion?: string;
   contentFileId: string;
   iconFileId?: string;

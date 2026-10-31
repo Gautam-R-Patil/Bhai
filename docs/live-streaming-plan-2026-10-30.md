@@ -17,7 +17,7 @@
 - Commits as Bhavana Sanal (per-worktree git config), plain messages, **no** `Co-Authored-By: Claude` trailer, no mention of Claude/AI. Push only to remote `xagi` (XAGI-Lab/Bhai), never force.
 - No prompt changes and no prompt reseed (§3 non-goals). No new npm dependencies.
 - Every new source file starts with `// © 2024-2026 XAGI Labs Private Limited. All rights reserved.`
-- Kill switches, exact names: bot `ATLAS_NO_STREAMING=true`; Convex env `LLM_STREAMING_DISABLED=true` (§4.8).
+- Kill switches, exact names: bot `BHAI_NO_STREAMING=true`; Convex env `LLM_STREAMING_DISABLED=true` (§4.8).
 - Thinking display: `display: "updates"` + beta `thinking-display-updates-2026-08-18` on Opus/Sonnet main-loop calls, the same whether or not the call streams; never on Sonnet `between_tools`, Haiku, or lean calls (§4.2, §9).
 - Streamed text never reveals `[OTP_1]`-style handles; only the final `response` reveals (§4.5).
 - Frame padding bucket: 256 bytes. Server frame coalescing: 60 ms. WS delta coalescing per socket: 40 ms.
@@ -161,12 +161,12 @@ The cache check (§6 item 2) runs at the end of Task 2.
 
 **Interfaces:**
 - Consumes: `encryptedFetchStream`, `readFrames`, `LLMDelta` (Task 6).
-- Produces: `LLMClient.chat(params & { onDelta?: (d: LLMDelta) => void })`. When `onDelta` is set and `process.env.ATLAS_NO_STREAMING !== "true"`: each attempt (incl. fallback models, the 401 retry and the last-resort retry) first calls `onDelta({kind:"reset"})` if any delta was sent earlier in this `chat()` call, then streams. The resolved `ChatCompletion` goes through the same post-processing as today (`tryParseOssToolCalls`, `sanitizeContextEchoes`, `updateModelStats` with latency to `done`). The caller's `signal` aborts the stream and tries no other model (as today). Without `onDelta`: byte-for-byte today's path.
+- Produces: `LLMClient.chat(params & { onDelta?: (d: LLMDelta) => void })`. When `onDelta` is set and `process.env.BHAI_NO_STREAMING !== "true"`: each attempt (incl. fallback models, the 401 retry and the last-resort retry) first calls `onDelta({kind:"reset"})` if any delta was sent earlier in this `chat()` call, then streams. The resolved `ChatCompletion` goes through the same post-processing as today (`tryParseOssToolCalls`, `sanitizeContextEchoes`, `updateModelStats` with latency to `done`). The caller's `signal` aborts the stream and tries no other model (as today). Without `onDelta`: byte-for-byte today's path.
 
 - [ ] **Step 1: Write the failing tests** (mock `encryptedFetchStream`/`readFrames`, follow `src/llm-timeout.test.ts` style):
   - `"forwards deltas and resolves the same completion shape"`.
   - Review Focus 5: `"a mid-stream failure resets, then streams the fallback model"` (first attempt emits 2 text deltas then throws a network error → observed deltas: `text, text, reset, text…`, result from model 2).
-  - `"no onDelta means no stream flag"`; `"ATLAS_NO_STREAMING=true disables streaming"`; `"abort mid-stream tries no other model"`.
+  - `"no onDelta means no stream flag"`; `"BHAI_NO_STREAMING=true disables streaming"`; `"abort mid-stream tries no other model"`.
 - [ ] **Step 2:** Run → FAIL. **Step 3:** Implement. **Step 4:** Run → PASS, plus `$VT src/llm-timeout.test.ts src/llm-guest.test.ts src/llm-cache.toolsig.test.ts`.
 - [ ] **Step 5:** Commit: `LLM client: stream deltas to the caller, same final answer`.
 
@@ -258,7 +258,7 @@ The cache check (§6 item 2) runs at the end of Task 2.
 ### Task 12: Chrome side panel
 
 **Files:**
-- Modify: `chrome-extension/background.js` (`handleOverlayMessage` ~498-541, `addChat` ~37-44, stop ~2307-2309, `sendToAtlas` ~330-347), `chrome-extension/sidepanel.js` (`setBusy` ~343-361, `renderChat` ~308-335, listener ~808-822), `chrome-extension/sidepanel.html` (styles), `chrome-extension/manifest.json` (version bump to 2.2.0)
+- Modify: `chrome-extension/background.js` (`handleOverlayMessage` ~498-541, `addChat` ~37-44, stop ~2307-2309, `sendToBhai` ~330-347), `chrome-extension/sidepanel.js` (`setBusy` ~343-361, `renderChat` ~308-335, listener ~808-822), `chrome-extension/sidepanel.html` (styles), `chrome-extension/manifest.json` (version bump to 2.2.0)
 - Create: `chrome-extension/turn-view.js` (pure, shared shape with Task 11's `turnView`)
 - Test: `src/chrome-extension-turn-view.test.ts` (imports `chrome-extension/turn-view.js`)
 
@@ -289,7 +289,7 @@ The cache check (§6 item 2) runs at the end of Task 2.
 Added 2026-10-30 at the owner's request ("there is also a chat option inside the app also now so apply the things to that also").
 
 **Files:**
-- Modify: `desktop/panel.html` (`sendChat` / `finishLiveChat` / `atlas.onChatEvent` ~1660-1712; Chats styles), `desktop/main.js` only if the relay (~2476-2509) needs a change (it already forwards every socket message with the chat id and sends `{type:"stop"}`)
+- Modify: `desktop/panel.html` (`sendChat` / `finishLiveChat` / `bhai.onChatEvent` ~1660-1712; Chats styles), `desktop/main.js` only if the relay (~2476-2509) needs a change (it already forwards every socket message with the chat id and sends `{type:"stop"}`)
 - Test: `desktop/tests/chat-turn-view.test.js` (desktop vitest, runs on the default Node, not Node 20)
 
 **Interfaces:**
@@ -312,7 +312,7 @@ Added 2026-10-30 at the owner's request ("there is also a chat option inside the
 
 - [ ] **Step 1: Write the failing test:** `"logs live and first-word timings"` (spy on `console.log`).
 - [ ] **Step 2:** Run → FAIL. **Step 3:** Implement. **Step 4:** Run → PASS.
-- [ ] **Step 5:** Document in `CLAUDE.md`: the streaming path (one paragraph under LLM Client), the `turn_*` protocol (Overlay), `ATLAS_NO_STREAMING` and `LLM_STREAMING_DISABLED` (kill switches).
+- [ ] **Step 5:** Document in `CLAUDE.md`: the streaming path (one paragraph under LLM Client), the `turn_*` protocol (Overlay), `BHAI_NO_STREAMING` and `LLM_STREAMING_DISABLED` (kill switches).
 - [ ] **Step 6:** Gate: `npx tsc --noEmit -p .`; full suite `$VT`; Biome on changed files (no new diagnostics); `cd native && cargo fmt --check` untouched; `git log --format='%an %ce%n%B' xagi/main..HEAD` shows only Bhavana and no Claude trailer.
 - [ ] **Step 7:** Manual pass on all four surfaces (Task 11/12/13/13b manual steps) with timings ≤ 300 ms live line and ≤ 1 s first word after the model starts writing; credits per turn unchanged on a harness benchmark run.
 - [ ] **Step 8:** Commit: `Streaming: timings, docs`. Merge `xagi/main`, rerun the gate, push as Bhavana, deploy Convex to prod only with the owner's go-ahead.

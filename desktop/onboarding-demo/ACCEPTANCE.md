@@ -1,6 +1,6 @@
 # W1 Cinematic Spine — Acceptance Checklist
 
-> Run on a clean `~/.atlas/setup-state.json`. Walk every line. Anything
+> Run on a clean `~/.bhai/setup-state.json`. Walk every line. Anything
 > not green is a blocker.
 
 ## Awakening
@@ -59,11 +59,11 @@
 - [ ] Audio is OFF by default (no sound on advance).
 - [ ] Toggling the speaker in the chrome enables confirm chimes on advance.
 - [ ] With audio enabled, the awakening plays a bell ~1.45s in.
-- [ ] `ATLAS_NO_ONBOARDING_AUDIO=true` silences everything regardless of toggle.
+- [ ] `BHAI_NO_ONBOARDING_AUDIO=true` silences everything regardless of toggle.
 
 ## Kill-switches
-- [ ] `ATLAS_NO_AWAKENING=true` → awakening skipped, welcome is first.
-- [ ] `ATLAS_NO_MAGIC_MOMENT=true` → magic-moment card hidden on Ready Hub.
+- [ ] `BHAI_NO_AWAKENING=true` → awakening skipped, welcome is first.
+- [ ] `BHAI_NO_MAGIC_MOMENT=true` → magic-moment card hidden on Ready Hub.
 
 ## Comparison to demo
 - [ ] Open `desktop/onboarding-demo/index.html` side by side. The production wizard's visuals match the demo within ~2% (font sizes, weights, padding, motion timing). Any divergence is a bug in the production code, not the demo.
@@ -91,11 +91,11 @@
 ## Identity-line injection
 - [ ] With persona=developer set and bot running, send any message via Telegram or overlay.
 - [ ] Check the log: the dynamic-context block should contain a line starting "The user describes themselves as a developer."
-- [ ] Set `ATLAS_NO_PERSONA_BIAS=true` and restart. Send a message. The line should NOT appear.
+- [ ] Set `BHAI_NO_PERSONA_BIAS=true` and restart. Send a message. The line should NOT appear.
 
 ## Tool-router overlay
 - [ ] With persona=developer set, send "explain my codebase" — agent should choose code-cluster tools.
-- [ ] Set `ATLAS_NO_PERSONA_BIAS=true` and restart — the overlay block should be skipped (confirm via absence of related entries in tool-router logs).
+- [ ] Set `BHAI_NO_PERSONA_BIAS=true` and restart — the overlay block should be skipped (confirm via absence of related entries in tool-router logs).
 
 ## Comparison to demo
 - [ ] Open `desktop/onboarding-demo/index.html` — the persona step in the demo and the production wizard should match within ~2% (sizes, padding, hover behaviour).
@@ -116,8 +116,8 @@
 - [ ] Persona-aware filler: if persona=developer, the rotation should include
   "I'll prioritize codebase context."
 - [ ] Late-night session adds a "minimal mode" signal.
-- [ ] `ATLAS_NO_MAGIC_MOMENT_RICH=true` → card stays on W1 static signals.
-- [ ] `ATLAS_NO_MAGIC_MOMENT=true` → card hidden entirely.
+- [ ] `BHAI_NO_MAGIC_MOMENT_RICH=true` → card stays on W1 static signals.
+- [ ] `BHAI_NO_MAGIC_MOMENT=true` → card hidden entirely.
 
 ## Adaptive Nudges
 - [ ] Open the bot 2 days after first install. The personalize-shortcuts
@@ -125,7 +125,7 @@
 - [ ] Day 3: browser-memory nudge fires.
 - [ ] Day 5: voice-speed nudge fires.
 - [ ] After all three fire, no further onboarding nudges (graduatedAt set).
-- [ ] `ATLAS_NO_ONBOARDING_NUDGES=true` → no nudges fire ever.
+- [ ] `BHAI_NO_ONBOARDING_NUDGES=true` → no nudges fire ever.
 - [ ] Tapping "Don't suggest more" on any nudge → graduatedAt set immediately;
   no further nudges.
 

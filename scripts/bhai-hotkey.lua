@@ -6,7 +6,7 @@
 -- Bhai Overlay Chat — Hammerspoon Hotkey
 -- Cmd+J = toggle, Escape = dismiss
 
-local atlasOverlay = nil
+local bhaiOverlay = nil
 local OVERLAY_URL = "http://127.0.0.1:18792"
 local isClosing = false
 local resizeTimer = nil
@@ -15,19 +15,19 @@ local MAX_WIDTH = 340
 local MAX_HEIGHT = 500
 local MIN_HEIGHT = 56  -- just the input bar
 
-function showAtlas()
+function showBhai()
     local screen = hs.screen.mainScreen()
     local f = screen:frame()
     local x = f.x + f.w - MAX_WIDTH - 16
     local y = f.y + 8
 
-    if atlasOverlay then
-        atlasOverlay:delete()
-        atlasOverlay = nil
+    if bhaiOverlay then
+        bhaiOverlay:delete()
+        bhaiOverlay = nil
     end
 
     -- Start small (just input bar), will grow dynamically
-    atlasOverlay = hs.webview.new(hs.geometry.rect(x, y, MAX_WIDTH, MIN_HEIGHT))
+    bhaiOverlay = hs.webview.new(hs.geometry.rect(x, y, MAX_WIDTH, MIN_HEIGHT))
         :windowStyle({"borderless", "closable"})
         :allowTextEntry(true)
         :allowGestures(true)
@@ -49,24 +49,24 @@ function showAtlas()
 
     hs.focus()
     hs.timer.doAfter(0.5, function()
-        if atlasOverlay then
-            atlasOverlay:evaluateJavaScript("document.getElementById('input').focus();", function() end)
+        if bhaiOverlay then
+            bhaiOverlay:evaluateJavaScript("document.getElementById('input').focus();", function() end)
         end
     end)
 
     -- Start polling content height to resize dynamically
     if resizeTimer then resizeTimer:stop() end
     resizeTimer = hs.timer.doEvery(0.3, function()
-        if atlasOverlay and atlasOverlay:isVisible() then
-            atlasOverlay:evaluateJavaScript(
+        if bhaiOverlay and bhaiOverlay:isVisible() then
+            bhaiOverlay:evaluateJavaScript(
                 "document.getElementById('container').scrollHeight",
                 function(height)
                     if height and type(height) == "number" and height > 0 then
                         local newH = math.min(math.max(height + 10, MIN_HEIGHT), MAX_HEIGHT)
-                        local frame = atlasOverlay:frame()
+                        local frame = bhaiOverlay:frame()
                         if math.abs(frame.h - newH) > 2 then
                             frame.h = newH
-                            atlasOverlay:frame(frame)
+                            bhaiOverlay:frame(frame)
                         end
                     end
                 end
@@ -77,13 +77,13 @@ function showAtlas()
     isClosing = false
 end
 
-function hideAtlas()
-    if not atlasOverlay or not atlasOverlay:isVisible() or isClosing then return end
+function hideBhai()
+    if not bhaiOverlay or not bhaiOverlay:isVisible() or isClosing then return end
     isClosing = true
 
     if resizeTimer then resizeTimer:stop(); resizeTimer = nil end
 
-    atlasOverlay:evaluateJavaScript([[
+    bhaiOverlay:evaluateJavaScript([[
         (function() {
             var ib = document.getElementById('input-box');
             var rb = document.getElementById('reply-box');
@@ -93,24 +93,24 @@ function hideAtlas()
         })();
     ]], function() end)
     hs.timer.doAfter(0.25, function()
-        if atlasOverlay then atlasOverlay:hide() end
+        if bhaiOverlay then bhaiOverlay:hide() end
         isClosing = false
     end)
 end
 
-function toggleAtlas()
-    if atlasOverlay and atlasOverlay:isVisible() then
-        hideAtlas()
+function toggleBhai()
+    if bhaiOverlay and bhaiOverlay:isVisible() then
+        hideBhai()
     else
-        showAtlas()
+        showBhai()
     end
 end
 
-hs.hotkey.bind({"cmd"}, "j", toggleAtlas)
+hs.hotkey.bind({"cmd"}, "j", toggleBhai)
 
 hs.hotkey.bind({}, "escape", function()
-    if atlasOverlay and atlasOverlay:isVisible() then
-        hideAtlas()
+    if bhaiOverlay and bhaiOverlay:isVisible() then
+        hideBhai()
     end
 end)
 

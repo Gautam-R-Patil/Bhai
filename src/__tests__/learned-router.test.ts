@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = mkdtempSync(join(tmpdir(), "bhai-router-"));
+process.env.BHAI_DATA_DIR = mkdtempSync(join(tmpdir(), "bhai-router-"));
 const r = await import("../routing/learned-router.js");
 
 const DAY = 24 * 60 * 60 * 1000;

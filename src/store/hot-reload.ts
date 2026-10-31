@@ -7,7 +7,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 
 import type { StoreItem, StoreItemType, StoreMCPConfig } from "./types.js";
-import { SKILLS_PATH, MCP_PATH, TOOLS_PATH, MCP_CONFIG_PATH } from "./installer.js";
+import { SKILLS_PATH, MCP_PATH, TOOLS_PATH, MCP_CONFIG_PATH, packageConfigPath } from "./installer.js";
 
 // ── Hot-reload state ──────────────────────────────
 
@@ -55,7 +55,7 @@ export function registerToolCallbacks(
 /**
  * Register the document-templates reload callback.
  * Called by the document tools during initialization so newly installed
- * templates (dropped into ~/.atlas/store/templates/) are picked up without a restart.
+ * templates (dropped into ~/.bhai/store/templates/) are picked up without a restart.
  */
 export function registerTemplatesReloader(callback: () => void): void {
   templatesReloadCallback = callback;
@@ -153,16 +153,16 @@ async function hotReloadMCP(item: StoreItem): Promise<void> {
   // Read the MCP config
   let config: StoreMCPConfig[string];
 
-  const atlasConfigPath = join(mcpPath, "atlas.config.json");
-  if (existsSync(atlasConfigPath)) {
-    const atlasConfig = JSON.parse(await readFile(atlasConfigPath, "utf-8"));
-    if (atlasConfig.mcp) {
+  const bhaiConfigPath = packageConfigPath(mcpPath);
+  if (existsSync(bhaiConfigPath)) {
+    const bhaiConfig = JSON.parse(await readFile(bhaiConfigPath, "utf-8"));
+    if (bhaiConfig.mcp) {
       config = {
-        command: atlasConfig.mcp.command || "node",
-        args: (atlasConfig.mcp.args || ["dist/index.js"]).map((arg: string) =>
+        command: bhaiConfig.mcp.command || "node",
+        args: (bhaiConfig.mcp.args || ["dist/index.js"]).map((arg: string) =>
           arg.startsWith("/") ? arg : join(mcpPath, arg)
         ),
-        ...(atlasConfig.mcp.env ? { env: atlasConfig.mcp.env } : {}),
+        ...(bhaiConfig.mcp.env ? { env: bhaiConfig.mcp.env } : {}),
       };
     } else {
       config = {
@@ -275,7 +275,7 @@ export async function reloadAllStoreItems(): Promise<void> {
     }
   }
 
-  // Templates (bundled + ~/.atlas/store/templates/)
+  // Templates (bundled + ~/.bhai/store/templates/)
   if (templatesReloadCallback) {
     try { templatesReloadCallback(); } catch (err) {
       console.warn("🏪 Templates reload failed:", (err as Error).message);

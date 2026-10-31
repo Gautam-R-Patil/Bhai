@@ -4,7 +4,7 @@
 
 // ── spogo auto-installer ──────────────────────
 // Downloads the `spogo` binary from GitHub releases for the current platform
-// and installs it to ~/.atlas/bin/spogo. No brew/go/npm deps required — uses
+// and installs it to ~/.bhai/bin/spogo. No brew/go/npm deps required — uses
 // Node's native https + tar (unix) / PowerShell Expand-Archive (win).
 //
 // This lets non-technical Electron-app users get full Spotify control without
@@ -23,23 +23,24 @@ import {
 } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { get as httpsGet } from "node:https";
-import { arch, homedir, platform, tmpdir } from "node:os";
+import { arch, platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { getBhaiHome } from "../config/paths.js";
 import { IS_LINUX, IS_MAC, IS_WIN } from "./platform.js";
 
 const execFileAsync = promisify(execFile);
 
 // ── Paths ─────────────────────────────────────
 
-export const ATLAS_BIN_DIR = join(homedir(), ".atlas", "bin");
+export const BHAI_BIN_DIR = join(getBhaiHome(), "bin");
 
 export function spogoBinaryPath(): string {
-    return join(ATLAS_BIN_DIR, IS_WIN ? "spogo.exe" : "spogo");
+    return join(BHAI_BIN_DIR, IS_WIN ? "spogo.exe" : "spogo");
 }
 
 function ensureBinDir(): void {
-    if (!existsSync(ATLAS_BIN_DIR)) mkdirSync(ATLAS_BIN_DIR, { recursive: true });
+    if (!existsSync(BHAI_BIN_DIR)) mkdirSync(BHAI_BIN_DIR, { recursive: true });
 }
 
 // ── Asset resolution ──────────────────────────
@@ -77,7 +78,7 @@ function httpsJson<T = unknown>(url: string): Promise<T> {
             if (depth > 5) return reject(new Error("Too many redirects"));
             httpsGet(
                 u,
-                { headers: { "User-Agent": "atlas-spotify-installer", Accept: "application/vnd.github+json" } },
+                { headers: { "User-Agent": "bhai-spotify-installer", Accept: "application/vnd.github+json" } },
                 (res: IncomingMessage) => {
                     if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                         res.resume();
@@ -108,7 +109,7 @@ function httpsDownload(url: string, outPath: string, onProgress?: (pct: number) 
     return new Promise((resolve, reject) => {
         const doGet = (u: string, depth = 0) => {
             if (depth > 5) return reject(new Error("Too many redirects"));
-            httpsGet(u, { headers: { "User-Agent": "atlas-spotify-installer" } }, (res: IncomingMessage) => {
+            httpsGet(u, { headers: { "User-Agent": "bhai-spotify-installer" } }, (res: IncomingMessage) => {
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     res.resume();
                     return doGet(res.headers.location, depth + 1);
@@ -206,7 +207,7 @@ export interface InstallResult {
 }
 
 /**
- * Download + install spogo into ~/.atlas/bin. Returns the resolved binary path.
+ * Download + install spogo into ~/.bhai/bin. Returns the resolved binary path.
  * If already installed, returns the existing path without re-downloading.
  */
 export async function installSpogo(
@@ -268,7 +269,7 @@ async function downloadAndInstall(
     tagName: string,
     log: (msg: string, pct?: number) => void,
 ): Promise<InstallResult> {
-    const tmpDir = join(tmpdir(), `atlas-spogo-${Date.now()}`);
+    const tmpDir = join(tmpdir(), `bhai-spogo-${Date.now()}`);
     mkdirSync(tmpDir, { recursive: true });
 
     const archivePath = join(tmpDir, asset.name);

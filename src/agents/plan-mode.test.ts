@@ -426,11 +426,11 @@ describe("plan-mode — planModeReminderBody", () => {
     });
 
     it("spec-mode body includes task and spec path", () => {
-        enterSpecMode("build auth", "/workspace/.atlas/specs/build-auth.md");
+        enterSpecMode("build auth", "/workspace/.bhai/specs/build-auth.md");
         const body = planModeReminderBody();
         expect(body).toContain("Spec mode is active");
         expect(body).toContain("build auth");
-        expect(body).toContain("/workspace/.atlas/specs/build-auth.md");
+        expect(body).toContain("/workspace/.bhai/specs/build-auth.md");
         expect(body).toContain("finalize_spec");
     });
 

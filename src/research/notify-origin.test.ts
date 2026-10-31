@@ -90,7 +90,7 @@ describe("research notifications follow where research was asked", () => {
 describe("boot recovery", () => {
     it("a running research whose process is gone is interrupted, however recent", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-recover-"));
-        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.stubEnv("BHAI_DATA_DIR", dir);
         vi.resetModules();
         const now = new Date().toISOString();
         const entry = (id: string, pid?: number) => ({ id, topic: id, profile: "quick", status: "running", startedAt: now, updatedAt: now, sourcesProcessed: 0, findingsCount: 0, pid });
@@ -107,7 +107,7 @@ describe("boot recovery", () => {
 
     it("a running research last updated before the machine booted is interrupted, even if its pid is reused", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-reboot-"));
-        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.stubEnv("BHAI_DATA_DIR", dir);
         vi.resetModules();
         const os = (await import("node:os")).default;
         const uptime = vi.spyOn(os, "uptime").mockReturnValue(60); // booted a minute ago
@@ -124,7 +124,7 @@ describe("boot recovery", () => {
 
     it("prunes old failed checkpoints and ones the index no longer lists", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-prune-"));
-        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.stubEnv("BHAI_DATA_DIR", dir);
         vi.resetModules();
         const old = new Date(Date.now() - 30 * 86_400_000).toISOString();
         const now = new Date().toISOString();
@@ -147,7 +147,7 @@ describe("boot recovery", () => {
 
     it("a lost or unreadable index deletes no checkpoints", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-prune-corrupt-"));
-        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.stubEnv("BHAI_DATA_DIR", dir);
         vi.resetModules();
         const now = new Date().toISOString();
         const p = await import("./persistence.js");
@@ -167,7 +167,7 @@ describe("boot recovery", () => {
 describe("auto-resume after a restart", () => {
     it("counts the try before running it and stops after two", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-resume-"));
-        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.stubEnv("BHAI_DATA_DIR", dir);
         vi.resetModules();
         const id = "research_7_7";
         const now = new Date().toISOString();
@@ -191,7 +191,7 @@ describe("auto-resume after a restart", () => {
 
     it("re-sends the answer of a research that finished just before the restart", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-undelivered-"));
-        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.stubEnv("BHAI_DATA_DIR", dir);
         vi.resetModules();
         const now = new Date().toISOString();
         writeFileSync(join(dir, "research-index.json"), JSON.stringify({
@@ -210,7 +210,7 @@ describe("auto-resume after a restart", () => {
 
     it("at boot, waits for the computer to connect instead of marking an unsent answer delivered", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-resend-"));
-        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.stubEnv("BHAI_DATA_DIR", dir);
         vi.resetModules();
         const id = "research_10_10";
         const now = new Date().toISOString();
@@ -244,7 +244,7 @@ describe("auto-resume after a restart", () => {
 
     it("won't resume a cancelled research (its old run may still be finishing)", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-cancelled-"));
-        vi.stubEnv("ATLAS_DATA_DIR", dir);
+        vi.stubEnv("BHAI_DATA_DIR", dir);
         vi.resetModules();
         const id = "research_9_9";
         const now = new Date().toISOString();

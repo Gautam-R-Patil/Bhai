@@ -65,7 +65,7 @@ async function fetchWttr(location: string): Promise<WttrResponse> {
     const loc = resolveLocation(location);
     const url = `https://wttr.in/${loc}?format=j1`;
     const res = await fetch(url, {
-        headers: { "User-Agent": "atlas-agent/0.2.0" },
+        headers: { "User-Agent": "bhai-agent/0.2.0" },
     });
     if (!res.ok) throw new Error(`wttr.in returned ${res.status}`);
     return (await res.json()) as WttrResponse;

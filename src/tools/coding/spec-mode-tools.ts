@@ -16,7 +16,7 @@ import path from "node:path";
 import { enterSpecMode, getPlanModeState, isSpecMode, specToPlan } from "../../agents/plan-mode.js";
 import type { ToolDefinition } from "../get-current-time.js";
 
-const SPECS_DIR = path.resolve(".atlas", "specs");
+const SPECS_DIR = path.resolve(".bhai", "specs");
 
 function safeSlug(task: string): string {
     return (

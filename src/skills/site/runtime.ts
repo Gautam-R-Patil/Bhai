@@ -230,8 +230,8 @@ function takeConsent(token: string | undefined, task: SiteTask): boolean {
 const spent: Array<{ at: number; amount: number }> = [];
 
 export function spendAllowed(amount: number): boolean {
-    const perOrder = Number(process.env.ATLAS_SPEND_CAP_ORDER_INR ?? 5000);
-    const perDay = Number(process.env.ATLAS_SPEND_CAP_DAY_INR ?? 10000);
+    const perOrder = Number(process.env.BHAI_SPEND_CAP_ORDER_INR ?? 5000);
+    const perDay = Number(process.env.BHAI_SPEND_CAP_DAY_INR ?? 10000);
     const dayAgo = Date.now() - 86_400_000;
     const today = spent.filter((s) => s.at > dayAgo).reduce((sum, s) => sum + s.amount, 0);
     return amount <= perOrder && today + amount <= perDay;

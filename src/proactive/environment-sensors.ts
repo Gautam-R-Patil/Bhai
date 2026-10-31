@@ -30,7 +30,7 @@ export async function getEnvironmentSnapshot(): Promise<EnvironmentSnapshot> {
     return { fsChanges, upcomingCalendar: calendar, systemLoad: sysLoad, networkStatus: isOnline(), location: getLocation() };
 }
 
-const FS_MARKER_PATH = `${tmpdir()}/.atlas-fs-marker`;
+const FS_MARKER_PATH = `${tmpdir()}/.bhai-fs-marker`;
 
 async function getRecentFSChanges(): Promise<string[]> {
     try {

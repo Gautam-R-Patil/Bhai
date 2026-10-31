@@ -67,9 +67,10 @@ export async function ensurePythonEnv(): Promise<void> {
 
 async function _doEnsure(): Promise<void> {
     const venvDir = getVenvDir();
-    const markerFile = path.join(venvDir, ".atlas-ready");
+    const markerFile = path.join(venvDir, ".bhai-ready");
 
-    if (fs.existsSync(markerFile)) {
+    // .atlas-ready: a venv set up before the rename is just as ready (skips a ~5 min reinstall).
+    if (fs.existsSync(markerFile) || fs.existsSync(path.join(venvDir, ".atlas-ready"))) {
         _envReady = true;
         return;
     }

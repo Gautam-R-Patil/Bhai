@@ -16,6 +16,7 @@
 // machine. Only computer-use tools run (no shell, no AppleScript, no Wi-Fi toggles), and
 // clicks/typing are refused while a terminal is in front. Results append to OUT
 // (default data/eval-computer-use.jsonl). Spotify and Apple Music tasks need those apps signed in.
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import Anthropic from "@anthropic-ai/sdk";
 import { execFile } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -388,7 +389,7 @@ setToolRouterLLM(
           } as never)
         : ({ chat: () => new Promise(() => {}) } as never),
 );
-if (ROUTER) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "10000";
+if (ROUTER) process.env.BHAI_TOOL_ROUTER_TIMEOUT_MS ??= "10000";
 // DECISION_DEPLOYMENT=<name>: the classifier is Microsoft-Decision-1, called straight on Azure
 // (in the app it goes through Convex /api/decide); otherwise no Decision step here.
 setDecisionTransport(
@@ -404,7 +405,7 @@ setDecisionTransport(
           }
         : null,
 );
-if (process.env.DECISION_DEPLOYMENT) process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS ??= "6000";
+if (process.env.DECISION_DEPLOYMENT) process.env.BHAI_TOOL_ROUTER_TIMEOUT_MS ??= "6000";
 let planCost = 0; // PLAN=1: the planner's own cost, added to the task's
 const only = process.argv.slice(2);
 const results = [];

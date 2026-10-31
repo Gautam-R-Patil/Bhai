@@ -64,6 +64,11 @@ async function probe(cmd: string, args: string[]): Promise<boolean> {
     }
 }
 
+/** Bhai's native messaging host is registered in this Chrome hosts dir (com.atlas.bridge: its pre-rename name). */
+export function hasBridgeHost(nmHostDir: string): boolean {
+    return ["com.bhai.bridge.json", "com.atlas.bridge.json"].some((f) => existsSync(join(nmHostDir, f)));
+}
+
 export async function getPlatformCapabilities(): Promise<PlatformCapabilities> {
     if (_cached) return _cached;
 
@@ -154,7 +159,7 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilities> {
             : p === "linux"
               ? join(homedir(), ".config", "google-chrome", "NativeMessagingHosts")
               : null;
-    const nativeMessaging = nmHostDir ? existsSync(join(nmHostDir, "com.atlas.bridge.json")) : false;
+    const nativeMessaging = nmHostDir ? hasBridgeHost(nmHostDir) : false;
 
     // ── Native module ────────────────────────────
     let nativeModuleLoaded = false;
@@ -183,7 +188,7 @@ export async function getPlatformCapabilities(): Promise<PlatformCapabilities> {
         audio: { portaudio },
     };
 
-    if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
+    if (process.env.BHAI_SKIP_CAPABILITY_PROBE !== "true") {
         console.log(
             `⚡ [capabilities] platform=${p} shell=${_cached.shell.type} screenshot=${_cached.screenshot.engine} clipboard=${_cached.clipboard.engine} ocr=${_cached.ocr.engine} native=${_cached.nativeModule.loaded}`,
         );

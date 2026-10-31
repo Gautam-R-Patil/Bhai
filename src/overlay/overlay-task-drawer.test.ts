@@ -6,8 +6,8 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-task-drawer-"));
-process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-task-drawer-"));
+process.env.BHAI_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
 const state = vi.hoisted(() => ({ research: true, cancelled: [] as string[] }));
 vi.mock("../research/index.js", async (orig) => ({
@@ -33,7 +33,7 @@ const chat = await import("./overlay-chat.js");
 chat.initOverlayChat({} as never);
 
 it("lists running tasks, cancels one, and says when it ended", async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.BHAI_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`);
     const seen: Array<{ type: string; taskId?: string; name?: string; progress?: number; phase?: string }> = [];
     ws.on("message", (d) => seen.push(JSON.parse(String(d))));
     await new Promise((r) => ws.once("open", r));

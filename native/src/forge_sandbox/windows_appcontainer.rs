@@ -63,7 +63,7 @@ fn to_wide(s: &str) -> Vec<u16> {
 /// Idempotently get or create the AppContainer profile for `slug`. Returns
 /// an owned SID buffer the caller must drop.
 pub fn ensure_profile(slug: &str) -> io::Result<AppContainerSid> {
-    let profile_name = format!("atlas-forge-{slug}");
+    let profile_name = format!("bhai-forge-{slug}");
     let display = format!("Bhai Forge sandboxed tool: {slug}");
     let description = format!("Per-slug isolated AppContainer for Bhai Forge tool '{slug}'");
     let profile_w = to_wide(&profile_name);

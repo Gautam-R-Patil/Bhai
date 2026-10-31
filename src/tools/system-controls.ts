@@ -31,7 +31,7 @@ const execFileAsync = promisify(execFile);
 // ── Helper: run AppleScript from string ───────
 
 async function runAppleScript(script: string, timeout = 5000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_sys_${Date.now()}.scpt`);
+    const tmpFile = join(tmpdir(), `bhai_sys_${Date.now()}.scpt`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout });
@@ -44,7 +44,7 @@ async function runAppleScript(script: string, timeout = 5000): Promise<string> {
 }
 
 async function runJXA(script: string, timeout = 5000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_sys_${Date.now()}.js`);
+    const tmpFile = join(tmpdir(), `bhai_sys_${Date.now()}.js`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout });

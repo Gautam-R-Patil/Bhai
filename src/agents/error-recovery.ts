@@ -255,6 +255,6 @@ function sleep(ms: number): Promise<void> {
 // retry the same upstream fault in lockstep and re-collide.
 export function jitteredBackoff(backoffMs: number, attempt: number): number {
     const base = backoffMs * 2 ** attempt;
-    if (process.env.ATLAS_NO_RECOVERY_JITTER === "true") return base;
+    if (process.env.BHAI_NO_RECOVERY_JITTER === "true") return base;
     return base + Math.random() * (base / 2);
 }

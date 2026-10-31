@@ -62,7 +62,7 @@ function reference(text: string, forms: string[], handleOfForm: Map<string, stri
 
 describe("known-value masking property", () => {
     it("masks every char of every form occurrence (seeded, thousands of cases)", async () => {
-        vi.stubEnv("ATLAS_NO_PROTECT_CACHE", "true");
+        vi.stubEnv("BHAI_NO_PROTECT_CACHE", "true");
         const r = rng(0x5eed);
         const pick = <T>(a: T[]) => a[Math.floor(r() * a.length)];
         const int = (lo: number, hi: number) => lo + Math.floor(r() * (hi - lo + 1));

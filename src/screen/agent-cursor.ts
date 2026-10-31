@@ -9,7 +9,7 @@
  * (`##BHAI_CURSOR_ACK##<id>`), the same pipe the companion uses.
  *
  * Every call is a no-op unless the desktop app spawned the bot
- * (ATLAS_AGENT_CURSOR_IPC=1) and ATLAS_NO_AGENT_CURSOR is not "true". Waits are
+ * (BHAI_AGENT_CURSOR_IPC=1) and BHAI_NO_AGENT_CURSOR is not "true". Waits are
  * bounded (glide ≤300ms, hide ≤150ms), so a missing or stuck app never stalls
  * a click or a screenshot. Coordinates are global screen points, as posted to
  * CGEvent / SetCursorPos.
@@ -49,7 +49,7 @@ let drivers = 0;
 const turnStore = new AsyncLocalStorage<{ drove: boolean; done: boolean }>();
 
 export function agentCursorEnabled(): boolean {
-    return process.env.ATLAS_NO_AGENT_CURSOR !== "true" && process.env.ATLAS_AGENT_CURSOR_IPC === "1";
+    return process.env.BHAI_NO_AGENT_CURSOR !== "true" && process.env.BHAI_AGENT_CURSOR_IPC === "1";
 }
 
 function send(evt: CursorEvent & { id?: number }): void {

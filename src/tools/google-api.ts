@@ -28,7 +28,7 @@ const execFileAsync = promisify(execFile);
 // OAuth2 Account Manager
 // ═══════════════════════════════════════════════
 
-const BASE_DATA_DIR = process.env.ATLAS_DATA_DIR || join(process.cwd(), "data");
+const BASE_DATA_DIR = process.env.BHAI_DATA_DIR || join(process.cwd(), "data");
 const DATA_DIR = join(BASE_DATA_DIR, "google-tokens");
 const CREDENTIALS_PATH = join(BASE_DATA_DIR, "google-credentials.json");
 const OAUTH_CALLBACK_PORT = 8844;

@@ -32,8 +32,8 @@
     <div class="title-bar">
         <span class="title-bar-text">Bhai</span>
         <div class="title-bar-buttons">
-            <button class="title-btn" onclick="atlas.minimize()" title="Minimize" aria-label="Minimize">─</button>
-            <button class="title-btn close" onclick="atlas.close()" title="Close" aria-label="Close">✕</button>
+            <button class="title-btn" onclick="bhai.minimize()" title="Minimize" aria-label="Minimize">─</button>
+            <button class="title-btn close" onclick="bhai.close()" title="Close" aria-label="Close">✕</button>
         </div>
     </div>
 
@@ -355,7 +355,7 @@
                                     <small class="workspace-path" id="settingWorkspace" style="color:var(--text-secondary);"></small>
                                 </div>
                                 <div style="display:flex;gap:6px;flex:none;">
-                                    <button class="btn btn-secondary btn-sm" onclick="atlas.openWorkspace()">Open</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="bhai.openWorkspace()">Open</button>
                                     <button class="btn btn-secondary btn-sm" onclick="chooseWorkspace()">Change…</button>
                                     <button class="btn btn-secondary btn-sm" id="workspaceResetBtn" onclick="resetWorkspace()" style="display:none;">Use default</button>
                                 </div>
@@ -530,8 +530,8 @@
                                     <small style="color:var(--text-secondary);">For troubleshooting or sending to support</small>
                                 </div>
                                 <div style="display:flex;gap:6px;">
-                                    <button class="btn btn-sm btn-secondary" onclick="atlas.openLogsDir()">Logs</button>
-                                    <button class="btn btn-sm btn-secondary" onclick="atlas.openDataDir()">Data folder</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="bhai.openLogsDir()">Logs</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="bhai.openDataDir()">Data folder</button>
                                 </div>
                             </div>
                         </div>
@@ -1544,7 +1544,7 @@
 
         async function loadRecentChats() {
             try {
-                const chats = (await atlas.listChats()) || [];
+                const chats = (await bhai.listChats()) || [];
                 const box = document.getElementById('recentChats');
                 const list = document.getElementById('recentList');
                 box.hidden = chats.length === 0;
@@ -1582,7 +1582,7 @@
 
         async function loadUpcoming() {
             try {
-                const items = ((await atlas.getUpcoming()) || [])
+                const items = ((await bhai.getUpcoming()) || [])
                     .map(t => ({ ...t, sort: t.fireAt ?? Infinity }))
                     .sort((a, b) => a.sort - b.sort)
                     .slice(0, 3);
@@ -1613,7 +1613,7 @@
         async function loadChats(keepThread) {
             const list = document.getElementById('chatsList');
             const thread = document.getElementById('chatsThread');
-            const chats = await atlas.listChats().catch(() => []);
+            const chats = await bhai.listChats().catch(() => []);
             document.getElementById('chatsClearBtn').hidden = !chats.length;
             list.replaceChildren();
             if (!chats.length) {
@@ -1653,7 +1653,7 @@
             chatsOpenId = id;
             chatsFresh = false;
             markOpenChat(id);
-            const msgs = await atlas.getChat(id).catch(() => []);
+            const msgs = await bhai.getChat(id).catch(() => []);
             if (chatsOpenId !== id) return; // another chat was picked meanwhile
             const thread = document.getElementById('chatsThread');
             thread.replaceChildren(...msgs.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => chatBubble(m.role, m.text, m.ts, false, null, m.images)));
@@ -1764,7 +1764,7 @@
                 const file = typeof im.path === 'string' && im.path ? im.path : null;
                 if (file) {
                     bar.append(button('Download', 'Download image', async () => {
-                        if ((await atlas.saveImage(file).catch(() => false)) === false) showToast("Couldn't save that image.", true);
+                        if ((await bhai.saveImage(file).catch(() => false)) === false) showToast("Couldn't save that image.", true);
                     }));
                 } else {
                     const dl = document.createElement('a');
@@ -1777,14 +1777,14 @@
                 }
                 bar.append(button('Copy', 'Copy image', async (b) => {
                     try {
-                        if (file) { if (!(await atlas.copyImage(file))) throw new Error('copy'); } else await copyImage(im.url);
+                        if (file) { if (!(await bhai.copyImage(file))) throw new Error('copy'); } else await copyImage(im.url);
                         b.textContent = 'Copied';
                     } catch { b.textContent = "Couldn't copy"; }
                     setTimeout(() => { b.textContent = 'Copy'; }, 1500);
                 }));
                 if (file) {
                     bar.append(button(SHOW_IN_FOLDER, SHOW_IN_FOLDER, async () => {
-                        if (!(await atlas.revealImage(file).catch(() => false))) showToast("That file isn't there any more.", true);
+                        if (!(await bhai.revealImage(file).catch(() => false))) showToast("That file isn't there any more.", true);
                     }));
                 }
                 if (typeof im.before === 'string' && im.before.startsWith('data:image/')) {
@@ -1888,7 +1888,7 @@
             btn.onclick = busy ? stopChat : null;
         }
         function stopChat() {
-            atlas.chatStop();
+            bhai.chatStop();
             if (liveChat) { liveChat.stopping = true; renderLiveChat(); } // the stopped reply ends the turn
         }
 
@@ -2080,7 +2080,7 @@
             renderLiveChat();
             thread.scrollTop = thread.scrollHeight;
             setComposerBusy(true);
-            const r = await atlas.chatSend(id, text, file ? { name: file.name, base64: file.base64, mimeType: file.mimeType } : undefined).catch((e) => ({ ok: false, error: e.message }));
+            const r = await bhai.chatSend(id, text, file ? { name: file.name, base64: file.base64, mimeType: file.mimeType } : undefined).catch((e) => ({ ok: false, error: e.message }));
             if (!r || !r.ok) finishLiveChat(r?.error ? `Couldn't send: ${r.error}.` : "Couldn't reach Bhai.", true);
             return true;
         }
@@ -2147,7 +2147,7 @@
             try { localStorage.setItem(TURN_PANEL_KEY, open ? '1' : '0'); } catch { /* private storage off */ }
         });
 
-        atlas.onChatEvent(({ msg }) => {
+        bhai.onChatEvent(({ msg }) => {
             if (msg && msg.type === 'research_action_result') {
                 if (msg.error) showToast(msg.error, true);
                 else if (msg.action === 'start') {
@@ -2161,7 +2161,7 @@
             } else if (msg && msg.type === 'research_complete') loadResearch();
         });
 
-        atlas.onChatEvent(({ chat, msg }) => {
+        bhai.onChatEvent(({ chat, msg }) => {
             // Something Bhai finished in the background (a research report): into the open chat.
             if (msg && (msg.type === 'notification' || msg.type === 'research_complete') && msg.text) {
                 const thread = document.getElementById('chatsThread');
@@ -2171,7 +2171,7 @@
                         const open = document.createElement('button');
                         open.className = 'btn btn-secondary btn-sm';
                         open.textContent = 'Open full report';
-                        open.onclick = () => atlas.openReport(msg.reportFile);
+                        open.onclick = () => bhai.openReport(msg.reportFile);
                         row.append(open);
                     }
                     thread.append(row);
@@ -2214,7 +2214,7 @@
         }
         async function clearChatHistory() {
             if (!confirm('Delete all saved chats? Bhai keeps what it has learned in its memory.')) return;
-            await atlas.clearChats();
+            await bhai.clearChats();
             chatsOpenId = null;
             loadChats();
         }
@@ -2264,7 +2264,7 @@
             const hello = part === 'morning' ? 'Good morning' : part === 'afternoon' ? 'Good afternoon' : part === 'evening' ? 'Good evening' : 'Hi';
             return ownerFirstName ? `${hello}, ${ownerFirstName}` : hello;
         }
-        atlas.getAccountInfo().then((i) => { ownerFirstName = String(i?.name || '').trim().split(/\s+/)[0]; setMood(); }).catch(() => {});
+        bhai.getAccountInfo().then((i) => { ownerFirstName = String(i?.name || '').trim().split(/\s+/)[0]; setMood(); }).catch(() => {});
         setInterval(() => { if (!moodHold) setMood(); }, 10 * 60 * 1000); // roll over to the next part of the day
 
         function startFailed() {
@@ -2349,7 +2349,7 @@
 
         // A Mac that must sign in again can't start Bhai: say so, and make the button sign in.
         async function showSignInHint() {
-            const info = await atlas.getAccountInfo().catch(() => null);
+            const info = await bhai.getAccountInfo().catch(() => null);
             if (lastBotStatus === 'running' || botStarting) return;
             const need = !!info?.signInAgain;
             document.getElementById('startBtn').textContent = need ? 'Sign in' : 'Start Bhai';
@@ -2376,7 +2376,7 @@
 
         async function loadActivity() {
             try {
-                const items = (await atlas.getActivity()) || [];
+                const items = (await bhai.getActivity()) || [];
                 document.getElementById('didToday').hidden = items.length === 0;
                 document.getElementById('didList').replaceChildren(...items.map(it => dashRow(it.text, new Date(it.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))));
             } catch { /* non-fatal */ }
@@ -2427,10 +2427,10 @@
 
             // Account gate: check status before starting
             try {
-                const info = await atlas.getAccountInfo();
+                const info = await bhai.getAccountInfo();
                 if (info && info.signInAgain) {
                     // Bhai starts by itself once the sign-in goes through.
-                    await atlas.openAuthWindow().catch(() => {});
+                    await bhai.openAuthWindow().catch(() => {});
                     document.getElementById('startBtn').disabled = false;
                     botStarting = false;
                     setMood();
@@ -2467,14 +2467,14 @@
 
             document.getElementById('startBtn').textContent = 'Starting…';
 
-            const result = await atlas.startBot().catch(() => ({}));
+            const result = await bhai.startBot().catch(() => ({}));
             if (result.status === 'started' || result.status === 'already_running') {
                 updateUI('running');
                 // Update credit display
                 refreshCreditDisplay();
             } else if (result.status === 'signed_out' || result.status === 'sign_in_required') {
                 // Bhai starts by itself once the sign-in goes through.
-                await atlas.openAuthWindow().catch(() => {});
+                await bhai.openAuthWindow().catch(() => {});
                 document.getElementById('startBtn').disabled = false;
                 botStarting = false;
                 setMood();
@@ -2492,17 +2492,17 @@
             userStopping = true;
             setMood('sleepy');
 
-            await atlas.stopBot();
+            await bhai.stopBot();
             setTimeout(async () => {
-                const { status } = await atlas.getBotStatus();
+                const { status } = await bhai.getBotStatus();
                 updateUI(status);
                 document.getElementById('stopBtn').textContent = 'Stop';
             }, 2000);
         }
 
         // Listen for status changes from main process
-        atlas.onBotStatus((status) => updateUI(status));
-        atlas.onBotLog((msg) => addBotLog(msg));
+        bhai.onBotStatus((status) => updateUI(status));
+        bhai.onBotLog((msg) => addBotLog(msg));
 
         // ── Settings ──────────────────────────────────
 
@@ -2548,7 +2548,7 @@
                 return;
             }
             btn.dataset.armed = '';
-            await atlas.clearChats();
+            await bhai.clearChats();
             btn.textContent = 'Cleared';
             setTimeout(() => { btn.textContent = 'Clear'; }, 2000);
         }
@@ -2556,9 +2556,9 @@
         // Opening Settings checks for updates quietly, at most every 6 hours.
         async function autoCheckUpdates() {
             try {
-                const status = await atlas.getUpdateStatus();
+                const status = await bhai.getUpdateStatus();
                 if (status && status.lastCheck && Date.now() - new Date(status.lastCheck).getTime() < 6 * 60 * 60 * 1000) return;
-                const result = await atlas.checkForUpdates();
+                const result = await bhai.checkForUpdates();
                 updateLastCheckDisplay();
                 if (result && result.available) document.getElementById('prefUpdateStatus').textContent = `Version ${result.version} is available`;
             } catch { /* offline: try next time */ }
@@ -2566,20 +2566,20 @@
 
         // Settings save by themselves; integration changes restart the bot so it picks them up.
         async function restartBotForChanges(message) {
-            const status = await atlas.getBotStatus().catch(() => null);
+            const status = await bhai.getBotStatus().catch(() => null);
             if (!status || status.status !== 'running') return;
             showToast(message || 'Saved. Restarting Bhai…');
-            await atlas.stopBot();
+            await bhai.stopBot();
             for (let i = 0; i < 15; i++) {
                 await new Promise(r => setTimeout(r, 1000));
-                const st = await atlas.getBotStatus();
+                const st = await bhai.getBotStatus();
                 if (st.status === 'stopped') break;
             }
-            await atlas.startBot();
+            await bhai.startBot();
         }
 
         async function loadSettings() {
-            const info = await atlas.getIntegrations().catch(() => null);
+            const info = await bhai.getIntegrations().catch(() => null);
             if (!info) return;
             // Workspace
             document.getElementById('settingWorkspace').textContent = String(info.workspace || '').replace(/^\/Users\/[^/]+/, '~');
@@ -2587,7 +2587,7 @@
             document.getElementById('workspaceResetBtn').style.display = info.workspaceIsDefault ? 'none' : '';
             // GitHub: show whose token is saved
             if (info.githubSaved) {
-                const r = await atlas.testGithubToken('');
+                const r = await bhai.testGithubToken('');
                 showGithub(r && r.success ? r : null, !(r && r.success) ? (r && r.message) : '');
             } else {
                 showGithub(null, '');
@@ -2658,10 +2658,10 @@
             if (!token) return setStatus(st, '', '');
             if (!/^(ghp_|github_pat_|gho_)/.test(token)) return setStatus(st, 'GitHub tokens start with ghp_ or github_pat_.', 'error');
             setStatus(st, 'Checking…', 'loading');
-            const r = await atlas.testGithubToken(token);
+            const r = await bhai.testGithubToken(token);
             if (token !== fieldVal('settingGithubToken')) return;
             if (!r || !r.success) return setStatus(st, (r && r.message) || 'GitHub rejected this token.', 'error');
-            const saved = await atlas.saveSettings({ GITHUB_TOKEN: token });
+            const saved = await bhai.saveSettings({ GITHUB_TOKEN: token });
             if (!saved || !saved.success) return setStatus(st, "Couldn't save the token.", 'error');
             document.getElementById('settingGithubToken').value = '';
             showGithub(r, '');
@@ -2669,22 +2669,22 @@
         }
 
         async function disconnectGithub() {
-            await atlas.saveSettings({ GITHUB_TOKEN: '' });
+            await bhai.saveSettings({ GITHUB_TOKEN: '' });
             showGithub(null, '');
             await restartBotForChanges('GitHub disconnected. Restarting Bhai…');
         }
 
         // ── Workspace ──
         async function chooseWorkspace() {
-            const result = await atlas.chooseSettingsWorkspace();
+            const result = await bhai.chooseSettingsWorkspace();
             if (result.canceled || !result.path) return;
-            await atlas.saveSettings({ ATLAS_WORKSPACE: result.path });
+            await bhai.saveSettings({ BHAI_WORKSPACE: result.path });
             await loadSettings();
             await restartBotForChanges('Workspace changed. Restarting Bhai…');
         }
 
         async function resetWorkspace() {
-            await atlas.saveSettings({ ATLAS_WORKSPACE: '' });
+            await bhai.saveSettings({ BHAI_WORKSPACE: '' });
             await loadSettings();
             await restartBotForChanges('Workspace reset. Restarting Bhai…');
         }
@@ -2696,7 +2696,7 @@
             btn.disabled = true;
             setStatus(st, 'Finish signing in in your browser…', 'loading');
             try {
-                const result = await atlas.googleOAuth();
+                const result = await bhai.googleOAuth();
                 if (!result.success) return setStatus(st, 'Google sign-in failed: ' + (result.error || 'unknown error'), 'error');
                 setStatus(st, '', '');
                 await loadSettings();
@@ -2707,12 +2707,12 @@
         }
 
         async function disconnectGoogle(email) {
-            await atlas.googleDisconnect(email);
+            await bhai.googleDisconnect(email);
             await loadSettings();
             await restartBotForChanges('Google account removed. Restarting Bhai…');
         }
 
-        atlas.onGoogleOAuthSuccess(() => {
+        bhai.onGoogleOAuthSuccess(() => {
             if (document.getElementById('tab-settings').classList.contains('active')) loadSettings();
         });
 
@@ -2720,7 +2720,7 @@
         window.addEventListener('focus', async () => {
             if (!document.getElementById('tab-settings').classList.contains('active')) return;
             if (document.getElementById('ghSetup').style.display === 'none' || fieldVal('settingGithubToken')) return;
-            const token = await atlas.clipboardToken('github').catch(() => '');
+            const token = await bhai.clipboardToken('github').catch(() => '');
             if (!token) return;
             document.getElementById('settingGithubToken').value = token;
             showToast('Pasted your GitHub token from the clipboard');
@@ -2734,7 +2734,7 @@
         // Primary channel preference
         async function loadPrimaryChannel() {
             try {
-                const result = await atlas.getSettings();
+                const result = await bhai.getSettings();
                 if (result.success && result.settings.PRIMARY_CHANNEL) {
                     document.getElementById('primaryChannelSelect').value = result.settings.PRIMARY_CHANNEL;
                 }
@@ -2744,7 +2744,7 @@
         async function savePrimaryChannel() {
             const value = document.getElementById('primaryChannelSelect').value;
             try {
-                const r = await atlas.saveSettings({ PRIMARY_CHANNEL: value });
+                const r = await bhai.saveSettings({ PRIMARY_CHANNEL: value });
                 if (r && r.success === false) throw new Error(r.error || 'save failed');
                 showToast('Primary channel set to ' + value + ' — Bhai uses it after its next restart');
             } catch (err) {
@@ -2931,7 +2931,7 @@
                 const st = document.getElementById('tgTokenStatus');
                 if (!/^\d+:[A-Za-z0-9_-]{30,}$/.test(token)) return setStatus(st, token ? "That doesn't look like a full token yet." : '', 'error');
                 setStatus(st, 'Checking…', 'loading');
-                const r = await atlas.testChannel('telegram', { token });
+                const r = await bhai.testChannel('telegram', { token });
                 if (token !== fieldVal('chTelegramToken')) return;
                 if (!r || !r.success) return setStatus(st, (r && r.message) || 'Telegram rejected this token.', 'error');
                 setStatus(st, '✓ Found @' + r.username, 'success');
@@ -2945,7 +2945,7 @@
                 const st = document.getElementById('dcTokenStatus');
                 if (token.length < 50) return setStatus(st, token ? "That doesn't look like a full token yet." : '', 'error');
                 setStatus(st, 'Checking…', 'loading');
-                const r = await atlas.testChannel('discord', { token });
+                const r = await bhai.testChannel('discord', { token });
                 if (token !== fieldVal('chDiscordToken')) return;
                 if (!r || !r.success) return setStatus(st, (r && r.message) || 'Discord rejected this token.', 'error');
                 setStatus(st, '✓ ' + r.message, 'success');
@@ -2963,7 +2963,7 @@
             const st = document.getElementById('slTokenStatus');
             if (!/^xoxb-/.test(token)) return setStatus(st, token ? 'The Bot Token starts with xoxb-.' : '', 'error');
             setStatus(st, 'Checking…', 'loading');
-            const r = await atlas.testChannel('slack', { botToken: token });
+            const r = await bhai.testChannel('slack', { botToken: token });
             if (token !== fieldVal('chSlackBotToken')) return;
             if (!r || !r.success) return setStatus(st, (r && r.message) || 'Slack rejected this token.', 'error');
             setStatus(st, '✓ ' + r.message, 'success');
@@ -2983,11 +2983,11 @@
             ['slack', 2, 'chSlackAppToken', 'slackApp'],
         ];
         async function pickUpCopiedToken() {
-            if (!atlas.clipboardToken || !document.getElementById('tab-channels').classList.contains('active')) return;
+            if (!bhai.clipboardToken || !document.getElementById('tab-channels').classList.contains('active')) return;
             for (const [channel, step, id, kind] of CLIPBOARD_FIELDS) {
                 const field = document.getElementById(id);
                 if (!document.getElementById('chToggle' + capitalize(channel)).checked || wizardSteps[channel] !== step || field.value.trim()) continue;
-                const token = await atlas.clipboardToken(kind);
+                const token = await bhai.clipboardToken(kind);
                 if (!token || [...document.querySelectorAll('#tab-channels input')].some(i => i !== field && i.value.trim() === token)) continue;
                 if (channel === 'slack' && step === 1) goToWizardStep('slack', 2);
                 if (channel === 'telegram') document.getElementById('tgManual').open = true;
@@ -3029,7 +3029,7 @@
             btn.disabled = true;
             setStatus(st, 'Getting an address…', 'loading');
             try {
-                const r = await atlas.bhaiMailClaim(owner);
+                const r = await bhai.bhaiMailClaim(owner);
                 if (!r || !r.success) {
                     document.getElementById('emailOwnMailbox').open = true;
                     return setStatus(st, (r && r.notConfigured ? "Bhai's email isn't switched on yet" : "Couldn't reach Bhai's servers") + '. You can use your own mailbox below.', 'error');
@@ -3049,13 +3049,13 @@
             btn.disabled = true;
             try {
                 setStatus(st, 'Opening Telegram…', 'loading');
-                const r = await atlas.telegramManagedStart();
+                const r = await bhai.telegramManagedStart();
                 if (!r || !r.success) {
                     document.getElementById('tgManual').open = true;
                     return setStatus(st, (r && r.notConfigured ? "One-tap setup isn't switched on yet" : "Couldn't reach Bhai's servers") + '. BotFather below takes about a minute.', 'error');
                 }
                 setStatus(st, 'In Telegram, tap Create (keep the suggested username). Waiting…', 'loading');
-                const res = await atlas.telegramManagedWait(r.username);
+                const res = await bhai.telegramManagedWait(r.username);
                 if (!res || !res.success) return setStatus(st, ((res && res.message) || "Telegram didn't confirm") + '. Tap the button to try again.', 'error');
                 document.getElementById('chTelegramToken').value = res.token;
                 document.getElementById('chTelegramUserIds').value = res.userId;
@@ -3077,7 +3077,7 @@
             const st = document.getElementById('tgOwnerStatus');
             tgWaiting = true;
             setStatus(st, 'Waiting for your message…', 'loading');
-            const r = await atlas.telegramWaitOwner(token);
+            const r = await bhai.telegramWaitOwner(token);
             tgWaiting = false;
             if (token !== fieldVal('chTelegramToken')) return;
             if (!r || !r.success) return setStatus(st, ((r && r.message) || 'No message yet') + '. Tap the button to try again.', 'error');
@@ -3124,7 +3124,7 @@
             }
 
             try {
-                const result = await atlas.testChannel(channel, params);
+                const result = await bhai.testChannel(channel, params);
                 if (result && result.success) {
                     setStatus(resultEl, result.message || 'Connection successful!', 'success');
                     return result;
@@ -3169,7 +3169,7 @@
             const cur = sel.value;
             if (cur !== channel && cur !== 'overlay' && !(channelConfig[cur] && channelConfig[cur].enabled)) {
                 sel.value = channel;
-                try { await atlas.saveSettings({ PRIMARY_CHANNEL: channel }); } catch { /* non-fatal */ }
+                try { await bhai.saveSettings({ PRIMARY_CHANNEL: channel }); } catch { /* non-fatal */ }
             }
             const who = channel === 'slack' && r.ownerName ? ' Only ' + r.ownerName + ' can talk to it; change that under "Who can talk to Bhai".' : '';
             setStatus(resultEl, '✓ ' + r.message + '. Turning it on…' + who, 'success');
@@ -3188,13 +3188,13 @@
         }
 
         // WhatsApp QR listener
-        if (atlas.onWhatsAppQR) {
-            atlas.onWhatsAppQR((qr) => {
+        if (bhai.onWhatsAppQR) {
+            bhai.onWhatsAppQR((qr) => {
                 const area = document.getElementById('waQRArea');
                 if (!area) return;
                 if (qr === 'connected') {
                     area.innerHTML = '<div class="qr-connected">WhatsApp connected!</div>';
-                    atlas.waGetOwners().then(o => (o && o.length) ? goToWizardStep('whatsapp', 2) : startWhatsAppOwnerStep()).catch(() => goToWizardStep('whatsapp', 2));
+                    bhai.waGetOwners().then(o => (o && o.length) ? goToWizardStep('whatsapp', 2) : startWhatsAppOwnerStep()).catch(() => goToWizardStep('whatsapp', 2));
                     const dot = document.getElementById('chStatusWhatsapp');
                     if (dot) dot.className = 'channel-status-dot connected';
                 } else {
@@ -3204,8 +3204,8 @@
         }
 
         // WhatsApp OTP listener
-        if (atlas.onWhatsAppOTP) {
-            atlas.onWhatsAppOTP((data) => {
+        if (bhai.onWhatsAppOTP) {
+            bhai.onWhatsAppOTP((data) => {
                 if (data.verified) {
                     // Owner verified: done. Owners and personality stay optional.
                     goToWizardStep('whatsapp', 2);
@@ -3284,8 +3284,8 @@
         })();
 
         // Channel status update listener
-        if (atlas.onChannelStatusUpdate) {
-            atlas.onChannelStatusUpdate((statuses) => {
+        if (bhai.onChannelStatusUpdate) {
+            bhai.onChannelStatusUpdate((statuses) => {
                 if (!statuses) return;
                 channelStatuses = statuses; // Store for loadChannelConfig to use
                 if (document.getElementById('statusOnline').style.display !== 'none') renderDashChannels(statuses);
@@ -3321,7 +3321,7 @@
 
         async function loadChannelConfig() {
             try {
-                const config = await atlas.getChannelConfig();
+                const config = await bhai.getChannelConfig();
                 channelConfig = config || {};
 
                 // Telegram
@@ -3338,7 +3338,7 @@
                 if (tg.enabled && tg.token) {
                     goToWizardStep('telegram', 2);
                     showTelegramReady('✓ Connected' + (tg.userIds ? '. Allowed: ' + tg.userIds : ''));
-                    atlas.testChannel('telegram', { token: '' }).then(r => {
+                    bhai.testChannel('telegram', { token: '' }).then(r => {
                         if (!r || !r.success) return;
                         const link = document.getElementById('tgBotLink');
                         link.href = 'https://t.me/' + encodeURIComponent(r.username);
@@ -3359,7 +3359,7 @@
                     if (waConnected) {
                         // Connected — determine which step to show based on owner state
                         try {
-                            const owners = await atlas.waGetOwners();
+                            const owners = await bhai.waGetOwners();
                             if (owners && owners.length > 0) {
                                 goToWizardStep('whatsapp', 2);
                             } else {
@@ -3388,7 +3388,7 @@
                 if (dc.userIds) document.getElementById('chDiscordUserIds').value = dc.userIds;
                 if (dc.enabled && dc.token) {
                     goToWizardStep('discord', 2);
-                    atlas.testChannel('discord', { token: '' }).then(r => {
+                    bhai.testChannel('discord', { token: '' }).then(r => {
                         if (r && r.success) { renderDiscordInvite(r.clientId); renderDiscordIntent(r); }
                     }).catch(() => {});
                 }
@@ -3422,7 +3422,7 @@
                 }
                 if (em.whitelist) document.getElementById('chEmailWhitelist').value = em.whitelist;
                 if (em.bhaiAddress) showBhaiMail(em.bhaiAddress, em.bhaiOwner);
-                else if (!fieldVal('chBhaiMailOwner')) atlas.getAccountInfo().then(a => { if (a && a.email && !fieldVal('chBhaiMailOwner')) document.getElementById('chBhaiMailOwner').value = a.email; }).catch(() => {});
+                else if (!fieldVal('chBhaiMailOwner')) bhai.getAccountInfo().then(a => { if (a && a.email && !fieldVal('chBhaiMailOwner')) document.getElementById('chBhaiMailOwner').value = a.email; }).catch(() => {});
                 if (em.smtpHost) document.getElementById('chEmailSmtpHost').value = em.smtpHost;
                 if (em.smtpPort) document.getElementById('chEmailSmtpPort').value = em.smtpPort;
                 if (em.imapHost) document.getElementById('chEmailImapHost').value = em.imapHost;
@@ -3489,23 +3489,23 @@
             };
 
             try {
-                const result = await atlas.saveChannelConfig(config);
+                const result = await bhai.saveChannelConfig(config);
                 if (!result.success) {
                     showToast('Failed to save: ' + (result.error || 'Unknown error'));
                     return false;
                 }
                 if (result.botRunning) {
                     showToast('Saved. Restarting Bhai…');
-                    await atlas.stopBot();
+                    await bhai.stopBot();
                     for (let i = 0; i < 15; i++) {
                         await new Promise(r => setTimeout(r, 1000));
-                        const status = await atlas.getBotStatus();
+                        const status = await bhai.getBotStatus();
                         if (status.status === 'stopped') break;
                     }
                 } else {
                     showToast('Saved. Starting Bhai…');
                 }
-                await atlas.startBot();
+                await bhai.startBot();
                 setTimeout(() => loadChannelConfig(), 3000);
                 return true;
             } catch (err) {
@@ -3519,7 +3519,7 @@
         // WhatsApp OTP
         async function regenerateWhatsAppOTP(quiet) {
             try {
-                const result = await atlas.waGenerateOTP();
+                const result = await bhai.waGenerateOTP();
                 if (result && result.code) {
                     showWhatsAppOTP(result);
                     if (!quiet) showToast('New code ready.');
@@ -3532,7 +3532,7 @@
         // WhatsApp Owner list
         async function loadWhatsAppOwners() {
             try {
-                const owners = await atlas.waGetOwners();
+                const owners = await bhai.waGetOwners();
                 const list = document.getElementById('waOwnerList');
                 if (!owners || owners.length === 0) {
                     list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">No owners verified yet.</div>';
@@ -3548,7 +3548,7 @@
         async function removeWhatsAppOwner(jid) {
             if (!confirm('Remove this owner? They will lose full access.')) return;
             try {
-                await atlas.waRemoveOwner(jid);
+                await bhai.waRemoveOwner(jid);
                 loadWhatsAppOwners();
                 showToast('Owner removed.');
             } catch (err) { showToast('Failed: ' + err.message); }
@@ -3578,7 +3578,7 @@
                 autoAllow: document.getElementById('waAutoAllow').checked,
             };
             try {
-                await atlas.waSavePersona(persona);
+                await bhai.waSavePersona(persona);
                 const el = document.getElementById('testResultWhatsappPersona');
                 el.className = 'channel-test-result visible success';
                 el.textContent = 'Persona saved!';
@@ -3588,7 +3588,7 @@
 
         async function loadWhatsAppPersona() {
             try {
-                const persona = await atlas.waGetPersona();
+                const persona = await bhai.waGetPersona();
                 if (persona) {
                     document.getElementById('waPersonaPrompt').value = persona.systemPrompt || '';
                     document.getElementById('waAutoAllow').checked = !!persona.autoAllow;
@@ -3645,8 +3645,8 @@
         // pages — see ipcMain.handle("util:open-external") in main.js.
         async function openLegalDoc(url) {
             try {
-                if (atlas && typeof atlas.openExternalUrl === 'function') {
-                    const res = await atlas.openExternalUrl(url);
+                if (bhai && typeof bhai.openExternalUrl === 'function') {
+                    const res = await bhai.openExternalUrl(url);
                     if (res && res.success === false) {
                         showToast('Could not open document: ' + (res.error || 'unknown'), true);
                     }
@@ -3661,7 +3661,7 @@
             const btn = document.getElementById('signInBtn');
             if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
             try {
-                await atlas.openAuthWindow();
+                await bhai.openAuthWindow();
             } catch (err) {
                 showToast('❌ ' + err.message);
                 if (btn) { btn.disabled = false; btn.textContent = 'Sign In / Create Account'; }
@@ -3681,7 +3681,7 @@
 
         async function accountLogout() {
             try {
-                await atlas.accountLogout();
+                await bhai.accountLogout();
                 showToast('👋 Signed out');
                 document.getElementById('accountAuthView').style.display = 'block';
                 document.getElementById('accountProfileView').style.display = 'none';
@@ -3693,7 +3693,7 @@
 
         async function loadAccountInfo() {
             try {
-                const info = await atlas.getAccountInfo();
+                const info = await bhai.getAccountInfo();
                 if (!info || !info.signedIn) {
                     document.getElementById('accountAuthView').style.display = 'block';
                     document.getElementById('accountProfileView').style.display = 'none';
@@ -3764,7 +3764,7 @@
         }
         async function loadDevices() {
             const list = document.getElementById('accountDevicesList');
-            const r = await atlas.getDevices().catch(() => null);
+            const r = await bhai.getDevices().catch(() => null);
             if (!r || !r.success) {
                 list.innerHTML = '<div class="account-devices-empty">Couldn\'t load your devices. Check your connection and reopen this page.</div>';
                 return;
@@ -3791,7 +3791,7 @@
                 return;
             }
             btn.disabled = true;
-            const r = await atlas.removeDevice(btn.dataset.device).catch((e) => ({ success: false, error: e.message }));
+            const r = await bhai.removeDevice(btn.dataset.device).catch((e) => ({ success: false, error: e.message }));
             if (!r || !r.success) {
                 btn.disabled = false;
                 showToast(r && r.error ? r.error : "Couldn't remove that device", true);
@@ -3805,7 +3805,7 @@
 
         async function refreshCreditDisplay() {
             try {
-                const info = await atlas.getAccountInfo();
+                const info = await bhai.getAccountInfo();
                 if (!info || !info.signedIn) return;
                 const credits = info.ai_credits;
                 needs.credits = typeof credits !== 'number' || credits >= 10 ? null
@@ -3829,13 +3829,13 @@
         }
 
         // Listen for account status changes
-        atlas.onAccountStatusChange(() => { loadAccountInfo(); showSignInHint(); });
+        bhai.onAccountStatusChange(() => { loadAccountInfo(); showSignInHint(); });
 
         // ── Update Banner ─────────────────────────────
 
         let updateState = { available: null, downloaded: false, progress: 0 };
 
-        atlas.onUpdateAvailable((data) => {
+        bhai.onUpdateAvailable((data) => {
             updateState.available = data;
             document.getElementById('updateBanner').style.display = 'flex';
             document.getElementById('updateBannerTitle').textContent = 'Update available';
@@ -3845,7 +3845,7 @@
             document.getElementById('updateProgressBar').style.display = 'none';
         });
 
-        atlas.onUpdateProgress((data) => {
+        bhai.onUpdateProgress((data) => {
             updateState.progress = data.percent;
             document.getElementById('updateProgressBar').style.display = 'block';
             document.getElementById('updateProgressFill').style.width = `${data.percent}%`;
@@ -3853,7 +3853,7 @@
             document.getElementById('updateActionBtn').disabled = true;
         });
 
-        atlas.onUpdateReady((data) => {
+        bhai.onUpdateReady((data) => {
             updateState.downloaded = true;
             document.getElementById('updateBannerTitle').textContent = 'Update ready';
             document.getElementById('updateBannerSubtitle').textContent = `v${data.version} downloaded`;
@@ -3863,7 +3863,7 @@
             document.getElementById('updateDismissBtn').style.display = 'none';
         });
 
-        atlas.onUpdateError((msg) => {
+        bhai.onUpdateError((msg) => {
             showToast('❌ Update error: ' + msg);
             document.getElementById('updateActionBtn').textContent = 'Retry';
             document.getElementById('updateActionBtn').disabled = false;
@@ -3874,11 +3874,11 @@
             if (updateState.downloaded) {
                 btn.textContent = 'Restarting...';
                 btn.disabled = true;
-                await atlas.installUpdate();
+                await bhai.installUpdate();
             } else {
                 btn.textContent = 'Starting...';
                 btn.disabled = true;
-                await atlas.downloadUpdate();
+                await bhai.downloadUpdate();
             }
         }
 
@@ -3891,7 +3891,7 @@
             btn.textContent = 'Checking...';
             btn.disabled = true;
 
-            const result = await atlas.checkForUpdates();
+            const result = await bhai.checkForUpdates();
 
             btn.textContent = 'Check for updates';
             btn.disabled = false;
@@ -3910,7 +3910,7 @@
         }
 
         function updateLastCheckDisplay() {
-            atlas.getUpdateStatus().then(status => {
+            bhai.getUpdateStatus().then(status => {
                 if (status.lastCheck) {
                     const date = new Date(status.lastCheck);
                     document.getElementById('prefUpdateStatus').textContent =
@@ -3923,7 +3923,7 @@
 
         async function setUpdateChannel(channel) {
             try {
-                const result = await atlas.setUpdateChannel(channel);
+                const result = await bhai.setUpdateChannel(channel);
                 if (result?.success) {
                     showToast(`✅ Switched to ${channel} channel — checking for updates…`);
                 } else {
@@ -3938,7 +3938,7 @@
 
         async function loadPreferences() {
             try {
-                const prefs = await atlas.getPrefs();
+                const prefs = await bhai.getPrefs();
 
                 document.getElementById('prefLaunchAtLogin').checked = prefs.launchAtLogin || false;
                 document.getElementById('prefNotifications').checked = prefs.notificationsEnabled !== false;
@@ -3955,7 +3955,7 @@
                 updateThemeButtons(prefs.theme || 'light');
 
                 // Update hotkey display
-                const info = await atlas.getAppInfo();
+                const info = await bhai.getAppInfo();
                 const customHotkey = prefs.overlayHotkey;
                 // Show the shortcut that actually works: if the preferred one was taken by
                 // another app, main registered a fallback (e.g. Cmd+Shift+J).
@@ -3980,7 +3980,7 @@
         }
 
         async function setPref(key, value) {
-            await atlas.setPref(key, value);
+            await bhai.setPref(key, value);
             showToast('✓ Preference saved');
         }
 
@@ -4087,9 +4087,9 @@
 
         async function applyHotkey(accelerator, el) {
             try {
-                const result = await atlas.setOverlayHotkey(accelerator);
+                const result = await bhai.setOverlayHotkey(accelerator);
                 if (result.success) {
-                    const info = await atlas.getAppInfo();
+                    const info = await bhai.getAppInfo();
                     const display = formatAccelerator(accelerator, info.platform);
                     el.textContent = display;
                     document.getElementById('prefHotkeyReset').style.display = '';
@@ -4106,9 +4106,9 @@
 
         async function resetOverlayHotkey() {
             try {
-                const result = await atlas.resetOverlayHotkey();
+                const result = await bhai.resetOverlayHotkey();
                 if (result.success) {
-                    const info = await atlas.getAppInfo();
+                    const info = await bhai.getAppInfo();
                     const defaultDisplay = info.platform === 'darwin' ? '⌘ Cmd + J' : 'Alt + Space';
                     document.getElementById('prefHotkeyShow').textContent = defaultDisplay;
                     document.getElementById('prefHotkeyReset').style.display = 'none';
@@ -4122,7 +4122,7 @@
         }
 
         function setTheme(theme) {
-            atlas.setPref('theme', theme);
+            bhai.setPref('theme', theme);
             updateThemeButtons(theme);
             applyTheme(theme);
         }
@@ -4131,7 +4131,7 @@
         async function loadPersonalityFromPrefs() {
             try {
                 // getPrefs() returns the whole store; the choice lives at prefs.personalize.
-                const store = await (atlas.getPrefs ? atlas.getPrefs() : Promise.resolve({}));
+                const store = await (bhai.getPrefs ? bhai.getPrefs() : Promise.resolve({}));
                 const pz = (store && store.prefs && store.prefs.personalize) || {};
                 const persona = pz.personality || { preset: 'casual_playful', notes: '' };
                 const r = document.querySelector(`input[name="personality-preset"][value="${persona.preset}"]`);
@@ -4197,11 +4197,11 @@
                 const preset = (presetEl && presetEl.value) || 'casual_playful';
                 const notesEl = document.getElementById('personalityNotes');
                 const notes = (notesEl && notesEl.value || '').trim();
-                if (!atlas || typeof atlas.setupSavePersonalize !== 'function') {
+                if (!bhai || typeof bhai.setupSavePersonalize !== 'function') {
                     if (status) status.textContent = 'IPC not ready — try again';
                     return;
                 }
-                const res = await atlas.setupSavePersonalize({ personality: { preset, notes } });
+                const res = await bhai.setupSavePersonalize({ personality: { preset, notes } });
                 if (!res || !res.success) {
                     if (status) status.textContent = 'Save failed: ' + ((res && res.error) || 'unknown error');
                     return;
@@ -4230,13 +4230,13 @@
         };
         async function showPersonaWelcomeIfNeeded() {
             try {
-                if (!atlas || typeof atlas.getPrefs !== 'function') return;
-                const prefs = await atlas.getPrefs() || {};
+                if (!bhai || typeof bhai.getPrefs !== 'function') return;
+                const prefs = await bhai.getPrefs() || {};
                 if (prefs.personaWelcomed) return;
                 let persona = null;
-                if (typeof atlas.setupDetect === 'function') {
+                if (typeof bhai.setupDetect === 'function') {
                     try {
-                        const state = await atlas.setupDetect();
+                        const state = await bhai.setupDetect();
                         persona = state && state.profile && state.profile.persona;
                     } catch { /* no-op */ }
                 }
@@ -4244,12 +4244,12 @@
                 const msg = PERSONA_GREETINGS[persona];
                 if (!msg) {
                     // Explorer or unknown — still mark welcomed so we don't keep checking.
-                    if (typeof atlas.setPref === 'function') atlas.setPref('personaWelcomed', true);
+                    if (typeof bhai.setPref === 'function') bhai.setPref('personaWelcomed', true);
                     return;
                 }
                 // Slight delay so the panel finishes laying out before the toast pops.
                 setTimeout(function () { showToast(msg); }, 600);
-                if (typeof atlas.setPref === 'function') await atlas.setPref('personaWelcomed', true);
+                if (typeof bhai.setPref === 'function') await bhai.setPref('personaWelcomed', true);
             } catch { /* best-effort */ }
         }
 
@@ -4320,7 +4320,7 @@
             vaultMsg('');
         }
         async function vaultLoad() {
-            const r = await atlas.vault.list();
+            const r = await bhai.vault.list();
             if (!r || !r.success) return vaultMsg(r && r.error);
             vaultState = r;
             for (const t of vaultShown.values()) clearTimeout(t);
@@ -4355,7 +4355,7 @@
         }
         async function vaultShow(id) {
             if (vaultShown.has(id)) return vaultHide(id);
-            const r = await atlas.vault.reveal(id, vaultPw());
+            const r = await bhai.vault.reveal(id, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
             const detail = document.getElementById('vaultDetail-' + id);
             detail.innerHTML = Object.entries(r.values).filter(([, v]) => v).map(([k, v]) =>
@@ -4379,7 +4379,7 @@
             } catch { vaultMsg('Could not copy'); }
         }
         async function vaultEdit(id) {
-            const r = await atlas.vault.reveal(id, vaultPw());
+            const r = await bhai.vault.reveal(id, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
             const e = vaultState.entries.find((x) => x.id === id);
             vaultModalValues = { ...r.values, label: e.label, domains: e.domains };
@@ -4389,20 +4389,20 @@
             const entry = { kind: vaultModalKind };
             if (vaultEditingId) entry.id = vaultEditingId;
             for (const el of document.querySelectorAll('#vaultForm [data-vault-field]')) entry[el.dataset.vaultField] = el.value;
-            const r = await atlas.vault.save(entry, vaultPw());
+            const r = await bhai.vault.save(entry, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
             vaultCloseModal();
             vaultLoad();
         }
         async function vaultDelete(id) {
             // Touch ID (or the vault password) is the confirmation.
-            const r = await atlas.vault.remove(id, vaultPw());
+            const r = await bhai.vault.remove(id, vaultPw());
             if (!r || !r.success) return vaultMsg(vaultErr(r));
             vaultLoad();
         }
         async function vaultSetPassword() {
             const next = document.getElementById('vaultNewPassword');
-            const r = await atlas.vault.setPassword(next.value, vaultPw());
+            const r = await bhai.vault.setPassword(next.value, vaultPw());
             vaultMsg(r && r.success ? 'Vault password set.' : vaultErr(r));
             if (r && r.success) { next.value = ''; vaultLoad(); }
         }
@@ -4413,12 +4413,12 @@
             const cvv = pay ? input.value.trim() : null;
             input.value = '';
             document.getElementById('vaultCvvModal').style.display = 'none';
-            if (vaultCvvReq) atlas.vault.submitCvv(vaultCvvReq.id, cvv);
+            if (vaultCvvReq) bhai.vault.submitCvv(vaultCvvReq.id, cvv);
             vaultCvvReq = null;
         }
-        if (window.atlas && atlas.vault) {
-            atlas.vault.onCvvRequest((req) => {
-                if (vaultCvvReq) atlas.vault.submitCvv(vaultCvvReq.id, null); // one prompt at a time
+        if (window.bhai && bhai.vault) {
+            bhai.vault.onCvvRequest((req) => {
+                if (vaultCvvReq) bhai.vault.submitCvv(vaultCvvReq.id, null); // one prompt at a time
                 vaultCvvReq = req;
                 document.getElementById('vaultCvvText').textContent =
                     `Bhai wants to pay ₹${req.amount} for "${req.item}" with ${req.label}`
@@ -4464,14 +4464,14 @@
         }
 
         // Listen for theme changes
-        atlas.onThemeChanged((theme) => {
+        bhai.onThemeChanged((theme) => {
             updateThemeButtons(theme);
             applyTheme(theme);
         });
 
         // System theme change listener
         window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', async () => {
-            const prefs = await atlas.getPrefs();
+            const prefs = await bhai.getPrefs();
             if (prefs.theme === 'system') {
                 applyTheme('system');
             }
@@ -4481,7 +4481,7 @@
 
         async function updateConnectionStatus() {
             try {
-                const { status } = await atlas.getBotStatus();
+                const { status } = await bhai.getBotStatus();
 
                 if (status !== 'running') {
                     needs.channels = [];
@@ -4489,10 +4489,10 @@
                     return;
                 }
 
-                const { label } = await atlas.getOverlayHotkey();
+                const { label } = await bhai.getOverlayHotkey();
                 document.getElementById('chatShortcut').textContent = label;
 
-                renderDashChannels(await atlas.getChannelStatuses());
+                renderDashChannels(await bhai.getChannelStatuses());
             } catch { /* */ }
         }
 
@@ -4512,7 +4512,7 @@
 
         (async () => {
             try {
-                const { status } = await atlas.getBotStatus();
+                const { status } = await bhai.getBotStatus();
                 updateUI(status);
                 updateConnectionStatus();
             } catch { /* */ }
@@ -4521,7 +4521,7 @@
             loadActivity();
 
             try {
-                const info = await atlas.getAppInfo();
+                const info = await bhai.getAppInfo();
                 document.getElementById('sidebarVersion').textContent = `v${info.version}`;
                 document.getElementById('aboutVersion').textContent = info.version;
 
@@ -4534,7 +4534,7 @@
 
             // Check for pending update banner
             try {
-                const updateStatus = await atlas.getUpdateStatus();
+                const updateStatus = await bhai.getUpdateStatus();
                 if (updateStatus.available && !updateStatus.downloaded) {
                     updateState.available = updateStatus.available;
                     document.getElementById('updateBanner').style.display = 'flex';
@@ -4552,7 +4552,7 @@
 
             // Apply saved theme
             try {
-                const prefs = await atlas.getPrefs();
+                const prefs = await bhai.getPrefs();
                 applyTheme(prefs.theme || 'light');
             } catch { /* */ }
 
@@ -4568,7 +4568,7 @@
 
         async function pollStatus() {
             try {
-                const { status } = await atlas.getBotStatus();
+                const { status } = await bhai.getBotStatus();
                 updateUI(status);
                 updateConnectionStatus();
             } catch { /* */ }
@@ -4595,7 +4595,7 @@
 
             // Sync sideload button visibility with preference
             try {
-                const prefs = await atlas.getPrefs();
+                const prefs = await bhai.getPrefs();
                 toggleSideloadButton(prefs.sideloadingEnabled || false);
             } catch { /* ignore */ }
 
@@ -4609,11 +4609,11 @@
 
             try {
                 console.log('[Store] Starting loadStore...');
-                console.log('[Store] atlas object:', typeof atlas);
-                console.log('[Store] atlas.getStoreItems:', typeof atlas?.getStoreItems);
+                console.log('[Store] bhai object:', typeof bhai);
+                console.log('[Store] bhai.getStoreItems:', typeof bhai?.getStoreItems);
 
                 // Use IPC to fetch from main process
-                const result = await atlas.getStoreItems();
+                const result = await bhai.getStoreItems();
                 console.log('[Store] IPC result received:', JSON.stringify(result));
 
                 if (!result || !result.success) {
@@ -4645,7 +4645,7 @@
 
         async function loadInstalledList() {
             try {
-                const result = await atlas.getInstalledStoreItems();
+                const result = await bhai.getInstalledStoreItems();
                 installedItems = Array.isArray(result) ? result : [];
             } catch (err) {
                 console.error('[Store] Failed to load installed items:', err);
@@ -4818,7 +4818,7 @@
                 // Start install via the authenticated proxy — returns the
                 // content download URL and validates availability. userId is
                 // bound server-side from the session.
-                const start = await atlas.startStoreInstall({
+                const start = await bhai.startStoreInstall({
                     itemId: currentItem._id,
                     version: currentItem.version
                 });
@@ -4830,7 +4830,7 @@
                 progressFill.style.width = '50%';
 
                 // Download and install via Electron
-                const result = await atlas.installStoreItem({
+                const result = await bhai.installStoreItem({
                     slug: currentItem.slug,
                     type: currentItem.type,
                     name: currentItem.name,
@@ -4848,7 +4848,7 @@
 
                 // Confirm install — records the install row and atomically
                 // increments the install count.
-                await atlas.confirmStoreInstall({ itemId: currentItem._id });
+                await bhai.confirmStoreInstall({ itemId: currentItem._id });
 
                 progressFill.style.width = '100%';
                 progressText.textContent = 'Installed!';
@@ -4888,7 +4888,7 @@
             installBtn.disabled = true;
 
             try {
-                const result = await atlas.uninstallStoreItem({
+                const result = await bhai.uninstallStoreItem({
                     slug: currentItem.slug,
                     type: currentItem.type
                 });
@@ -4963,7 +4963,7 @@
 
         async function quickUninstall(slug, type) {
             try {
-                const result = await atlas.uninstallStoreItem({ slug, type });
+                const result = await bhai.uninstallStoreItem({ slug, type });
                 if (result.success) {
                     await loadInstalledList();
                     renderStoreItems();
@@ -5006,7 +5006,7 @@
             modal.style.display = 'flex';
 
             // Open file picker
-            const pick = await atlas.sideloadPick();
+            const pick = await bhai.sideloadPick();
             if (pick.canceled) {
                 closeSideloadModal();
                 return;
@@ -5024,14 +5024,14 @@
                 document.getElementById('sideloadProgressFill').style.width = '60%';
                 document.getElementById('sideloadProgressText').textContent = 'Installing...';
 
-                let result = await atlas.sideloadInstall(filePath);
+                let result = await bhai.sideloadInstall(filePath);
                 if (!result.success && result.requiresUnsignedConsent) {
                     const ok = confirm(`"${fileName}" isn't signed by a publisher Bhai trusts. Skills change how Bhai behaves and can use its tools. Install it anyway?`);
                     if (!ok) {
                         closeSideloadModal();
                         return;
                     }
-                    result = await atlas.sideloadInstall(filePath, { acceptUnsigned: true });
+                    result = await bhai.sideloadInstall(filePath, { acceptUnsigned: true });
                 }
 
                 document.getElementById('sideloadProgressFill').style.width = '100%';
@@ -5106,7 +5106,7 @@
         async function loadResearch() {
             if (!document.getElementById('tab-research').classList.contains('active')) return;
             const list = document.getElementById('researchList');
-            const items = await atlas.research.list().catch(() => []);
+            const items = await bhai.research.list().catch(() => []);
             list.replaceChildren();
             if (!items.length) {
                 list.innerHTML = '<div class="chats-empty">No research yet</div>';
@@ -5158,14 +5158,14 @@
             // Both need the saved sources, which only the newest finished researches keep.
             if (r.resumable && (r.status === 'interrupted' || r.status === 'failed')) button('Continue', () => researchAction({ action: 'resume', id: r.id }), true);
             if (r.resumable && r.status === 'completed') button('Dig deeper', () => setResearchBasis(r), true);
-            if (r.hasReport) button('Open in app', () => atlas.research.open(r.id));
+            if (r.hasReport) button('Open in app', () => bhai.research.open(r.id));
             head.append(h, meta, actions);
             const body = document.createElement('div');
             body.className = 'research-report';
             if (r.status === 'running') body.innerHTML = '<p class="chats-working">Reading sources… the report shows up here when it\'s done.</p>';
             else if (r.error && r.status !== 'completed') body.textContent = r.error;
             if (r.hasReport) {
-                const text = await atlas.research.report(r.id).catch(() => null);
+                const text = await bhai.research.report(r.id).catch(() => null);
                 if (researchOpenId !== r.id) return; // another one was opened meanwhile
                 // Links stay text until clicked: a click opens a source only if it's in this report.
                 body.innerHTML = text
@@ -5175,7 +5175,7 @@
                     const a = e.target.closest('a.research-link');
                     if (!a) return;
                     e.preventDefault();
-                    atlas.research.openSource(r.id, a.textContent);
+                    bhai.research.openSource(r.id, a.textContent);
                 };
             }
             pane.replaceChildren(head, body);
@@ -5198,7 +5198,7 @@
         }
 
         async function researchAction(a) {
-            const res = await atlas.research.action(a).catch((err) => ({ ok: false, error: err.message }));
+            const res = await bhai.research.action(a).catch((err) => ({ ok: false, error: err.message }));
             if (!res.ok) showToast(res.error || "Couldn't reach Bhai", true);
             else setTimeout(loadResearch, 1200);
         }
@@ -5216,7 +5216,7 @@
             const input = document.getElementById('researchTopic');
             const topic = input.value.trim();
             if (!topic) return input.focus();
-            const res = await atlas.research.action({ action: 'start', topic, profile: document.getElementById('researchProfile').value, buildsOn: researchBasis || undefined }).catch((err) => ({ ok: false, error: err.message }));
+            const res = await bhai.research.action({ action: 'start', topic, profile: document.getElementById('researchProfile').value, buildsOn: researchBasis || undefined }).catch((err) => ({ ok: false, error: err.message }));
             if (!res.ok) showToast(res.error || "Couldn't reach Bhai", true);
         }
 
@@ -5297,7 +5297,7 @@
             }
             document.addEventListener('visibilitychange', run);
             window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener?.('change', run);
-            window.atlas?.onAmbientPaused?.((p) => { paused = !!p; run(); });
+            window.bhai?.onAmbientPaused?.((p) => { paused = !!p; run(); });
             run();
         })();
     </script>

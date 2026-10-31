@@ -165,9 +165,9 @@ function firstDiff(t: string) {
     return { input: at(t), ts: at(a), native: at(b) };
 }
 
-// CI's native job sets ATLAS_REQUIRE_NATIVE=true after building the binary, so a
+// CI's native job sets BHAI_REQUIRE_NATIVE=true after building the binary, so a
 // load failure there fails instead of skipping.
-it.runIf(process.env.ATLAS_REQUIRE_NATIVE === "true")("the native binary is loaded (ATLAS_REQUIRE_NATIVE)", () => {
+it.runIf(process.env.BHAI_REQUIRE_NATIVE === "true")("the native binary is loaded (BHAI_REQUIRE_NATIVE)", () => {
     expect(HAS_NATIVE).toBe(true);
 });
 
@@ -193,7 +193,7 @@ describe.skipIf(!HAS_NATIVE)("pii_protect.rs parity", () => {
     });
 });
 
-describe("ATLAS_NATIVE_PROTECT dispatch", () => {
+describe("BHAI_NATIVE_PROTECT dispatch", () => {
     afterEach(() => {
         vi.doUnmock("../native/index.js");
         vi.unstubAllEnvs();
@@ -202,7 +202,7 @@ describe("ATLAS_NATIVE_PROTECT dispatch", () => {
 
     it("falls back to TS when the native call throws", async () => {
         vi.resetModules();
-        vi.stubEnv("ATLAS_NATIVE_PROTECT", "true");
+        vi.stubEnv("BHAI_NATIVE_PROTECT", "true");
         vi.doMock("../native/index.js", () => ({
             nativeMaskCredentials: () => {
                 throw new Error("boom");
@@ -219,7 +219,7 @@ describe("ATLAS_NATIVE_PROTECT dispatch", () => {
 
     it.skipIf(!HAS_NATIVE)("routes to native when on, with the same answer", async () => {
         vi.resetModules();
-        vi.stubEnv("ATLAS_NATIVE_PROTECT", "true");
+        vi.stubEnv("BHAI_NATIVE_PROTECT", "true");
         const { maskCredentials } = await import("./credential-mask.js");
         const { findPii } = await import("./pii-redactor.js");
         const t = "Authorization: Bearer FAKEtok3nAbc123xyz and card 4111 1111 1111 1111";

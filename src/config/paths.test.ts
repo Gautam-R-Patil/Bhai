@@ -16,23 +16,23 @@ async function freshImport() {
 }
 
 describe("paths — getWorkspaceDir priority order", () => {
-    const originalEnv = process.env.ATLAS_WORKSPACE;
+    const originalEnv = process.env.BHAI_WORKSPACE;
 
     beforeEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
     });
 
     afterEach(() => {
         if (originalEnv !== undefined) {
-            process.env.ATLAS_WORKSPACE = originalEnv;
+            process.env.BHAI_WORKSPACE = originalEnv;
         } else {
-            delete process.env.ATLAS_WORKSPACE;
+            delete process.env.BHAI_WORKSPACE;
         }
         vi.restoreAllMocks();
     });
 
-    it("priority 1: returns ATLAS_WORKSPACE env var when the directory exists", async () => {
-        process.env.ATLAS_WORKSPACE = "/fake/workspace/from-env";
+    it("priority 1: returns BHAI_WORKSPACE env var when the directory exists", async () => {
+        process.env.BHAI_WORKSPACE = "/fake/workspace/from-env";
         vi.spyOn(fs, "existsSync").mockImplementation(
             (p) => String(p) === "/fake/workspace/from-env",
         );
@@ -40,8 +40,8 @@ describe("paths — getWorkspaceDir priority order", () => {
         expect(getWorkspaceDir()).toEqual("/fake/workspace/from-env");
     });
 
-    it("priority 1: skips ATLAS_WORKSPACE if the directory doesn't exist", async () => {
-        process.env.ATLAS_WORKSPACE = "/fake/workspace/does-not-exist";
+    it("priority 1: skips BHAI_WORKSPACE if the directory doesn't exist", async () => {
+        process.env.BHAI_WORKSPACE = "/fake/workspace/does-not-exist";
         vi.spyOn(os, "homedir").mockReturnValue("/home/user");
         // Make ALL existsSync calls return false → fall through to mkdirSync
         const existsSpy = vi.spyOn(fs, "existsSync").mockReturnValue(false);
@@ -69,12 +69,12 @@ describe("paths — getWorkspaceDir priority order", () => {
         expect(getWorkspaceDir()).toEqual(documentsPath);
     });
 
-    it("priority 2: returns ~/.atlas/files when Desktop + Documents missing", async () => {
+    it("priority 2: returns ~/.bhai/files when Desktop + Documents missing", async () => {
         vi.spyOn(os, "homedir").mockReturnValue("/home/user");
-        const atlasFilesPath = path.join("/home/user", ".atlas", "files");
-        vi.spyOn(fs, "existsSync").mockImplementation((p) => String(p) === atlasFilesPath);
+        const bhaiFilesPath = path.join("/home/user", ".bhai", "files");
+        vi.spyOn(fs, "existsSync").mockImplementation((p) => String(p) === bhaiFilesPath);
         const { getWorkspaceDir } = await freshImport();
-        expect(getWorkspaceDir()).toEqual(atlasFilesPath);
+        expect(getWorkspaceDir()).toEqual(bhaiFilesPath);
     });
 
     it("priority 3: creates ~/Bhai Files when no existing location found", async () => {
@@ -103,7 +103,7 @@ describe("paths — getWorkspaceDir priority order", () => {
     });
 
     it("caches the resolved path across repeated calls", async () => {
-        process.env.ATLAS_WORKSPACE = "/cached/path";
+        process.env.BHAI_WORKSPACE = "/cached/path";
         const existsSpy = vi.spyOn(fs, "existsSync").mockReturnValue(true);
         const { getWorkspaceDir } = await freshImport();
         getWorkspaceDir();
@@ -117,7 +117,7 @@ describe("paths — getWorkspaceDir priority order", () => {
 
 describe("paths — getWorkspaceSubdir", () => {
     beforeEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
     });
 
     afterEach(() => {
@@ -125,7 +125,7 @@ describe("paths — getWorkspaceSubdir", () => {
     });
 
     it("returns path.join(workspace, subdir) and creates it if missing", async () => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
         const created: string[] = [];
         vi.spyOn(fs, "existsSync").mockImplementation((p) => String(p) === "/ws");
         vi.spyOn(fs, "mkdirSync").mockImplementation((p) => {
@@ -139,7 +139,7 @@ describe("paths — getWorkspaceSubdir", () => {
     });
 
     it("does NOT call mkdirSync when the subdir already exists", async () => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
         vi.spyOn(fs, "existsSync").mockReturnValue(true);
         const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
         const { getWorkspaceSubdir } = await freshImport();
@@ -150,11 +150,11 @@ describe("paths — getWorkspaceSubdir", () => {
 
 describe("paths — specific directory helpers", () => {
     beforeEach(() => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
     });
 
     afterEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
         vi.restoreAllMocks();
     });
 
@@ -209,11 +209,11 @@ describe("paths — specific directory helpers", () => {
 
 describe("paths — generateFilePath + timestamp format", () => {
     beforeEach(() => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
     });
 
     afterEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
         vi.restoreAllMocks();
         vi.useRealTimers();
     });
@@ -260,11 +260,11 @@ describe("paths — generateFilePath + timestamp format", () => {
 
 describe("paths — generateImagePath", () => {
     beforeEach(() => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
     });
 
     afterEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
         vi.restoreAllMocks();
         vi.useRealTimers();
     });
@@ -326,11 +326,11 @@ describe("paths — generateImagePath", () => {
 
 describe("paths — generateReportPath", () => {
     beforeEach(() => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
     });
 
     afterEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
         vi.restoreAllMocks();
         vi.useRealTimers();
     });
@@ -385,11 +385,11 @@ describe("paths — generateReportPath", () => {
 
 describe("paths — generateScreenshotPath", () => {
     beforeEach(() => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
     });
 
     afterEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
         vi.restoreAllMocks();
         vi.useRealTimers();
     });
@@ -417,12 +417,12 @@ describe("paths — generateScreenshotPath", () => {
 
 describe("paths — isWorkspaceConfigured", () => {
     afterEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
         vi.restoreAllMocks();
     });
 
     it("returns true when workspace is a real dir (not tmpdir)", async () => {
-        process.env.ATLAS_WORKSPACE = "/real/workspace";
+        process.env.BHAI_WORKSPACE = "/real/workspace";
         vi.spyOn(os, "tmpdir").mockReturnValue("/tmp");
         vi.spyOn(fs, "existsSync").mockImplementation((p) => String(p) === "/real/workspace");
         const { isWorkspaceConfigured } = await freshImport();
@@ -431,7 +431,7 @@ describe("paths — isWorkspaceConfigured", () => {
 
     it("returns false when workspace resolves to os.tmpdir() (fallback case)", async () => {
         // No env, no existing default locations, mkdirSync throws → tmpdir fallback
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
         vi.spyOn(os, "homedir").mockReturnValue("/home/user");
         vi.spyOn(os, "tmpdir").mockReturnValue("/tmp");
         vi.spyOn(fs, "existsSync").mockReturnValue(false);
@@ -446,9 +446,9 @@ describe("paths — isWorkspaceConfigured", () => {
     });
 
     it("returns false when workspace path doesn't exist on disk", async () => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
         vi.spyOn(os, "tmpdir").mockReturnValue("/tmp");
-        // existsSync true during getAtlasWorkspace (priority 1), false at isWorkspaceConfigured check
+        // existsSync true during getBhaiWorkspace (priority 1), false at isWorkspaceConfigured check
         let callCount = 0;
         vi.spyOn(fs, "existsSync").mockImplementation(() => {
             callCount += 1;
@@ -460,42 +460,42 @@ describe("paths — isWorkspaceConfigured", () => {
 });
 
 describe("paths — getDataDir", () => {
-    const originalDataDir = process.env.ATLAS_DATA_DIR;
+    const originalDataDir = process.env.BHAI_DATA_DIR;
 
     afterEach(() => {
         if (originalDataDir !== undefined) {
-            process.env.ATLAS_DATA_DIR = originalDataDir;
+            process.env.BHAI_DATA_DIR = originalDataDir;
         } else {
-            delete process.env.ATLAS_DATA_DIR;
+            delete process.env.BHAI_DATA_DIR;
         }
         vi.restoreAllMocks();
     });
 
-    it("respects ATLAS_DATA_DIR env var when set", async () => {
-        process.env.ATLAS_DATA_DIR = "/var/lib/atlas";
+    it("respects BHAI_DATA_DIR env var when set", async () => {
+        process.env.BHAI_DATA_DIR = "/var/lib/bhai";
         const { getDataDir } = await freshImport();
-        expect(getDataDir()).toEqual("/var/lib/atlas");
+        expect(getDataDir()).toEqual("/var/lib/bhai");
     });
 
     it("defaults to path.resolve('data') when env var is unset", async () => {
-        delete process.env.ATLAS_DATA_DIR;
+        delete process.env.BHAI_DATA_DIR;
         const { getDataDir } = await freshImport();
         expect(getDataDir()).toEqual(path.resolve("data"));
     });
 
-    it("respects ATLAS_DATA_DIR even when workspace changes", async () => {
-        process.env.ATLAS_DATA_DIR = "/custom/data";
-        process.env.ATLAS_WORKSPACE = "/some/workspace";
+    it("respects BHAI_DATA_DIR even when workspace changes", async () => {
+        process.env.BHAI_DATA_DIR = "/custom/data";
+        process.env.BHAI_WORKSPACE = "/some/workspace";
         const { getDataDir, getWorkspaceDir } = await freshImport();
         vi.spyOn(fs, "existsSync").mockReturnValue(true);
         // Workspace and data dir are independent — changing one doesn't affect the other.
         expect(getDataDir()).toEqual("/custom/data");
         expect(getWorkspaceDir()).toEqual("/some/workspace");
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
     });
 
     it("treats empty-string env var as falsy → falls back to resolve('data')", async () => {
-        process.env.ATLAS_DATA_DIR = "";
+        process.env.BHAI_DATA_DIR = "";
         const { getDataDir } = await freshImport();
         expect(getDataDir()).toEqual(path.resolve("data"));
     });
@@ -503,11 +503,11 @@ describe("paths — getDataDir", () => {
 
 describe("paths — slug truncation edge cases", () => {
     beforeEach(() => {
-        process.env.ATLAS_WORKSPACE = "/ws";
+        process.env.BHAI_WORKSPACE = "/ws";
     });
 
     afterEach(() => {
-        delete process.env.ATLAS_WORKSPACE;
+        delete process.env.BHAI_WORKSPACE;
         vi.restoreAllMocks();
         vi.useRealTimers();
     });
@@ -541,5 +541,82 @@ describe("paths — slug truncation edge cases", () => {
         const { generateImagePath } = await freshImport();
         const result = generateImagePath("abc");
         expect(path.basename(result).startsWith("abc_")).toBe(true);
+    });
+});
+
+describe("paths — getBhaiHome (~/.atlas → ~/.bhai)", () => {
+    const origBhaiHome = process.env.BHAI_HOME;
+    let home: string;
+
+    beforeEach(() => {
+        delete process.env.BHAI_HOME;
+        home = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-home-"));
+        vi.spyOn(os, "homedir").mockReturnValue(home);
+    });
+
+    afterEach(() => {
+        if (origBhaiHome === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = origBhaiHome;
+        vi.restoreAllMocks();
+        fs.rmSync(home, { recursive: true, force: true });
+    });
+
+    it("copies ~/.atlas to ~/.bhai once when only the old one exists, keeping ~/.atlas", async () => {
+        fs.mkdirSync(path.join(home, ".atlas", "store"), { recursive: true });
+        fs.writeFileSync(path.join(home, ".atlas", "hooks.json"), "{}");
+        const { getBhaiHome, LEGACY_HOME } = await freshImport();
+        expect(getBhaiHome()).toBe(path.join(home, ".bhai"));
+        expect(fs.existsSync(path.join(home, ".bhai", "hooks.json"))).toBe(true);
+        expect(fs.existsSync(path.join(home, ".bhai", "store"))).toBe(true);
+        if (process.platform !== "win32") expect(fs.statSync(path.join(home, ".bhai")).mode & 0o777).toBe(0o700);
+        expect(fs.existsSync(path.join(LEGACY_HOME, "hooks.json"))).toBe(true); // older builds still use it
+        expect(fs.readdirSync(home).filter((f) => f.includes(".tmp-"))).toEqual([]);
+    });
+
+    it("leaves ~/.atlas alone when ~/.bhai already exists", async () => {
+        fs.mkdirSync(path.join(home, ".atlas"));
+        fs.mkdirSync(path.join(home, ".bhai"));
+        const { getBhaiHome } = await freshImport();
+        expect(getBhaiHome()).toBe(path.join(home, ".bhai"));
+        expect(fs.existsSync(path.join(home, ".atlas"))).toBe(true);
+    });
+
+    it("keeps using ~/.atlas when the copy fails, leaving no temp dir", async () => {
+        fs.mkdirSync(path.join(home, ".atlas"));
+        vi.spyOn(fs, "renameSync").mockImplementation(() => {
+            throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
+        });
+        const { getBhaiHome } = await freshImport();
+        expect(getBhaiHome()).toBe(path.join(home, ".atlas"));
+        expect(fs.readdirSync(home).filter((f) => f.includes(".tmp-"))).toEqual([]);
+    });
+
+    it("moves models/ (re-downloadable caches) instead of copying them", async () => {
+        fs.mkdirSync(path.join(home, ".atlas", "models", "kokoro"), { recursive: true });
+        fs.writeFileSync(path.join(home, ".atlas", "models", "kokoro", "m.onnx"), "w");
+        const { getBhaiHome } = await freshImport();
+        expect(fs.readFileSync(path.join(getBhaiHome(), "models", "kokoro", "m.onnx"), "utf8")).toBe("w");
+        expect(fs.existsSync(path.join(home, ".atlas", "models"))).toBe(false);
+    });
+
+    it("a failed copy is not retried on the next start (marker), and stale temp dirs are swept", async () => {
+        fs.mkdirSync(path.join(home, ".atlas"));
+        fs.mkdirSync(path.join(home, ".bhai.tmp-1"));
+        fs.utimesSync(path.join(home, ".bhai.tmp-1"), new Date(1000), new Date(1000));
+        const cp = vi.spyOn(fs, "cpSync").mockImplementation(() => {
+            throw Object.assign(new Error("no space"), { code: "ENOSPC" });
+        });
+        expect((await freshImport()).getBhaiHome()).toBe(path.join(home, ".atlas"));
+        expect((await freshImport()).getBhaiHome()).toBe(path.join(home, ".atlas"));
+        expect(cp).toHaveBeenCalledTimes(1);
+        expect(fs.readdirSync(home).filter((f) => f.includes(".tmp-"))).toEqual([]);
+    });
+
+    it("BHAI_HOME wins and skips the move", async () => {
+        fs.mkdirSync(path.join(home, ".atlas"));
+        process.env.BHAI_HOME = "/custom/bhai";
+        const { getBhaiHome } = await freshImport();
+        expect(getBhaiHome()).toBe("/custom/bhai");
+        expect(fs.existsSync(path.join(home, ".atlas"))).toBe(true);
     });
 });

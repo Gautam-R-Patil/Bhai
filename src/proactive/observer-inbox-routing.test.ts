@@ -108,7 +108,7 @@ describe("Observer → inbox routing (Task 4.2)", () => {
     let configPath: string;
 
     beforeEach(() => {
-        dir = mkdtempSync(join(tmpdir(), "atlas-inbox-route-"));
+        dir = mkdtempSync(join(tmpdir(), "bhai-inbox-route-"));
         configPath = join(dir, "proactive-config.json");
         dispatchSpy.mockReset();
         for (const k of Object.keys(releaseByChannel)) delete releaseByChannel[k];

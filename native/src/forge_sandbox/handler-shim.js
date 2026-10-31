@@ -6,7 +6,7 @@
 //   - Writes JSON-line responses to stdout: {"id": "<uuid>", "ok": true, "result": <any>}
 //                                       or  {"id": "<uuid>", "ok": false, "error": {"kind", "message", "stack?"}}
 //   - Boot message emitted ONCE at startup: {"id": "__boot__", "ok": true}
-//   - Handler lives at $ATLAS_FORGE_HANDLER_PATH and exports a single async fn.
+//   - Handler lives at $BHAI_FORGE_HANDLER_PATH and exports a single async fn.
 //
 // NO monkey-patching — the OS sandbox is the fence. If the handler tries
 // fs.readFile("/etc/passwd"), it gets EACCES and throws; we catch + report
@@ -17,9 +17,10 @@
 
 const readline = require("node:readline");
 
-const handlerPath = process.env.ATLAS_FORGE_HANDLER_PATH;
+// ATLAS_ is the pre-rename name, still set by a native build from before it.
+const handlerPath = process.env.BHAI_FORGE_HANDLER_PATH || process.env.ATLAS_FORGE_HANDLER_PATH;
 if (!handlerPath) {
-    process.stderr.write("forge-shim: ATLAS_FORGE_HANDLER_PATH not set\n");
+    process.stderr.write("forge-shim: BHAI_FORGE_HANDLER_PATH not set\n");
     process.exit(2);
 }
 

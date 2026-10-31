@@ -5,7 +5,7 @@
 // newer kernels the ABI version (1-4 as of 5.19) controls which access
 // rights are available. `CompatLevel::BestEffort` is the default — it
 // silently downgrades richer rights to weaker ones. For the strict
-// supervisor mode (`ATLAS_FORGE_STRICT=true`) we promote BestEffort to
+// supervisor mode (`BHAI_FORGE_STRICT=true`) we promote BestEffort to
 // HardRequirement and propagate failures up so install refuses.
 
 #![cfg(target_os = "linux")]

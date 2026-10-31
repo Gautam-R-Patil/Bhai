@@ -85,8 +85,8 @@
             const skip = built.row.querySelector("[data-sp-skip]");
             const copy = built.row.querySelector("[data-sp-copy]");
             if (retry) retry.addEventListener("click", function () {
-                if (window.atlas && window.atlas.setupRetryInstallPhase) {
-                    Promise.resolve(window.atlas.setupRetryInstallPhase(phaseId)).catch(function () {});
+                if (window.bhai && window.bhai.setupRetryInstallPhase) {
+                    Promise.resolve(window.bhai.setupRetryInstallPhase(phaseId)).catch(function () {});
                 }
             });
             if (skip) skip.addEventListener("click", function () {

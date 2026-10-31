@@ -6,8 +6,8 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
-    process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS = "200";
-    process.env.ATLAS_NO_PERSONA_BIAS = "true";
+    process.env.BHAI_TOOL_ROUTER_TIMEOUT_MS = "200";
+    process.env.BHAI_NO_PERSONA_BIAS = "true";
 });
 
 vi.mock("./memory/embeddings.js", () => ({

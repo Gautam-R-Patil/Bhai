@@ -23,7 +23,7 @@ import { bufferToEmbedding, cosineSimilarity, embedText, isReady as isEmbeddingR
 import {
     addProject,
     fieldEmbedsOwnershipClaim,
-    fieldNamesAtlasDirectly,
+    fieldNamesBhaiDirectly,
     getFieldValue,
     getIdentityProfile,
     isGuardedOrg,
@@ -718,7 +718,7 @@ const PROFILE_RE: [RegExp, ("name" | "location" | "role" | "company")[]][] = [
     [new RegExp(String.raw`^Works at (${ORG})\.?$`, "u"), ["company"]],
 ];
 // The guards identity_update applies: nothing that names Bhai/XAGI or claims to own it.
-const guarded = (v: string) => isGuardedOrg(v) || fieldNamesAtlasDirectly(v) || fieldEmbedsOwnershipClaim(v);
+const guarded = (v: string) => isGuardedOrg(v) || fieldNamesBhaiDirectly(v) || fieldEmbedsOwnershipClaim(v);
 
 /** A tag name (lowercased by normalizeTags) as the fact spells it, else title-cased. */
 function displayName(name: string, content: string): string {

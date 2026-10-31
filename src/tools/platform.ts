@@ -25,51 +25,51 @@ export const IS_LINUX = process.platform === "linux";
 // ── PowerShell Automation Helpers ─────────────
 
 const PS_HELPERS = `
-if (-not $env:ATLAS_PS_HELPERS_LOADED) {
-    $env:ATLAS_PS_HELPERS_LOADED = "1"
+if (-not $env:BHAI_PS_HELPERS_LOADED) {
+    $env:BHAI_PS_HELPERS_LOADED = "1"
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
     Add-Type -AssemblyName UIAutomationClient -ErrorAction SilentlyContinue
     Add-Type -AssemblyName UIAutomationTypes -ErrorAction SilentlyContinue
 
-    $atlasWin32Code = @'
+    $bhaiWin32Code = @'
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-public class AtlasWin32 {
+public class BhaiWin32 {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 '@
-    if (-not ([System.Management.Automation.PSTypeName]'AtlasWin32').Type) {
-        Add-Type -TypeDefinition $atlasWin32Code -ErrorAction SilentlyContinue
+    if (-not ([System.Management.Automation.PSTypeName]'BhaiWin32').Type) {
+        Add-Type -TypeDefinition $bhaiWin32Code -ErrorAction SilentlyContinue
     }
 
-    function Atlas-FocusApp([string]$Name) {
+    function Bhai-FocusApp([string]$Name) {
         $p = Get-Process $Name -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
-            [AtlasWin32]::ShowWindow($p.MainWindowHandle, 9) | Out-Null
-            [AtlasWin32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+            [BhaiWin32]::ShowWindow($p.MainWindowHandle, 9) | Out-Null
+            [BhaiWin32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
         }
     }
-    function Atlas-GetFrontApp() {
-        $hwnd = [AtlasWin32]::GetForegroundWindow()
+    function Bhai-GetFrontApp() {
+        $hwnd = [BhaiWin32]::GetForegroundWindow()
         $sb = New-Object System.Text.StringBuilder 256
-        [AtlasWin32]::GetWindowText($hwnd, $sb, 256) | Out-Null
+        [BhaiWin32]::GetWindowText($hwnd, $sb, 256) | Out-Null
         $sb.ToString()
     }
-    function Atlas-SetDoNotDisturb([bool]$Enable) {
+    function Bhai-SetDoNotDisturb([bool]$Enable) {
         $path = "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"
         $val = if ($Enable) { 0 } else { 1 }
         Set-ItemProperty -Path $path -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value $val -Force -ErrorAction SilentlyContinue
     }
-    function Atlas-GetRunningApps() {
+    function Bhai-GetRunningApps() {
         Get-Process | Where-Object { $_.MainWindowTitle -ne "" } |
             Select-Object ProcessName, Id, MainWindowTitle | ConvertTo-Json -Compress
     }
-    function Atlas-LaunchApp([string]$App) { Start-Process $App }
-    function Atlas-CloseApp([string]$Name) {
+    function Bhai-LaunchApp([string]$App) { Start-Process $App }
+    function Bhai-CloseApp([string]$Name) {
         Get-Process $Name -ErrorAction SilentlyContinue | Stop-Process -Force
     }
 }`.trim();
@@ -83,7 +83,7 @@ public class AtlasWin32 {
 export async function runPowerShell(script: string, timeout = 10000): Promise<string> {
     if (!IS_WIN) throw new Error("runPowerShell is only available on Windows.");
 
-    const tmpFile = join(tmpdir(), `atlas_ps_${Date.now()}.ps1`);
+    const tmpFile = join(tmpdir(), `bhai_ps_${Date.now()}.ps1`);
     try {
         await fs.writeFile(tmpFile, `${PS_HELPERS}\n${script}`, "utf-8");
         const { stdout } = await execFileAsync(
@@ -293,7 +293,7 @@ export async function getFrontmostApp(): Promise<string> {
         }
     } else if (IS_WIN) {
         try {
-            const result = await runPowerShell(`Atlas-GetFrontApp`);
+            const result = await runPowerShell(`Bhai-GetFrontApp`);
             return result.trim() || "unknown";
         } catch {
             return "unknown";
@@ -442,7 +442,7 @@ export async function clipboardRead(): Promise<string> {
 
 export async function clipboardWrite(text: string): Promise<void> {
     if (IS_MAC) {
-        const tmpFile = join(tmpdir(), `atlas_clip_${Date.now()}.txt`);
+        const tmpFile = join(tmpdir(), `bhai_clip_${Date.now()}.txt`);
         await fs.writeFile(tmpFile, text, "utf-8");
         await execFileAsync("bash", ["-c", `cat "${tmpFile}" | pbcopy`], { timeout: 3000 });
         await fs.unlink(tmpFile).catch(() => {});
@@ -456,7 +456,7 @@ export async function clipboardWrite(text: string): Promise<void> {
     } else {
         // Linux — try multiple tools in order
         const wayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
-        const tmpFile = join(tmpdir(), `atlas_clip_${Date.now()}.txt`);
+        const tmpFile = join(tmpdir(), `bhai_clip_${Date.now()}.txt`);
         await fs.writeFile(tmpFile, text, "utf-8");
         let written = false;
         if (wayland) {

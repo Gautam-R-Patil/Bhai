@@ -14,7 +14,7 @@ const GITHUB_API = "https://api.github.com";
 async function githubFetch(endpoint: string, options: RequestInit = {}): Promise<unknown> {
     const headers: Record<string, string> = {
         Accept: "application/vnd.github.v3+json",
-        "User-Agent": "atlas-agent",
+        "User-Agent": "bhai-agent",
         ...((options.headers as Record<string, string>) || {}),
     };
     if (GITHUB_TOKEN) {
@@ -417,7 +417,7 @@ export const githubTool: ToolDefinition = {
                     headers: {
                         Authorization: `Bearer ${GITHUB_TOKEN}`,
                         "Content-Type": "application/json",
-                        "User-Agent": "atlas-agent",
+                        "User-Agent": "bhai-agent",
                     },
                     body: JSON.stringify({
                         query,

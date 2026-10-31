@@ -22,7 +22,7 @@ export async function postReddit(
         throw new Error(`Reddit credentials not set for brand "${brandId}"`);
     }
 
-    const userAgent = "ATLAS-Marketing/1.0";
+    const userAgent = "BHAI-Marketing/1.0";
     const tokenRes = await fetch("https://www.reddit.com/api/v1/access_token", {
         method: "POST",
         headers: {

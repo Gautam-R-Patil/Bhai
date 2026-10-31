@@ -11,7 +11,7 @@ import type { AnyMessageContent, BaileysEventMap, WAMessage, WASocket } from "@w
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { type GeneratedImage, type MediaAttachment, runAgent } from "./agent.js";
 import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
-import { isStopCommand, STUCK_REPLY_LINE, takeReaction, withStuckReplyLine } from "./channel-text.js";
+import { isStopCommand, sanitizeIncomingChannelText, STUCK_REPLY_LINE, takeReaction, withStuckReplyLine } from "./channel-text.js";
 import { getFieldValue, getIdentityProfile } from "./memory/identity.js";
 import type { ChatActions } from "./whatsapp-media.js";
 import { getDataDir } from "./config/paths.js";
@@ -187,20 +187,6 @@ function stopStateSweep(): void {
     }
 }
 
-
-// Sanitize attacker-controlled inbound text before wrapping in delimiters.
-// Strips framing tokens that the LLM treats as authoritative.
-function sanitizeIncomingChannelText(text: string): string {
-    if (!text) return text;
-    return text
-        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
-        .replace(/\[ATLAS-INTERNAL\b/gi, "[user-quoted-text")
-        .replace(/<system_log>/gi, "&lt;system_log&gt;")
-        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
-        .replace(/<tool_log/gi, "&lt;tool_log")
-        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
-        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
-}
 
 // ── Strip internal debug blocks before sending ──
 
@@ -627,7 +613,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const base64 = buffer.toString("base64");
 
             // Save to temp file
-            const mediaDir = join(tmpdir(), "atlas_media");
+            const mediaDir = join(tmpdir(), "bhai_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const ext = mimeType.split("/")[1] || "jpg";
             const tmpFilePath = join(mediaDir, `whatsapp_${randomUUID()}.${ext}`);
@@ -635,14 +621,14 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
 
             media.push({ type: "image", base64, mimeType });
             const caption = sanitizeIncomingChannelText(msg.imageMessage.caption || "What's in this image?");
-            enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This image is saved at ${tmpFilePath}. Use this absolute path for media-edit tools.]`;
+            enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: This image is saved at ${tmpFilePath}. Use this absolute path for media-edit tools.]`;
         }
 
         if (contentType === "videoMessage" && msg.videoMessage) {
             const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
             const isGif = msg.videoMessage.gifPlayback === true;
 
-            const mediaDir = join(tmpdir(), "atlas_media");
+            const mediaDir = join(tmpdir(), "bhai_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const tmpFilePath = join(mediaDir, `whatsapp_video_${randomUUID()}.mp4`);
             await fs.writeFile(tmpFilePath, buffer);
@@ -670,12 +656,12 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const seen = frames.length
                 ? `${frames.length} frames from it are attached in order${said ? `; what's said in it: "${sanitizeIncomingChannelText(said).slice(0, 2000)}"` : ""}${heardSounds ? `; also heard: ${sanitizeIncomingChannelText(heardSounds)}` : ""}`
                 : "it couldn't be opened";
-            enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: They sent a ${kind}; ${seen}. Saved at ${tmpFilePath}.]`;
+            enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: They sent a ${kind}; ${seen}. Saved at ${tmpFilePath}.]`;
         }
 
         if (contentType === "audioMessage" && msg.audioMessage) {
             const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
-            const mediaDir = join(tmpdir(), "atlas_media");
+            const mediaDir = join(tmpdir(), "bhai_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const isVoiceNote = msg.audioMessage.ptt === true;
             const ext = isVoiceNote ? "ogg" : msg.audioMessage.mimetype?.split("/")[1]?.split(";")[0] || "ogg";
@@ -702,21 +688,21 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             } else {
                 // Regular audio file (music, recording, etc.)
                 const said = heard?.text ? `\nWhat's said in it: "${sanitizeIncomingChannelText(heard.text).slice(0, 2000)}"` : "";
-                enrichedText = `User sent an audio file (${msg.audioMessage.mimetype || "audio"}, ${msg.audioMessage.seconds || "?"}s).${said}${sounds}\n\n[ATLAS-INTERNAL — not from user: Audio saved at ${tmpFilePath}. Use file tools to process it.]`;
+                enrichedText = `User sent an audio file (${msg.audioMessage.mimetype || "audio"}, ${msg.audioMessage.seconds || "?"}s).${said}${sounds}\n\n[BHAI-INTERNAL — not from user: Audio saved at ${tmpFilePath}. Use file tools to process it.]`;
             }
         }
 
         // Sticker messages
         if (contentType === "stickerMessage" && msg.stickerMessage) {
             const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
-            const mediaDir = join(tmpdir(), "atlas_media");
+            const mediaDir = join(tmpdir(), "bhai_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const isAnimated = msg.stickerMessage.isAnimated;
             const ext = isAnimated ? "webp" : "webp";
             const tmpFilePath = join(mediaDir, `whatsapp_sticker_${randomUUID()}.${ext}`);
             await fs.writeFile(tmpFilePath, buffer);
             media.push({ type: "image", base64: buffer.toString("base64"), mimeType: "image/webp" });
-            enrichedText = `User sent a ${isAnimated ? "animated " : ""}sticker.\n\n[ATLAS-INTERNAL — not from user: Sticker saved at ${tmpFilePath}. Respond with text as normal — do NOT send a sticker back unless the user explicitly asks for one.]`;
+            enrichedText = `User sent a ${isAnimated ? "animated " : ""}sticker.\n\n[BHAI-INTERNAL — not from user: Sticker saved at ${tmpFilePath}. Respond with text as normal — do NOT send a sticker back unless the user explicitly asks for one.]`;
         }
 
         // Location messages
@@ -765,7 +751,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             const mimeType = docMsg.mimetype || "application/octet-stream";
             const buffer = (await baileys.downloadMediaMessage(message, "buffer", {})) as Buffer;
 
-            const mediaDir = join(tmpdir(), "atlas_media");
+            const mediaDir = join(tmpdir(), "bhai_media");
             await fs.mkdir(mediaDir, { recursive: true });
             const ext = fileName.includes(".") ? (fileName.split(".").pop() ?? "bin") : "bin";
             const tmpFilePath = join(mediaDir, `whatsapp_doc_${randomUUID()}.${ext}`);
@@ -775,7 +761,7 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
             if (mimeType.startsWith("image/")) {
                 const base64 = buffer.toString("base64");
                 media.push({ type: "image", base64, mimeType });
-                enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Document saved at ${tmpFilePath}.]`;
+                enrichedText = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: Document saved at ${tmpFilePath}.]`;
             } else {
                 let textContent = "";
                 if (
@@ -791,8 +777,8 @@ async function extractMedia(message: WAMessage): Promise<{ media: MediaAttachmen
                     }
                 }
                 enrichedText = textContent
-                    ? `<channel_message_content>\n${caption}\n</channel_message_content>\n\n<channel_attached_document>\n${textContent}\n</channel_attached_document>\n\n[ATLAS-INTERNAL — not from user: Document saved at ${tmpFilePath}.]`
-                    : `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Document "${fileName}" (${mimeType}) saved at ${tmpFilePath}. Use file tools to read it if needed.]`;
+                    ? `<channel_message_content>\n${caption}\n</channel_message_content>\n\n<channel_attached_document>\n${textContent}\n</channel_attached_document>\n\n[BHAI-INTERNAL — not from user: Document saved at ${tmpFilePath}.]`
+                    : `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: Document "${fileName}" (${mimeType}) saved at ${tmpFilePath}. Use file tools to read it if needed.]`;
             }
         }
     } catch (err) {
@@ -2859,7 +2845,7 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
         if (qr) {
             currentQR = qr;
-            console.log(`##ATLAS_QR##${qr}##END_QR##`);
+            console.log(`##BHAI_QR##${qr}##END_QR##`);
             console.log("\n[WHATSAPP] Scan this QR code with WhatsApp on your phone:\n");
             (await import("qrcode-terminal")).default.generate(qr, { small: true });
             console.log("[WHATSAPP] Open WhatsApp > Settings > Linked Devices > Link a Device\n");
@@ -2876,12 +2862,12 @@ async function connectWhatsApp(llm: LLMClient): Promise<void> {
 
             // The desktop builds a wa.me link to this number for owner sign-up.
             const selfNumber = (sock.user?.id || "").split(/[:@]/)[0];
-            if (/^\d+$/.test(selfNumber)) console.log(`##ATLAS_WA_SELF##${selfNumber}##END_SELF##`);
+            if (/^\d+$/.test(selfNumber)) console.log(`##BHAI_WA_SELF##${selfNumber}##END_SELF##`);
 
             // First-time setup: generate OTP for owner registration
             if (getOwners().length === 0) {
                 const otp = generateOTP();
-                console.log(`##ATLAS_WA_OTP##${otp.code}##END_OTP##`);
+                console.log(`##BHAI_WA_OTP##${otp.code}##END_OTP##`);
                 console.log(`[WHATSAPP] First-time setup: Send OTP ${otp.code} from your phone to register as owner`);
             } else {
                 const ownerCount = getOwners().length;

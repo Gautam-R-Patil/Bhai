@@ -35,9 +35,9 @@ type SessionState = "idle" | "connecting" | "active" | "stopping";
 // of Kokoro echo bleeding through a MacBook's built-in mic typically sits
 // around 200-600, room noise at 100-200, intentional speech at 1500+. Pick
 // 1200 as a starting floor; env-overrideable for tuning in the field.
-const BARGE_IN_RMS_THRESHOLD = Number(process.env.ATLAS_BARGE_IN_RMS) || 1200;
+const BARGE_IN_RMS_THRESHOLD = Number(process.env.BHAI_BARGE_IN_RMS) || 1200;
 
-// libfvad-backed barge-in gate. Opt-IN: set `ATLAS_NATIVE_VAD=true` AND build
+// libfvad-backed barge-in gate. Opt-IN: set `BHAI_NATIVE_VAD=true` AND build
 // the native module with the `vad` cargo feature (`napi build --features vad`)
 // to enable. The RMS threshold above is a crude amplitude gate that
 // false-positives on background noise / music; libfvad classifies the actual
@@ -46,22 +46,22 @@ const BARGE_IN_RMS_THRESHOLD = Number(process.env.ATLAS_BARGE_IN_RMS) || 1200;
 //
 // When enabled but native is missing the function (build without `vad` feature),
 // the gate transparently falls back to RMS. No hard failure.
-const NATIVE_VAD_ENABLED = process.env.ATLAS_NATIVE_VAD === "true";
+const NATIVE_VAD_ENABLED = process.env.BHAI_NATIVE_VAD === "true";
 const VAD_AGGRESSIVENESS = (() => {
-    const n = Number(process.env.ATLAS_VAD_MODE);
+    const n = Number(process.env.BHAI_VAD_MODE);
     if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > 3) return 2;
     return n;
 })();
 
 // One-shot warnings for the silent-fallback cases — printed once per process
-// per reason so a misconfigured ATLAS_NATIVE_VAD doesn't waste debugging time.
+// per reason so a misconfigured BHAI_NATIVE_VAD doesn't waste debugging time.
 const _vadWarnedReasons = new Set<string>();
 function warnVadFallbackOnce(reason: "missing-feature" | "frame-shape", err?: unknown): void {
     if (_vadWarnedReasons.has(reason)) return;
     _vadWarnedReasons.add(reason);
     if (reason === "missing-feature") {
         console.warn(
-            "[LIVE-SESSION] ATLAS_NATIVE_VAD=true but native binary lacks `vad` feature — falling back to RMS. " +
+            "[LIVE-SESSION] BHAI_NATIVE_VAD=true but native binary lacks `vad` feature — falling back to RMS. " +
                 "Rebuild with `cd native && npx napi build --features vad --release`.",
         );
     } else {
@@ -121,7 +121,7 @@ export function tokenOverlap(candidate: string, reference: string): number {
 // Conservative enough that a human echoing "I think it's 26 degrees" after
 // Bhai says it doesn't trigger (<60% overlap once their actual words
 // arrive), but strict enough to catch "opening WhatsApp now" looping.
-const ECHO_OVERLAP_THRESHOLD = Number(process.env.ATLAS_ECHO_OVERLAP) || 0.6;
+const ECHO_OVERLAP_THRESHOLD = Number(process.env.BHAI_ECHO_OVERLAP) || 0.6;
 
 // Connective / function words that commonly appear mid-thought. When the
 // user's pending transcript ends in one of these, they almost certainly
@@ -234,10 +234,10 @@ export function looksLikeMidSentence(text: string): boolean {
 // accessibility tree, web_search results, browser_* page dumps) otherwise
 // balloon the next llm.chat input from ~30K to ~400K tokens and make every
 // subsequent turn 5-6s slower.
-const MAX_TOOL_RESULT_CHARS = Number(process.env.ATLAS_VOICE_TOOL_RESULT_MAX) || 2000;
+const MAX_TOOL_RESULT_CHARS = Number(process.env.BHAI_VOICE_TOOL_RESULT_MAX) || 2000;
 /** Same untrusted-content fence the main agent puts on tool output (agent.ts). */
 function fenceToolResult(name: string, result: string): string {
-    if (process.env.ATLAS_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(name)) return result;
+    if (process.env.BHAI_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(name)) return result;
     return wrapUntrustedToolResult(name, result);
 }
 
@@ -279,7 +279,7 @@ export class LiveVoiceSession extends EventEmitter {
     // via llm.chat() (fast regular Gemini) and output is spoken via Kokoro
     // TranscriptSpeaker. This path is ~1-2s user-to-hears vs ~3-4s for the
     // native-audio Live API path.
-    private hybridMode = process.env.ATLAS_VOICE_MODE !== "native";
+    private hybridMode = process.env.BHAI_VOICE_MODE !== "native";
     private hybridHistory: import("openai/resources/chat/completions.js").ChatCompletionMessageParam[] = [];
     // Bumped whenever the user starts a new turn so an in-flight llm.chat()
     // response from the prior turn can recognize it's been orphaned and drop.
@@ -292,14 +292,14 @@ export class LiveVoiceSession extends EventEmitter {
     // Silence window before dispatching accumulated user speech. Natural
     // mid-utterance pauses > this fire a premature turn; tune up for users
     // who speak slowly or tune down for snappier dispatch.
-    private static readonly END_OF_SPEECH_MS = Number(process.env.ATLAS_END_OF_SPEECH_MS) || 700;
+    private static readonly END_OF_SPEECH_MS = Number(process.env.BHAI_END_OF_SPEECH_MS) || 700;
     // Minimum transcript-chunk length (trimmed chars) to trigger barge-in
     // while Kokoro is playing. Under this we assume it's a Gemini hallucination
     // on speaker echo (common: one-letter or two-letter fake words) and drop
     // it. Loud, substantive user speech transcribes as longer chunks and
     // DOES cross this bar. Tuned to 5 so short interjections like "Wait",
     // "Stop", "Hey?" trigger — at 8 we'd lose those single-word barge-ins.
-    private static readonly BARGE_IN_MIN_CHARS = Number(process.env.ATLAS_BARGE_IN_MIN_CHARS) || 5;
+    private static readonly BARGE_IN_MIN_CHARS = Number(process.env.BHAI_BARGE_IN_MIN_CHARS) || 5;
     // Echo-filter: Bhai's most-recent spoken text (normalized). When a
     // user transcript arrives right after we spoke, we compare it against
     // this — if it substantially overlaps, it's the mic picking up the
@@ -310,7 +310,7 @@ export class LiveVoiceSession extends EventEmitter {
     // How long the echo window stays armed after a reply. Mic leakage is
     // always immediate (<2 s), so a short window is fine and prevents
     // dropping genuine user speech that happens to overlap the reply.
-    private static readonly ECHO_WINDOW_MS = Number(process.env.ATLAS_ECHO_WINDOW_MS) || 5000;
+    private static readonly ECHO_WINDOW_MS = Number(process.env.BHAI_ECHO_WINDOW_MS) || 5000;
 
     constructor(config: Partial<LiveVoiceConfig> & Pick<LiveVoiceConfig, "keys">, llm: LLMClient) {
         super();
@@ -426,7 +426,7 @@ export class LiveVoiceSession extends EventEmitter {
             // visible "Bhai is watching your screen" indicator. Without
             // this signal users had no way to tell that screencaptures
             // were being uploaded to the live-voice provider every 1.5s.
-            if (process.env.ATLAS_LIVE_SCREEN_SHARE !== "false") {
+            if (process.env.BHAI_LIVE_SCREEN_SHARE !== "false") {
                 try {
                     this.screenShare = startScreenShare(
                         (b64, mime) => this.backend?.sendVideo(b64, mime),
@@ -539,7 +539,7 @@ export class LiveVoiceSession extends EventEmitter {
      * feedback-loop the AI's own words back through STT.
      *
      * Two strategies, picked at runtime:
-     *   1. libfvad (when ATLAS_NATIVE_VAD=true AND the native module was
+     *   1. libfvad (when BHAI_NATIVE_VAD=true AND the native module was
      *      built with the `vad` cargo feature): spectrum-aware, ignores
      *      background noise / music far better than RMS.
      *   2. RMS threshold (default and fallback): cheap amplitude gate. Loud
@@ -1153,7 +1153,7 @@ export class LiveVoiceSession extends EventEmitter {
     // messages. Prevents unbounded growth over long sessions from turning
     // every subsequent llm.chat into a multi-second request.
     private trimHybridHistory(): void {
-        const MAX_HYBRID_HISTORY = Number(process.env.ATLAS_VOICE_HISTORY_MAX) || 30;
+        const MAX_HYBRID_HISTORY = Number(process.env.BHAI_VOICE_HISTORY_MAX) || 30;
         if (this.hybridHistory.length <= MAX_HYBRID_HISTORY + 1) return;
         const system = this.hybridHistory[0]?.role === "system" ? [this.hybridHistory[0]] : [];
         const recent = this.hybridHistory.slice(-MAX_HYBRID_HISTORY);

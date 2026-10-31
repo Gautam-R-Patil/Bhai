@@ -58,7 +58,7 @@ function cacheFilePath(projectRoot: string, hash: string): string {
 }
 
 async function extractAudio(videoPath: string): Promise<string> {
-    const tmpWav = path.join(os.tmpdir(), `atlas-vs-audio-${Date.now()}.wav`);
+    const tmpWav = path.join(os.tmpdir(), `bhai-vs-audio-${Date.now()}.wav`);
     await execFileP(
         ffmpegPath(),
         ["-i", videoPath, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "-y", tmpWav],

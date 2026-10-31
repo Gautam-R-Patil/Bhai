@@ -76,12 +76,12 @@ describe("persona step — render", () => {
 describe("persona step — Continue payload", () => {
     beforeEach(async () => { await loadPersonaStep(); });
 
-    it("calls atlas.saveProfile with the expected shape", async () => {
+    it("calls bhai.saveProfile with the expected shape", async () => {
         const root = document.getElementById("step-root");
         const saveProfile = vi.fn().mockResolvedValue({ success: true });
         const onAdvance = vi.fn();
         const refreshState = vi.fn().mockResolvedValue(undefined);
-        window.atlas = { saveProfile };
+        window.bhai = { saveProfile };
         window.WizardSteps.persona.render(root, {
             state: { profile: { name: "Dheeraj" } },
             onAdvance, refreshState,
@@ -103,7 +103,7 @@ describe("persona step — Continue payload", () => {
     it("preserves existing tone if profile.tone is already set", async () => {
         const root = document.getElementById("step-root");
         const saveProfile = vi.fn().mockResolvedValue({ success: true });
-        window.atlas = { saveProfile };
+        window.bhai = { saveProfile };
         window.WizardSteps.persona.render(root, {
             state: { profile: { name: "X", tone: "playful" } },
             onAdvance: () => {}, refreshState: async () => {},
@@ -117,7 +117,7 @@ describe("persona step — Continue payload", () => {
     it("creator defaults tone to friendly", async () => {
         const root = document.getElementById("step-root");
         const saveProfile = vi.fn().mockResolvedValue({ success: true });
-        window.atlas = { saveProfile };
+        window.bhai = { saveProfile };
         window.WizardSteps.persona.render(root, {
             state: { profile: {} },
             onAdvance: () => {}, refreshState: async () => {},

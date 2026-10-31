@@ -29,7 +29,7 @@ import { buildIndexFromDB, getHNSWIndex } from "./vector-index.js";
 
 // ── Constants ─────────────────────────────────
 
-const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
+const DATA_DIR = process.env.BHAI_DATA_DIR || path.resolve("data");
 const DB_PATH = path.join(DATA_DIR, "memory.db");
 
 // ── Module-level LLM client for smart memory writes ──
@@ -608,8 +608,8 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
 
         // ── Conversation transcript search (session_search) ──
         // Per-message decomposition + FTS5 over raw transcript content.
-        // Gated by ATLAS_NO_SESSION_SEARCH; shares this try/catch fail-open.
-        if (process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
+        // Gated by BHAI_NO_SESSION_SEARCH; shares this try/catch fail-open.
+        if (process.env.BHAI_NO_SESSION_SEARCH !== "true") {
             initConversationSearchSchema(rawDb);
             backfillConversationMessages();
         }
@@ -620,10 +620,10 @@ export async function initMemoryDB(): Promise<CompatDatabase> {
         console.error("  FTS5 error:", (err as Error).message);
     }
 
-    const gateDisabled = process.env.ATLAS_NO_MEMORY_GATE === "true";
-    const shadow = process.env.ATLAS_MEMORY_GATE_SHADOW !== "false";
+    const gateDisabled = process.env.BHAI_NO_MEMORY_GATE === "true";
+    const shadow = process.env.BHAI_MEMORY_GATE_SHADOW !== "false";
     if (gateDisabled) {
-        console.log("[MEMORY] Value-gate: DISABLED (ATLAS_NO_MEMORY_GATE=true)");
+        console.log("[MEMORY] Value-gate: DISABLED (BHAI_NO_MEMORY_GATE=true)");
     } else if (shadow) {
         console.log(
             "[MEMORY] Value-gate: SHADOW (decisions logged to data/memory-gate.jsonl, all writes still insert)",
@@ -944,7 +944,7 @@ export function withoutMedia<T extends { content?: unknown }>(messages: T[]): T[
 
 /**
  * Housekeeping after decay: strip media that older builds stored in
- * conversations, drop transcripts past ATLAS_TRANSCRIPT_RETENTION_DAYS (unset =
+ * conversations, drop transcripts past BHAI_TRANSCRIPT_RETENTION_DAYS (unset =
  * keep forever), refresh planner stats, and on the nightly pass VACUUM when over
  * a quarter of the file is free pages.
  */
@@ -972,12 +972,12 @@ export function compactMemoryDB(nightly = false): void {
             console.log(`[MEMORY][COMPACT] Stripped media from ${media.length} stored conversations`);
         }
 
-        const days = Number.parseInt(process.env.ATLAS_TRANSCRIPT_RETENTION_DAYS ?? "", 10);
+        const days = Number.parseInt(process.env.BHAI_TRANSCRIPT_RETENTION_DAYS ?? "", 10);
         if (days > 0) {
             const old = "SELECT id FROM conversations WHERE COALESCE(updated_at, created_at) < datetime('now', ?)";
             const cutoff = `-${days} days`;
             const removed = raw.transaction(() => {
-                // conversation_messages is absent with ATLAS_NO_SESSION_SEARCH.
+                // conversation_messages is absent with BHAI_NO_SESSION_SEARCH.
                 if (raw.prepare("SELECT 1 FROM sqlite_master WHERE name = 'conversation_messages'").get())
                     raw.prepare(`DELETE FROM conversation_messages WHERE conversation_id IN (${old})`).run(cutoff);
                 raw.prepare(`DELETE FROM conversation_embeddings WHERE conversation_id IN (${old})`).run(cutoff);
@@ -1205,8 +1205,8 @@ export async function remember(
 
     const validScope = /^(global|user:.+|session:.+|task:.+)$/.test(scope) ? scope : "global";
 
-    const gateDisabled = process.env.ATLAS_NO_MEMORY_GATE === "true";
-    const shadow = process.env.ATLAS_MEMORY_GATE_SHADOW !== "false"; // default ON during rollout
+    const gateDisabled = process.env.BHAI_NO_MEMORY_GATE === "true";
+    const shadow = process.env.BHAI_MEMORY_GATE_SHADOW !== "false"; // default ON during rollout
 
     let gateDecision: "allow" | "reject" = "allow";
     let gateReason = "gate_disabled";

@@ -19,7 +19,8 @@ Deny when any of these holds, quoting the exact faulty text from skill.cjs or sk
 - done can return without reading, from the page, a confirmation that matches confirmPattern.
 - An add-on, tip, donation, membership, delivery address or payment method is picked silently instead of
   being the page's neutral default or a declared question.
-- A selector uses a generated or hashed class (.css-1x2y3z, .sc-abc123, Foo__bar_3kXq) or data-atlas-id.
+- A selector uses a generated or hashed class (.css-1x2y3z, .sc-abc123, Foo__bar_3kXq), data-bhai-id or
+  data-atlas-id.
 - The code tries to reach anything outside its arguments: require, process, globalThis, Function, eval,
   .constructor, timers, network, files.
 

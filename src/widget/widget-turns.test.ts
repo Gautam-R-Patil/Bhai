@@ -158,9 +158,9 @@ const send = (msg: Record<string, unknown>) => FakeWS.last.onmessage?.({ data: J
 const flush = () => {
     for (const f of frames.splice(0)) f();
 };
-const messages = () => win.querySelector("#atlas-widget-messages");
+const messages = () => win.querySelector("#bhai-widget-messages");
 const agents = () => messages().children.filter((c) => c.className.includes("agent"));
-const status = () => win.querySelector("#atlas-widget-status");
+const status = () => win.querySelector("#bhai-widget-status");
 
 beforeEach(boot);
 
@@ -197,7 +197,7 @@ describe("widget live turns", () => {
         send({ type: "response", turn: "t1", text: "Final <b>answer</b>", worked: { secs: 5, steps: 2 } });
         expect(agents()).toHaveLength(1);
         expect(agents()[0].innerHTML).toBe("Final &lt;b&gt;answer&lt;/b&gt;");
-        expect(win.querySelector("#atlas-widget-steps-toggle").textContent).toBe("Worked for 5s · 2 steps");
+        expect(win.querySelector("#bhai-widget-steps-toggle").textContent).toBe("Worked for 5s · 2 steps");
         send({ type: "turn_answer", turn: "t1", seq: 9, attempt: 0, text: "after the end" });
         flush();
         expect(agents()[0].innerHTML).toBe("Final &lt;b&gt;answer&lt;/b&gt;");
@@ -208,7 +208,7 @@ describe("widget live turns", () => {
         send({ type: "turn_status", turn: "t1", text: "Working", step: 0, elapsed: 20 });
         send({ type: "turn_step", turn: "t1", seq: 1, id: "a", text: "Open page", state: "done" });
         send({ type: "response", turn: "t1", text: "Done", worked: { secs: 3, steps: 1 } });
-        expect(win.querySelector("#atlas-widget-steps-toggle").textContent).toBe("Worked for 3s · 1 step");
+        expect(win.querySelector("#bhai-widget-steps-toggle").textContent).toBe("Worked for 3s · 1 step");
     });
 
     it("a plain or stopped answer keeps its Worked for line, with nothing to open", () => {
@@ -217,8 +217,8 @@ describe("widget live turns", () => {
         send({ type: "turn_answer", turn: "t1", seq: 1, attempt: 0, text: "Hi th" });
         flush();
         send({ type: "response", turn: "t1", text: "Hi th\n\nStopped.", stopped: true, worked: { secs: 4, steps: 0 } });
-        const toggle = win.querySelector("#atlas-widget-steps-toggle");
-        expect(win.querySelector("#atlas-widget-steps-bar").hidden).toBe(false);
+        const toggle = win.querySelector("#bhai-widget-steps-toggle");
+        expect(win.querySelector("#bhai-widget-steps-bar").hidden).toBe(false);
         expect(toggle.textContent).toBe("Worked for 4s");
         expect(toggle.disabled).toBe(true);
         // The next turn with steps can open its list again.
@@ -243,10 +243,10 @@ describe("widget live turns", () => {
         });
         flush();
         expect(status().textContent).toMatch(/^Searching the web · step 2 · \d+s$/);
-        const list = win.querySelector("#atlas-widget-steps");
+        const list = win.querySelector("#bhai-widget-steps");
         expect(list.children).toHaveLength(1);
         expect(list.children[0].textContent).toBe("<img src=x onerror=alert(1)>");
-        expect(win.querySelector("#atlas-widget-steps-bar").hidden).toBe(false);
+        expect(win.querySelector("#bhai-widget-steps-bar").hidden).toBe(false);
     });
 
     it("never renders thinking_content into the bubble", () => {
@@ -287,7 +287,7 @@ describe("widget live turns", () => {
             FakeWS.last.onclose?.();
             expect(agents()).toHaveLength(0);
             const last = messages().children.at(-1);
-            expect(last?.className).toBe("atlas-msg system");
+            expect(last?.className).toBe("bhai-msg system");
             expect(last?.innerHTML).toBe("Connection lost. Ask me again.");
         }
     });
@@ -304,7 +304,7 @@ describe("widget live line waits for a long turn", () => {
     afterEach(() => {
         vi.useRealTimers();
     });
-    const bar = () => win.querySelector("#atlas-widget-steps-bar");
+    const bar = () => win.querySelector("#bhai-widget-steps-bar");
     const timed = () => {
         vi.useFakeTimers();
         boot({ Date, setInterval, clearInterval });
@@ -339,10 +339,10 @@ describe("widget live line waits for a long turn", () => {
         vi.advanceTimersByTime(1000);
         expect(status().textContent).toBe("Searching the web · step 1 · 15s");
         expect(bar().hidden).toBe(false);
-        expect(win.querySelector("#atlas-widget-steps").children.at(-1)?.textContent).toBe("Search");
+        expect(win.querySelector("#bhai-widget-steps").children.at(-1)?.textContent).toBe("Search");
         expect(agents()[0].style.display).toBe("");
         send({ type: "response", turn: "t1", text: "Found it", worked: { secs: 18, steps: 1 } });
-        expect(win.querySelector("#atlas-widget-steps-toggle").textContent).toBe("Worked for 18s · 1 step");
+        expect(win.querySelector("#bhai-widget-steps-toggle").textContent).toBe("Worked for 18s · 1 step");
     });
 
     it("a rejoin snapshot past 15 s shows the line at once", () => {
@@ -372,5 +372,15 @@ describe("widget live line waits for a long turn", () => {
         expect(status().textContent).toBe("Online");
         vi.advanceTimersByTime(5000);
         expect(status().textContent).toBe("Reading · step 1 · 15s");
+    });
+});
+
+describe("widget double-inject guard", () => {
+    it("a page already running the pre-rename script (__atlasWidget) gets no second widget", () => {
+        const createElement = vi.fn();
+        const sandbox: Record<string, unknown> = { document: { createElement }, __atlasWidget: true };
+        sandbox.window = sandbox;
+        vm.runInNewContext(getWidgetScript("ws://x"), sandbox);
+        expect(createElement).not.toHaveBeenCalled();
     });
 });

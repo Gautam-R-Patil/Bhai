@@ -27,7 +27,7 @@ let heartbeatTimer = null;
 let discoveryTimer = null;
 let connectionAttempts = 0;
 let discoveryAttempts = 0;
-let lastAtlasResponse = "";
+let lastBhaiResponse = "";
 
 // The side panel's conversation, kept in this Chrome profile so it survives the
 // worker sleeping, the panel closing and Chrome restarting. Text only: the
@@ -202,13 +202,13 @@ function connect() {
   try {
     ws = new WebSocket(serverUrl);
   } catch (err) {
-    console.error("[ATLAS Bridge] WebSocket creation failed:", err);
+    console.error("[Bhai Bridge] WebSocket creation failed:", err);
     scheduleReconnect();
     return;
   }
 
   ws.onopen = () => {
-    console.log("[ATLAS Bridge] Connected to Bhai bridge");
+    console.log("[Bhai Bridge] Connected to Bhai bridge");
     connectionAttempts = 0;
     reconnectDelay = 1000;
     // The version lets Bhai ask an outdated copy (an update installed under a running Chrome) to reload.
@@ -222,12 +222,12 @@ function connect() {
       const msg = JSON.parse(event.data);
       handleServerMessage(msg);
     } catch (err) {
-      console.error("[ATLAS Bridge] Invalid message:", err);
+      console.error("[Bhai Bridge] Invalid message:", err);
     }
   };
 
   ws.onclose = (event) => {
-    console.log(`[ATLAS Bridge] Bridge disconnected: code=${event.code} reason=${event.reason}`);
+    console.log(`[Bhai Bridge] Bridge disconnected: code=${event.code} reason=${event.reason}`);
     authenticated = false;
     stopHeartbeat();
     updateBadge(false);
@@ -247,7 +247,7 @@ function connect() {
 
   ws.onerror = () => {
     // The WS onerror event has no useful message; the real reason appears in onclose
-    console.warn("[ATLAS Bridge] Bridge WebSocket error (Bhai may not be running yet)");
+    console.warn("[Bhai Bridge] Bridge WebSocket error (Bhai may not be running yet)");
   };
 }
 
@@ -277,13 +277,13 @@ function connectOverlay() {
   try {
     overlayWs = new WebSocket(url);
   } catch (err) {
-    console.error("[ATLAS Bridge] Overlay WebSocket creation failed:", err);
+    console.error("[Bhai Bridge] Overlay WebSocket creation failed:", err);
     scheduleOverlayReconnect();
     return;
   }
 
   overlayWs.onopen = () => {
-    console.log("[ATLAS Bridge] Connected to Bhai overlay");
+    console.log("[Bhai Bridge] Connected to Bhai overlay");
     overlayReconnectDelay = 1000;
   };
 
@@ -292,15 +292,15 @@ function connectOverlay() {
     try {
       msg = JSON.parse(event.data);
     } catch (err) {
-      console.error("[ATLAS Bridge] Invalid overlay message:", err);
+      console.error("[Bhai Bridge] Invalid overlay message:", err);
       return;
     }
     // After the saved turn is back, in arrival order.
-    turnReady.then(() => handleOverlayMessage(msg)).catch((err) => console.error("[ATLAS Bridge] Overlay message failed:", err));
+    turnReady.then(() => handleOverlayMessage(msg)).catch((err) => console.error("[Bhai Bridge] Overlay message failed:", err));
   };
 
   overlayWs.onclose = (event) => {
-    console.log(`[ATLAS Bridge] Overlay disconnected: code=${event.code} reason=${event.reason}`);
+    console.log(`[Bhai Bridge] Overlay disconnected: code=${event.code} reason=${event.reason}`);
     // A turn this panel was waiting on can't finish here any more: its events went with the socket.
     turnReady.then(() => {
       if (!draft && !awaitingTurn()) return;
@@ -322,7 +322,7 @@ function connectOverlay() {
   };
 
   overlayWs.onerror = () => {
-    console.warn("[ATLAS Bridge] Overlay WebSocket error");
+    console.warn("[Bhai Bridge] Overlay WebSocket error");
   };
 }
 
@@ -353,7 +353,7 @@ function scheduleReconnect() {
   const delay = connectionAttempts < 3
     ? 1000
     : Math.min(reconnectDelay * Math.pow(2, Math.min(connectionAttempts - 3, 6)), MAX_RECONNECT_DELAY);
-  console.log(`[ATLAS Bridge] Reconnecting in ${delay}ms (attempt ${connectionAttempts})`);
+  console.log(`[Bhai Bridge] Reconnecting in ${delay}ms (attempt ${connectionAttempts})`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
@@ -425,7 +425,7 @@ function logAction(type, detail) {
   }
   _actionLog.unshift(entry);
   if (_actionLog.length > MAX_ACTION_LOG) _actionLog.pop();
-  chrome.runtime.sendMessage({ type: 'atlas_action', entry }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'bhai_action', entry }).catch(() => {});
 }
 
 // ── Send Message to Bhai Overlay ────────────
@@ -433,9 +433,9 @@ function logAction(type, detail) {
 // Messages include meta.source = "chrome-extension" so the server can
 // detect browser context and prepend URL info for the agent.
 
-function sendToAtlas(text, meta = {}, image = null) {
+function sendToBhai(text, meta = {}, image = null) {
   if (!overlayWs || overlayWs.readyState !== WebSocket.OPEN) {
-    console.warn("[ATLAS Bridge] Cannot send — overlay not connected");
+    console.warn("[Bhai Bridge] Cannot send — overlay not connected");
     return false;
   }
 
@@ -452,7 +452,7 @@ function sendToAtlas(text, meta = {}, image = null) {
   overlayWs.send(JSON.stringify(payload));
   awaitingSince = Date.now();
   savePanelTurn();
-  console.log(`[ATLAS Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
+  console.log(`[Bhai Bridge] Sent to overlay: ${text.substring(0, 100)}...`);
   return true;
 }
 
@@ -551,7 +551,7 @@ async function sendFromPanel(msg) {
   }
   const mentions = await mentionedTabs(msg.mentions);
   const text = `${url ? `[From browser: ${url}] ` : ""}${body}${mentions.text}`;
-  const sent = sendToAtlas(text, { url, title, action: msg.type, imageKind: shot?.pasted ? "pasted" : "tab" }, shot?.image || null);
+  const sent = sendToBhai(text, { url, title, action: msg.type, imageKind: shot?.pasted ? "pasted" : "tab" }, shot?.image || null);
   // What went with the message, for the panel to show as chips.
   if (sent) {
     addChat("you", display, {
@@ -572,12 +572,12 @@ async function sendFromPanel(msg) {
 function handleServerMessage(msg) {
   if (msg.type === "auth_ok") {
     authenticated = true;
-    console.log("[ATLAS Bridge] Bridge authenticated successfully");
+    console.log("[Bhai Bridge] Bridge authenticated successfully");
     return;
   }
 
   if (msg.type === "auth_failed") {
-    console.error("[ATLAS Bridge] Bridge authentication failed:", msg.error);
+    console.error("[Bhai Bridge] Bridge authentication failed:", msg.error);
     authenticated = false;
     authToken = "";
     // Clear the stale cached token so the next boot doesn't reuse it
@@ -592,7 +592,7 @@ function handleServerMessage(msg) {
 
   // Bhai shipped a newer copy of this extension: load it (the socket reconnects after).
   if (msg.type === "reload") {
-    console.log("[ATLAS Bridge] Reloading to pick up the updated extension");
+    console.log("[Bhai Bridge] Reloading to pick up the updated extension");
     chrome.runtime.reload();
     return;
   }
@@ -614,7 +614,7 @@ function handleServerMessage(msg) {
 // Overlay socket (18792): chat replies relayed to the popup.
 function handleOverlayMessage(msg) {
   if (msg.type === "ready") {
-    console.log("[ATLAS Bridge] Overlay server ready");
+    console.log("[Bhai Bridge] Overlay server ready");
     return;
   }
 
@@ -654,7 +654,7 @@ function handleOverlayMessage(msg) {
   }
 
   if (msg.type === "response") {
-    lastAtlasResponse = msg.text || "";
+    lastBhaiResponse = msg.text || "";
     // Follow-ups, feedback and "Forget that" ride with the reply; the panel shows them as buttons.
     const actions = (Array.isArray(msg.quickActions) ? msg.quickActions : [])
       .map((a) => (typeof a === "string" ? { label: a, action: a } : a))
@@ -662,14 +662,14 @@ function handleOverlayMessage(msg) {
       .slice(0, 8)
       .map((a) => ({ label: a.label.slice(0, 80), action: a.action.slice(0, 300) }));
     const links = (Array.isArray(msg.links) ? msg.links : []).filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 6);
-    addChat("bhai", lastAtlasResponse, actions.length || links.length ? { actions, links } : null, replyImages(msg.images));
+    addChat("bhai", lastBhaiResponse, actions.length || links.length ? { actions, links } : null, replyImages(msg.images));
     if (!panelsOpen) {
       unread++;
       if (!_badgeActivityTimer) updateBadge(authenticated);
     }
     chrome.runtime.sendMessage({
-      type: "atlas_response",
-      text: lastAtlasResponse,
+      type: "bhai_response",
+      text: lastBhaiResponse,
     }).catch(() => { /* popup not open */ });
     return;
   }
@@ -688,7 +688,7 @@ function handleOverlayMessage(msg) {
     // Research running in the background, or another surface's turn: not this panel's work.
     if (msg.background || (!draft && !awaitingTurn())) return;
     chrome.runtime.sendMessage({
-      type: "atlas_progress",
+      type: "bhai_progress",
       text: msg.text || "",
     }).catch(() => { /* popup not open */ });
     return;
@@ -697,7 +697,7 @@ function handleOverlayMessage(msg) {
   if (msg.type === "error") {
     addChat("error", msg.text || "Something went wrong");
     chrome.runtime.sendMessage({
-      type: "atlas_error",
+      type: "bhai_error",
       text: msg.text || "Something went wrong",
     }).catch(() => { /* popup not open */ });
   }
@@ -720,26 +720,26 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onInstalled.addListener(() => {
   // Remove existing menus first to avoid duplicates
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: "atlas-ask-page", title: "Ask Bhai about this page", contexts: ["page"] });
-    chrome.contextMenus.create({ id: "atlas-ask-image", title: "Ask Bhai about this image", contexts: ["image"] });
+    chrome.contextMenus.create({ id: "bhai-ask-page", title: "Ask Bhai about this page", contexts: ["page"] });
+    chrome.contextMenus.create({ id: "bhai-ask-image", title: "Ask Bhai about this image", contexts: ["image"] });
     // Text gets one "Bhai" submenu so the right-click menu doesn't fill up.
-    chrome.contextMenus.create({ id: "atlas-text", title: "Bhai", contexts: ["selection"] });
+    chrome.contextMenus.create({ id: "bhai-text", title: "Bhai", contexts: ["selection"] });
     for (const [id, title] of [
-      ["atlas-ask-selection", "Ask about this"],
-      ["atlas-explain", "Explain"],
-      ["atlas-summarize", "Summarize"],
-      ["atlas-translate", "Translate to English"],
+      ["bhai-ask-selection", "Ask about this"],
+      ["bhai-explain", "Explain"],
+      ["bhai-summarize", "Summarize"],
+      ["bhai-translate", "Translate to English"],
     ]) {
-      chrome.contextMenus.create({ id, parentId: "atlas-text", title, contexts: ["selection"] });
+      chrome.contextMenus.create({ id, parentId: "bhai-text", title, contexts: ["selection"] });
     }
   });
 });
 
 const TEXT_ASKS = {
-  "atlas-ask-selection": ["What can you tell me about this?", "About"],
-  "atlas-explain": ["Explain this simply.", "Explain"],
-  "atlas-summarize": ["Summarize this in a few lines.", "Summarize"],
-  "atlas-translate": ["Translate this to English. Keep the meaning and tone.", "Translate"],
+  "bhai-ask-selection": ["What can you tell me about this?", "About"],
+  "bhai-explain": ["Explain this simply.", "Explain"],
+  "bhai-summarize": ["Summarize this in a few lines.", "Summarize"],
+  "bhai-translate": ["Translate this to English. Keep the meaning and tone.", "Translate"],
 };
 
 // A page image as a ≤1600px JPEG data part; null if the site won't let us fetch it.
@@ -769,26 +769,26 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const url = tab.url || "unknown";
   const title = tab.title || "Untitled";
 
-  if (info.menuItemId === "atlas-ask-page") {
+  if (info.menuItemId === "bhai-ask-page") {
     const message = `[From browser: ${url}] User asks about this page: "${title}"`;
-    if (sendToAtlas(message, { url, title, action: "ask_page" })) addChat("you", `About this page: ${title}`);
+    if (sendToBhai(message, { url, title, action: "ask_page" })) addChat("you", `About this page: ${title}`);
   }
 
   if (TEXT_ASKS[info.menuItemId]) {
     const [ask, label] = TEXT_ASKS[info.menuItemId];
     const selectedText = (info.selectionText || "").slice(0, 4000);
     const message = `[From browser: ${url}] User selected: "${selectedText}"\n\n${ask}`;
-    if (sendToAtlas(message, { url, title, selectedText, action: "ask_selection" })) {
+    if (sendToBhai(message, { url, title, selectedText, action: "ask_selection" })) {
       addChat("you", label, { selection: selectedText.slice(0, 140) });
     }
   }
 
-  if (info.menuItemId === "atlas-ask-image") {
+  if (info.menuItemId === "bhai-ask-image") {
     const image = await fetchImage(info.srcUrl);
     const message = image
       ? `[From browser: ${url}] What can you tell me about this image?`
       : `[From browser: ${url}] What can you tell me about the image at ${info.srcUrl}?`;
-    if (sendToAtlas(message, { url, title, action: "ask_image", imageKind: "pasted" }, image)) {
+    if (sendToBhai(message, { url, title, action: "ask_image", imageKind: "pasted" }, image)) {
       addChat("you", "About this image", image ? { pasted: true } : null);
     }
   }
@@ -1025,7 +1025,8 @@ async function scanElements(payload) {
     y: el.y,
     tag: el.tag,
     text: el.text,
-    atlasId: el.atlasId,
+    bhaiId: el.bhaiId,
+    atlasId: el.bhaiId, // for a bot from before the rename; drop after a release
     editorType: el.editorType,
   }));
 
@@ -1035,6 +1036,11 @@ async function scanElements(payload) {
 function scanPageElements() {
   // Runs inside the page (executeScript serializes only this function), so its
   // helpers must live in here too: an outside helper is a ReferenceError there.
+  // data-atlas-id too, for one release: a bot from before the rename looks that up.
+  function stampId(el, id) {
+    el.setAttribute('data-bhai-id', id);
+    el.setAttribute('data-atlas-id', id);
+  }
   function detectSpecialEditors() {
     const editors = [];
     const ts = Date.now();
@@ -1047,9 +1053,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-monaco-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, atlasId, editorType: 'monaco' });
+      const bhaiId = `bhai-editor-monaco-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Monaco)', score: 25, bhaiId, editorType: 'monaco' });
     });
 
     // CodeMirror 6
@@ -1058,9 +1064,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-cm6-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror6' });
+      const bhaiId = `bhai-editor-cm6-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, bhaiId, editorType: 'codemirror6' });
     });
 
     // CodeMirror 5 (skip if already detected as CM6)
@@ -1070,9 +1076,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-cm5-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, atlasId, editorType: 'codemirror5' });
+      const bhaiId = `bhai-editor-cm5-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (CodeMirror)', score: 25, bhaiId, editorType: 'codemirror5' });
     });
 
     // Ace Editor
@@ -1081,9 +1087,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-ace-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, atlasId, editorType: 'ace' });
+      const bhaiId = `bhai-editor-ace-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'code-editor', text: 'Code Editor (Ace)', score: 25, bhaiId, editorType: 'ace' });
     });
 
     // ── Rich Text Editors ──
@@ -1094,9 +1100,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-quill-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, atlasId, editorType: 'quill' });
+      const bhaiId = `bhai-editor-quill-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Quill)', score: 25, bhaiId, editorType: 'quill' });
     });
 
     // TinyMCE
@@ -1105,9 +1111,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-tinymce-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, atlasId, editorType: 'tinymce' });
+      const bhaiId = `bhai-editor-tinymce-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (TinyMCE)', score: 25, bhaiId, editorType: 'tinymce' });
     });
 
     // ProseMirror (also covers Tiptap which extends it)
@@ -1119,9 +1125,9 @@ function scanPageElements() {
       const y = Math.round(rect.top + rect.height / 2);
       const type = isTiptap ? 'tiptap' : 'prosemirror';
       const label = isTiptap ? 'Tiptap' : 'ProseMirror';
-      const atlasId = `atlas-editor-${type}-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: `Rich Text Editor (${label})`, score: 25, atlasId, editorType: type });
+      const bhaiId = `bhai-editor-${type}-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: `Rich Text Editor (${label})`, score: 25, bhaiId, editorType: type });
     });
 
     // Slate
@@ -1130,9 +1136,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-slate-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, atlasId, editorType: 'slate' });
+      const bhaiId = `bhai-editor-slate-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Slate)', score: 25, bhaiId, editorType: 'slate' });
     });
 
     // Draft.js
@@ -1141,9 +1147,9 @@ function scanPageElements() {
       if (rect.width < 50 || rect.height < 50) return;
       const x = Math.round(rect.left + rect.width / 2);
       const y = Math.round(rect.top + rect.height / 2);
-      const atlasId = `atlas-editor-draftjs-${ts}-${i}`;
-      el.setAttribute('data-atlas-id', atlasId);
-      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, atlasId, editorType: 'draftjs' });
+      const bhaiId = `bhai-editor-draftjs-${ts}-${i}`;
+      stampId(el, bhaiId);
+      editors.push({ x, y, tag: 'rich-editor', text: 'Rich Text Editor (Draft.js)', score: 25, bhaiId, editorType: 'draftjs' });
     });
 
     return editors;
@@ -1258,10 +1264,10 @@ function scanPageElements() {
     if (hasCursorPointer) score += 3;
     if (hasButtonClass) score += 2;
 
-    const atlasId = `atlas-el-${Date.now()}-${i}`;
-    el.setAttribute("data-atlas-id", atlasId);
+    const bhaiId = `bhai-el-${Date.now()}-${i}`;
+    stampId(el, bhaiId);
 
-    candidateMap.push({ x, y, tag, text: text.trim(), score, atlasId });
+    candidateMap.push({ x, y, tag, text: text.trim(), score, bhaiId });
   }
 
     // ── Shadow DOM traversal ──
@@ -1285,9 +1291,9 @@ function scanPageElements() {
         seenCoords.add(sKey);
         const sText = shadowEl.innerText?.replace(/\n/g, ' ').substring(0, 40) ||
                       shadowEl.getAttribute?.('aria-label') || '';
-        const sAtlasId = `atlas-shadow-${Date.now()}-${i}`;
-        shadowEl.setAttribute('data-atlas-id', sAtlasId);
-        candidateMap.push({ x: sx, y: sy, tag: sTag, text: sText.trim(), score: 10, atlasId: sAtlasId });
+        const sBhaiId = `bhai-shadow-${Date.now()}-${i}`;
+        stampId(shadowEl, sBhaiId);
+        candidateMap.push({ x: sx, y: sy, tag: sTag, text: sText.trim(), score: 10, bhaiId: sBhaiId });
       }
     }
 
@@ -1324,34 +1330,34 @@ function scanPageElements() {
 
 // ── Shared visual feedback injected into real tabs ──────────────────────────
 
-function injectAtlasVisuals(tabId) {
+function injectBhaiVisuals(tabId) {
   // Inject keyframes + HUD CSS once per tab
   chrome.scripting.executeScript({
     target: { tabId },
     world: "ISOLATED",
     func: () => {
-      if (document.getElementById('__atlasKF')) return;
+      if (document.getElementById('__bhaiKF')) return;
       const s = document.createElement('style');
-      s.id = '__atlasKF';
+      s.id = '__bhaiKF';
       s.textContent = `
-        @keyframes atlasRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}
-        @keyframes atlasDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}
-        @keyframes atlasFade{0%{opacity:.8}100%{opacity:0}}
-        @keyframes atlasPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
-        @keyframes atlasScrollFadeDown{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(16px)}}
-        @keyframes atlasScrollFadeUp{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-16px)}}
+        @keyframes bhaiRipple{0%{transform:scale(.3);opacity:1}100%{transform:scale(2.2);opacity:0}}
+        @keyframes bhaiDot{0%{transform:scale(1.8);opacity:1}100%{transform:scale(.6);opacity:0}}
+        @keyframes bhaiFade{0%{opacity:.8}100%{opacity:0}}
+        @keyframes bhaiPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+        @keyframes bhaiScrollFadeDown{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(16px)}}
+        @keyframes bhaiScrollFadeUp{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-16px)}}
       `;
       document.head.appendChild(s);
     }
   }).catch(() => {});
 }
 
-function showAtlasHUD(tabId, label, done = false) {
+function showBhaiHUD(tabId, label, done = false) {
   chrome.scripting.executeScript({
     target: { tabId },
     world: "ISOLATED",
     func: (lbl, isDone) => {
-      const ID = '__atlasHUD';
+      const ID = '__bhaiHUD';
       let hud = document.getElementById(ID);
       if (isDone) {
         if (hud) { hud.style.opacity = '0'; setTimeout(() => hud?.remove(), 300); }
@@ -1360,13 +1366,13 @@ function showAtlasHUD(tabId, label, done = false) {
       if (!hud) {
         hud = document.createElement('div');
         hud.id = ID;
-        hud.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;animation:atlasPulse 1.2s ease-in-out infinite;flex-shrink:0"></span>' +
-                        '<span id="__atlasHUDtxt" style="margin-left:7px;font-size:11px;font-weight:500;color:#e2e8f0;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px"></span>';
+        hud.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;animation:bhaiPulse 1.2s ease-in-out infinite;flex-shrink:0"></span>' +
+                        '<span id="__bhaiHUDtxt" style="margin-left:7px;font-size:11px;font-weight:500;color:#e2e8f0;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px"></span>';
         hud.style.cssText = 'position:fixed;top:10px;right:10px;display:flex;align-items:center;padding:6px 12px;border-radius:20px;background:rgba(15,23,42,0.92);border:1px solid #1e3a5f;backdrop-filter:blur(8px);pointer-events:none;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.4);transition:opacity .3s ease;opacity:0;';
         document.body.appendChild(hud);
         requestAnimationFrame(() => { hud.style.opacity = '1'; });
       }
-      const txt = document.getElementById('__atlasHUDtxt');
+      const txt = document.getElementById('__bhaiHUDtxt');
       if (txt) txt.textContent = lbl;
     },
     args: [label, done]
@@ -1398,9 +1404,9 @@ async function cdpClick(tabId, payload) {
 
 async function clickAt(payload) {
   return withActiveTab(async (tabId) => {
-    injectAtlasVisuals(tabId);
+    injectBhaiVisuals(tabId);
     const elementLabel = payload.elementLabel || '';
-    if (elementLabel) showAtlasHUD(tabId, `🖱 Clicking "${elementLabel.substring(0, 30)}"`);
+    if (elementLabel) showBhaiHUD(tabId, `🖱 Clicking "${elementLabel.substring(0, 30)}"`);
 
     if (await cdpClick(tabId, payload)) {
       // The click indicator only; the click itself already happened.
@@ -1408,15 +1414,15 @@ async function clickAt(payload) {
         target: { tabId },
         func: (x, y) => {
           const ring = document.createElement('div');
-          ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid rgba(59,130,246,.9);pointer-events:none;z-index:2147483646;animation:atlasRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
+          ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid rgba(59,130,246,.9);pointer-events:none;z-index:2147483646;animation:bhaiRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
           const dot = document.createElement('div');
-          dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:#3b82f6;pointer-events:none;z-index:2147483647;animation:atlasDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
+          dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:#3b82f6;pointer-events:none;z-index:2147483647;animation:bhaiDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
           [ring, dot].forEach(e => document.body.appendChild(e));
           setTimeout(() => [ring, dot].forEach(e => e.remove()), 650);
         },
         args: [payload.x, payload.y],
       }).catch(() => {});
-      if (elementLabel) showAtlasHUD(tabId, '', true);
+      if (elementLabel) showBhaiHUD(tabId, '', true);
       return { success: true, method: "cdp" };
     }
 
@@ -1427,13 +1433,13 @@ async function clickAt(payload) {
         const colors = { left: ['rgba(59,130,246,0.15)','rgba(59,130,246,.9)','#3b82f6'], right: ['rgba(239,68,68,.15)','rgba(239,68,68,.9)','#ef4444'], middle: ['rgba(168,85,247,.15)','rgba(168,85,247,.9)','#a855f7'] };
         const [, border, solid] = colors[button || 'left'] || colors.left;
         const ring = document.createElement('div');
-        ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid ${border};pointer-events:none;z-index:2147483646;animation:atlasRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
+        ring.style.cssText = `position:fixed;left:${x-24}px;top:${y-24}px;width:48px;height:48px;border-radius:50%;border:2px solid ${border};pointer-events:none;z-index:2147483646;animation:bhaiRipple .6s cubic-bezier(.4,0,.2,1) forwards;`;
         const dot = document.createElement('div');
-        dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:${solid};pointer-events:none;z-index:2147483647;animation:atlasDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
-        const mkL = (h) => { const l = document.createElement('div'); l.style.cssText=`position:fixed;${h?`left:${x-12}px;top:${y-1}px;width:24px;height:2px;`:`left:${x-1}px;top:${y-12}px;width:2px;height:24px;`}background:${solid};opacity:.6;pointer-events:none;z-index:2147483647;animation:atlasFade .5s ease-out forwards;`; return l; };
+        dot.style.cssText = `position:fixed;left:${x-4}px;top:${y-4}px;width:8px;height:8px;border-radius:50%;background:${solid};pointer-events:none;z-index:2147483647;animation:bhaiDot .4s cubic-bezier(.4,0,.2,1) forwards;`;
+        const mkL = (h) => { const l = document.createElement('div'); l.style.cssText=`position:fixed;${h?`left:${x-12}px;top:${y-1}px;width:24px;height:2px;`:`left:${x-1}px;top:${y-12}px;width:2px;height:24px;`}background:${solid};opacity:.6;pointer-events:none;z-index:2147483647;animation:bhaiFade .5s ease-out forwards;`; return l; };
         [ring, dot, mkL(true), mkL(false)].forEach(e => document.body.appendChild(e));
         setTimeout(() => [ring, dot].forEach(e => e.remove()), 650);
-        setTimeout(() => document.querySelectorAll('[style*="atlasFade"]').forEach(e => e.remove()), 560);
+        setTimeout(() => document.querySelectorAll('[style*="bhaiFade"]').forEach(e => e.remove()), 560);
 
         const el = document.elementFromPoint(x, y);
         if (!el) return { success: false, error: "No element at coordinates" };
@@ -1523,7 +1529,7 @@ async function clickAt(payload) {
     });
 
     // Clear HUD after click
-    if (elementLabel) showAtlasHUD(tabId, '', true);
+    if (elementLabel) showBhaiHUD(tabId, '', true);
     return results[0]?.result || { success: true };
   });
 }
@@ -1565,7 +1571,7 @@ async function typeText(payload) {
               const model = editor.getModel();
               if (model) {
                 const range = clear ? model.getFullModelRange() : editor.getSelection();
-                editor.executeEdits('atlas', [{ range, text, forceMoveMarkers: true }]);
+                editor.executeEdits('bhai', [{ range, text, forceMoveMarkers: true }]);
                 return true;
               }
             }
@@ -1740,8 +1746,8 @@ async function typeText(payload) {
 
 async function scroll(payload) {
   return withActiveTab(async (tabId) => {
-    injectAtlasVisuals(tabId);
-    showAtlasHUD(tabId, `↕ Scrolling ${payload.direction || 'down'} ${payload.amount || 300}px`);
+    injectBhaiVisuals(tabId);
+    showBhaiHUD(tabId, `↕ Scrolling ${payload.direction || 'down'} ${payload.amount || 300}px`);
 
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -1754,7 +1760,7 @@ async function scroll(payload) {
         const arrows = {up:'↑', down:'↓', left:'←', right:'→'};
         const pill = document.createElement('div');
         pill.textContent = (arrows[direction] || '↕') + ' ' + px + 'px';
-        const fadeAnim = direction === 'up' ? 'atlasScrollFadeUp' : 'atlasScrollFadeDown';
+        const fadeAnim = direction === 'up' ? 'bhaiScrollFadeUp' : 'bhaiScrollFadeDown';
         pill.style.cssText = `position:fixed;left:50%;transform:translateX(-50%);bottom:40px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(15,23,42,.88);color:#94a3b8;border:1px solid #334155;pointer-events:none;z-index:2147483647;backdrop-filter:blur(4px);animation:${fadeAnim} .75s ease-out forwards;font-family:-apple-system,sans-serif;`;
         document.body.appendChild(pill);
         setTimeout(() => pill.remove(), 780);
@@ -1786,7 +1792,7 @@ async function scroll(payload) {
       args: [payload.direction, payload.amount || 300, payload.selector || null],
     });
 
-    setTimeout(() => showAtlasHUD(tabId, '', true), 800);
+    setTimeout(() => showBhaiHUD(tabId, '', true), 800);
     return { success: true };
   });
 }
@@ -2140,15 +2146,15 @@ async function keyboard(payload) {
 
 async function hover(payload) {
   return withActiveTab(async (tabId) => {
-    injectAtlasVisuals(tabId);
+    injectBhaiVisuals(tabId);
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (x, y) => {
         // Subtle hover cursor dot
-        const prev = document.getElementById('__atlasHoverDot');
+        const prev = document.getElementById('__bhaiHoverDot');
         if (prev) prev.remove();
         const dot = document.createElement('div');
-        dot.id = '__atlasHoverDot';
+        dot.id = '__bhaiHoverDot';
         dot.style.cssText = `position:fixed;left:${x-5}px;top:${y-5}px;width:10px;height:10px;border-radius:50%;background:rgba(99,102,241,.7);border:2px solid rgba(99,102,241,.9);pointer-events:none;z-index:2147483647;transition:all .15s ease;`;
         document.body.appendChild(dot);
         setTimeout(() => dot?.remove(), 1500);
@@ -2338,10 +2344,10 @@ async function autoDiscover() {
 // work, it stops handing tokens out over HTTP (any local process can GET /discover).
 let discoveredVia = "";
 
-function nativeConfig() {
+function nativeConfigFrom(host) {
   return new Promise((resolve) => {
     try {
-      chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" }, (resp) => {
+      chrome.runtime.sendNativeMessage(host, { action: "get_config" }, (resp) => {
         resolve(chrome.runtime.lastError ? null : resp);
       });
     } catch {
@@ -2350,11 +2356,16 @@ function nativeConfig() {
   });
 }
 
+// A bot from before the rename registered only com.atlas.bridge.
+async function nativeConfig() {
+  return (await nativeConfigFrom("com.bhai.bridge")) || nativeConfigFrom("com.atlas.bridge");
+}
+
 async function _autoDiscover() {
   // Native messaging first: Chrome only starts the host for this extension, as this OS user.
   const native = await nativeConfig();
   if (native?.success && native.token) {
-    console.log("[ATLAS Bridge] Discovered via native messaging");
+    console.log("[Bhai Bridge] Discovered via native messaging");
     discoveredVia = "native";
     applyDiscovery(native);
     return true;
@@ -2366,16 +2377,16 @@ async function _autoDiscover() {
     const config = await res.json();
 
     if (config.token && config.wsUrl) {
-      console.log("[ATLAS Bridge] Auto-discovered Bhai server");
+      console.log("[Bhai Bridge] Auto-discovered Bhai server");
       discoveredVia = "http";
       applyDiscovery(config);
       return true;
     }
-    console.warn("[ATLAS Bridge] /discover returned no token/wsUrl:", JSON.stringify(config));
+    console.warn("[Bhai Bridge] /discover returned no token/wsUrl:", JSON.stringify(config));
   } catch (err) {
     // Surface the real reason — silent failure here was the root of a long
     // "stuck Searching" debug. Network/CORS/PNA errors all land here.
-    console.warn("[ATLAS Bridge] /discover fetch failed:", err && err.message ? err.message : String(err));
+    console.warn("[Bhai Bridge] /discover fetch failed:", err && err.message ? err.message : String(err));
   }
 
   // No fallback to the overlay port. 18792 is the overlay chat server — it
@@ -2415,7 +2426,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       serverUrl,
       hasToken: !!authToken,
       discoveryAttempts,
-      lastResponse: lastAtlasResponse,
+      lastResponse: lastBhaiResponse,
       actionLog: _actionLog,
     });
     return true;
@@ -2428,7 +2439,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === "clear_chat") {
     _chat = [];
-    lastAtlasResponse = "";
+    lastBhaiResponse = "";
     chrome.storage.local.set({ chat: [] }).catch(() => {});
     sendResponse({ ok: true });
     return true;
@@ -2571,7 +2582,8 @@ async function ensureConnected() {
 ensureConnected();
 chrome.runtime.onStartup.addListener(() => { ensureConnected(); });
 chrome.runtime.onInstalled.addListener(() => { ensureConnected(); });
-chrome.alarms.create("atlas-keepalive", { periodInMinutes: 0.5 });
+chrome.alarms.clear("atlas-keepalive"); // the pre-rename name
+chrome.alarms.create("bhai-keepalive", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "atlas-keepalive") ensureConnected();
+  if (alarm.name === "bhai-keepalive") ensureConnected();
 });

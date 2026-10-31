@@ -23,7 +23,7 @@ const RECALL_CASES: RecallCase[] = [
     { query: "user's work schedule or daily routine", expectedKeywords: ["morning", "work", "schedule", "routine", "daily"] },
     { query: "tools the user uses for development", expectedKeywords: ["vscode", "editor", "terminal", "git", "node", "npm"] },
     { query: "user's goals or objectives", expectedKeywords: ["goal", "want", "plan", "aim", "objective"] },
-    { query: "recent conversations about Bhai", expectedKeywords: ["atlas", "agent", "ai", "assistant"] },
+    { query: "recent conversations about Bhai", expectedKeywords: ["bhai", "agent", "ai", "assistant"] },
     { query: "user's location or timezone", expectedKeywords: ["location", "city", "timezone", "country", "india", "gmt"] },
     { query: "coding style preferences", expectedKeywords: ["style", "format", "lint", "prettier", "biome", "eslint"] },
     { query: "communication preferences", expectedKeywords: ["telegram", "message", "chat", "notify", "send"] },

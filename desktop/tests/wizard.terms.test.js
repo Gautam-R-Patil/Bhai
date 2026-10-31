@@ -28,7 +28,7 @@ describe("Trust step — per-document clickwrap", () => {
         openedUrls = [];
         savedPayload = null;
 
-        window.atlas = {
+        window.bhai = {
             openExternalUrl: vi.fn((url) => {
                 openedUrls.push(url);
                 return Promise.resolve({ success: true });
@@ -74,7 +74,7 @@ describe("Trust step — per-document clickwrap", () => {
         expect(handle.cta.disabled).toBe(false);
     });
 
-    it("each Read link opens the canonical URL via atlas.openExternalUrl", () => {
+    it("each Read link opens the canonical URL via bhai.openExternalUrl", () => {
         const handle = window.WizardSteps.terms.render(root, {});
         const links = root.querySelectorAll(".legal-row-link");
         expect(links.length).toBe(5);

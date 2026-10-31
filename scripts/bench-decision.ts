@@ -5,6 +5,7 @@
 //
 //   AZ_ENDPOINT=… AZ_KEY=… DECISION_DEPLOYMENT=<name> RESULTS=<router run .jsonl> \
 //     npx tsx scripts/bench-decision.ts
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { readFileSync } from "node:fs";
 import { categoryCatalog, initToolRouter, selectTools, setToolRouterLLM } from "../src/tool-router.js";
 
@@ -72,7 +73,7 @@ setToolRouterLLM({
         return r.json();
     },
 } as never);
-process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS = "10000";
+process.env.BHAI_TOOL_ROUTER_TIMEOUT_MS = "10000";
 await initToolRouter();
 
 // Chat turns must stay chat (the classifier's "chat lane" gets no tools).

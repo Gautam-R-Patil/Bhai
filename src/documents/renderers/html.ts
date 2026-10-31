@@ -91,7 +91,7 @@ export async function renderHtmlTemplateToPdf(
 
         // Write to a temp file so relative assets (images, fonts) can resolve
         // against the template directory.
-        const tmpFile = path.join(os.tmpdir(), `atlas-doc-${crypto.randomBytes(4).toString("hex")}.html`);
+        const tmpFile = path.join(os.tmpdir(), `bhai-doc-${crypto.randomBytes(4).toString("hex")}.html`);
         fs.writeFileSync(tmpFile, fullHtml, "utf-8");
 
         try {

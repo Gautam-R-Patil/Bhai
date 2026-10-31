@@ -199,6 +199,7 @@ import { AUTH_LOGIN_HTML, isHandoffNonce, isHandoffToken } from "./otpless.js";
 import { isBotUsername, managedBotLink } from "./telegramManaged.js";
 import { newDeviceSecret, sha256Hex } from "./devices.js";
 import { isEmail, MAX_RECIPIENTS_PER_EMAIL, parseRecipients, SEND_RECIPIENTS_PER_DAY } from "./bhaiMailHelpers.js";
+import { bhaiEnv } from "./envCompat.js";
 
 // ── Waitlist helpers (per-IP rate limit + CORS + hCaptcha verify) ─────────
 // Isolated subsystem — no coupling to session/credit machinery. Lives next
@@ -675,10 +676,10 @@ http.route({
 
           // Record that this user's active addenda were exercised, so the
           // nightly staleness sweep can retire never-used ones. Opt-in via the
-          // ATLAS_ADDENDA_HITS deployment env var; fire-and-forget, never blocks
+          // BHAI_ADDENDA_HITS deployment env var; fire-and-forget, never blocks
           // or fails the request. (The assembler is a read-only query and can't
           // mutate, so the hit-bump happens here in the action.)
-          if (process.env.ATLAS_ADDENDA_HITS === "true" && account.otplessUserId) {
+          if (bhaiEnv("ADDENDA_HITS") === "true" && account.otplessUserId) {
             ctx
               .runMutation(internal.userAddenda.incrementActiveAddendaHits, {
                 otplessUserId: account.otplessUserId,
@@ -1225,7 +1226,7 @@ http.route({
       // /api/auth/session was an account-creation primitive: anyone on the
       // internet could pick any otplessUserId, supply email/phone/name, and
       // get a working 24h session that could call the LLM proxy and burn
-      // ATLAS-owned provider tokens. We do NOT accept email/phone/name
+      // Bhai-owned provider tokens. We do NOT accept email/phone/name
       // here anymore — those fields are only honored during validate-token.
       const existingAccount = await ctx.runQuery(internal.accounts.getByOtplessIdInternal, {
         otplessUserId,
@@ -3556,7 +3557,7 @@ http.route({
 // store/admins.ts re-exports query()/mutation() as internalQuery/internalMutation
 // (see admins.ts line 5), so the admin panel can't reach them via the public
 // /api/query path. These HTTP routes bridge that gap using ADMIN_API_KEY,
-// which the admin panel already has server-side as ATLAS_ADMIN_KEY.
+// which the admin panel already has server-side as BHAI_ADMIN_KEY.
 // ══════════════════════════════════════════════════════════════════════════
 
 http.route({
@@ -3917,8 +3918,8 @@ const CONTACT_ALLOWED_ORIGINS = new Set([
   "https://www.xagilab.com",
   "https://tryatlasagi.com",
   "https://www.tryatlasagi.com",
-  // Local dev — only allowed when ATLAS_ENV !== 'prod'
-  ...(process.env.ATLAS_ENV === "prod" ? [] : [
+  // Local dev — only allowed when BHAI_ENV !== 'prod'
+  ...(bhaiEnv("ENV") === "prod" ? [] : [
     "http://localhost:8088",
     "http://localhost:3000",
     "http://127.0.0.1:8088",

@@ -33,7 +33,7 @@ echo "📦 Creating DMG: ${DMG_NAME}"
 
 [ ! -d "${APP_PATH}" ] && echo "❌ App not found: ${APP_PATH}" && exit 1
 
-# Eject ALL existing atlas volumes
+# Eject ALL existing bhai volumes
 for vol in /Volumes/Bhai*; do
     [ -d "$vol" ] && hdiutil detach "$vol" -force 2>/dev/null || true
 done

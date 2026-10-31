@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { SelfEdit } from "../agents/self-editor.js";
 
-const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
+const DATA_DIR = process.env.BHAI_DATA_DIR || path.resolve("data");
 const AUDIT_LOG_PATH = path.join(DATA_DIR, "self-edits-audit.log");
 
 /** Gate used by formatDreamResults: true = show in morning brief, false = silent actuation only. */

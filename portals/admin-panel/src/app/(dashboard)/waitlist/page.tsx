@@ -8,7 +8,7 @@ import type {
   WaitlistStatus,
 } from "@/lib/types";
 
-// Same-origin proxies — client components can't read ATLAS_ADMIN_KEY,
+// Same-origin proxies — client components can't read BHAI_ADMIN_KEY,
 // so the /api/waitlist/* Next.js routes (server-side) hold the key and
 // forward to Convex's admin-gated endpoints. See src/app/api/waitlist/*.
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -97,7 +97,7 @@ function downloadCsv(entries: WaitlistEntry[]): void {
   const link = document.createElement("a");
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   link.href = url;
-  link.download = `atlas-waitlist-${ts}.csv`;
+  link.download = `bhai-waitlist-${ts}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

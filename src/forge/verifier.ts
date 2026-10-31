@@ -375,7 +375,7 @@ async function writeFailureReport(
 }
 
 function parseEnvBudget(): number | undefined {
-    const raw = process.env.ATLAS_POST_SYNTHESIS_BUDGET_MS;
+    const raw = process.env.BHAI_POST_SYNTHESIS_BUDGET_MS;
     if (!raw) return undefined;
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : undefined;

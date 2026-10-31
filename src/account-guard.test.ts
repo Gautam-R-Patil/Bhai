@@ -12,7 +12,7 @@ vi.mock("./crypto-transport.js", () => ({ encryptedFetch: fetchMock }));
 
 describe("checkAccountStatus", () => {
     it("reuses a fresh allowed status instead of fetching every turn", async () => {
-        process.env.ATLAS_OTPLESS_USER_ID = "u1";
+        process.env.BHAI_OTPLESS_USER_ID = "u1";
         const { checkAccountStatus } = await import("./account-guard.js");
         expect(await checkAccountStatus()).toEqual({ allowed: true });
         expect(await checkAccountStatus()).toEqual({ allowed: true });

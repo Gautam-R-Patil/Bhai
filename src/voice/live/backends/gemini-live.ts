@@ -381,7 +381,7 @@ export class GeminiLiveBackend extends LiveVoiceBackend {
         // Gemini sends back after a tool result. If there's no modelTurn or
         // turnComplete after a tool, we know the server isn't generating a
         // response at all (as opposed to us not handling it correctly).
-        if (process.env.ATLAS_LIVE_DEBUG === "true") {
+        if (process.env.BHAI_LIVE_DEBUG === "true") {
             const keys = Object.keys(data || {});
             const sc = data.serverContent ? Object.keys(data.serverContent) : [];
             console.log(`[GEMINI-LIVE][DEBUG] msg keys=${keys.join(",")} serverContent.keys=${sc.join(",")}`);

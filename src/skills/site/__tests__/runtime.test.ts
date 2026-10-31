@@ -29,8 +29,8 @@ const fakeDriver = () => {
 // Only the hang fixtures need a short deadline; everything else keeps the real
 // 5s one, so a slow CI runner (Windows process spawn) isn't read as a hang.
 const shortDeadline = (on: boolean) => {
-    if (on) process.env.ATLAS_SITE_SKILL_DEADLINE_MS = "1000";
-    else delete process.env.ATLAS_SITE_SKILL_DEADLINE_MS;
+    if (on) process.env.BHAI_SITE_SKILL_DEADLINE_MS = "1000";
+    else delete process.env.BHAI_SITE_SKILL_DEADLINE_MS;
 };
 afterAll(() => shortDeadline(false));
 
@@ -185,7 +185,7 @@ describe("checkout safety", () => {
     });
 
     it("an order over the spend cap is blocked before checkout (100/100)", async () => {
-        process.env.ATLAS_SPEND_CAP_ORDER_INR = "500";
+        process.env.BHAI_SPEND_CAP_ORDER_INR = "500";
         try {
             for (let i = 0; i < 100; i++) {
                 const { task } = await toConfirm();
@@ -194,7 +194,7 @@ describe("checkout safety", () => {
                 expect([r.reason, clicks(d)]).toEqual(["spend_cap", 0]);
             }
         } finally {
-            delete process.env.ATLAS_SPEND_CAP_ORDER_INR;
+            delete process.env.BHAI_SPEND_CAP_ORDER_INR;
         }
     }, 120_000);
 });
@@ -230,7 +230,7 @@ const cartSkill = `exports.step = (phase, { snapshot: s }) => {
 describe("commit safety (write-ahead)", () => {
     it("a submit that timed out is marked sent before the click and never sent again (100 runs)", async () => {
         const skillPath = withManifest(cartSkill, manifest);
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // 100 × ₹249 is past the real daily cap
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000"; // 100 × ₹249 is past the real daily cap
         for (let i = 0; i < 100; i++) {
             const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
             let sentBeforeClick = false;
@@ -250,7 +250,7 @@ describe("commit safety (write-ahead)", () => {
             expect(again.reason).toBe("commit_unresolved");
             expect(d.calls.filter((a) => a.target?.sel === "#checkout").length).toBe(1);
         }
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     }, 180_000);
 
     it("a skill can't click the submit outside confirm", async () => {
@@ -350,7 +350,7 @@ describe("review round 3", () => {
     });
 
     it("a driver error after the submit still says the order may have been placed", async () => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // earlier tests in this file booked spend
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000"; // earlier tests in this file booked spend
         const skillPath = withManifest(cartSkill, manifest);
         let submitted = false;
         const d = pageDriver({ onAct: (a) => { if (a.target?.sel === "#checkout") submitted = true; } });
@@ -361,11 +361,11 @@ describe("review round 3", () => {
         expect(r.status).toBe("failed");
         expect(r.reason).toMatch(/^driver_error/);
         expect(r.writeStatus).toBe("may_have_applied");
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     });
 
     it("a skill that hangs while the total is re-checked fails with its own reason, not total_changed", async () => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
         const hang = withManifest(cartSkill.replace('if (phase === "select"', 'if (phase === "select" && state.n) return new Promise(() => {}); if (phase === "select"').replace("{ snapshot: s }", "{ snapshot: s, state }").replace("return { confirm:", "return { state: { n: 1 }, confirm:"), manifest);
         const d = pageDriver();
         const c = await runSiteTask({ skillPath: hang, phase: "select", driver: d });
@@ -375,7 +375,7 @@ describe("review round 3", () => {
         shortDeadline(false);
         expect([r.status, r.reason, r.writeStatus]).toEqual(["failed", "skill_timeout", "not_attempted"]);
         expect(d.calls.some((a) => a.target?.sel === "#checkout")).toBe(false);
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     });
 
     it("the third OTP attempt is allowed (a fresh answer resets the loop counter)", async () => {

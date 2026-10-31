@@ -8,10 +8,10 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // Hermetic: point the memory DB at a throwaway temp dir BEFORE importing the
-// sqlite module (its DATA_DIR const reads process.env.ATLAS_DATA_DIR at load).
-const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-session-search-"));
-process.env.ATLAS_DATA_DIR = TMP_DIR;
-process.env.ATLAS_MEMORY_GATE_SHADOW = "true";
+// sqlite module (its DATA_DIR const reads process.env.BHAI_DATA_DIR at load).
+const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-session-search-"));
+process.env.BHAI_DATA_DIR = TMP_DIR;
+process.env.BHAI_MEMORY_GATE_SHADOW = "true";
 
 type SqliteModule = typeof import("../memory/sqlite.js");
 type ToolModule = typeof import("./session-search.js");

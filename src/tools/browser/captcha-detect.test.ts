@@ -7,7 +7,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("./core.js", () => ({ ATLAS_HUD_JS: "", getActivePage: vi.fn(), touchBrowserActivity: vi.fn() }));
+vi.mock("./core.js", () => ({ BHAI_HUD_JS: "", getActivePage: vi.fn(), touchBrowserActivity: vi.fn() }));
 vi.mock("./chrome-bridge.js", () => ({ getActiveExtensionTab: vi.fn(), sendBridgeCommand: vi.fn() }));
 vi.mock("./browser-backend.js", () => ({ getCurrentMode: () => "playwright" }));
 vi.mock("../../voice/transcribe.js", () => ({ transcribeBuffer: vi.fn() }));

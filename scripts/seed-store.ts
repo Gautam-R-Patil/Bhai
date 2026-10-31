@@ -84,7 +84,7 @@ json_utils({"json_input": "invalid json", "operation": "validate"})
     tags: ["json", "formatter", "validator", "utilities"],
     permissions: [],
     version: "1.0.0",
-    localPath: path.join(process.env.HOME!, ".atlas", "store", "tools", "json-utils"),
+    localPath: path.join(process.env.HOME!, ".bhai", "store", "tools", "json-utils"),
   },
   {
     slug: "uuid-generator",
@@ -122,7 +122,7 @@ generate_id({"type": "custom", "pattern": "AAA-9999"})
     tags: ["uuid", "generator", "id", "utilities"],
     permissions: [],
     version: "1.0.0",
-    localPath: path.join(process.env.HOME!, ".atlas", "store", "tools", "uuid-generator"),
+    localPath: path.join(process.env.HOME!, ".bhai", "store", "tools", "uuid-generator"),
   },
 ];
 
@@ -183,7 +183,7 @@ async function main() {
         passwordHash: "$2a$12$test.hash.not.real", // Not a real login
         displayName: "Bhai Team",
         companyName: "XAGI Labs Private Limited",
-        website: "https://atlas.app",
+        website: "https://bhai.app",
         bio: "Official Bhai development team",
       });
 

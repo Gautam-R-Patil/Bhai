@@ -51,8 +51,8 @@
     ];
 
     function openExternal(url) {
-        if (window.atlas && typeof window.atlas.openExternalUrl === "function") {
-            window.atlas.openExternalUrl(url).catch(function () { /* no-op */ });
+        if (window.bhai && typeof window.bhai.openExternalUrl === "function") {
+            window.bhai.openExternalUrl(url).catch(function () { /* no-op */ });
         }
     }
 
@@ -198,9 +198,9 @@
                     ageOrAuthority: ageCb.checked === true,
                 },
             };
-            if (window.atlas && typeof window.atlas.saveLegalAcceptance === "function") {
+            if (window.bhai && typeof window.bhai.saveLegalAcceptance === "function") {
                 try {
-                    const res = await window.atlas.saveLegalAcceptance(payload);
+                    const res = await window.bhai.saveLegalAcceptance(payload);
                     if (!res || res.success !== true) {
                         err.textContent = "Couldn't save acceptance: " + ((res && res.error) || "unknown error");
                         return;

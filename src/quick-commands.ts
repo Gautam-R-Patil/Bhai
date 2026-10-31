@@ -8,7 +8,7 @@
 // through their tools: no model call, so ~1s, no cost, and the same on any model.
 // All or nothing: every clause must be one of these commands, checked before anything
 // runs (the settings page resolves, the app exists); otherwise the turn goes to the
-// model as before. Kill switch: ATLAS_NO_QUICK_COMMANDS=true.
+// model as before. Kill switch: BHAI_NO_QUICK_COMMANDS=true.
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -301,7 +301,7 @@ export async function runQuickCommand(
     message: string,
     exec: (tool: string, args: Record<string, unknown>) => Promise<string>,
 ): Promise<QuickResult | null> {
-    if (process.env.ATLAS_NO_QUICK_COMMANDS === "true") return null;
+    if (process.env.BHAI_NO_QUICK_COMMANDS === "true") return null;
     const steps = parseQuickCommand(message);
     if (!steps) return null;
     for (const s of steps) if (s.check && !(await s.check().catch(() => false))) return null;

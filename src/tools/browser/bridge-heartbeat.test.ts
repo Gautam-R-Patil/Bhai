@@ -7,10 +7,10 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
-// The bridge writes ~/.atlas files and registers Chrome's native host: keep it all in a temp home.
-const home = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-bridge-home-"));
+// The bridge writes ~/.bhai files and registers Chrome's native host: keep it all in a temp home.
+const home = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-bridge-home-"));
 process.env.HOME = home;
-process.env.ATLAS_DATA_DIR = path.join(home, "data");
+process.env.BHAI_DATA_DIR = path.join(home, "data");
 vi.mock("../../overlay/overlay-chat.js", () => ({ getOverlayLocalToken: () => "t" }));
 
 const bridge = await import("./chrome-bridge.js");

@@ -28,16 +28,16 @@ describe("orchestrator.lookupTool", () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-orch-lk-"));
         registry = new Map();
         setRegistryRef(registry);
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
         await initForge({ embedFn: async () => vector(0) });
     });
 
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("returns null when library is empty", async () => {
@@ -62,18 +62,18 @@ describe("orchestrator.lookupTool", () => {
         expect(tool!.slug).toBe("extract_pdf");
     });
 
-    it("returns null when ATLAS_NO_FORGE_LOOKUP=true even if a match exists", async () => {
+    it("returns null when BHAI_NO_FORGE_LOOKUP=true even if a match exists", async () => {
         insertTool({
             slug: "extract_pdf", description: "Extract PDF text",
             schemaJson: "{}", handlerHash: "x", embedding: vector(0),
             source: "synchronous", createdAt: Date.now(),
         });
-        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        process.env.BHAI_NO_FORGE_LOOKUP = "true";
         try {
             const tool = await lookupTool("Extract PDF text", { type: "object", properties: {}, required: [] });
             expect(tool).toBeNull();
         } finally {
-            delete process.env.ATLAS_NO_FORGE_LOOKUP;
+            delete process.env.BHAI_NO_FORGE_LOOKUP;
         }
     });
 

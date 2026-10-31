@@ -71,7 +71,7 @@ async function downloadPexelsClip(
   outputPath: string
 ): Promise<AIVideoGenResult> {
   const apiKey = process.env.PEXELS_API_KEY;
-  const headers: Record<string, string> = { "User-Agent": "ATLAS-Marketing/1.0" };
+  const headers: Record<string, string> = { "User-Agent": "BHAI-Marketing/1.0" };
   if (apiKey) headers.Authorization = apiKey;
 
   const orientation =

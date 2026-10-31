@@ -91,19 +91,19 @@ describe("chat timeoutMs", () => {
     });
 
     it("thinking effort scales the per-attempt deadline; the env var overrides it", () => {
-        const prev = process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS;
-        delete process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS;
+        const prev = process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS;
+        delete process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS;
         try {
             expect(attemptTimeoutMs(undefined)).toBe(25_000);
             expect(attemptTimeoutMs("low")).toBe(25_000);
             expect(attemptTimeoutMs("medium")).toBe(60_000);
             expect(attemptTimeoutMs("high")).toBe(120_000);
             expect(attemptTimeoutMs("max")).toBe(180_000);
-            process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS = "5000";
+            process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS = "5000";
             expect(attemptTimeoutMs("max")).toBe(5000);
         } finally {
-            if (prev === undefined) delete process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS;
-            else process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS = prev;
+            if (prev === undefined) delete process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS;
+            else process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS = prev;
         }
     });
 });

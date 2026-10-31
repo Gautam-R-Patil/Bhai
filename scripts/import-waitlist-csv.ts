@@ -4,7 +4,7 @@
 // Idempotent server-side (skips emails that already exist), safe to re-run.
 //
 // Usage:
-//   ATLAS_ADMIN_KEY=... ATLAS_ADMIN_BASE=https://<convex-site> \
+//   BHAI_ADMIN_KEY=... BHAI_ADMIN_BASE=https://<convex-site> \
 //     npx tsx scripts/import-waitlist-csv.ts <path-to.csv>
 //
 // CSV columns expected (header row required):
@@ -14,30 +14,30 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { extname } from "node:path";
 import { argv, exit } from "node:process";
 
-const adminBase = process.env.ATLAS_ADMIN_BASE;
-const adminKey = process.env.ATLAS_ADMIN_KEY;
+const adminBase = process.env.BHAI_ADMIN_BASE ?? process.env.ATLAS_ADMIN_BASE; // ATLAS_: pre-rename name
+const adminKey = process.env.BHAI_ADMIN_KEY ?? process.env.ATLAS_ADMIN_KEY;
 if (!adminBase || !adminKey) {
     console.error(
-        "Both ATLAS_ADMIN_BASE (Convex site URL, e.g. https://avid-finch-726.convex.site)\n" +
-            "and ATLAS_ADMIN_KEY (matches the ADMIN_API_KEY env in Convex) must be set.",
+        "Both BHAI_ADMIN_BASE (Convex site URL, e.g. https://avid-finch-726.convex.site)\n" +
+            "and BHAI_ADMIN_KEY (matches the ADMIN_API_KEY env in Convex) must be set.",
     );
     exit(2);
 }
 
 // Refuse anything that isn't an HTTPS Convex URL — a malicious .env line like
-// ATLAS_ADMIN_BASE=https://attacker.example/ would quietly exfiltrate the
+// BHAI_ADMIN_BASE=https://attacker.example/ would quietly exfiltrate the
 // entire waitlist + the bearer token. The convex.site / convex.cloud
 // hostnames are the only places the admin endpoints actually live.
 let parsedBase: URL;
 try {
     parsedBase = new URL(adminBase);
 } catch {
-    console.error(`ATLAS_ADMIN_BASE is not a valid URL: ${adminBase}`);
+    console.error(`BHAI_ADMIN_BASE is not a valid URL: ${adminBase}`);
     exit(2);
 }
 if (parsedBase.protocol !== "https:" || !/\.convex\.(site|cloud)$/i.test(parsedBase.hostname)) {
     console.error(
-        `ATLAS_ADMIN_BASE must be https://*.convex.site (or .convex.cloud). Got: ${adminBase}`,
+        `BHAI_ADMIN_BASE must be https://*.convex.site (or .convex.cloud). Got: ${adminBase}`,
     );
     exit(2);
 }

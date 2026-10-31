@@ -178,8 +178,9 @@ export function shellWriteTargetsProtected(line: string, cwd: string): string | 
  * so \`env\` (or a prompt-injected curl …$TELEGRAM_BOT_TOKEN) handed them out. Tokens the
  * owner set for tools (GITHUB_TOKEN, HF_TOKEN…) stay for gh, git and the like.
  */
+// ATLAS_ is the pre-rename prefix, still honoured (and so still secret) when set.
 const BHAI_SECRET_ENV =
-    /^(ATLAS_RUNTIME_KEY|ATLAS_DEVICE_SECRET|ATLAS_OTPLESS_USER_ID|ATLAS_ACCOUNT_EMAIL|OWNER_[A-Z_]+_IDS|CONVEX_[A-Z_]+|WIDGET_TOKEN)$|_BOT_TOKEN$|_APP_TOKEN$|_SIGNING_SECRET$|_ACCESS_TOKEN$|^EMAIL_PASS(WORD)?$|^SMTP_PASS(WORD)?$|^IMAP_PASS(WORD)?$|_SESSION_TOKEN$/;
+    /^((?:BHAI|ATLAS)_(?:RUNTIME_KEY|DEVICE_SECRET|OTPLESS_USER_ID|ACCOUNT_EMAIL)|OWNER_[A-Z_]+_IDS|CONVEX_[A-Z_]+|WIDGET_TOKEN)$|_BOT_TOKEN$|_APP_TOKEN$|_SIGNING_SECRET$|_ACCESS_TOKEN$|^EMAIL_PASS(WORD)?$|^SMTP_PASS(WORD)?$|^IMAP_PASS(WORD)?$|_SESSION_TOKEN$/;
 
 export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
     return Object.fromEntries(Object.entries(env).filter(([k]) => !BHAI_SECRET_ENV.test(k)));
@@ -335,11 +336,11 @@ export const shellExec: ToolDefinition = {
             });
         }
 
-        // Codebase self-protection: block write forms that touch the atlas folder.
+        // Codebase self-protection: block write forms that touch the bhai folder.
         const hit = shellWriteTargetsProtected(fullCommand, cwd);
         if (hit) {
             return JSON.stringify({
-                error: `Blocked: command "${command}" writes to the bot's own codebase path "${hit}". Write/delete operations on the atlas codebase are not allowed.`,
+                error: `Blocked: command "${command}" writes to the bot's own codebase path "${hit}". Write/delete operations on the bhai codebase are not allowed.`,
             });
         }
 

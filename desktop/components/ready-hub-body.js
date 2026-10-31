@@ -143,7 +143,7 @@
     }
 
     // Route a tile click based on its onClickRoute string.
-    async function handleTileRoute(route, atlas) {
+    async function handleTileRoute(route, bhai) {
         if (!route || typeof route !== "string") return;
         if (route === "channels") { window.location.href = "channels.html"; return; }
         if (route === "settings:account") {
@@ -151,14 +151,14 @@
             // is signed in the tile should jump to the Account panel tab — the
             // old behavior reopened the login popup every click.
             let signedIn = false;
-            if (atlas && typeof atlas.getAccountInfo === "function") {
+            if (bhai && typeof bhai.getAccountInfo === "function") {
                 try {
-                    const info = await atlas.getAccountInfo();
+                    const info = await bhai.getAccountInfo();
                     signedIn = !!(info && info.signedIn);
                 } catch { signedIn = false; }
             }
             if (signedIn) { window.location.href = "panel.html#account"; return; }
-            if (atlas && typeof atlas.openAuthWindow === "function") atlas.openAuthWindow();
+            if (bhai && typeof bhai.openAuthWindow === "function") bhai.openAuthWindow();
             return;
         }
         if (route === "wizard:permissions") {
@@ -188,7 +188,7 @@
         return null;
     }
 
-    function renderTiles(tilesWrap, state, atlas) {
+    function renderTiles(tilesWrap, state, bhai) {
         if (!tilesWrap) return;
         const TM = _getTileModel();
         if (!TM) return;
@@ -224,29 +224,29 @@
             const route = model.onClickRoute;
             if (route) {
                 cell.style.cursor = "pointer";
-                cell.addEventListener("click", function () { handleTileRoute(route, atlas); });
+                cell.addEventListener("click", function () { handleTileRoute(route, bhai); });
             }
             tilesWrap.appendChild(cell);
         }
     }
 
-    function applyDiff(tilesWrap, prevState, nextState, atlas) {
+    function applyDiff(tilesWrap, prevState, nextState, bhai) {
         if (!tilesWrap) return;
         const Diff = _getDiff();
         const changed = Diff.diffTiles(prevState, nextState);
         if (changed.length === 0) return;
         // The new hub-index cells are plain divs (no StatusTile instances), so we
         // re-render the whole grid on any change. The grid is 6 cells — cheap.
-        renderTiles(tilesWrap, nextState, atlas);
+        renderTiles(tilesWrap, nextState, bhai);
     }
 
     // Merge the real account-info IPC result into the detection state so the
     // Account tile reflects the OTPless session, which is NOT stored in the
     // electron-store `account` key that runDetection reads.
-    async function mergeRealAccount(state, atlas) {
-        if (!atlas || typeof atlas.getAccountInfo !== "function") return state;
+    async function mergeRealAccount(state, bhai) {
+        if (!bhai || typeof bhai.getAccountInfo !== "function") return state;
         try {
-            const info = await atlas.getAccountInfo();
+            const info = await bhai.getAccountInfo();
             if (info && info.signedIn) {
                 const acct = {
                     signedIn: true,
@@ -260,27 +260,27 @@
         return state;
     }
 
-    function startLiveUpdates(container, initialState, atlasApi) {
+    function startLiveUpdates(container, initialState, bhaiApi) {
         if (!container) return { stop: function () {} };
-        const atlas = atlasApi || (typeof window !== "undefined" ? window.atlas : null) || {};
+        const bhai = bhaiApi || (typeof window !== "undefined" ? window.bhai : null) || {};
         let state = initialState || {};
         const tilesWrap = container.querySelector("#hub-tiles");
 
         async function refresh() {
-            if (typeof atlas.setupDetect !== "function") return;
+            if (typeof bhai.setupDetect !== "function") return;
             if (typeof document !== "undefined" && document.visibilityState && document.visibilityState !== "visible") return;
             let next;
-            try { next = await atlas.setupDetect(); }
+            try { next = await bhai.setupDetect(); }
             catch { return; }
             if (!next) return;
-            next = await mergeRealAccount(next, atlas);
-            applyDiff(tilesWrap, state, next, atlas);
+            next = await mergeRealAccount(next, bhai);
+            applyDiff(tilesWrap, state, next, bhai);
             state = next;
         }
 
         let timer = setInterval(refresh, REFRESH_MS);
-        if (typeof atlas.onAccountStatusChange === "function") {
-            atlas.onAccountStatusChange(function () { refresh(); });
+        if (typeof bhai.onAccountStatusChange === "function") {
+            bhai.onAccountStatusChange(function () { refresh(); });
         }
         return {
             stop: function () { if (timer) { clearInterval(timer); timer = null; } },
@@ -288,9 +288,9 @@
         };
     }
 
-    async function mountHub(container, state, atlasApi) {
+    async function mountHub(container, state, bhaiApi) {
         if (!container) return { stop: function () {} };
-        const atlas = atlasApi || (typeof window !== "undefined" ? window.atlas : null) || {};
+        const bhai = bhaiApi || (typeof window !== "undefined" ? window.bhai : null) || {};
 
         // Render synchronously with whatever state we have. Account-info
         // enrichment runs in the background and refreshes tiles when it
@@ -301,20 +301,20 @@
         while (container.firstChild) container.removeChild(container.firstChild);
         const body = renderHubBody(initial);
         container.appendChild(body);
-        renderTiles(body.querySelector("#hub-tiles"), initial, atlas);
+        renderTiles(body.querySelector("#hub-tiles"), initial, bhai);
 
         // Kick off enrichment in the background; never block the paint on it.
         let enriched = initial;
-        mergeRealAccount(initial, atlas).then(function (next) {
+        mergeRealAccount(initial, bhai).then(function (next) {
             if (!next || next === initial) return;
             enriched = next;
-            applyDiff(body.querySelector("#hub-tiles"), initial, next, atlas);
+            applyDiff(body.querySelector("#hub-tiles"), initial, next, bhai);
         }).catch(function () { /* best-effort */ });
 
         // Mount magic-moment if available + not killed by env.
         let mmHandle = null;
         if (window.MagicMoment && typeof window.MagicMoment.mount === "function"
-            && !(typeof process !== "undefined" && process.env && process.env.ATLAS_NO_MAGIC_MOMENT === "true")) {
+            && !(typeof process !== "undefined" && process.env && process.env.BHAI_NO_MAGIC_MOMENT === "true")) {
             const mmHost = body.querySelector("#hub-magic-moment");
             if (mmHost) mmHandle = window.MagicMoment.mount(mmHost, enriched);
         }
@@ -341,8 +341,8 @@
         if (launchBtn) {
             launchBtn.addEventListener("click", async function () {
                 launchBtn.disabled = true;
-                if (typeof atlas.finishSetup === "function") {
-                    try { await atlas.finishSetup(); }
+                if (typeof bhai.finishSetup === "function") {
+                    try { await bhai.finishSetup(); }
                     catch (e) { if (errEl) errEl.textContent = "Launch failed: " + (e.message || e); launchBtn.disabled = false; }
                 } else if (errEl) {
                     errEl.textContent = "Launch IPC unavailable.";
@@ -354,12 +354,12 @@
         const talkBtn = body.querySelector('[data-action="talk"]');
         if (talkBtn) {
             talkBtn.addEventListener("click", async function () {
-                if (typeof atlas.triggerLiveVoice !== "function") {
+                if (typeof bhai.triggerLiveVoice !== "function") {
                     if (errEl) errEl.textContent = "Live voice unavailable.";
                     return;
                 }
                 try {
-                    const res = await atlas.triggerLiveVoice();
+                    const res = await bhai.triggerLiveVoice();
                     if (!res || !res.ok) {
                         if (errEl) errEl.textContent = "Couldn't start voice: " + ((res && res.error) || "unknown");
                     } else if (errEl) errEl.textContent = "";
@@ -370,7 +370,7 @@
         const typeBtn = body.querySelector('[data-action="type"]');
         if (typeBtn) {
             typeBtn.addEventListener("click", function () {
-                if (typeof atlas.showOverlay === "function") atlas.showOverlay();
+                if (typeof bhai.showOverlay === "function") bhai.showOverlay();
                 else if (errEl) errEl.textContent = "Overlay unavailable.";
             });
         }
@@ -387,13 +387,13 @@
             tryHandle = window.TryThis.mount(tryHost, enriched, {
                 onClick: function (text) {
                     // Clicking a prompt opens the overlay pre-filled with the suggestion.
-                    if (typeof atlas.showOverlay === "function") atlas.showOverlay();
+                    if (typeof bhai.showOverlay === "function") bhai.showOverlay();
                     window.dispatchEvent(new CustomEvent("hub:try-prompt", { detail: { text: text } }));
                 },
             });
         }
 
-        const liveHandle = startLiveUpdates(body, enriched, atlas);
+        const liveHandle = startLiveUpdates(body, enriched, bhai);
         return {
             stop: function () {
                 if (tryHandle && typeof tryHandle.stop === "function") tryHandle.stop();

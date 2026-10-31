@@ -1,8 +1,8 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
-// Browser-only mock of the Electron `window.atlas` IPC bridge so the
+// Browser-only mock of the Electron `window.bhai` IPC bridge so the
 // setup wizard, ready hub, and channels pages can be rendered in plain
 // Chrome for design review. Must be loaded BEFORE wizard/router.js,
-// wizard/boot.js, or any component that touches window.atlas.
+// wizard/boot.js, or any component that touches window.bhai.
 (function () {
     "use strict";
 
@@ -66,7 +66,7 @@
         };
         const installed = () => {
             base.installed = { node: true, playwright: true, embeddingModel: true };
-            base.workspace = { path: "/Users/demo/atlas-workspace", exists: true };
+            base.workspace = { path: "/Users/demo/bhai-workspace", exists: true };
             base.setupFinalized = true;
         };
 
@@ -129,8 +129,8 @@
         { backend: "elevenlabs",     voices: ["Rachel", "Adam", "Sam"] },
     ];
 
-    // ── The mock atlas surface ──────────────────────────────────────
-    window.atlas = {
+    // ── The mock bhai surface ──────────────────────────────────────
+    window.bhai = {
         // Title-bar buttons — no-op in the browser.
         minimize: () => console.log("[demo] minimize"),
         close:    () => console.log("[demo] close (demo — use the X on the real app)"),
@@ -208,5 +208,5 @@
         app: { getVersion: async () => "0.2.0-demo" },
     };
 
-    console.log("%c[demo] window.atlas mocked — step preset: %s", "color:#c471ed;font-weight:600", step);
+    console.log("%c[demo] window.bhai mocked — step preset: %s", "color:#c471ed;font-weight:600", step);
 })();

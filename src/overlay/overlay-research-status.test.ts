@@ -8,15 +8,15 @@ import vm from "node:vm";
 import { expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-research-status-"));
-process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-research-status-"));
+process.env.BHAI_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
 const chat = await import("./overlay-chat.js");
 const { createNotify } = await import("../research/index.js");
 chat.initOverlayChat({} as never);
 
 it("sends research progress as research_status, unchanged, and plain notes as notifications only", async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.BHAI_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`);
     const seen: Array<{ type: string; text?: string }> = [];
     ws.on("message", (d) => seen.push(JSON.parse(String(d))));
     await new Promise((r) => ws.once("open", r));

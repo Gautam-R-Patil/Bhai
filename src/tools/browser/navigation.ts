@@ -11,7 +11,7 @@ import { checkAuthWall } from "./auth-wall.js";
 import { getActiveBackend, getCurrentMode } from "./browser-backend.js";
 import { quickCaptchaCheck } from "./captcha.js";
 import {
-    ATLAS_HUD_JS,
+    BHAI_HUD_JS,
     buildElementsText,
     getAccessibilityTree,
     getActivePage,
@@ -109,7 +109,7 @@ export const browserNavigate: ToolDefinition = {
             const navDomain = urlRaw.replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
             await page
                 .evaluate(
-                    `(${ATLAS_HUD_JS})(${JSON.stringify({ label: `🌐 Navigating to ${navDomain}`, done: false })})`,
+                    `(${BHAI_HUD_JS})(${JSON.stringify({ label: `🌐 Navigating to ${navDomain}`, done: false })})`,
                 )
                 .catch(() => {});
             // Navigation timeouts are non-fatal (page is likely usable even if not fully
@@ -135,7 +135,7 @@ export const browserNavigate: ToolDefinition = {
             if (!navError) await waitForPageReady(page);
             mark("ready");
             // Clear HUD once page is ready
-            await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
+            await page.evaluate(`(${BHAI_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
 
             if (!navError && page.url().startsWith("chrome-error://"))
                 navError = "browser error page (site unreachable)";

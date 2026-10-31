@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 const dir = mkdtempSync(join(tmpdir(), "scheduled-images-"));
-process.env.ATLAS_DATA_DIR = dir;
+process.env.BHAI_DATA_DIR = dir;
 const cat = join(dir, "cat.png");
 writeFileSync(cat, "png");
 const img = (path: string) => ({ path, mimeType: "image/png", prompt: "a cat", kind: "generated" as const });

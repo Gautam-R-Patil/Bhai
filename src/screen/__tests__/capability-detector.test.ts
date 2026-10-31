@@ -1,6 +1,9 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
     clearCapabilityCache,
     detectCapabilities,
@@ -14,34 +17,67 @@ import {
 describe("capability detector — override via env", () => {
     beforeEach(() => {
         clearCapabilityCache();
-        delete process.env.ATLAS_VISION_PROFILE;
+        delete process.env.BHAI_VISION_PROFILE;
     });
 
-    it("respects ATLAS_VISION_PROFILE=lite override", async () => {
-        process.env.ATLAS_VISION_PROFILE = "lite";
+    it("respects BHAI_VISION_PROFILE=lite override", async () => {
+        process.env.BHAI_VISION_PROFILE = "lite";
         const r = await detectCapabilities({ force: true });
         expect(r.profile).toBe("lite");
         expect(r.notes.some((n) => n.includes("overridden"))).toBe(true);
     });
 
-    it("respects ATLAS_VISION_PROFILE=standard override", async () => {
-        process.env.ATLAS_VISION_PROFILE = "standard";
+    it("respects BHAI_VISION_PROFILE=standard override", async () => {
+        process.env.BHAI_VISION_PROFILE = "standard";
         const r = await detectCapabilities({ force: true });
         expect(r.profile).toBe("standard");
     });
 
     it("reads a stored 'full' (the retired tier) as the standard setup", async () => {
-        process.env.ATLAS_VISION_PROFILE = "full";
+        process.env.BHAI_VISION_PROFILE = "full";
         const r = await detectCapabilities({ force: true });
         expect(r.profile).toBe("standard");
     });
 
     it("ignores invalid override values", async () => {
-        process.env.ATLAS_VISION_PROFILE = "rainbow";
+        process.env.BHAI_VISION_PROFILE = "rainbow";
         const r = await detectCapabilities({ force: true });
         // No override → the one default setup
         expect(r.profile).toBe("standard" satisfies VisionProfile);
     });
+});
+
+describe("capability detector — profile from the desktop's .env.runtime", () => {
+    const saved = process.env.BHAI_DATA_DIR;
+    beforeEach(() => {
+        clearCapabilityCache();
+        delete process.env.BHAI_VISION_PROFILE;
+    });
+    afterEach(() => {
+        process.env.BHAI_DATA_DIR = saved;
+    });
+
+    it.each(["BHAI_VISION_PROFILE", "ATLAS_VISION_PROFILE"])("reads a %s= line", async (key) => {
+        const dir = mkdtempSync(join(tmpdir(), "cap-env-"));
+        writeFileSync(join(dir, ".env.runtime"), `OTHER=1\n${key}=lite\n`);
+        process.env.BHAI_DATA_DIR = dir;
+        try {
+            expect((await detectCapabilities({ force: true, cacheDir: dir })).profile).toBe("lite");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }, 30_000);
+
+    it("prefers the BHAI_ line over a stale ATLAS_ one", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "cap-env-"));
+        writeFileSync(join(dir, ".env.runtime"), "ATLAS_VISION_PROFILE=lite\nBHAI_VISION_PROFILE=standard\n");
+        process.env.BHAI_DATA_DIR = dir;
+        try {
+            expect((await detectCapabilities({ force: true, cacheDir: dir })).profile).toBe("standard");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }, 30_000);
 });
 
 describe("capability detector — report shape", () => {
@@ -132,7 +168,7 @@ describe("capability detector — caching", () => {
 describe("capability detector — default", () => {
     beforeEach(() => {
         clearCapabilityCache();
-        delete process.env.ATLAS_VISION_PROFILE;
+        delete process.env.BHAI_VISION_PROFILE;
     });
 
     it("picks the standard setup on every machine (there is no tier to choose)", async () => {

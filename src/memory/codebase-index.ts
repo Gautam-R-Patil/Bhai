@@ -139,7 +139,7 @@ export interface IndexStats {
 // ── Depth + Timing pickers ────────────────────
 
 export function pickDepth(signals: { fileCount: number; typedRatio: number; lang: Language | "mixed" }): Depth {
-    const env = (process.env.ATLAS_INDEX_DEPTH || "").toLowerCase();
+    const env = (process.env.BHAI_INDEX_DEPTH || "").toLowerCase();
     if (env === "symbols" || env === "imports" || env === "calls") return env;
 
     let tier: Depth;
@@ -155,7 +155,7 @@ export function pickDepth(signals: { fileCount: number; typedRatio: number; lang
 }
 
 export function pickTiming(fileCount: number): Timing {
-    const env = (process.env.ATLAS_INDEX_ASYNC || "").toLowerCase();
+    const env = (process.env.BHAI_INDEX_ASYNC || "").toLowerCase();
     if (env === "force") return "async";
     if (env === "never") return "block";
     return fileCount <= 100 ? "block" : "async";
@@ -541,7 +541,7 @@ export function getIndexStats(root: string): IndexStats {
     const row = metaRow[0].values[0];
     let sidecarBytes = 0;
     try {
-        const sp = path.join(process.env.ATLAS_DATA_DIR || path.resolve("data"), "codebase-index", `${hash}.db`);
+        const sp = path.join(process.env.BHAI_DATA_DIR || path.resolve("data"), "codebase-index", `${hash}.db`);
         sidecarBytes = fs.statSync(sp).size;
     } catch {
         /* */
@@ -577,16 +577,16 @@ export const isAppBundleDir = (root: string) => fs.existsSync(path.join(root, "b
  * Best-effort architecture snippet. Returns an empty string when:
  *  - the sidecar does not exist, OR
  *  - root is the packaged app's own folder, OR
- *  - ATLAS_NO_ARCHITECTURE_INJECTION=true, OR
- *  - ATLAS_NO_CODEBASE_INDEX=true, OR
+ *  - BHAI_NO_ARCHITECTURE_INJECTION=true, OR
+ *  - BHAI_NO_CODEBASE_INDEX=true, OR
  *  - any SQL / fs error occurs.
  * Never throws.
  */
 export async function getArchitectureSnippet(root: string): Promise<string> {
     try {
-        if ((process.env.ATLAS_NO_ARCHITECTURE_INJECTION ?? "").toLowerCase() === "true") return "";
+        if ((process.env.BHAI_NO_ARCHITECTURE_INJECTION ?? "").toLowerCase() === "true") return "";
         if (isAppBundleDir(root)) return "";
-        if ((process.env.ATLAS_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true") return "";
+        if ((process.env.BHAI_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true") return "";
         const repoRoot = resolveRepoRoot(root);
         const { hasSidecar, openSidecar } = await import("./codebase-sidecar.js");
         if (!hasSidecar(repoRoot)) return "";
@@ -623,7 +623,7 @@ export async function getArchitectureSnippet(root: string): Promise<string> {
  */
 export async function ensureIndexForCoding(root: string): Promise<void> {
     try {
-        if ((process.env.ATLAS_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true") return;
+        if ((process.env.BHAI_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true") return;
         if (isAppBundleDir(root)) return;
         const repoRoot = resolveRepoRoot(root);
         const { hasSidecar } = await import("./codebase-sidecar.js");

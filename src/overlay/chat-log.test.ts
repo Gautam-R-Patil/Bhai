@@ -7,13 +7,13 @@ import { chatLogPath, logChatMessage, markChatReset, readChatLog, recentChatCont
 
 describe("chat-log", () => {
     let dir: string;
-    const prev = process.env.ATLAS_DATA_DIR;
+    const prev = process.env.BHAI_DATA_DIR;
     beforeEach(() => {
         dir = fs.mkdtempSync(path.join(os.tmpdir(), "chatlog-"));
-        process.env.ATLAS_DATA_DIR = dir;
+        process.env.BHAI_DATA_DIR = dir;
     });
     afterEach(() => {
-        process.env.ATLAS_DATA_DIR = prev;
+        process.env.BHAI_DATA_DIR = prev;
         fs.rmSync(dir, { recursive: true, force: true });
     });
 

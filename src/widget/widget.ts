@@ -16,8 +16,9 @@ export function getWidgetScript(wsUrl: string): string {
     // It injects its own DOM elements, styles, and WebSocket logic.
     return `(function() {
   "use strict";
-  if (window.__atlasWidget) return;
-  window.__atlasWidget = true;
+  // __atlasWidget: set by a cached pre-rename copy of this script on the same page.
+  if (window.__bhaiWidget || window.__atlasWidget) return;
+  window.__bhaiWidget = window.__atlasWidget = true;
 
   // -- Config --
   var SCRIPT = document.currentScript || document.querySelector('script[src*="widget.js"]');
@@ -31,45 +32,45 @@ export function getWidgetScript(wsUrl: string): string {
   var STYLES = document.createElement("style");
   STYLES.textContent = \`
     :root {
-      --atlas-primary: #6366f1;
-      --atlas-primary-hover: #4f46e5;
-      --atlas-bg: #ffffff;
-      --atlas-bg-secondary: #f3f4f6;
-      --atlas-text: #1f2937;
-      --atlas-text-secondary: #6b7280;
-      --atlas-border: #e5e7eb;
-      --atlas-bubble-user: #6366f1;
-      --atlas-bubble-user-text: #ffffff;
-      --atlas-bubble-agent: #f3f4f6;
-      --atlas-bubble-agent-text: #1f2937;
-      --atlas-shadow: 0 8px 32px rgba(0,0,0,0.12);
+      --bhai-primary: #6366f1;
+      --bhai-primary-hover: #4f46e5;
+      --bhai-bg: #ffffff;
+      --bhai-bg-secondary: #f3f4f6;
+      --bhai-text: #1f2937;
+      --bhai-text-secondary: #6b7280;
+      --bhai-border: #e5e7eb;
+      --bhai-bubble-user: #6366f1;
+      --bhai-bubble-user-text: #ffffff;
+      --bhai-bubble-agent: #f3f4f6;
+      --bhai-bubble-agent-text: #1f2937;
+      --bhai-shadow: 0 8px 32px rgba(0,0,0,0.12);
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --atlas-primary: #818cf8;
-        --atlas-primary-hover: #6366f1;
-        --atlas-bg: #1f2937;
-        --atlas-bg-secondary: #374151;
-        --atlas-text: #f9fafb;
-        --atlas-text-secondary: #9ca3af;
-        --atlas-border: #4b5563;
-        --atlas-bubble-user: #6366f1;
-        --atlas-bubble-user-text: #ffffff;
-        --atlas-bubble-agent: #374151;
-        --atlas-bubble-agent-text: #f9fafb;
-        --atlas-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        --bhai-primary: #818cf8;
+        --bhai-primary-hover: #6366f1;
+        --bhai-bg: #1f2937;
+        --bhai-bg-secondary: #374151;
+        --bhai-text: #f9fafb;
+        --bhai-text-secondary: #9ca3af;
+        --bhai-border: #4b5563;
+        --bhai-bubble-user: #6366f1;
+        --bhai-bubble-user-text: #ffffff;
+        --bhai-bubble-agent: #374151;
+        --bhai-bubble-agent-text: #f9fafb;
+        --bhai-shadow: 0 8px 32px rgba(0,0,0,0.3);
       }
     }
-    #atlas-widget-bubble {
+    #bhai-widget-bubble {
       position: fixed;
       width: 56px;
       height: 56px;
       border-radius: 50%;
-      background: var(--atlas-primary);
+      background: var(--bhai-primary);
       color: #fff;
       border: none;
       cursor: pointer;
-      box-shadow: var(--atlas-shadow);
+      box-shadow: var(--bhai-shadow);
       z-index: 999998;
       display: flex;
       align-items: center;
@@ -77,34 +78,34 @@ export function getWidgetScript(wsUrl: string): string {
       transition: transform 0.2s ease, background 0.2s ease;
       \${POSITION === "bottom-left" ? "left: 20px; bottom: 20px;" : "right: 20px; bottom: 20px;"}
     }
-    #atlas-widget-bubble:hover {
+    #bhai-widget-bubble:hover {
       transform: scale(1.08);
-      background: var(--atlas-primary-hover);
+      background: var(--bhai-primary-hover);
     }
-    #atlas-widget-bubble svg {
+    #bhai-widget-bubble svg {
       width: 28px;
       height: 28px;
       fill: currentColor;
     }
-    #atlas-widget-window {
+    #bhai-widget-window {
       position: fixed;
       width: 350px;
       height: 500px;
       border-radius: 12px;
-      background: var(--atlas-bg);
-      box-shadow: var(--atlas-shadow);
+      background: var(--bhai-bg);
+      box-shadow: var(--bhai-shadow);
       z-index: 999999;
       display: none;
       flex-direction: column;
       overflow: hidden;
-      border: 1px solid var(--atlas-border);
+      border: 1px solid var(--bhai-border);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       \${POSITION === "bottom-left" ? "left: 20px; bottom: 86px;" : "right: 20px; bottom: 86px;"}
     }
-    #atlas-widget-window.open { display: flex; }
-    #atlas-widget-header {
+    #bhai-widget-window.open { display: flex; }
+    #bhai-widget-header {
       padding: 14px 16px;
-      background: var(--atlas-primary);
+      background: var(--bhai-primary);
       color: #fff;
       font-weight: 600;
       font-size: 14px;
@@ -113,12 +114,12 @@ export function getWidgetScript(wsUrl: string): string {
       justify-content: space-between;
       flex-shrink: 0;
     }
-    #atlas-widget-header .status {
+    #bhai-widget-header .status {
       font-size: 11px;
       font-weight: 400;
       opacity: 0.85;
     }
-    #atlas-widget-close {
+    #bhai-widget-close {
       background: none;
       border: none;
       color: #fff;
@@ -128,8 +129,8 @@ export function getWidgetScript(wsUrl: string): string {
       line-height: 1;
       opacity: 0.8;
     }
-    #atlas-widget-close:hover { opacity: 1; }
-    #atlas-widget-messages {
+    #bhai-widget-close:hover { opacity: 1; }
+    #bhai-widget-messages {
       flex: 1;
       overflow-y: auto;
       padding: 12px;
@@ -137,7 +138,7 @@ export function getWidgetScript(wsUrl: string): string {
       flex-direction: column;
       gap: 8px;
     }
-    .atlas-msg {
+    .bhai-msg {
       max-width: 85%;
       padding: 8px 12px;
       border-radius: 12px;
@@ -146,26 +147,26 @@ export function getWidgetScript(wsUrl: string): string {
       word-wrap: break-word;
       white-space: pre-wrap;
     }
-    .atlas-msg.user {
+    .bhai-msg.user {
       align-self: flex-end;
-      background: var(--atlas-bubble-user);
-      color: var(--atlas-bubble-user-text);
+      background: var(--bhai-bubble-user);
+      color: var(--bhai-bubble-user-text);
       border-bottom-right-radius: 4px;
     }
-    .atlas-msg.agent {
+    .bhai-msg.agent {
       align-self: flex-start;
-      background: var(--atlas-bubble-agent);
-      color: var(--atlas-bubble-agent-text);
+      background: var(--bhai-bubble-agent);
+      color: var(--bhai-bubble-agent-text);
       border-bottom-left-radius: 4px;
     }
-    .atlas-msg.system {
+    .bhai-msg.system {
       align-self: center;
       background: transparent;
-      color: var(--atlas-text-secondary);
+      color: var(--bhai-text-secondary);
       font-size: 12px;
       font-style: italic;
     }
-    .atlas-msg code {
+    .bhai-msg code {
       background: rgba(0,0,0,0.1);
       padding: 1px 4px;
       border-radius: 3px;
@@ -173,38 +174,38 @@ export function getWidgetScript(wsUrl: string): string {
       font-size: 12px;
     }
     @media (prefers-color-scheme: dark) {
-      .atlas-msg code { background: rgba(255,255,255,0.1); }
+      .bhai-msg code { background: rgba(255,255,255,0.1); }
     }
-    #atlas-widget-input-area {
+    #bhai-widget-input-area {
       display: flex;
       padding: 10px 12px;
-      border-top: 1px solid var(--atlas-border);
+      border-top: 1px solid var(--bhai-border);
       gap: 8px;
       flex-shrink: 0;
-      background: var(--atlas-bg);
+      background: var(--bhai-bg);
     }
-    #atlas-widget-input {
+    #bhai-widget-input {
       flex: 1;
-      border: 1px solid var(--atlas-border);
+      border: 1px solid var(--bhai-border);
       border-radius: 8px;
       padding: 8px 12px;
       font-size: 13px;
-      background: var(--atlas-bg-secondary);
-      color: var(--atlas-text);
+      background: var(--bhai-bg-secondary);
+      color: var(--bhai-text);
       outline: none;
       resize: none;
       font-family: inherit;
       min-height: 36px;
       max-height: 80px;
     }
-    #atlas-widget-input:focus {
-      border-color: var(--atlas-primary);
+    #bhai-widget-input:focus {
+      border-color: var(--bhai-primary);
     }
-    #atlas-widget-input::placeholder {
-      color: var(--atlas-text-secondary);
+    #bhai-widget-input::placeholder {
+      color: var(--bhai-text-secondary);
     }
-    #atlas-widget-send {
-      background: var(--atlas-primary);
+    #bhai-widget-send {
+      background: var(--bhai-primary);
       color: #fff;
       border: none;
       border-radius: 8px;
@@ -215,17 +216,17 @@ export function getWidgetScript(wsUrl: string): string {
       transition: background 0.15s;
       align-self: flex-end;
     }
-    #atlas-widget-send:hover { background: var(--atlas-primary-hover); }
-    #atlas-widget-send:disabled { opacity: 0.5; cursor: default; }
-    #atlas-widget-steps-bar {
+    #bhai-widget-send:hover { background: var(--bhai-primary-hover); }
+    #bhai-widget-send:disabled { opacity: 0.5; cursor: default; }
+    #bhai-widget-steps-bar {
       flex-shrink: 0;
       padding: 6px 12px;
-      border-bottom: 1px solid var(--atlas-border);
+      border-bottom: 1px solid var(--bhai-border);
       font-size: 12px;
-      color: var(--atlas-text-secondary);
+      color: var(--bhai-text-secondary);
     }
-    #atlas-widget-steps-bar[hidden], #atlas-widget-steps[hidden] { display: none; }
-    #atlas-widget-steps-toggle {
+    #bhai-widget-steps-bar[hidden], #bhai-widget-steps[hidden] { display: none; }
+    #bhai-widget-steps-toggle {
       background: none;
       border: none;
       padding: 0;
@@ -234,51 +235,51 @@ export function getWidgetScript(wsUrl: string): string {
       cursor: pointer;
       text-decoration: underline;
     }
-    #atlas-widget-steps-toggle:disabled { cursor: default; text-decoration: none; }
-    #atlas-widget-steps { max-height: 110px; overflow-y: auto; margin-top: 4px; }
-    .atlas-step { padding: 1px 0; }
-    .atlas-step.running { color: var(--atlas-text); }
-    .atlas-step.failed { text-decoration: line-through; }
+    #bhai-widget-steps-toggle:disabled { cursor: default; text-decoration: none; }
+    #bhai-widget-steps { max-height: 110px; overflow-y: auto; margin-top: 4px; }
+    .bhai-step { padding: 1px 0; }
+    .bhai-step.running { color: var(--bhai-text); }
+    .bhai-step.failed { text-decoration: line-through; }
     @media (prefers-reduced-motion: reduce) {
-      #atlas-widget-bubble, #atlas-widget-send { transition: none; }
-      #atlas-widget-bubble:hover { transform: none; }
+      #bhai-widget-bubble, #bhai-widget-send { transition: none; }
+      #bhai-widget-bubble:hover { transform: none; }
     }
   \`;
   document.head.appendChild(STYLES);
 
   // -- DOM --
   var bubble = document.createElement("button");
-  bubble.id = "atlas-widget-bubble";
+  bubble.id = "bhai-widget-bubble";
   bubble.setAttribute("aria-label", "Chat with Bhai");
   bubble.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg>';
   document.body.appendChild(bubble);
 
   var win = document.createElement("div");
-  win.id = "atlas-widget-window";
+  win.id = "bhai-widget-window";
   win.innerHTML =
-    '<div id="atlas-widget-header">' +
-      '<div><span>Bhai</span><br><span class="status" id="atlas-widget-status">Connecting...</span></div>' +
-      '<button id="atlas-widget-close" aria-label="Close chat">&times;</button>' +
+    '<div id="bhai-widget-header">' +
+      '<div><span>Bhai</span><br><span class="status" id="bhai-widget-status">Connecting...</span></div>' +
+      '<button id="bhai-widget-close" aria-label="Close chat">&times;</button>' +
     '</div>' +
-    '<div id="atlas-widget-steps-bar" hidden>' +
-      '<button type="button" id="atlas-widget-steps-toggle" aria-expanded="false" aria-controls="atlas-widget-steps">Steps</button>' +
-      '<div id="atlas-widget-steps" hidden></div>' +
+    '<div id="bhai-widget-steps-bar" hidden>' +
+      '<button type="button" id="bhai-widget-steps-toggle" aria-expanded="false" aria-controls="bhai-widget-steps">Steps</button>' +
+      '<div id="bhai-widget-steps" hidden></div>' +
     '</div>' +
-    '<div id="atlas-widget-messages"></div>' +
-    '<div id="atlas-widget-input-area">' +
-      '<textarea id="atlas-widget-input" placeholder="Type a message..." rows="1"></textarea>' +
-      '<button id="atlas-widget-send" disabled>Send</button>' +
+    '<div id="bhai-widget-messages"></div>' +
+    '<div id="bhai-widget-input-area">' +
+      '<textarea id="bhai-widget-input" placeholder="Type a message..." rows="1"></textarea>' +
+      '<button id="bhai-widget-send" disabled>Send</button>' +
     '</div>';
   document.body.appendChild(win);
 
-  var msgContainer = win.querySelector("#atlas-widget-messages");
-  var input = win.querySelector("#atlas-widget-input");
-  var sendBtn = win.querySelector("#atlas-widget-send");
-  var statusEl = win.querySelector("#atlas-widget-status");
-  var closeBtn = win.querySelector("#atlas-widget-close");
-  var stepsBar = win.querySelector("#atlas-widget-steps-bar");
-  var stepsToggle = win.querySelector("#atlas-widget-steps-toggle");
-  var stepsList = win.querySelector("#atlas-widget-steps");
+  var msgContainer = win.querySelector("#bhai-widget-messages");
+  var input = win.querySelector("#bhai-widget-input");
+  var sendBtn = win.querySelector("#bhai-widget-send");
+  var statusEl = win.querySelector("#bhai-widget-status");
+  var closeBtn = win.querySelector("#bhai-widget-close");
+  var stepsBar = win.querySelector("#bhai-widget-steps-bar");
+  var stepsToggle = win.querySelector("#bhai-widget-steps-toggle");
+  var stepsList = win.querySelector("#bhai-widget-steps");
 
   // -- Markdown (simple) --
   function renderMarkdown(text) {
@@ -301,7 +302,7 @@ export function getWidgetScript(wsUrl: string): string {
 
   function addMessage(text, role) {
     var div = document.createElement("div");
-    div.className = "atlas-msg " + role;
+    div.className = "bhai-msg " + role;
     div.innerHTML = role === "user" ? text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;") : renderMarkdown(text);
     msgContainer.appendChild(div);
     msgContainer.scrollTop = msgContainer.scrollHeight;
@@ -415,7 +416,7 @@ export function getWidgetScript(wsUrl: string): string {
       stepsList.textContent = "";
       s.steps.forEach(function(x) {
         var row = document.createElement("div");
-        row.className = "atlas-step" + (x.state === "running" || x.state === "done" || x.state === "failed" ? " " + x.state : "");
+        row.className = "bhai-step" + (x.state === "running" || x.state === "done" || x.state === "failed" ? " " + x.state : "");
         row.textContent = String(x.text);
         stepsList.appendChild(row);
       });

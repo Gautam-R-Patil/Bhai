@@ -232,7 +232,7 @@ function obfuscateFile(filePath) {
             const header = `// ${crypto.randomBytes(8).toString('hex')} © ${crypto.randomBytes(4).toString('hex')}\n`;
             const finalCode = header + protectedCode;
             // Write to a tmp .mjs so Node treats it as ESM for the parse check.
-            const probe = path.join(tmpDir, `atlas-obf-check-${process.pid}-${attempt}.mjs`);
+            const probe = path.join(tmpDir, `bhai-obf-check-${process.pid}-${attempt}.mjs`);
             fs.writeFileSync(probe, finalCode);
             const r = spawnSync(process.execPath, ["--check", probe], { encoding: "utf8" });
             fs.unlinkSync(probe);
@@ -452,8 +452,8 @@ function removeSourceMaps(dir) {
  *   • scripts/check-deps.mjs               — Windows-only; drop on macOS/Linux
  *   • scripts/dump_uia.ps1                 — Windows-only; drop on macOS/Linux
  *   • scripts/dump_atspi.py                — Linux-only;  drop on macOS/Windows
- *   • scripts/atlas-hotkey.lua             — Hammerspoon (macOS); drop on Win/Linux
- *   • scripts/atlas-hotkey.ahk             — AutoHotkey (Windows); drop on macOS/Linux
+ *   • scripts/bhai-hotkey.lua             — Hammerspoon (macOS); drop on Win/Linux
+ *   • scripts/bhai-hotkey.ahk             — AutoHotkey (Windows); drop on macOS/Linux
  *
  * Anything still needed for the target platform is preserved.
  */
@@ -487,20 +487,20 @@ function cleanResidues(botDir, platform) {
             path.join(botDir, "scripts", "dump_atspi.py"),
             path.join(botDir, "scripts", "ocr_screen.ps1"),
             path.join(botDir, "scripts", "check-deps.mjs"),
-            path.join(botDir, "scripts", "atlas-hotkey.ahk"),
+            path.join(botDir, "scripts", "bhai-hotkey.ahk"),
         );
     } else if (platform === "win32") {
         alwaysDelete.push(
             path.join(botDir, "scripts", "dump_atspi.py"),
-            path.join(botDir, "scripts", "atlas-hotkey.lua"),
+            path.join(botDir, "scripts", "bhai-hotkey.lua"),
         );
     } else if (platform === "linux") {
         alwaysDelete.push(
             path.join(botDir, "scripts", "dump_uia.ps1"),
             path.join(botDir, "scripts", "ocr_screen.ps1"),
             path.join(botDir, "scripts", "check-deps.mjs"),
-            path.join(botDir, "scripts", "atlas-hotkey.ahk"),
-            path.join(botDir, "scripts", "atlas-hotkey.lua"),
+            path.join(botDir, "scripts", "bhai-hotkey.ahk"),
+            path.join(botDir, "scripts", "bhai-hotkey.lua"),
         );
     }
 
@@ -571,7 +571,7 @@ function loadedExports(file) {
 
 /**
  * strip -x the large native libraries before electron-builder signs them:
- * onnxruntime's dylibs and the atlas-native module (native/Cargo.toml keeps
+ * onnxruntime's dylibs and the bhai-native module (native/Cargo.toml keeps
  * strip=false because of a linker bug, so it happens here, after linking).
  * A stripped file replaces the original only after it loads in this Node with
  * the same exports (a dylib through the .node binding next to it). Anything
@@ -582,7 +582,7 @@ function stripNativeLibraries(botDir, arch) {
     let saved = 0;
     const libs = [
         ...findFiles(path.join(botDir, "node_modules"), /^libonnxruntime[^/]*\.dylib$/),
-        ...findFiles(path.join(botDir, "native"), /^atlas-native\..*\.node$/),
+        ...findFiles(path.join(botDir, "native"), /^bhai-native\..*\.node$/),
     ];
     for (const file of libs) {
         const dir = path.dirname(file);
@@ -775,9 +775,9 @@ exports.default = async function afterPack(context) {
 
     if (platform === "darwin") {
         // Try universal first, then arch-specific
-        const universalPath = path.join(nativeDir, "atlas-native.darwin-universal.node");
-        const arm64Path = path.join(nativeDir, "atlas-native.darwin-arm64.node");
-        const x64Path = path.join(nativeDir, "atlas-native.darwin-x64.node");
+        const universalPath = path.join(nativeDir, "bhai-native.darwin-universal.node");
+        const arm64Path = path.join(nativeDir, "bhai-native.darwin-arm64.node");
+        const x64Path = path.join(nativeDir, "bhai-native.darwin-x64.node");
 
         if (fs.existsSync(universalPath)) {
             nativeNodeFile = universalPath;
@@ -787,14 +787,14 @@ exports.default = async function afterPack(context) {
             nativeNodeFile = x64Path;
         }
     } else if (platform === "win32") {
-        const winPath = path.join(nativeDir, `atlas-native.win32-${arch}-msvc.node`);
+        const winPath = path.join(nativeDir, `bhai-native.win32-${arch}-msvc.node`);
         if (fs.existsSync(winPath)) {
             nativeNodeFile = winPath;
         }
     } else if (platform === "linux") {
         // Try GNU first, then musl
-        const gnuPath = path.join(nativeDir, `atlas-native.linux-${arch}-gnu.node`);
-        const muslPath = path.join(nativeDir, `atlas-native.linux-${arch}-musl.node`);
+        const gnuPath = path.join(nativeDir, `bhai-native.linux-${arch}-gnu.node`);
+        const muslPath = path.join(nativeDir, `bhai-native.linux-${arch}-musl.node`);
         if (fs.existsSync(gnuPath)) {
             nativeNodeFile = gnuPath;
         } else if (fs.existsSync(muslPath)) {
@@ -810,7 +810,7 @@ exports.default = async function afterPack(context) {
         const nodeFileName = path.basename(nativeNodeFile);
         fs.copyFileSync(nativeNodeFile, path.join(destNativeDir, nodeFileName));
         for (const other of fs.readdirSync(destNativeDir)) {
-            if (/^atlas-native\..*\.node$/.test(other) && other !== nodeFileName) {
+            if (/^(?:bhai|atlas)-native\..*\.node$/.test(other) && other !== nodeFileName) { // atlas-: a stale pre-rename build
                 fs.unlinkSync(path.join(destNativeDir, other));
             }
         }

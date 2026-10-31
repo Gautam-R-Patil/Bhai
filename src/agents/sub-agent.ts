@@ -81,10 +81,10 @@ const STUCK_CRITICAL_THRESHOLD = 5; // Force-exit after N consecutive identical 
 /**
  * Fence attacker-influenceable tool output the same way the main agent does
  * (agent.ts executeToolCall), so web/tool text reads as data, not instructions.
- * Honors ATLAS_NO_UNTRUSTED_WRAP=true.
+ * Honors BHAI_NO_UNTRUSTED_WRAP=true.
  */
 function fenceToolResult(fnName: string, result: string): string {
-    if (process.env.ATLAS_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(fnName)) return result;
+    if (process.env.BHAI_NO_UNTRUSTED_WRAP === "true" || !isUntrustedToolResult(fnName)) return result;
     return wrapUntrustedToolResult(fnName, result);
 }
 

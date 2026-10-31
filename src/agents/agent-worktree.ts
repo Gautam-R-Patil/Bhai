@@ -5,7 +5,7 @@
 // ── Agent Worktree Isolation (Phase 4G) ──────
 // Thin utility for creating throwaway git worktrees so multiple
 // parallel coder sub-agents can operate on the same repo without file
-// conflicts. Opt-in (mesh.ts gates on ATLAS_AGENT_WORKTREE=true and
+// conflicts. Opt-in (mesh.ts gates on BHAI_AGENT_WORKTREE=true and
 // parallel coder-step count >= 2).
 //
 // This file is pure process/filesystem helper — it has no knowledge of
@@ -18,7 +18,7 @@ import path from "node:path";
 import { getDataDir } from "../config/paths.js";
 
 const WORKTREES_ROOT = path.join(getDataDir(), "agent-worktrees");
-const BRANCH_PREFIX = "atlas/agent";
+const BRANCH_PREFIX = "bhai/agent";
 
 // ── Detection ────────────────────────────────
 
@@ -32,7 +32,7 @@ export function isGitRepo(cwd: string = process.cwd()): boolean {
 }
 
 export function isWorktreeEnabled(): boolean {
-    return process.env.ATLAS_AGENT_WORKTREE === "true" && process.env.ATLAS_NO_AGENT_WORKTREE !== "true";
+    return process.env.BHAI_AGENT_WORKTREE === "true" && process.env.BHAI_NO_AGENT_WORKTREE !== "true";
 }
 
 // ── Lifecycle ────────────────────────────────

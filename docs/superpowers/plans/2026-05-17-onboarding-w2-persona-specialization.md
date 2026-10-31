@@ -4,7 +4,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the Profile step's tone dropdown with a five-card Persona step. Persist `profile.persona` through the existing `saveProfile` IPC → electron-store → wizard-seed → identity store. At runtime, inject a persona identity line into the dynamic prompt and apply a multiplicative bias to tool-router category scores. All wired behind `ATLAS_NO_PERSONA_BIAS`.
+**Goal:** Replace the Profile step's tone dropdown with a five-card Persona step. Persist `profile.persona` through the existing `saveProfile` IPC → electron-store → wizard-seed → identity store. At runtime, inject a persona identity line into the dynamic prompt and apply a multiplicative bias to tool-router category scores. All wired behind `BHAI_NO_PERSONA_BIAS`.
 
 **Architecture:** No schema changes — `accounts` table in Convex has no `profile` column; persona persists locally in `~/Library/Application Support/atlas-desktop/config.json` via the existing IPC and is mirrored to bot memory via the existing `wizard-seed.ts` "extra" payload. Three integration points: (1) new step `desktop/wizard/steps/persona.js`, (2) new pure module `src/prompts/persona-bias.ts` with the identity-line table and the category-weight table, (3) read-only consumers in `src/prompts/dynamic-context.ts` (identity line) and `src/tool-router.ts:1145` (score overlay).
 
@@ -50,7 +50,7 @@ These rules override anything in the task bodies if they conflict.
 
 5. **Tone defaults per persona**: developer/founder/researcher → `"professional"`, creator/explorer → `"friendly"`. The Profile step computes this only when the user hasn't explicitly set tone via the Personalize → Personality preset.
 
-6. **Kill-switch**: `ATLAS_NO_PERSONA_BIAS=true` disables BOTH the identity-line injection AND the tool-router overlay. The Persona step still saves; it just doesn't get consumed.
+6. **Kill-switch**: `BHAI_NO_PERSONA_BIAS=true` disables BOTH the identity-line injection AND the tool-router overlay. The Persona step still saves; it just doesn't get consumed.
 
 7. **No `Co-Authored-By: Claude` attribution** in commits per user's persistent memory.
 
@@ -183,7 +183,7 @@ Create `desktop/wizard/steps/persona.js`:
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Persona step — five cards in a 2×3 grid (explorer spans both columns
 // at the bottom). Selecting a card writes profile.persona via
-// atlas.saveProfile. Tone defaults to professional or friendly per
+// bhai.saveProfile. Tone defaults to professional or friendly per
 // persona, but only if the user hasn't explicitly set tone in
 // Personalize → Personality (preserved in profile.tone if present).
 (function () {
@@ -324,7 +324,7 @@ Create `desktop/wizard/steps/persona.js`:
             const tone = existingTone || TONE_DEFAULTS[selected] || "friendly";
             const existingName = profile.name || "";
 
-            if (!window.atlas || typeof window.atlas.saveProfile !== "function") {
+            if (!window.bhai || typeof window.bhai.saveProfile !== "function") {
                 err.textContent = "Save unavailable (IPC not ready).";
                 cta.disabled = false;
                 return;
@@ -339,7 +339,7 @@ Create `desktop/wizard/steps/persona.js`:
             };
 
             let res;
-            try { res = await window.atlas.saveProfile(payload); }
+            try { res = await window.bhai.saveProfile(payload); }
             catch (e) { err.textContent = "Save failed: " + (e.message || e); cta.disabled = false; return; }
             if (!res || !res.success) {
                 err.textContent = (res && res.error) || "Save failed.";
@@ -374,7 +374,7 @@ git add desktop/wizard/steps/persona.js
 git commit -m "feat(wizard): persona step renderer
 
 Five-card grid (developer/founder/creator/researcher/explorer).
-Click selects; Continue calls atlas.saveProfile with {name, tone,
+Click selects; Continue calls bhai.saveProfile with {name, tone,
 persona, personaConfidence, personaSelectedAt}. Tone defaults to
 'professional' for developer/founder/researcher, 'friendly' for
 creator/explorer — but only if profile.tone isn't already set.
@@ -544,12 +544,12 @@ describe("persona step — render", () => {
 describe("persona step — Continue payload", () => {
     beforeEach(async () => { await loadPersonaStep(); });
 
-    it("calls atlas.saveProfile with the expected shape", async () => {
+    it("calls bhai.saveProfile with the expected shape", async () => {
         const root = document.getElementById("step-root");
         const saveProfile = vi.fn().mockResolvedValue({ success: true });
         const onAdvance = vi.fn();
         const refreshState = vi.fn().mockResolvedValue(undefined);
-        window.atlas = { saveProfile };
+        window.bhai = { saveProfile };
         window.WizardSteps.persona.render(root, {
             state: { profile: { name: "Dheeraj" } },
             onAdvance, refreshState,
@@ -571,7 +571,7 @@ describe("persona step — Continue payload", () => {
     it("preserves existing tone if profile.tone is already set", async () => {
         const root = document.getElementById("step-root");
         const saveProfile = vi.fn().mockResolvedValue({ success: true });
-        window.atlas = { saveProfile };
+        window.bhai = { saveProfile };
         window.WizardSteps.persona.render(root, {
             state: { profile: { name: "X", tone: "playful" } },
             onAdvance: () => {}, refreshState: async () => {},
@@ -585,7 +585,7 @@ describe("persona step — Continue payload", () => {
     it("creator defaults tone to friendly", async () => {
         const root = document.getElementById("step-root");
         const saveProfile = vi.fn().mockResolvedValue({ success: true });
-        window.atlas = { saveProfile };
+        window.bhai = { saveProfile };
         window.WizardSteps.persona.render(root, {
             state: { profile: {} },
             onAdvance: () => {}, refreshState: async () => {},
@@ -893,7 +893,7 @@ Create `src/prompts/persona-bias.ts`:
  *   getPersonaIdentityLine(p)   → string injected into dynamic prompt
  *   getPersonaToolWeights(p)    → category → multiplier map for tool router
  *
- * Both consumers gate their use behind ATLAS_NO_PERSONA_BIAS=true.
+ * Both consumers gate their use behind BHAI_NO_PERSONA_BIAS=true.
  * Persona is stored in identity profile (set during wizard) and read
  * once per agent turn — see src/agent.ts and src/tool-router.ts.
  */
@@ -1203,7 +1203,7 @@ import { getPersonaIdentityLine } from "./persona-bias.js";
     {
         name: "persona_identity",
         condition: (ctx) => {
-            if (process.env.ATLAS_NO_PERSONA_BIAS === "true") return false;
+            if (process.env.BHAI_NO_PERSONA_BIAS === "true") return false;
             return ctx.persona != null && getPersonaIdentityLine(ctx.persona) != null;
         },
         // content is computed at filter time, but MODULES has static content
@@ -1292,7 +1292,7 @@ git commit -m "feat(prompts): inject persona identity line into dynamic context
 PromptContext gains an optional persona field. New persona_identity
 MODULE entry uses a placeholder content string substituted at
 assembly time so the assembler stays declarative. Module condition
-honors ATLAS_NO_PERSONA_BIAS=true — kill-switch disables injection
+honors BHAI_NO_PERSONA_BIAS=true — kill-switch disables injection
 without removing the module wiring."
 ```
 
@@ -1403,10 +1403,10 @@ Replace it with:
 
     // ── W2: persona-bias overlay. Multiplies each category's score by
     //         the persona-specific weight (~0.7–1.4). Default = 1.0
-    //         (unbiased). Kill-switch: ATLAS_NO_PERSONA_BIAS=true. Read
+    //         (unbiased). Kill-switch: BHAI_NO_PERSONA_BIAS=true. Read
     //         persona lazily from identity so a cold tool-router call
     //         (before identity init) just skips the overlay.
-    if (process.env.ATLAS_NO_PERSONA_BIAS !== "true") {
+    if (process.env.BHAI_NO_PERSONA_BIAS !== "true") {
         try {
             const { getIdentityProfile } = await import("./memory/identity.js");
             const { asPersona, getPersonaToolWeights } = await import("./prompts/persona-bias.js");
@@ -1441,7 +1441,7 @@ git commit -m "feat(tool-router): persona weight overlay before final sort
 After recent-tool boost, before sort, multiplies each category's
 score by getPersonaToolWeights(persona)[cat] when persona is set
 in identity. Reads persona lazily so cold-path tool-routing
-(before identity init) is unaffected. ATLAS_NO_PERSONA_BIAS=true
+(before identity init) is unaffected. BHAI_NO_PERSONA_BIAS=true
 short-circuits the entire block. Best-effort: a thrown identity
 read never breaks routing."
 ```
@@ -1600,12 +1600,12 @@ Open `desktop/onboarding-demo/ACCEPTANCE.md`. Append at the end:
 ## Identity-line injection
 - [ ] With persona=developer set and bot running, send any message via Telegram or overlay.
 - [ ] Check the log: the dynamic-context block should contain a line starting "The user describes themselves as a developer."
-- [ ] Set `ATLAS_NO_PERSONA_BIAS=true` and restart. Send a message. The line should NOT appear.
+- [ ] Set `BHAI_NO_PERSONA_BIAS=true` and restart. Send a message. The line should NOT appear.
 
 ## Tool-router overlay
 - [ ] With persona=developer set, send "explain my codebase" — agent should choose code-cluster tools.
 - [ ] With persona=null (delete the field in config.json) — same query may route the same way (semantic match is strong here); confirm via logs that the persona-weight block is skipped (look for the absence of the lazy-import log line or just confirm absence of errors).
-- [ ] `ATLAS_NO_PERSONA_BIAS=true` short-circuits the block entirely.
+- [ ] `BHAI_NO_PERSONA_BIAS=true` short-circuits the block entirely.
 
 ## Comparison to demo
 - [ ] Open `desktop/onboarding-demo/index.html` — the persona step in the demo and the production wizard should match within ~2% (sizes, padding, hover behaviour).
@@ -1703,6 +1703,6 @@ After all 16 tasks complete, walk the spec (`docs/superpowers/specs/2026-05-16-o
 - §8.3 `persona-bias.ts` (identity-line + weights) — Tasks 8–9. **✓**
 - §8.4 Integration: dynamic-assembler injects identity-line — Task 10. tool-router applies weights — Task 12. Convex schema — **NOT changed** per §0 spec correction (no `accounts.profile` field exists in the real schema). **✓**
 - §8.5 Tests — wizard step (Task 4), persona-bias unit (Task 9), tool-router integration (Task 13). **✓**
-- Kill-switch `ATLAS_NO_PERSONA_BIAS` — Tasks 10 + 12 both gate. **✓**
+- Kill-switch `BHAI_NO_PERSONA_BIAS` — Tasks 10 + 12 both gate. **✓**
 
 Plan ready.

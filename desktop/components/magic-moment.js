@@ -99,10 +99,10 @@
         scheduleRotation();
 
         // 2. Async rich detection (best-effort).
-        if (typeof window !== "undefined" && window.atlas && typeof window.atlas.detectMagicMoment === "function"
+        if (typeof window !== "undefined" && window.bhai && typeof window.bhai.detectMagicMoment === "function"
             && window.MagicMomentRanker) {
             try {
-                const snapshot = await window.atlas.detectMagicMoment();
+                const snapshot = await window.bhai.detectMagicMoment();
                 if (snapshot && Array.isArray(snapshot.names) && snapshot.names.length > 0) {
                     const rich = window.MagicMomentRanker.rankSignals({
                         snapshot: snapshot,

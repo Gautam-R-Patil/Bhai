@@ -75,7 +75,7 @@ function zip(entries: { name: string; data: string | Buffer; store?: boolean; de
     return Buffer.concat([...locals, cd, end]);
 }
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-import-zip-"));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-import-zip-"));
 const writeZip = (name: string, entries: Parameters<typeof zip>[0]) => {
     const p = path.join(dir, name);
     fs.writeFileSync(p, zip(entries));

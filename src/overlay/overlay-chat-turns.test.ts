@@ -9,8 +9,8 @@ import WebSocket from "ws";
 import type { AgentResponse, ChannelContext } from "../agent.js";
 import { readChatLog } from "./chat-log.js";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-overlay-chat-turns-"));
-process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-overlay-chat-turns-"));
+process.env.BHAI_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
 type Call = {
     ctx: ChannelContext;
@@ -31,7 +31,7 @@ vi.mock("../agent.js", async (orig) => ({
 
 const chat = await import("./overlay-chat.js");
 chat.initOverlayChat({} as never);
-const url = `ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`;
+const url = `ws://127.0.0.1:${process.env.BHAI_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type Msg = { type: string; text?: string; turn?: string; [k: string]: unknown };

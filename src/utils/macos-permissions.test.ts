@@ -15,7 +15,7 @@ vi.mock("node:fs", () => ({ promises: { stat: async () => ({ size: 500_000 }), u
 
 const { probeAndLogMacPermissions } = await import("./macos-permissions.js");
 
-describe("##ATLAS_PERMS## marker", () => {
+describe("##BHAI_PERMS## marker", () => {
     const platform = process.platform;
     let log: MockInstance<typeof console.log>;
     beforeEach(() => {
@@ -27,7 +27,7 @@ describe("##ATLAS_PERMS## marker", () => {
         Object.defineProperty(process, "platform", { value: platform });
         vi.restoreAllMocks();
     });
-    const marker = () => log.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith("##ATLAS_PERMS##"));
+    const marker = () => log.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith("##BHAI_PERMS##"));
 
     it("stays quiet on an Apple Events (Automation) denial", async () => {
         osascriptStderr = "execution error: Not authorized to send Apple events to System Events. (-1743)";
@@ -45,6 +45,6 @@ describe("##ATLAS_PERMS## marker", () => {
     it("reports an assistive-access denial as Accessibility", async () => {
         osascriptStderr = "execution error: osascript is not allowed assistive access. (1002)";
         await probeAndLogMacPermissions();
-        expect(marker()).toBe('##ATLAS_PERMS##{"accessibility":false,"screen":true}');
+        expect(marker()).toBe('##BHAI_PERMS##{"accessibility":false,"screen":true}');
     });
 });

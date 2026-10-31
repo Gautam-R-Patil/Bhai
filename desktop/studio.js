@@ -4,7 +4,7 @@
 // ── Bhai Memory Studio (renderer) ─────────────
 // Force-directed graph of the user's memory with right-side detail panel.
 // Mounts on first navigation to the Memory tab; pauses the simulation when
-// the tab is hidden. Fetches read-only data via window.atlas.studio.*.
+// the tab is hidden. Fetches read-only data via window.bhai.studio.*.
 //
 // Theme: every visual value resolves through CSS custom properties on
 // document.documentElement so the existing light/dark theme switch propagates
@@ -167,12 +167,12 @@
 
     async function _fetchGraph() {
         const res = state.filters.query
-            ? await window.atlas.studio.search(state.filters.query, {
+            ? await window.bhai.studio.search(state.filters.query, {
                   includeAdvanced: state.filters.advanced,
                   includeSimilarity: state.filters.similarity,
                   maxNodes: 400,
               })
-            : await window.atlas.studio.graph({
+            : await window.bhai.studio.graph({
                   centerOnUser: true,
                   hops: 1,
                   includeAdvanced: state.filters.advanced,
@@ -616,7 +616,7 @@
         let extra = null;
         if (kindNs === "you") {
             try {
-                const res = await window.atlas.studio.you();
+                const res = await window.bhai.studio.you();
                 if (res?.success) extra = res.you;
             } catch { /* non-fatal */ }
         } else if (kindNs === "cat" || kindNs === "world" || kindNs === "self") {
@@ -624,7 +624,7 @@
             extra = null;
         } else {
             try {
-                const res = await window.atlas.studio.getNode(kind, isNumericNs(kindNs) ? Number(tail) : tail);
+                const res = await window.bhai.studio.getNode(kind, isNumericNs(kindNs) ? Number(tail) : tail);
                 if (res?.success) extra = res.node;
             } catch { /* non-fatal */ }
         }
@@ -634,7 +634,7 @@
         const isLocal = kindNs === "cat" || kindNs === "world" || kindNs === "self";
         const connectionsP = isLocal
             ? Promise.resolve({ success: true, connections: _anchorMembers(id) })
-            : window.atlas.studio
+            : window.bhai.studio
                   .connections(kind, isNumericNs(kindNs) ? Number(tail) : tail)
                   .catch(() => ({ success: false }));
 
@@ -673,7 +673,7 @@
         if (!Number.isFinite(id)) return;
         const next = !(extra && extra.pinned);
         try {
-            const res = await window.atlas.studio.pinMemory(id, next);
+            const res = await window.bhai.studio.pinMemory(id, next);
             if (res?.success) {
                 if (typeof window.showToast === "function") {
                     window.showToast(next ? "📌 Pinned" : "Unpinned");
@@ -722,7 +722,7 @@
             const tags = form.querySelector("[data-edit-tags]").value;
             const importance = Number(slider.value);
             try {
-                const res = await window.atlas.studio.updateMemory(id, { content, tags, importance });
+                const res = await window.bhai.studio.updateMemory(id, { content, tags, importance });
                 if (res?.success) {
                     if (typeof window.showToast === "function") window.showToast("✓ Memory updated");
                     await refresh();
@@ -792,11 +792,11 @@
         try {
             let res = null;
             if (kindNs === "memory") {
-                res = await window.atlas.studio.forgetMemory(Number(tail), reason);
+                res = await window.bhai.studio.forgetMemory(Number(tail), reason);
             } else if (kindNs === "trait") {
-                res = await window.atlas.studio.forgetTrait(tail, reason);
+                res = await window.bhai.studio.forgetTrait(tail, reason);
             } else if (kindNs === "entity") {
-                res = await window.atlas.studio.forgetEntity(Number(tail), reason, true);
+                res = await window.bhai.studio.forgetEntity(Number(tail), reason, true);
             }
             if (res?.success) {
                 if (typeof window.showToast === "function") window.showToast("🗑️ Forgotten");
@@ -901,7 +901,7 @@
                 }
             });
             body.querySelector("[data-file]").addEventListener("click", async () => {
-                const res = await window.atlas.studio.pickImportFile();
+                const res = await window.bhai.studio.pickImportFile();
                 if (res && !res.canceled) { st.file = { path: res.path, name: res.name }; st.text = ""; renderPick(); }
             });
             body.querySelector("[data-unfile]")?.addEventListener("click", () => { st.file = null; renderPick(); });
@@ -920,7 +920,7 @@
             backdrop.querySelector("[data-close]").focus();
             let res;
             try {
-                res = await window.atlas.studio.importPreview(
+                res = await window.bhai.studio.importPreview(
                     st.text.trim() ? { text: st.text, source: st.source } : { filePath: st.file.path, source: st.source },
                 );
             } catch (err) {
@@ -1024,7 +1024,7 @@
                 const facts = fresh.filter((f) => f.keep).map(({ content, category, tags, importance }) => ({ content, category, tags, importance }));
                 let res;
                 try {
-                    res = await window.atlas.studio.importSave(facts, st.source);
+                    res = await window.bhai.studio.importSave(facts, st.source);
                 } catch (err) {
                     res = { success: false, error: err.message };
                 }
@@ -1073,8 +1073,8 @@
                 try {
                     // The bot's batch undo also takes back the people, projects and profile fields
                     // this import added; deleting the rows here is the fallback when it can't.
-                    if (res.batch && window.atlas.studio.importUndo) r = await window.atlas.studio.importUndo(res.batch);
-                    if (!r?.success) r = await window.atlas.studio.bulkForget(ids, "import_undo");
+                    if (res.batch && window.bhai.studio.importUndo) r = await window.bhai.studio.importUndo(res.batch);
+                    if (!r?.success) r = await window.bhai.studio.bulkForget(ids, "import_undo");
                 } catch (err) {
                     r = { success: false, error: err.message };
                 }
@@ -1098,7 +1098,7 @@
 
         renderPick();
         backdrop.querySelector("[data-close]").focus();
-        window.atlas.studio.importPrompt().then((res) => {
+        window.bhai.studio.importPrompt().then((res) => {
             st.loading = false;
             if (!backdrop.isConnected || !body.querySelector("[data-paste]")) return;
             if (!res?.success) return renderPick(res?.error || "Couldn't reach Bhai.");
@@ -1286,7 +1286,7 @@
                 deletedBtn.textContent = "Hide deleted";
                 deletedPane.innerHTML = '<span class="studio-empty">Loading…</span>';
                 try {
-                    const res = await window.atlas.studio.forgetLog(50);
+                    const res = await window.bhai.studio.forgetLog(50);
                     if (!res?.success) {
                         deletedPane.innerHTML = `<span class="studio-empty">${_escapeHtml(res?.error || "Could not load deleted memory log.")}</span>`;
                         return;
@@ -1342,7 +1342,7 @@
                 const original = recompute.textContent;
                 recompute.textContent = "Computing…";
                 try {
-                    const res = await window.atlas.studio.recomputeInsights();
+                    const res = await window.bhai.studio.recomputeInsights();
                     if (res?.success) {
                         if (typeof window.showToast === "function") {
                             window.showToast(`✨ ${res.generated} insight${res.generated === 1 ? "" : "s"} refreshed`);
@@ -1660,7 +1660,7 @@
         const wrap = $("studioInsights");
         if (!wrap) return;
         try {
-            const res = await window.atlas.studio.insights();
+            const res = await window.bhai.studio.insights();
             if (!res?.success) {
                 wrap.innerHTML = "";
                 return;

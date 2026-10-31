@@ -99,7 +99,7 @@ beforeEach(() => {
     hangHeaders = 0;
     gaps = [];
     netErrors.length = 0;
-    delete process.env.ATLAS_NO_STREAMING;
+    delete process.env.BHAI_NO_STREAMING;
 });
 
 describe("chat({ onDelta })", () => {
@@ -150,8 +150,8 @@ describe("chat({ onDelta })", () => {
         expect(JSON.parse(plain[0].body).stream).toBeUndefined();
     });
 
-    it("ATLAS_NO_STREAMING=true disables streaming", async () => {
-        process.env.ATLAS_NO_STREAMING = "true";
+    it("BHAI_NO_STREAMING=true disables streaming", async () => {
+        process.env.BHAI_NO_STREAMING = "true";
         const seen: LLMDelta[] = [];
         const r = await llm.chat({ messages: msgs, onDelta: (d) => seen.push(d) });
         expect(streams.length).toBe(0);

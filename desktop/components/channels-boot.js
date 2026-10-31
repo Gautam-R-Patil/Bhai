@@ -10,7 +10,7 @@
     async function boot() {
         const grid = document.getElementById("channels-grid");
         if (!grid) return;
-        const atlas = window.atlas || {};
+        const bhai = window.bhai || {};
         const C = window.SetupComponents || {};
         if (!C.ChannelCard) {
             const err = document.createElement("div");
@@ -23,8 +23,8 @@
         // (State isn't strictly required by ChannelCard — it reads from IPC on Test.
         // We still fetch it so a future version can pre-color cells by connection state.)
         let state = { channels: {} };
-        if (typeof atlas.setupDetect === "function") {
-            try { state = await atlas.setupDetect(); }
+        if (typeof bhai.setupDetect === "function") {
+            try { state = await bhai.setupDetect(); }
             catch { state = { channels: {} }; }
         }
 

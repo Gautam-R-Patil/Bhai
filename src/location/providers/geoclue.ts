@@ -65,7 +65,7 @@ export class GeoClueProvider implements LocationProvider {
                 "org.freedesktop.DBus.Properties.Set",
                 "org.freedesktop.GeoClue2.Client",
                 "DesktopId",
-                "<string 'atlas-agent'>",
+                "<string 'bhai-agent'>",
             ],
             { timeout: 3000 },
         );

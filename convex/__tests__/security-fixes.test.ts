@@ -11,45 +11,45 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { deriveSharedKey, generateServerKeyPair, KDF_VERSION_HKDF } from "../crypto.js";
 
-// ── F3: appRuntime throws when ATLAS_RUNTIME_MASTER_SECRET unset ───────────
+// ── F3: appRuntime throws when BHAI_RUNTIME_MASTER_SECRET unset ───────────
 describe("F3: deriveRuntimeKey", () => {
     let originalEnv: string | undefined;
     beforeEach(() => {
-        originalEnv = process.env.ATLAS_RUNTIME_MASTER_SECRET;
+        originalEnv = process.env.BHAI_RUNTIME_MASTER_SECRET;
     });
     afterEach(() => {
         if (originalEnv === undefined) {
-            delete process.env.ATLAS_RUNTIME_MASTER_SECRET;
+            delete process.env.BHAI_RUNTIME_MASTER_SECRET;
         } else {
-            process.env.ATLAS_RUNTIME_MASTER_SECRET = originalEnv;
+            process.env.BHAI_RUNTIME_MASTER_SECRET = originalEnv;
         }
     });
 
-    it("throws when ATLAS_RUNTIME_MASTER_SECRET is unset", async () => {
-        delete process.env.ATLAS_RUNTIME_MASTER_SECRET;
+    it("throws when BHAI_RUNTIME_MASTER_SECRET is unset", async () => {
+        delete process.env.BHAI_RUNTIME_MASTER_SECRET;
         const { internal } = await import("../_generated/api.js");
         // The action is registered through convex's internalAction wrapper, so
         // we can't call it directly. Instead, replicate the guard to assert
         // the failure semantics — the same source-of-truth check we changed.
         // The fix replaced the fallback string with a throw; this exercises
         // the very condition.
-        const masterSecret = process.env.ATLAS_RUNTIME_MASTER_SECRET;
+        const masterSecret = process.env.BHAI_RUNTIME_MASTER_SECRET;
         expect(masterSecret).toBeUndefined();
         expect(() => {
-            if (!masterSecret) throw new Error("ATLAS_RUNTIME_MASTER_SECRET not configured");
+            if (!masterSecret) throw new Error("BHAI_RUNTIME_MASTER_SECRET not configured");
         }).toThrow(/not configured/);
         // Sanity: the export still resolves so the deploy bundle isn't broken.
         expect(internal.appRuntime.deriveRuntimeKey).toBeTruthy();
     });
 
     it("returns hex when secret is set", async () => {
-        process.env.ATLAS_RUNTIME_MASTER_SECRET = "test-master-secret-32-bytes-ok!!";
+        process.env.BHAI_RUNTIME_MASTER_SECRET = "test-master-secret-32-bytes-ok!!";
         // Replicate the production path to confirm the fallback was the only
         // change — the success path still yields hex.
         const enc = new TextEncoder();
         const keyMaterial = await crypto.subtle.importKey(
             "raw",
-            enc.encode(process.env.ATLAS_RUNTIME_MASTER_SECRET),
+            enc.encode(process.env.BHAI_RUNTIME_MASTER_SECRET),
             { name: "HMAC", hash: "SHA-256" },
             false,
             ["sign"],

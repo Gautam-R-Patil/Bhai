@@ -105,7 +105,7 @@ export interface WhatsAppGroup {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
+const DATA_DIR = process.env.BHAI_DATA_DIR || path.resolve("data");
 const OWNERS_PATH = path.join(DATA_DIR, "whatsapp-owners.json");
 const CONTACTS_DIR = path.join(DATA_DIR, "whatsapp-contacts");
 const BLOCKLIST_PATH = path.join(DATA_DIR, "whatsapp-blocklist.json");

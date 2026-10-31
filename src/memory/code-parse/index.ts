@@ -27,13 +27,13 @@ export { parseFile };
 
 // ── Parser selection ──────────────────────────
 // Tree-sitter is the default for supported languages (currently TS + JS).
-// Set ATLAS_CODE_PARSER=regex to force the legacy regex extractors for
+// Set BHAI_CODE_PARSER=regex to force the legacy regex extractors for
 // every file — useful if the tree-sitter binding fails to load on a
 // platform or a specific grammar produces bad results and you need a
 // quick fallback. Individual failures inside tree-sitter already fall
 // back automatically; this switch is for global opt-out.
 function useTreeSitterFor(lang: Language): boolean {
-    if (process.env.ATLAS_CODE_PARSER === "regex") return false;
+    if (process.env.BHAI_CODE_PARSER === "regex") return false;
     return treeSitterSupports(lang);
 }
 

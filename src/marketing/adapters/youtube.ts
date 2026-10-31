@@ -5,7 +5,7 @@
 import { createReadStream, existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const BASE_DATA_DIR = process.env.ATLAS_DATA_DIR ?? join(process.cwd(), "data");
+const BASE_DATA_DIR = process.env.BHAI_DATA_DIR ?? join(process.cwd(), "data");
 const TOKEN_DIR = join(BASE_DATA_DIR, "google-tokens");
 const CREDENTIALS_PATH = join(BASE_DATA_DIR, "google-credentials.json");
 

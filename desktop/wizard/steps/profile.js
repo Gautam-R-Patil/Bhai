@@ -69,7 +69,7 @@
             const n = input.value.trim();
             if (!n) { err.textContent = "Please enter a name."; return; }
             err.textContent = "";
-            if (!window.atlas || typeof window.atlas.saveProfile !== "function") {
+            if (!window.bhai || typeof window.bhai.saveProfile !== "function") {
                 err.textContent = "Save unavailable (IPC not ready).";
                 return;
             }
@@ -78,14 +78,14 @@
             // replaces this with the persona step.
             const tone = existingProfile.tone || "friendly";
             let res;
-            try { res = await window.atlas.saveProfile({ name: n, tone: tone }); }
+            try { res = await window.bhai.saveProfile({ name: n, tone: tone }); }
             catch (e) { err.textContent = "Save failed: " + (e.message || e); return; }
             if (!res || !res.success) {
                 err.textContent = (res && res.error) || "Save failed.";
                 return;
             }
-            if (ctx && ctx.state && ctx.state.isReconfigure && window.atlas && typeof window.atlas.setupReseedNow === "function") {
-                try { await window.atlas.setupReseedNow(); } catch { /* next bot restart picks up */ }
+            if (ctx && ctx.state && ctx.state.isReconfigure && window.bhai && typeof window.bhai.setupReseedNow === "function") {
+                try { await window.bhai.setupReseedNow(); } catch { /* next bot restart picks up */ }
             }
             if (ctx && typeof ctx.refreshState === "function") await ctx.refreshState();
             if (ctx && typeof ctx.onAdvance === "function") ctx.onAdvance();

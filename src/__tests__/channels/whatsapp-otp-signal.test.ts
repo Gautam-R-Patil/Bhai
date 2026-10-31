@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 describe("WhatsApp OTP from the desktop's New Code button", () => {
     it("accepts the desktop's code once, rejects bad or expired ones", async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wa-otp-"));
-        process.env.ATLAS_DATA_DIR = dir;
+        process.env.BHAI_DATA_DIR = dir;
         const users = await import("../../whatsapp-users.js");
         const signal = path.join(dir, "whatsapp-otp-signal.json");
 

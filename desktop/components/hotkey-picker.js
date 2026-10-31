@@ -125,13 +125,13 @@
     };
 
     HotkeyPicker.prototype._testAndCommit = async function (combo, token) {
-        if (!window.atlas || !window.atlas.setupTestHotkey) {
+        if (!window.bhai || !window.bhai.setupTestHotkey) {
             this._commit(combo, token);
             return;
         }
         this._setStatus("Testing " + combo + "…", false);
         let res;
-        try { res = await window.atlas.setupTestHotkey(combo); }
+        try { res = await window.bhai.setupTestHotkey(combo); }
         catch (err) {
             if (token !== this._recordSeq) return; // stale — user started another recording
             this._setStatus("Error: " + (err.message || err), true);
@@ -146,9 +146,9 @@
         this._combo = combo;
         if (this._comboEl) this._comboEl.textContent = combo;
         this._setStatus("Saved", false);
-        if (window.atlas && window.atlas.setupSaveHotkey) {
+        if (window.bhai && window.bhai.setupSaveHotkey) {
             let saveRes;
-            try { saveRes = await window.atlas.setupSaveHotkey(combo); }
+            try { saveRes = await window.bhai.setupSaveHotkey(combo); }
             catch (err) {
                 if (token !== this._recordSeq) return;
                 this._setStatus("Save failed: " + (err.message || err), true);

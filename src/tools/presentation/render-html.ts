@@ -39,14 +39,14 @@ function slideHtml(slide: Slide, theme: Theme): string {
     switch (slide.archetype) {
         case "title":
             return `
-<section class="atlas-title">
+<section class="bhai-title">
   <h1>${title}</h1>
   ${slide.subtitle ? `<p class="subtitle">${escapeHtml(slide.subtitle)}</p>` : ""}
 </section>`;
 
         case "section-divider":
             return `
-<section class="atlas-divider" style="background:#${theme.colors.primary}; color:#${theme.colors.bg}">
+<section class="bhai-divider" style="background:#${theme.colors.primary}; color:#${theme.colors.bg}">
   <h1>${title}</h1>
   ${slide.subtitle ? `<p>${escapeHtml(slide.subtitle)}</p>` : ""}
 </section>`;
@@ -199,10 +199,10 @@ const CSS = (theme: Theme) => `
 .reveal h1 { font-size: 2.6em; }
 .reveal h2 { font-size: 1.8em; margin-bottom: 0.6em; }
 .reveal section { text-align: left; padding: 0.5em 1.5em; }
-.atlas-title h1 { font-size: 3.2em; }
-.atlas-title .subtitle { color: var(--muted); font-size: 1.2em; }
-.atlas-divider { text-align: center !important; }
-.atlas-divider h1 { font-size: 3em; color: inherit; }
+.bhai-title h1 { font-size: 3.2em; }
+.bhai-title .subtitle { color: var(--muted); font-size: 1.2em; }
+.bhai-divider { text-align: center !important; }
+.bhai-divider h1 { font-size: 3em; color: inherit; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em; align-items: start; }
 .col h3 { color: var(--primary); }
 .side { max-width: 100%; height: auto; border-radius: 8px; }

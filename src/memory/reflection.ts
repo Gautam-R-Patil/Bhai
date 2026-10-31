@@ -56,10 +56,10 @@ const HMAC_SECRET = "atlas-sacdr-audit-v1"; // Derived key for signing
 const CONSOLIDATION_EVERY_N_REFLECTIONS = 5; // Run lightweight consolidation every 5th reflection
 
 // Default 0 = persist FULL conversation history into conversations.messages_json.
-// Emergency rollback to the legacy cap: set ATLAS_CORPUS_MAX_MESSAGES="20".
+// Emergency rollback to the legacy cap: set BHAI_CORPUS_MAX_MESSAGES="20".
 // Malformed / 0 / negative → treated as full.
 const CORPUS_MAX_MESSAGES = (() => {
-    const raw = process.env.ATLAS_CORPUS_MAX_MESSAGES;
+    const raw = process.env.BHAI_CORPUS_MAX_MESSAGES;
     if (!raw) return 0;
     const n = Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : 0;
@@ -324,7 +324,7 @@ export async function runReflection(
                     // ── Incremental write-side sync: decompose into per-message
                     // rows so session_search's FTS index picks up this session
                     // immediately (the boot backfill is the fallback). Non-fatal. ──
-                    if (convId && process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
+                    if (convId && process.env.BHAI_NO_SESSION_SEARCH !== "true") {
                         try {
                             indexConversationMessages(convId, sessionId, messagesToStore);
                         } catch {
@@ -661,7 +661,7 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
 
         // ── 5h. Metacog confidence calibration (P5.2 — ZERO LLM) ──
         // Pure-stats fit over data/metacog-outcomes.jsonl → data/metacog-calibrators.json.
-        // Acting on the result is OFF until ATLAS_METACOG_SHADOW=false AND ECE/Brier
+        // Acting on the result is OFF until BHAI_METACOG_SHADOW=false AND ECE/Brier
         // beat the constant-base-rate baseline; until then this is instrumentation only.
         try {
             const r = runCalibrationFit();
@@ -690,7 +690,7 @@ export async function runDreamReplay(llm: LLMClient): Promise<void> {
 // (cold-start) → isotonic (≥200 samples) calibrator, and persists ONLY the
 // cells that beat the constant-base-rate baseline. Atomic tmp+rename write.
 // Fully fail-open: any error returns null and the hot path simply finds no
-// (or a stale) bundle. Gated by ATLAS_NO_METACOG_LOG (no log → nothing to fit).
+// (or a stale) bundle. Gated by BHAI_NO_METACOG_LOG (no log → nothing to fit).
 const CALIBRATION_MAX_ROWS = 5000;
 const CALIBRATION_MIN_FIT_ROWS = 30;
 
@@ -700,7 +700,7 @@ export function runCalibrationFit(): {
     calEce: number;
     beatsBaseline: boolean;
 } | null {
-    if (process.env.ATLAS_NO_METACOG_LOG === "true") return null;
+    if (process.env.BHAI_NO_METACOG_LOG === "true") return null;
     const fs = nodeFs;
     const path = nodePath;
     const dataDir = getDataDir();

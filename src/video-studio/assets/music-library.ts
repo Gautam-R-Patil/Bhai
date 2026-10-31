@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 const _require = createRequire(import.meta.url);
-const MUSIC_CACHE_DIR = path.resolve(process.env.ATLAS_DATA_DIR ?? "data", "video-studio", "music-cache");
+const MUSIC_CACHE_DIR = path.resolve(process.env.BHAI_DATA_DIR ?? "data", "video-studio", "music-cache");
 
 export interface MusicEntry {
     title: string;

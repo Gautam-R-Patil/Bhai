@@ -75,10 +75,10 @@ describe("metacognition — outcome log (A3)", () => {
 
     beforeEach(() => {
         prevCwd = process.cwd();
-        dir = mkdtempSync(join(tmpdir(), "atlas-metacog-"));
+        dir = mkdtempSync(join(tmpdir(), "bhai-metacog-"));
         process.chdir(dir);
-        process.env.ATLAS_DATA_DIR = join(dir, "data");
-        delete process.env.ATLAS_NO_METACOG_LOG;
+        process.env.BHAI_DATA_DIR = join(dir, "data");
+        delete process.env.BHAI_NO_METACOG_LOG;
     });
     afterEach(() => {
         process.chdir(prevCwd);
@@ -100,13 +100,13 @@ describe("metacognition — outcome log (A3)", () => {
         expect(typeof row.qualityScore).toBe("number");
     });
 
-    it("writes nothing when ATLAS_NO_METACOG_LOG=true", () => {
-        process.env.ATLAS_NO_METACOG_LOG = "true";
+    it("writes nothing when BHAI_NO_METACOG_LOG=true", () => {
+        process.env.BHAI_NO_METACOG_LOG = "true";
         const s = createMetacognitionState();
         updateSignals(s, { toolName: "shell", stepKey: "shell:1" });
         logOutcome(s, true);
         expect(existsSync(join(dir, "data", "metacog-outcomes.jsonl"))).toBe(false);
-        delete process.env.ATLAS_NO_METACOG_LOG;
+        delete process.env.BHAI_NO_METACOG_LOG;
     });
 
     it("never throws on a malformed state (fail-open)", () => {
@@ -120,13 +120,13 @@ describe("metacognition — VOC cost-aware threshold (B1)", () => {
     const DESTRUCTIVE_LOOP = ["shell_exec", "delete_file", "shell_exec", "delete_file", "shell_exec", "delete_file"];
 
     beforeEach(() => {
-        delete process.env.ATLAS_NO_META_VOC;
-        process.env.ATLAS_METACOG_SHADOW = "true"; // calibration stays identity
+        delete process.env.BHAI_NO_META_VOC;
+        process.env.BHAI_METACOG_SHADOW = "true"; // calibration stays identity
         __setCalibratorBundleForTesting(null);
     });
     afterEach(() => {
-        delete process.env.ATLAS_NO_META_VOC;
-        delete process.env.ATLAS_METACOG_SHADOW;
+        delete process.env.BHAI_NO_META_VOC;
+        delete process.env.BHAI_METACOG_SHADOW;
         __setCalibratorBundleForTesting(undefined);
     });
 
@@ -144,8 +144,8 @@ describe("metacognition — VOC cost-aware threshold (B1)", () => {
         expect(a.reasoning).not.toContain("VOC↓");
     });
 
-    it("ATLAS_NO_META_VOC=true disables VOC (byte-identical fixed-threshold enum)", () => {
-        process.env.ATLAS_NO_META_VOC = "true";
+    it("BHAI_NO_META_VOC=true disables VOC (byte-identical fixed-threshold enum)", () => {
+        process.env.BHAI_NO_META_VOC = "true";
         const a = assess(highConfLoop(READONLY_LOOP));
         expect(a.intervention).toBe("replan"); // not downgraded
         expect(a.reasoning).not.toContain("VOC↓");
@@ -166,19 +166,19 @@ describe("metacognition — VOC cost-aware threshold (B1)", () => {
 
 describe("metacognition — finalizeAssessment order + shadow calibration (C)", () => {
     beforeEach(() => {
-        delete process.env.ATLAS_NO_META_VOC;
+        delete process.env.BHAI_NO_META_VOC;
         __setCalibratorBundleForTesting(null);
     });
     afterEach(() => {
-        delete process.env.ATLAS_NO_META_VOC;
-        delete process.env.ATLAS_METACOG_SHADOW;
-        delete process.env.ATLAS_NO_METACOG_LOG;
+        delete process.env.BHAI_NO_META_VOC;
+        delete process.env.BHAI_METACOG_SHADOW;
+        delete process.env.BHAI_NO_METACOG_LOG;
         __setCalibratorBundleForTesting(undefined);
     });
 
     it("calibrate is an identity passthrough in shadow mode (DEFAULT) — confidence unchanged", () => {
-        process.env.ATLAS_METACOG_SHADOW = "true";
-        process.env.ATLAS_NO_METACOG_LOG = "true"; // no shadow-log side effect
+        process.env.BHAI_METACOG_SHADOW = "true";
+        process.env.BHAI_NO_METACOG_LOG = "true"; // no shadow-log side effect
         // A calibrator that WOULD map everything to 0.99 if applied.
         const bundle: CalibratorBundle = {
             version: 1,
@@ -199,10 +199,10 @@ describe("metacognition — finalizeAssessment order + shadow calibration (C)", 
     });
 
     it("finalizeAssessment runs calibrate → A1 → VOC in order (VOC sees A1's loop boost)", () => {
-        // With ATLAS_NO_META_VOC unset and a high-confidence read-only loop, the
+        // With BHAI_NO_META_VOC unset and a high-confidence read-only loop, the
         // downgrade in the reasoning string proves VOC ran AFTER A1/calibrate and
         // observed the assessment they produced.
-        process.env.ATLAS_METACOG_SHADOW = "true";
+        process.env.BHAI_METACOG_SHADOW = "true";
         const a = assess(
             highConfLoop(["web_search", "read_file", "web_search", "read_file", "web_search", "read_file"]),
         );

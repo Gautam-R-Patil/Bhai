@@ -505,7 +505,7 @@ async function searchWikipedia(query: string): Promise<SearchResult[]> {
     try {
         const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=10&srprop=snippet|titlesnippet&format=json&origin=*`;
         const response = await fetch(url, {
-            headers: { "User-Agent": `ATLAS-Research/2.0 (${randomUA()})` },
+            headers: { "User-Agent": `BHAI-Research/2.0 (${randomUA()})` },
             signal: AbortSignal.timeout(8000),
         });
         if (!response.ok) { markFailure("wikipedia"); return []; }
@@ -528,7 +528,7 @@ async function searchOpenAlex(query: string): Promise<SearchResult[]> {
     try {
         const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per_page=15&select=id,title,doi,abstract_inverted_index,cited_by_count,publication_year&mailto=atlas@codingdesk.info`;
         const response = await fetch(url, {
-            headers: { "User-Agent": "ATLAS-Research/2.0" },
+            headers: { "User-Agent": "BHAI-Research/2.0" },
             signal: AbortSignal.timeout(12000),
         });
         if (!response.ok) { markFailure("openalex"); return []; }

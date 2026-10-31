@@ -21,7 +21,7 @@ const execFileAsync = promisify(execFile);
 // ── AppleScript helper (mac) ──────────────────
 
 async function runAS(script: string, timeout = 10000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_spotify_${Date.now()}.scpt`);
+    const tmpFile = join(tmpdir(), `bhai_spotify_${Date.now()}.scpt`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout });

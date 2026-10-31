@@ -56,7 +56,7 @@ Keep name-match as a cheap pre-filter. `loopDetected` now means "repeating *with
 
 **Cost model:** Pure heuristic, **zero LLM, ~sub-µs/iter**. TS does one FNV hash over strings it already holds. Net cost ≈ today's `assess()` (already runs every iter).
 
-**Fail-open + kill-switch:** `ATLAS_NO_SEMANTIC_LOOP=true` → revert to name-only. Native port ships behind `ATLAS_NATIVE_META_LOOP=true` (opt-IN, off day 1) with a byte-identical `*.parity.test.ts` before any default flip — per the CLAUDE.md Rust-rollout rule. TS-only path is fully functional meanwhile; hashing in TS is the measure-first default (FFI tax on a tiny u32 vec likely a wash — defer the Rust port until `bench-native.ts` shows a win).
+**Fail-open + kill-switch:** `BHAI_NO_SEMANTIC_LOOP=true` → revert to name-only. Native port ships behind `BHAI_NATIVE_META_LOOP=true` (opt-IN, off day 1) with a byte-identical `*.parity.test.ts` before any default flip — per the CLAUDE.md Rust-rollout rule. TS-only path is fully functional meanwhile; hashing in TS is the measure-first default (FFI tax on a tiny u32 vec likely a wash — defer the Rust port until `bench-native.ts` shows a win).
 
 ---
 
@@ -64,7 +64,7 @@ Keep name-match as a cheap pre-filter. `loopDetected` now means "repeating *with
 
 **What:** This is the single biggest behavior change. Replace the `metaNudged` one-shot nudge (`agent.ts:1137-1152`) with an `applyIntervention(assessment, ctx)` dispatcher that **consumes the already-computed `intervention` field** every iteration (cooldown-gated, no latch):
 - `escalate` → thread a `metacogForcedTier` override into the next `chooseModel()` call (`agent.ts:1239`) so the **whole next iteration** runs higher-tier (not just the after-the-fact cascade retry at `:2871`). Record via existing `recordQualityFailure`.
-- `replan` → fire the existing `replan()` (`replanner.ts:51`) on a compact completed/remaining summary built from `messages`; inject revised steps as a system message; cooldown-gated (`ATLAS_META_REPLAN_COOLDOWN`, default 6 iters — hysteresis, MIRA).
+- `replan` → fire the existing `replan()` (`replanner.ts:51`) on a compact completed/remaining summary built from `messages`; inject revised steps as a system message; cooldown-gated (`BHAI_META_REPLAN_COOLDOWN`, default 6 iters — hysteresis, MIRA).
 - `critics` → fire `multi-critic.ts` **only when a tool-grounded verifier is in scope** (logic-verifier / code-critic / `browser_verify` / process-reward); framed **adversarially** ("enumerate ways this is wrong / find the bug"), never ungrounded self-critique. If no verifier → downgrade to `escalate`.
 - `ask_user` → SOFAI feedback-first: inject one rephrase nudge (`error-recovery.ts:175` template) and continue ≤2 iters; surface a real clarifying question via `onProgress` only if still failing.
 - `none` → no-op.
@@ -81,9 +81,9 @@ This is the "enforce, don't nudge" thesis — emit *guidance* and fire the right
 
 **Signals added:** None — this is pure *consumption* of existing signals.
 
-**Cost model:** Hot path unchanged. Expensive arms fire **selectively** and rarely: `escalate` = next iter on a higher tier (already budgeted); `replan` = one Pro call, cooldown-gated; `critics` = existing multi-critic capped by `ATLAS_POST_SYNTHESIS_BUDGET_MS` (90s) and only when a verifier exists; `ask_user` first arm is a free system message. On healthy turns: zero added cost. On a stuck turn: replaces dozens of wasted iterations.
+**Cost model:** Hot path unchanged. Expensive arms fire **selectively** and rarely: `escalate` = next iter on a higher tier (already budgeted); `replan` = one Pro call, cooldown-gated; `critics` = existing multi-critic capped by `BHAI_POST_SYNTHESIS_BUDGET_MS` (90s) and only when a verifier exists; `ask_user` first arm is a free system message. On healthy turns: zero added cost. On a stuck turn: replaces dozens of wasted iterations.
 
-**Fail-open + kill-switch:** `ATLAS_NO_META_INTERVENTIONS=true` → exact current nudge-only behavior. Granular: `ATLAS_META_REPLAN_COOLDOWN=int`.
+**Fail-open + kill-switch:** `BHAI_NO_META_INTERVENTIONS=true` → exact current nudge-only behavior. Granular: `BHAI_META_REPLAN_COOLDOWN=int`.
 
 ---
 
@@ -101,7 +101,7 @@ This is the "enforce, don't nudge" thesis — emit *guidance* and fire the right
 
 **Cost model:** One local SQLite write per turn. **Zero LLM, ~0 cost.**
 
-**Fail-open + kill-switch:** `ATLAS_NO_METACOG_LOG=true`. Write wrapped in try/catch — failure continues silently.
+**Fail-open + kill-switch:** `BHAI_NO_METACOG_LOG=true`. Write wrapped in try/catch — failure continues silently.
 
 ---
 
@@ -120,7 +120,7 @@ This is the "enforce, don't nudge" thesis — emit *guidance* and fire the right
 
 **Cost model:** **One MiniLM embed/iter** (~5–20ms, model warm, cached+inflight-deduped) **+ K cosines** (~tens of µs). **Zero LLM, zero credits.** Cosine stays in TS (8×384-dim ≈ 3K mults, sub-µs in V8) — measure before any Rust port; `batch.rs` cosine is the drop-in if a bench later justifies it.
 
-**Fail-open + kill-switch:** `ATLAS_NO_PROGRESS_PROBE=true` → freeze `noProgressStreak` at 0, skip the embed. Honest cost note: ship default-OFF until A1 traces prove the embedding catches stuck turns the hash misses — if it doesn't beat A1+guard, **cut it** (per the reviewed design's own discipline).
+**Fail-open + kill-switch:** `BHAI_NO_PROGRESS_PROBE=true` → freeze `noProgressStreak` at 0, skip the embed. Honest cost note: ship default-OFF until A1 traces prove the embedding catches stuck turns the hash misses — if it doesn't beat A1+guard, **cut it** (per the reviewed design's own discipline).
 
 ---
 
@@ -144,7 +144,7 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 **Cost model:** A few scalar ops. **Near-zero.** The *point* is to make the expensive arms rarer.
 
-**Fail-open + kill-switch:** `ATLAS_NO_META_VOC=true` → fall back to fixed thresholds (A2's behavior).
+**Fail-open + kill-switch:** `BHAI_NO_META_VOC=true` → fall back to fixed thresholds (A2's behavior).
 
 #### B2. Adversarial-framed progress judge (gated, ≤1 Haiku call/turn) — **effort M, impact high**
 
@@ -158,9 +158,9 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 **Signals added:** LLM-judged `progress`, `stalled`.
 
-**Cost model:** **Exactly ONE Haiku call per stuck turn**, gated so healthy turns never fire it, capped by `ATLAS_POST_SYNTHESIS_BUDGET_MS`. Replaces dozens of wasted Opus iterations (SWE-PRM net-cheaper).
+**Cost model:** **Exactly ONE Haiku call per stuck turn**, gated so healthy turns never fire it, capped by `BHAI_POST_SYNTHESIS_BUDGET_MS`. Replaces dozens of wasted Opus iterations (SWE-PRM net-cheaper).
 
-**Fail-open + kill-switch:** `ATLAS_NO_PROGRESS_JUDGE=true` → no judge; falls back to A1/A4 heuristic + A2 dispatch. `ATLAS_PROGRESS_JUDGE_MODEL` overrides tier.
+**Fail-open + kill-switch:** `BHAI_NO_PROGRESS_JUDGE=true` → no judge; falls back to A1/A4 heuristic + A2 dispatch. `BHAI_PROGRESS_JUDGE_MODEL` overrides tier.
 
 ---
 
@@ -168,7 +168,7 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 #### C1. Outcome-calibrated confidence + threshold (Platt/isotonic, fit nightly) — **effort L, impact medium-high (conditional)**
 
-**What:** The current confidence is uncalibrated. **First prove it's even miscalibrated** — compute ECE/Brier on A3's logged outcomes in `reflection.ts`. *If* miscalibrated, fit a per-(taskType×tier) calibrator nightly in `runDreamReplay` (`reflection.ts:358`): Platt cold-start (identity → P≈qRaw, day-1 ≈ today) → isotonic ≥200 samples. `assess()` reads the calibrator + an online adaptive-conformal threshold `κ` (one scalar update per episode, Gibbs-Candès) on the hot path. **Ship in SHADOW mode** (`ATLAS_METACOG_SHADOW=true` default) — compute+log `calibratedP/qRaw/outcome` to `data/metacog-outcomes.jsonl` *without acting* until ECE/Brier beats the subtractive baseline (mirrors the value-gate shadow rollout).
+**What:** The current confidence is uncalibrated. **First prove it's even miscalibrated** — compute ECE/Brier on A3's logged outcomes in `reflection.ts`. *If* miscalibrated, fit a per-(taskType×tier) calibrator nightly in `runDreamReplay` (`reflection.ts:358`): Platt cold-start (identity → P≈qRaw, day-1 ≈ today) → isotonic ≥200 samples. `assess()` reads the calibrator + an online adaptive-conformal threshold `κ` (one scalar update per episode, Gibbs-Candès) on the hot path. **Ship in SHADOW mode** (`BHAI_METACOG_SHADOW=true` default) — compute+log `calibratedP/qRaw/outcome` to `data/metacog-outcomes.jsonl` *without acting* until ECE/Brier beats the subtractive baseline (mirrors the value-gate shadow rollout).
 
 **SOTA basis:** Platt/isotonic/temperature scaling + ECE/Brier (Guo ICML 2017; ConfTuner arXiv:2508.18847, −54.7% ECE); online adaptive conformal (Gibbs-Candès 2021; CCPO arXiv:2511.11828, −30% cost); FOK/JOL "raw confidence is not directly actionable" (arXiv:2605.14186).
 
@@ -179,7 +179,7 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 **Cost model:** Hot path: one sigmoid or ≤16-knot lookup. Nightly fit rides the existing 3am job — **zero incremental scheduled cost.**
 
-**Fail-open + kill-switch:** `ATLAS_NO_CALIBRATED_CONF=true` → raw subtractive heuristic. `ATLAS_METACOG_SHADOW=true` (default during rollout). `ATLAS_NO_METACOG_CALIBRATION_FIT` → freeze calibrators.
+**Fail-open + kill-switch:** `BHAI_NO_CALIBRATED_CONF=true` → raw subtractive heuristic. `BHAI_METACOG_SHADOW=true` (default during rollout). `BHAI_NO_METACOG_CALIBRATION_FIT` → freeze calibrators.
 
 ---
 
@@ -195,13 +195,13 @@ Decision: destructive pending action + mediocre confidence → intervene unless 
 
 **Bhai changes (explicit, server-side included):**
 - `convex/http.ts:690` — add `logprobs`/`top_logprobs` to `openrouterBody` allowlist; redeploy (`npx convex deploy`).
-- `src/llm.ts:191` — add `logprobs:true, top_logprobs:5` to `requestBody` behind `ATLAS_NO_LOGPROB_CONF`.
+- `src/llm.ts:191` — add `logprobs:true, top_logprobs:5` to `requestBody` behind `BHAI_NO_LOGPROB_CONF`.
 - `src/llm.ts:~313` — capture `choices[0].logprobs.content[]` if present; expose `lastLogprobs` side-channel without changing the `ChatCompletion` type; discard silently if absent.
 - `src/agents/metacognition.ts` — `computeAnswerTokenConfidence()`/`computeToolArgConfidence()`; fuse as ADDITIONAL inputs (never a hard dependency; `-1.0` sentinel → identity to old behavior).
 
 **Cost model:** **Free** — rides the same chat call, just reads `top_logprobs`. No extra LLM call.
 
-**Fail-open + kill-switch:** `ATLAS_NO_LOGPROB_CONF=true`. Absent logprobs → sentinel → byte-identical to no-logprob behavior.
+**Fail-open + kill-switch:** `BHAI_NO_LOGPROB_CONF=true`. Absent logprobs → sentinel → byte-identical to no-logprob behavior.
 
 ---
 
@@ -223,7 +223,7 @@ Only **then**, gated on accumulated data:
 6. **C1 (calibration)** — in SHADOW mode, flipped only after ECE/Brier beats baseline on logged sessions.
 7. **D1 (logprobs)** — only after the `http.ts` spike proves end-to-end passthrough AND providers emit logprobs.
 
-Native Rust ports (A1's hash compare, C1's apply) ship **opt-IN** (`ATLAS_NATIVE_*`), TS-only functional meanwhile, flipped to default-on only after `scripts/bench-native.ts` shows a measured win AND `*.parity.test.ts` passes byte-identical — per CLAUDE.md.
+Native Rust ports (A1's hash compare, C1's apply) ship **opt-IN** (`BHAI_NATIVE_*`), TS-only functional meanwhile, flipped to default-on only after `scripts/bench-native.ts` shows a measured win AND `*.parity.test.ts` passes byte-identical — per CLAUDE.md.
 
 ## 4. What to explicitly NOT do
 
@@ -265,9 +265,9 @@ Native Rust ports (A1's hash compare, C1's apply) ship **opt-IN** (`ATLAS_NATIVE
 
 5. **`native/src/metacognition.parity.test.ts`** — byte-identical step-loop detection TS vs Rust on fixture traces (action-obs/action-error/ping-pong).
 
-6. **`CLAUDE.md`** — document `ATLAS_NO_META_INTERVENTIONS`, `ATLAS_NO_SEMANTIC_LOOP`, `ATLAS_NATIVE_META_LOOP`, `ATLAS_META_REPLAN_COOLDOWN`, `ATLAS_NO_METACOG_LOG` under Env Kill-Switches.
+6. **`CLAUDE.md`** — document `BHAI_NO_META_INTERVENTIONS`, `BHAI_NO_SEMANTIC_LOOP`, `BHAI_NATIVE_META_LOOP`, `BHAI_META_REPLAN_COOLDOWN`, `BHAI_NO_METACOG_LOG` under Env Kill-Switches.
 
-**Kill-switches:** `ATLAS_NO_META_INTERVENTIONS=true` reverts to today's nudge; `ATLAS_NO_SEMANTIC_LOOP=true` reverts to name-only; native behind `ATLAS_NATIVE_META_LOOP` (opt-IN). **Validation gate:** after a soak, query `meta_outcomes` for intervention-fired-vs-quality correlation; that's the evidence that unblocks Tier B/C.
+**Kill-switches:** `BHAI_NO_META_INTERVENTIONS=true` reverts to today's nudge; `BHAI_NO_SEMANTIC_LOOP=true` reverts to name-only; native behind `BHAI_NATIVE_META_LOOP` (opt-IN). **Validation gate:** after a soak, query `meta_outcomes` for intervention-fired-vs-quality correlation; that's the evidence that unblocks Tier B/C.
 
 **Cited paths:** `src/agents/metacognition.ts`, `native/src/metacognition.rs`, `src/agent.ts:430/1131/1137/1239/2871/2905/3040/3063`, `src/agents/replanner.ts:51`, `src/agents/error-recovery.ts:175`, `src/memory/embeddings.ts:377/475`, `src/memory/reflection.ts:358`, `convex/http.ts:690-726`, `native/src/lib.rs:33/103`.
 

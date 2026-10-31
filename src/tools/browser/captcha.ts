@@ -295,7 +295,7 @@ export async function quickCaptchaCheck(page: unknown): Promise<CaptchaType | nu
 // The agent never deals with CAPTCHAs. After any page action, a check on the page
 // goes here: Bhai's solvers, then (only if they can't) the owner, while the agent's
 // tool call simply waits. The agent gets the page back, or one line saying the owner
-// still has to finish it. ATLAS_NO_CAPTCHA_AUTO=true skips the solvers: every
+// still has to finish it. BHAI_NO_CAPTCHA_AUTO=true skips the solvers: every
 // check goes straight to the owner.
 
 type CaptchaOutcome = { present: false } | { present: true; cleared: boolean; detail: Record<string, unknown> };
@@ -326,7 +326,7 @@ export async function clearCaptchaIfAny(page: unknown, signal?: AbortSignal): Pr
         return { present: true, cleared: false, detail: { status: "still_waiting" } };
     console.log(`  🧩 CAPTCHA pipeline: ${type} on the page, taking over`);
     const raw =
-        process.env.ATLAS_NO_CAPTCHA_AUTO === "true"
+        process.env.BHAI_NO_CAPTCHA_AUTO === "true"
             ? await (await import("./human-handoff.js")).browserWaitForHuman.handler({ _signal: signal })
             : await browserHandleCaptcha.handler({ _signal: signal });
     const detail = JSON.parse(raw) as Record<string, unknown>;
@@ -952,9 +952,9 @@ export const browserHandleCaptcha: ToolDefinition = {
             }
             // Lazy: human-handoff.ts imports this module.
             const { browserWaitForHuman } = await import("./human-handoff.js");
-            // The owner's wait: ATLAS_CAPTCHA_HANDOFF_MS when set, never past the pipeline's budget.
+            // The owner's wait: BHAI_CAPTCHA_HANDOFF_MS when set, never past the pipeline's budget.
             const left = Math.floor(TOOL_BUDGET_S - (Date.now() - start) / 1000);
-            const configured = Number(process.env.ATLAS_CAPTCHA_HANDOFF_MS) / 1000;
+            const configured = Number(process.env.BHAI_CAPTCHA_HANDOFF_MS) / 1000;
             const timeout_s = configured > 0 ? Math.min(left, configured) : left;
             const out = JSON.parse(await browserWaitForHuman.handler({ timeout_s, _signal: signal }));
             return JSON.stringify({

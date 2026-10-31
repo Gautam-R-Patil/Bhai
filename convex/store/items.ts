@@ -4,6 +4,13 @@
 import { v } from "convex/values";
 import { internalQuery as query, internalMutation as mutation } from "../_generated/server";
 
+// minAtlasVersion was renamed minBhaiVersion. Accept either name, and write
+// both so clients from before the rename (reading minAtlasVersion) still see it.
+export function minVersionFields(row: { minBhaiVersion?: string; minAtlasVersion?: string }) {
+  const min = row.minBhaiVersion ?? row.minAtlasVersion;
+  return { minBhaiVersion: min, minAtlasVersion: min };
+}
+
 // ── Queries ────────────────────────────────────────────────────────────────
 
 /**
@@ -349,6 +356,7 @@ export const create = mutation({
     developerId: v.id("developers"),
     version: v.string(),
     changelog: v.optional(v.string()),
+    minBhaiVersion: v.optional(v.string()),
     minAtlasVersion: v.optional(v.string()),
     contentFileId: v.id("_storage"),
     iconFileId: v.optional(v.id("_storage")),
@@ -375,6 +383,7 @@ export const create = mutation({
 
     const itemId = await ctx.db.insert("store_items", {
       ...args,
+      ...minVersionFields(args),
       installCount: 0,
       rating: 0,
       ratingCount: 0,
@@ -411,15 +420,17 @@ export const update = mutation({
     contentFileId: v.optional(v.id("_storage")),
     iconFileId: v.optional(v.id("_storage")),
     screenshotFileIds: v.optional(v.array(v.id("_storage"))),
+    minBhaiVersion: v.optional(v.string()),
     minAtlasVersion: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     permissions: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const { itemId, ...updates } = args;
+    const { itemId, minBhaiVersion, minAtlasVersion, ...updates } = args;
 
     await ctx.db.patch(itemId, {
       ...updates,
+      ...((minBhaiVersion ?? minAtlasVersion) !== undefined ? minVersionFields(args) : {}),
       updatedAt: Date.now(),
     });
   },
@@ -440,5 +451,26 @@ export const resetWeeklyInstalls = mutation({
     }
 
     return { reset: items.length };
+  },
+});
+
+/**
+ * One-off, run by hand (npx convex run store/items:backfillMinBhaiVersion):
+ * copies minAtlasVersion into minBhaiVersion on rows from before the rename.
+ * Never scheduled. Same 10k cap as resetWeeklyInstalls.
+ */
+export const backfillMinBhaiVersion = mutation({
+  args: {},
+  handler: async (ctx) => {
+    let patched = 0;
+    for (const table of ["store_items", "submissions"] as const) {
+      for (const row of await ctx.db.query(table).take(10000)) {
+        if (row.minAtlasVersion !== undefined && row.minBhaiVersion === undefined) {
+          await ctx.db.patch(row._id, { minBhaiVersion: row.minAtlasVersion });
+          patched++;
+        }
+      }
+    }
+    return { patched };
   },
 });

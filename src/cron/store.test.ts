@@ -6,9 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 
-it("cron jobs are saved under ATLAS_DATA_DIR and load back after a restart", async () => {
+it("cron jobs are saved under BHAI_DATA_DIR and load back after a restart", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cron-"));
-    process.env.ATLAS_DATA_DIR = dir;
+    process.env.BHAI_DATA_DIR = dir;
     try {
         vi.resetModules();
         const first = await import("./store.js");
@@ -20,7 +20,7 @@ it("cron jobs are saved under ATLAS_DATA_DIR and load back after a restart", asy
         await second.loadJobs();
         expect(second.getJobs().map((j) => j.id)).toEqual([job.id]);
     } finally {
-        delete process.env.ATLAS_DATA_DIR;
+        delete process.env.BHAI_DATA_DIR;
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });

@@ -4,6 +4,9 @@
 
 const { contextBridge, ipcRenderer } = require("electron");
 
-contextBridge.exposeInMainWorld("atlasAuth", {
+const bhaiAuth = {
     submitToken: (token) => ipcRenderer.invoke("otpless:submit-token", { token }),
-});
+};
+contextBridge.exposeInMainWorld("bhaiAuth", bhaiAuth);
+// The live /auth-login page updates apart from this app; one from before the rename looks for atlasAuth.
+contextBridge.exposeInMainWorld("atlasAuth", bhaiAuth);

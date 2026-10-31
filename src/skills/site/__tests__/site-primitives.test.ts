@@ -29,10 +29,10 @@ const driver = (act: (a: SiteAction, o?: { submit?: boolean }) => Promise<ActRes
 };
 
 beforeAll(() => {
-    process.env.ATLAS_SITE_SKILL_DEADLINE_MS = "2000";
+    process.env.BHAI_SITE_SKILL_DEADLINE_MS = "2000";
 });
 afterAll(() => {
-    delete process.env.ATLAS_SITE_SKILL_DEADLINE_MS;
+    delete process.env.BHAI_SITE_SKILL_DEADLINE_MS;
 });
 
 describe("expect and pick reach the skill", () => {
@@ -175,7 +175,7 @@ describe("the submit's verdict", () => {
     };
 
     it("not_done clears 'sent' and refunds the spend: the owner may say yes once more", async () => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "300"; // room for one ₹249 order: a kept booking would block the retry
+        process.env.BHAI_SPEND_CAP_DAY_INR = "300"; // room for one ₹249 order: a kept booking would block the retry
         try {
             const d = shop(["not_done", "done"]);
             const c = await runSiteTask({ skillPath, phase: "select", driver: d });
@@ -184,7 +184,7 @@ describe("the submit's verdict", () => {
             const r2 = await runSiteTask({ task: r1.task, phase: "confirm", consentToken: mintConsent(r1.task), driver: d });
             expect([r2.status, r2.writeStatus, d.submits()]).toEqual(["done", "applied", 2]);
         } finally {
-            delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+            delete process.env.BHAI_SPEND_CAP_DAY_INR;
         }
     });
 

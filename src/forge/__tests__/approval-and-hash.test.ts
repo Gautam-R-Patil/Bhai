@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-process.env.ATLAS_HOME = mkdtempSync(path.join(tmpdir(), "atlas-forge-hash-"));
+process.env.BHAI_HOME = mkdtempSync(path.join(tmpdir(), "bhai-forge-hash-"));
 const { installPersistedTool, wrapHandler } = await import("../sandbox-supervisor.js");
 const { manifestDir } = await import("../manifest.js");
 const { noteOwnerMessage, ownerApproved } = await import("../../security/consent.js");

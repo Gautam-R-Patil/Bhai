@@ -17,7 +17,7 @@ import { type Database, wrapDatabase } from "./sqlite.js";
 /** Version bump forces a full sidecar rebuild on next open. */
 export const SIDECAR_SCHEMA_VERSION = "4L.3";
 
-const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
+const DATA_DIR = process.env.BHAI_DATA_DIR || path.resolve("data");
 const SIDECAR_DIR = path.join(DATA_DIR, "codebase-index");
 
 // Module-level handle cache keyed by repo hash.

@@ -146,7 +146,7 @@ async function login(userId: string, password: string): Promise<void> {
 // ── Send Message ─────────────────────────────────
 
 async function putMessage(roomId: string, content: Record<string, unknown>): Promise<void> {
-    const txnId = `atlas_${Date.now()}_${++txnCounter}`;
+    const txnId = `bhai_${Date.now()}_${++txnCounter}`;
     await matrixFetch(
         `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(txnId)}`,
         { method: "PUT", body: JSON.stringify(content) },

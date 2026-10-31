@@ -2,7 +2,7 @@
 // binary with --remote-debugging-port + an isolated user-data-dir so the
 // SETUP_FLAG check fails and the wizard window opens. Then attaches via
 // Playwright CDP and exercises:
-//   1. atlas.detectMagicMoment() IPC handler reachable + returns names[]
+//   1. bhai.detectMagicMoment() IPC handler reachable + returns names[]
 //   2. The packaged ready-hub.html loads MagicMoment + MagicMomentRanker
 //   3. mount() paints W1 fallback then swaps in the ranker's rich signal
 //
@@ -15,7 +15,7 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 
 const APP_BIN  = "/Applications/Bhai.app/Contents/MacOS/Bhai";
-const USER_DATA = "/tmp/atlas-cdp-w3-packaged";
+const USER_DATA = "/tmp/bhai-cdp-w3-packaged";
 const CDP_PORT  = 9224;
 
 function log(...args) { console.log("[w3-packaged]", ...args); }
@@ -74,8 +74,8 @@ async function main() {
             const checks = {
                 MagicMoment: typeof window.MagicMoment,
                 MagicMomentRanker: typeof window.MagicMomentRanker,
-                atlas: typeof window.atlas,
-                detectMagicMoment: typeof (window.atlas && window.atlas.detectMagicMoment),
+                bhai: typeof window.bhai,
+                detectMagicMoment: typeof (window.bhai && window.bhai.detectMagicMoment),
             };
             const host = document.createElement("div");
             host.id = "w3-host";
@@ -107,7 +107,7 @@ async function main() {
             throw new Error("MagicMomentRanker global missing in packaged build");
         }
         if (phase1.checks.detectMagicMoment !== "function") {
-            throw new Error("atlas.detectMagicMoment IPC bridge not exposed in packaged build");
+            throw new Error("bhai.detectMagicMoment IPC bridge not exposed in packaged build");
         }
         if (!phase1.hasNoteClass) throw new Error("magic-note class not applied");
         if (!phase1.fallbackObs) throw new Error("fallback observation empty");
@@ -125,7 +125,7 @@ async function main() {
         log("phase 2:", JSON.stringify(phase2));
 
         const snapshot = await wizard.evaluate(async () => {
-            try { return await window.atlas.detectMagicMoment(); }
+            try { return await window.bhai.detectMagicMoment(); }
             catch (e) { return { error: String(e && e.message || e) }; }
         });
         log("direct IPC snapshot:", JSON.stringify({

@@ -2,15 +2,15 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
-import "./security/log-redaction.js"; // first: redacts secrets/PII from every log line
+import "./config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror, before any module reads env
+import "./security/log-redaction.js"; // next: redacts secrets/PII from every log line
 import { chmodSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { checkAccountStatus, initAccountGuard } from "./account-guard.js";
 import { runAgent } from "./agent.js";
 import { autoResumeInterruptedTasks } from "./agents/long-task.js";
 import { closeCanvas, initCanvas } from "./canvas/server.js";
-import { getDataDir } from "./config/paths.js";
+import { getBhaiHome, getDataDir } from "./config/paths.js";
 import { loadConfig } from "./config.js";
 import { loadJobs } from "./cron/store.js";
 import { startCronTicker, stopCronTicker } from "./cron/tick.js";
@@ -170,10 +170,10 @@ async function boot() {
     }
 
     // Saved secrets from the desktop app's vault arrive on stdin (security/vault.ts).
-    // ~/.atlas holds the owner's past requests (strategy library), tool analytics and
+    // ~/.bhai holds the owner's past requests (strategy library), tool analytics and
     // tokens; the home folder lets every account in "staff" in, so it's owner-only.
     try {
-        chmodSync(join(homedir(), ".atlas"), 0o700);
+        chmodSync(getBhaiHome(), 0o700);
     } catch {
         /* not created yet, or not ours to change */
     }
@@ -186,7 +186,7 @@ async function boot() {
     for (let attempt = 1; attempt <= 3; attempt++) {
         sessionOk = await initSession();
         if (sessionOk) break;
-        if (sessionNeedsSignIn() || !process.env.ATLAS_OTPLESS_USER_ID) {
+        if (sessionNeedsSignIn() || !process.env.BHAI_OTPLESS_USER_ID) {
             // 78: not allowed to run — the app shows "sign in again" and won't auto-restart.
             console.error("❌ This device needs to sign in again (Account in the Bhai app)");
             process.exit(78);
@@ -243,7 +243,7 @@ async function boot() {
             // The removed browser action cache may still hold text the model typed.
             void import("node:fs")
                 .then(({ promises }) =>
-                    promises.rm(join(process.env.ATLAS_DATA_DIR || "data", "browser-action-cache.json"), {
+                    promises.rm(join(process.env.BHAI_DATA_DIR || "data", "browser-action-cache.json"), {
                         force: true,
                     }),
                 )
@@ -266,12 +266,12 @@ async function boot() {
         // Seed identity from the setup wizard's `.user-profile.json` (if present).
         // Idempotent across restarts — renames source to `.user-profile.seeded.json`
         // after successful seed. Source lives in the Electron app's userData dir,
-        // exposed to the bot via ATLAS_USER_DATA_DIR; falls back to ATLAS_DATA_DIR.
+        // exposed to the bot via BHAI_USER_DATA_DIR; falls back to BHAI_DATA_DIR.
         try {
             const seedResult = seedProfileIfPresent(
                 {
-                    userDataDir: process.env.ATLAS_USER_DATA_DIR,
-                    dataDir: process.env.ATLAS_DATA_DIR,
+                    userDataDir: process.env.BHAI_USER_DATA_DIR,
+                    dataDir: process.env.BHAI_DATA_DIR,
                 },
                 { log: (m) => console.log(m) },
             );
@@ -291,8 +291,8 @@ async function boot() {
         void import("./setup/account-name-sync.js")
             .then(({ syncAccountNameIfPresent }) =>
                 syncAccountNameIfPresent({
-                    userDataDir: process.env.ATLAS_USER_DATA_DIR,
-                    dataDir: process.env.ATLAS_DATA_DIR,
+                    userDataDir: process.env.BHAI_USER_DATA_DIR,
+                    dataDir: process.env.BHAI_DATA_DIR,
                 }),
             )
             .then((r) => {
@@ -312,8 +312,8 @@ async function boot() {
             );
             // Not awaited, like the account name above.
             void syncPersonalityIfPresent({
-                userDataDir: process.env.ATLAS_USER_DATA_DIR,
-                dataDir: process.env.ATLAS_DATA_DIR,
+                userDataDir: process.env.BHAI_USER_DATA_DIR,
+                dataDir: process.env.BHAI_DATA_DIR,
             })
                 .then((r) => {
                     if (r.ran) {
@@ -324,9 +324,9 @@ async function boot() {
                 })
                 .catch((err) => console.warn("[personality-sync] non-fatal:", (err as Error).message));
             // Later Settings changes apply on the next message, not the next boot.
-            loadActivePreset({ userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR });
+            loadActivePreset({ userDataDir: process.env.BHAI_USER_DATA_DIR, dataDir: process.env.BHAI_DATA_DIR });
             watchPersonalityFile(
-                { userDataDir: process.env.ATLAS_USER_DATA_DIR, dataDir: process.env.ATLAS_DATA_DIR },
+                { userDataDir: process.env.BHAI_USER_DATA_DIR, dataDir: process.env.BHAI_DATA_DIR },
                 (res) => {
                     if (res.ran) console.log(`🎨 Personality updated from Settings (v${res.version})`);
                     else if (res.reason !== "no-file")
@@ -426,9 +426,9 @@ async function boot() {
         initSkillMetadata().catch((e) => console.warn("[BOOT] Skills:", (e as Error).message)),
         // Load persisted dynamic tools (created by create_tool with persistent=true)
         loadDynamicTools().catch((e) => console.warn("[BOOT] Dynamic tools:", (e as Error).message)),
-        // Skill Forge (Phase 1) — kill switch: ATLAS_NO_FORGE=true
+        // Skill Forge (Phase 1) — kill switch: BHAI_NO_FORGE=true
         initForge({ embedFn: embedText }).catch((e) => console.warn("[BOOT] Forge:", (e as Error).message)),
-        // Hooks (user + project ~/.atlas/hooks.json and .atlas/hooks.json)
+        // Hooks (user + project ~/.bhai/hooks.json and .bhai/hooks.json)
         import("./hooks/index.js")
             .then((mod) => mod.loadHooks())
             .catch((e) => console.warn("[BOOT] Hooks:", (e as Error).message)),
@@ -544,13 +544,13 @@ async function boot() {
     );
 
     // Warm up platform capability probe (non-blocking)
-    if (process.env.ATLAS_SKIP_CAPABILITY_PROBE !== "true") {
+    if (process.env.BHAI_SKIP_CAPABILITY_PROBE !== "true") {
         getPlatformCapabilities().catch((err) => console.warn("[boot] capability probe failed:", err));
     }
 
     // macOS-only — probe Accessibility + Screen Recording for real, with actionable
     // advice when the user thinks they granted permission but the bot can't actually use it.
-    if (process.platform === "darwin" && process.env.ATLAS_SKIP_PERMISSION_PROBE !== "true") {
+    if (process.platform === "darwin" && process.env.BHAI_SKIP_PERMISSION_PROBE !== "true") {
         probeAndLogMacPermissions().catch((err) => console.warn("[boot] permission probe failed:", err));
     }
 
@@ -729,7 +729,7 @@ async function boot() {
     });
 
     // ── Proactive Observer (V2 scheduler) ─────
-    if (process.env.ATLAS_PROACTIVE_V2_SCHEDULER !== "false") {
+    if (process.env.BHAI_PROACTIVE_V2_SCHEDULER !== "false") {
         try {
             const { Observer, setObserver } = await import("./proactive/observer.js");
             const { join } = await import("node:path");
@@ -831,7 +831,7 @@ async function boot() {
 
             // ── Register onboarding_graduation source (W3) ──
             // Fires Day-2 / Day-3 / Day-5 wizard graduation nudges.
-            // ATLAS_NO_ONBOARDING_NUDGES=true short-circuits the source itself.
+            // BHAI_NO_ONBOARDING_NUDGES=true short-circuits the source itself.
             try {
                 const { onboardingGraduationSource } = await import("./proactive/sources/onboarding-graduation.js");
                 obs.registerSource(onboardingGraduationSource);
@@ -896,8 +896,8 @@ async function boot() {
                 console.log("[BOOT] memory_digest registration failed (non-fatal):", (err as Error).message);
             }
 
-            // ── V3 sources (default ON; set ATLAS_PROACTIVE_V3_SOURCES=false to disable) ──
-            if (process.env.ATLAS_PROACTIVE_V3_SOURCES !== "false") {
+            // ── V3 sources (default ON; set BHAI_PROACTIVE_V3_SOURCES=false to disable) ──
+            if (process.env.BHAI_PROACTIVE_V3_SOURCES !== "false") {
                 const webSearch = async (query: string): Promise<string> => {
                     try {
                         return await executeTool("web_search", { query });
@@ -994,7 +994,7 @@ async function boot() {
                     console.log("[BOOT] deep_work_gap registration failed (non-fatal):", (err as Error).message);
                 }
             } else {
-                console.log("💓 V3 sources disabled (ATLAS_PROACTIVE_V3_SOURCES=false)");
+                console.log("💓 V3 sources disabled (BHAI_PROACTIVE_V3_SOURCES=false)");
             }
         } catch (err) {
             console.log("[BOOT] Observer init failed (non-fatal):", (err as Error).message);
@@ -1259,12 +1259,12 @@ async function boot() {
         console.warn("[CRON] Ticker failed to start (non-fatal):", (cronErr as Error).message);
     }
 
-    // ── Webhook Server (opt-in via ATLAS_WEBHOOK_PORT=<n>) ──────
+    // ── Webhook Server (opt-in via BHAI_WEBHOOK_PORT=<n>) ──────
     // register_webhook / list_webhooks tools hand out URLs referring to this
     // HTTP endpoint; if the server isn't running the URLs 404. Opt-in because
     // binding a port at boot is usually unwanted — users who need inbound
-    // webhooks can set ATLAS_WEBHOOK_PORT (e.g. 18790) to activate.
-    const webhookPort = Number(process.env.ATLAS_WEBHOOK_PORT);
+    // webhooks can set BHAI_WEBHOOK_PORT (e.g. 18790) to activate.
+    const webhookPort = Number(process.env.BHAI_WEBHOOK_PORT);
     if (Number.isFinite(webhookPort) && webhookPort > 0 && webhookPort < 65536) {
         try {
             const { initWebhookServer, setWebhookHandler } = await import("./tools/webhook.js");

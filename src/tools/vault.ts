@@ -8,7 +8,7 @@
 import { authorizePayment, listVault, vaultEnabled } from "../security/vault.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
-const OFF = JSON.stringify({ error: "The vault is turned off (ATLAS_NO_VAULT)." });
+const OFF = JSON.stringify({ error: "The vault is turned off (BHAI_NO_VAULT)." });
 
 export const vaultList: ToolDefinition = {
     schema: {

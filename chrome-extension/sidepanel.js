@@ -1102,9 +1102,9 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     if (last && last.role !== 'you') setBusy(false);
   } else if (msg.type === 'turn_update') {
     onTurnUpdate(msg);
-  } else if (msg.type === 'atlas_progress') {
+  } else if (msg.type === 'bhai_progress' || msg.type === 'atlas_progress') { // atlas_: a pre-rename worker still running
     if (!liveRunning()) setBusy(true, msg.text || 'Working…');
-  } else if (msg.type === 'atlas_action') {
+  } else if (msg.type === 'bhai_action' || msg.type === 'atlas_action') {
     setBusy(true, msg.entry?.detail || 'Working…');
   } else if (msg.type === 'page_selection' && sender.tab?.id === activeTab?.id) {
     selection = msg.text || '';

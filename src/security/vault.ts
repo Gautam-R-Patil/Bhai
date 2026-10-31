@@ -28,7 +28,7 @@
 //     refused there until it navigates (the value could be read back in a form
 //     masking can't recognize).
 //
-// ATLAS_NO_VAULT=true turns resolution and the vault tools off.
+// BHAI_NO_VAULT=true turns resolution and the vault tools off.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createInterface } from "node:readline";
@@ -43,7 +43,7 @@ export type VaultEntry =
     | { id: string; label: string; kind: "card"; holder: string; number: string; expiry: string; brand: string }
     | { id: string; label: string; kind: "upi"; vpa: string };
 
-export const vaultEnabled = () => process.env.ATLAS_NO_VAULT !== "true";
+export const vaultEnabled = () => process.env.BHAI_NO_VAULT !== "true";
 
 const TOKEN_RE = /\{\{vault:([A-Za-z0-9_-]+)\.(username|password|apikey|number|expiry|holder|vpa|cvv)\}\}/g;
 const tokenOf = (id: string, field: string) => `{{vault:${id}.${field}}}`;
@@ -270,7 +270,7 @@ export async function authorizePayment(
     host: string,
     askCvv: (label: string, item: string, amount: number, site: string) => Promise<string | null> = requestCvv,
 ): Promise<{ ok: true; tokens: string[]; site: string } | { error: string }> {
-    if (!vaultEnabled()) return { error: "The vault is turned off (ATLAS_NO_VAULT)." };
+    if (!vaultEnabled()) return { error: "The vault is turned off (BHAI_NO_VAULT)." };
     const e = entries.get(entryId);
     if (!e || (e.kind !== "card" && e.kind !== "upi"))
         return { error: `No saved card or UPI ID with id "${entryId}". Call vault_list.` };
@@ -438,7 +438,7 @@ export async function resolveVaultArgs<T>(
     ctx: VaultContext,
 ): Promise<{ args: T; rules: VaultRule[] } | { error: string }> {
     if (!hasVaultToken(args)) return { args, rules: [] };
-    if (!vaultEnabled()) return { error: "The vault is turned off (ATLAS_NO_VAULT), so saved secrets can't be typed." };
+    if (!vaultEnabled()) return { error: "The vault is turned off (BHAI_NO_VAULT), so saved secrets can't be typed." };
     if (!ctx.isOwner) return { error: "Saved secrets can only be used for the owner." };
     // A saved secret is typed as text only — never a key name or hotkey combo. The
     // OS layer lowercases (mac) / uppercases (win) a key and echoes it in an
@@ -564,7 +564,7 @@ const cvvWaiters = new Map<number, (cvv: string | null) => void>();
 
 /** At boot: listen for the vault (and CVV answers) from the desktop app. No-op outside it. */
 export function initVault(): void {
-    if (desktopAttached || process.stdin.isTTY || !process.env.ATLAS_USER_DATA_DIR) return;
+    if (desktopAttached || process.stdin.isTTY || !process.env.BHAI_USER_DATA_DIR) return;
     desktopAttached = true;
     const rl = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
     rl.on("line", handleDesktopLine);

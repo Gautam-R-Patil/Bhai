@@ -59,7 +59,7 @@ export function shouldSpeculate(
     descriptionHint?: string,
 ): boolean {
     if (historicalFailureRate > threshold) return true;
-    if (roleHint === "coder" && descriptionHint && process.env.ATLAS_NO_CODER_SPECULATION !== "true") {
+    if (roleHint === "coder" && descriptionHint && process.env.BHAI_NO_CODER_SPECULATION !== "true") {
         return CODER_SPECULATE_PATTERNS.some((p) => p.test(descriptionHint));
     }
     return false;

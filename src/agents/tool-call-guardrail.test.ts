@@ -30,7 +30,7 @@ describe("canonicalArgsHash", () => {
 
 describe("tool-call guardrail", () => {
     afterEach(() => {
-        delete process.env.ATLAS_TOOL_LOOP_HARDSTOP;
+        delete process.env.BHAI_TOOL_LOOP_HARDSTOP;
     });
 
     it("stays silent on first failure, warns on the second identical failure", () => {
@@ -72,7 +72,7 @@ describe("tool-call guardrail", () => {
     });
 
     it("hard-stops only when opted in and limit reached", () => {
-        process.env.ATLAS_TOOL_LOOP_HARDSTOP = "true";
+        process.env.BHAI_TOOL_LOOP_HARDSTOP = "true";
         const s = createGuardrailState();
         const args = { cmd: "x" };
         let last = recordToolCall(s, { fnName: "shell", fnArgs: args, isError: true });

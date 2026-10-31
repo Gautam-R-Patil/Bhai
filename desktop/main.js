@@ -20,6 +20,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { createRequire } = require("node:module");
 const { autoUpdater } = require("electron-updater");
+const { envOf, upgradeEnvText, withLegacyEnvNames, upgradeMarkers, logDate, adoptLegacy, bhaiHome } = require("./legacy-names");
 
 // ── Protected String Decoder ─────────────────────
 // Decodes XOR-encoded prompts and skills at runtime
@@ -120,6 +121,8 @@ const ENV_PATH = IS_DEV
 const SETUP_FLAG = path.join(app.getPath("userData"), ".setup-complete");
 const LOGS_DIR = path.join(app.getPath("userData"), "logs");
 const LOG_RETENTION_DAYS = 3; // Keep logs for 3 days
+// ~/.bhai: copied over from ~/.atlas here, before the bot starts or anything reads it.
+const BHAI_HOME = bhaiHome(require("node:os").homedir());
 
 // ── v1 → v2 Setup Migration (D10) ─────────────
 // Runs once at boot before the wizard-gate so v1 installs are tagged + seeded.
@@ -145,7 +148,7 @@ const OVERLAY_MAX_HEIGHT = 600;
 const OVERLAY_MARGIN_RIGHT = 16;
 const OVERLAY_MARGIN_TOP = 8;
 const OVERLAY_URL = "http://127.0.0.1:18792";
-// Shown while the bot boots; the ##ATLAS_READY## reload swaps in the real overlay.
+// Shown while the bot boots; the ##BHAI_READY## reload swaps in the real overlay.
 // With a message instead when the bot won't come up (see botDownMessage).
 const overlaySplash = (text = "Bhai is waking up…") =>
     "data:text/html," +
@@ -155,7 +158,7 @@ const overlaySplash = (text = "Bhai is waking up…") =>
 // The overlay page embeds the owner token only for a request that proves it holds it
 // (src/overlay/overlay-chat.ts): this app's own requests add it, read from the 0600 file
 // the bot writes, so another local process or a browser tab opening the page gets none.
-const OVERLAY_TOKEN_FILE = path.join(require("node:os").homedir(), ".atlas", "overlay-local-token");
+const OVERLAY_TOKEN_FILE = path.join(BHAI_HOME, "overlay-local-token");
 let overlayTokenHooked = false;
 function hookOverlayToken(ses) {
     if (overlayTokenHooked) return;
@@ -165,7 +168,7 @@ function hookOverlayToken(ses) {
             const tok = fs.readFileSync(OVERLAY_TOKEN_FILE, "utf8").trim();
             if (tok) details.requestHeaders["X-Bhai-Overlay"] = tok;
         } catch {
-            /* bot hasn't written it yet: the page loads token-less and is reloaded on ##ATLAS_READY## */
+            /* bot hasn't written it yet: the page loads token-less and is reloaded on ##BHAI_READY## */
         }
         cb({ requestHeaders: details.requestHeaders });
     });
@@ -177,11 +180,11 @@ const OVERLAY_DARK_TINT = "#1C1A18E0";
 
 // ── Convex deployment selector ─────────────────────────────────────
 // Packaged DMG → prod by default. `npm start` (dev) → dev. Override either
-// via `ATLAS_ENV=prod|dev` or per-URL via `CONVEX_URL` / `CONVEX_SITE_URL`.
-const _ATLAS_IS_PROD = process.env.ATLAS_ENV
-    ? process.env.ATLAS_ENV === "prod"
+// via `BHAI_ENV=prod|dev` or per-URL via `CONVEX_URL` / `CONVEX_SITE_URL`.
+const _BHAI_IS_PROD = envOf("ENV")
+    ? envOf("ENV") === "prod"
     : app.isPackaged;
-const _CONVEX_DEPLOY_NAME = _ATLAS_IS_PROD ? "avid-finch-726" : "avid-finch-726";
+const _CONVEX_DEPLOY_NAME = _BHAI_IS_PROD ? "avid-finch-726" : "avid-finch-726";
 const CONVEX_SITE_URL = process.env.CONVEX_SITE_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.site`;
 const CONVEX_API_URL = process.env.CONVEX_URL || `https://${_CONVEX_DEPLOY_NAME}.convex.cloud`;
 
@@ -370,7 +373,7 @@ function configureAutoUpdater() {
 
 function getLogFilePath() {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    return path.join(LOGS_DIR, `atlas-${today}.log`);
+    return path.join(LOGS_DIR, `bhai-${today}.log`);
 }
 
 // Buffered async log writer. Bot stdout fires this on every line (heartbeat,
@@ -598,13 +601,11 @@ function cleanOldLogs() {
         cutoffDate.setDate(cutoffDate.getDate() - LOG_RETENTION_DAYS);
 
         for (const file of files) {
-            if (!file.startsWith('atlas-') || !file.endsWith('.log')) continue;
+            // bhai-YYYY-MM-DD.log (atlas-… from before the rename ages out too)
+            const date = logDate(file);
+            if (!date) continue;
 
-            // Extract date from filename: atlas-YYYY-MM-DD.log
-            const dateMatch = file.match(/atlas-(\d{4}-\d{2}-\d{2})\.log/);
-            if (!dateMatch) continue;
-
-            const fileDate = new Date(dateMatch[1]);
+            const fileDate = new Date(date);
             if (fileDate < cutoffDate) {
                 fs.unlinkSync(path.join(LOGS_DIR, file));
                 console.log(`Cleaned old log file: ${file}`);
@@ -737,6 +738,7 @@ function decrypt(encryptedBuffer, masterKey) {
  * Save the .env file encrypted.
  */
 function saveEnvEncrypted(envContent) {
+    envContent = withLegacyEnvNames(envContent); // ATLAS_ twins for a pre-rename build
     if (ENV_PATH.endsWith(".enc")) {
         // Production: encrypt before writing (throws, writing nothing, when the keychain refused the key).
         // Atomic: a crash mid-write must not leave half a settings file.
@@ -831,7 +833,7 @@ function buildDetectionDeps() {
         whatsappOwners: path.join(app.getPath("userData"), "whatsapp-users", "owners.json"),
     };
 
-    // Decrypt atlas-account.enc here so the detector can read the canonical
+    // Decrypt bhai-account.enc here so the detector can read the canonical
     // signin state. saveAccountSession writes to this file; prefs.account in
     // electron-store is never populated, so the detector previously always
     // claimed "not signed in" no matter how many times you signed in.
@@ -901,9 +903,10 @@ function requireInstaller() {
 function loadEnvDecrypted() {
     if (!fs.existsSync(ENV_PATH)) return "";
     try {
-        if (ENV_PATH.endsWith(".enc")) return decryptStored(fs.readFileSync(ENV_PATH));
+        // Old ATLAS_X lines read as BHAI_X, so the next save writes the new names.
+        if (ENV_PATH.endsWith(".enc")) return upgradeEnvText(decryptStored(fs.readFileSync(ENV_PATH)));
         // Dev mode: plain .env
-        return fs.readFileSync(ENV_PATH, "utf-8");
+        return upgradeEnvText(fs.readFileSync(ENV_PATH, "utf-8"));
     } catch {
         return "";
     }
@@ -964,7 +967,7 @@ function pushChannelStatuses(force = false) {
     }
 }
 
-// WhatsApp owner sign-up: the bot's own number (from its ##ATLAS_WA_SELF## line)
+// WhatsApp owner sign-up: the bot's own number (from its ##BHAI_WA_SELF## line)
 // lets the panel offer a wa.me link/QR with the code already typed in.
 let waSelfNumber = "";
 async function waOtpPayload(code) {
@@ -1045,7 +1048,8 @@ let updateDownloaded = false;
 let downloadProgress = 0;
 
 // ── Account Session (module-level) ────────────
-const ACCOUNT_SESSION_PATH = path.join(DATA_DIR, "atlas-account.enc");
+const ACCOUNT_SESSION_PATH = path.join(DATA_DIR, "bhai-account.enc");
+const LEGACY_ACCOUNT_SESSION_PATH = path.join(DATA_DIR, "atlas-account.enc"); // before the rename
 
 /** Save account session encrypted to disk */
 function saveAccountSession(session) {
@@ -1053,8 +1057,12 @@ function saveAccountSession(session) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
         const masterKey = getMasterKey();
         const data = encrypt(JSON.stringify(session), masterKey);
-        fs.writeFileSync(`${ACCOUNT_SESSION_PATH}.tmp`, data);
-        fs.renameSync(`${ACCOUNT_SESSION_PATH}.tmp`, ACCOUNT_SESSION_PATH);
+        // Also under the pre-rename name, so an older build (channel downgrade) stays signed in
+        // with the same device secret. Drop after a release or two.
+        for (const file of [ACCOUNT_SESSION_PATH, LEGACY_ACCOUNT_SESSION_PATH]) {
+            fs.writeFileSync(`${file}.tmp`, data);
+            fs.renameSync(`${file}.tmp`, file);
+        }
     } catch (err) {
         console.error("[Account] Failed to save session:", err.message);
     }
@@ -1063,8 +1071,9 @@ function saveAccountSession(session) {
 /** Load account session from encrypted file */
 function loadAccountSession() {
     try {
-        if (!fs.existsSync(ACCOUNT_SESSION_PATH)) return null;
-        const json = decryptStored(fs.readFileSync(ACCOUNT_SESSION_PATH));
+        const file = adoptLegacy(ACCOUNT_SESSION_PATH, LEGACY_ACCOUNT_SESSION_PATH);
+        if (!fs.existsSync(file)) return null;
+        const json = decryptStored(fs.readFileSync(file));
         const session = JSON.parse(json);
         if (session && isLegacyUserId(session.userId)) {
             console.log("[Auth] Purging legacy session:", session.userId);
@@ -1080,6 +1089,7 @@ function loadAccountSession() {
 /** Delete local account session */
 function deleteAccountSession() {
     try { fs.unlinkSync(ACCOUNT_SESSION_PATH); } catch { /* */ }
+    try { fs.unlinkSync(LEGACY_ACCOUNT_SESSION_PATH); } catch { /* */ }
 }
 
 // ── Auto-Updater Event Handlers ──────────────
@@ -1434,7 +1444,7 @@ async function startBot() {
     let args = ["--no-warnings", entryPoint];
     // Ensure common binary paths are in PATH — macOS Electron apps don't inherit full shell PATH
     const extraPaths = [
-        path.join(require("os").homedir(), ".atlas", "bin"), // Atlas-managed tools (spogo, etc.)
+        path.join(BHAI_HOME, "bin"), // Bhai-managed tools (spogo, etc.)
         "/opt/homebrew/bin",       // Homebrew (Apple Silicon)
         "/usr/local/bin",          // Homebrew (Intel) / system tools
         "/opt/homebrew/sbin",
@@ -1451,27 +1461,29 @@ async function startBot() {
         ...process.env,
         PATH: mergedPath,
         DOTENV_CONFIG_PATH: tempEnvPath,
-        ATLAS_DATA_DIR: DATA_DIR,
+        BHAI_DATA_DIR: DATA_DIR,
+        // The state root this app settled on (~/.atlas when copying it to ~/.bhai failed).
+        BHAI_HOME: BHAI_HOME,
         // Where Settings writes .user-personality.json (personality-sync.ts).
-        ATLAS_USER_DATA_DIR: app.getPath("userData"),
+        BHAI_USER_DATA_DIR: app.getPath("userData"),
         // The bot sends native notifications through us (showBotNotification).
-        ATLAS_DESKTOP_NOTIFY: "1",
+        BHAI_DESKTOP_NOTIFY: "1",
         NODE_ENV: "production",
         // V8 code cache for the 23MB bundle: a warm start skips re-compiling it.
         NODE_COMPILE_CACHE: path.join(app.getPath("userData"), "v8-cache"),
-        // The app draws Bhai's ghost cursor (agent-cursor.js); off with ATLAS_NO_AGENT_CURSOR=true.
+        // The app draws Bhai's ghost cursor (agent-cursor.js); off with BHAI_NO_AGENT_CURSOR=true.
         // Not on Linux: setOpacity/content protection do nothing there, so Bhai's
         // own screenshots would see the overlay (and it can render opaque without
         // a compositor).
-        ...(CURSOR_SUPPORTED ? { ATLAS_AGENT_CURSOR_IPC: "1" } : {}),
+        ...(CURSOR_SUPPORTED ? { BHAI_AGENT_CURSOR_IPC: "1" } : {}),
     };
 
     // Pass Convex URL + OTPless identity to bot process for credit enforcement
     spawnEnv.CONVEX_URL = CONVEX_API_URL;
     if (session && session.userId) {
-        spawnEnv.ATLAS_OTPLESS_USER_ID = session.userId;
-        spawnEnv.ATLAS_ACCOUNT_EMAIL = session.email || "";
-        if (session.deviceSecret) spawnEnv.ATLAS_DEVICE_SECRET = session.deviceSecret;
+        spawnEnv.BHAI_OTPLESS_USER_ID = session.userId;
+        spawnEnv.BHAI_ACCOUNT_EMAIL = session.email || "";
+        if (session.deviceSecret) spawnEnv.BHAI_DEVICE_SECRET = session.deviceSecret;
     }
 
     if (!IS_DEV) {
@@ -1488,7 +1500,7 @@ async function startBot() {
         await fetchRuntimeKey(_keyFetchToken);
     }
     if (_runtimeKey) {
-        spawnEnv.ATLAS_RUNTIME_KEY = _runtimeKey;
+        spawnEnv.BHAI_RUNTIME_KEY = _runtimeKey;
     }
 
     let child = null;
@@ -1511,7 +1523,7 @@ async function startBot() {
     botProcess.stdout.on("data", (data) => {
         // Line-buffer so a companion marker split across chunks isn't lost, and
         // keep the markers out of the user's log.
-        const lines = (stdoutTail + data.toString()).split("\n");
+        const lines = upgradeMarkers(stdoutTail + data.toString()).split("\n");
         stdoutTail = lines.pop();
         const rest = [];
         for (const line of lines) {
@@ -1524,7 +1536,7 @@ async function startBot() {
             if (cvv) { try { askCvv(JSON.parse(cvv[1])); } catch { /* malformed line */ } continue; }
             const note = line.match(/^##BHAI_NOTIFY##(\{.*\})\s*$/);
             if (note) { try { showBotNotification(JSON.parse(note[1])); } catch { /* malformed line */ } continue; }
-            const perms = line.match(/^##ATLAS_PERMS##(\{.*\})\s*$/);
+            const perms = line.match(/^##BHAI_PERMS##(\{.*\})\s*$/);
             if (perms) { try { notifyBrokenPermission(JSON.parse(perms[1])); } catch { /* malformed line */ } continue; }
             const m = line.match(/^##BHAI_BUDDY##(\{.*\})\s*$/);
             if (!m) { rest.push(line); continue; }
@@ -1541,7 +1553,7 @@ async function startBot() {
             }
 
             // WhatsApp QR forwarding — convert raw QR string to data URL image
-            const qrMatch = msg.match(/##ATLAS_QR##(.+)##END_QR##/);
+            const qrMatch = msg.match(/##BHAI_QR##(.+)##END_QR##/);
             if (qrMatch) {
                 const qrString = qrMatch[1];
                 try {
@@ -1565,8 +1577,8 @@ async function startBot() {
             }
 
             // Overlay server is listening: load the overlay now (it failed while the bot booted).
-            if (msg.includes("##ATLAS_READY##")) {
-                sendLog(`Bot ready in ${msg.split("##ATLAS_READY##")[1]?.trim() || "?"}ms`);
+            if (msg.includes("##BHAI_READY##")) {
+                sendLog(`Bot ready in ${msg.split("##BHAI_READY##")[1]?.trim() || "?"}ms`);
                 if (overlayLoadFailed && overlayWindow && !overlayWindow.isDestroyed()) {
                     overlayLoadFailed = false;
                     overlayWindow.loadURL(OVERLAY_URL);
@@ -1574,12 +1586,12 @@ async function startBot() {
             }
 
             // WhatsApp OTP forwarding
-            const selfMatch = msg.match(/##ATLAS_WA_SELF##(\d+)##END_SELF##/);
+            const selfMatch = msg.match(/##BHAI_WA_SELF##(\d+)##END_SELF##/);
             if (selfMatch) {
                 waSelfNumber = selfMatch[1];
                 if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("whatsapp-otp", { self: waSelfNumber });
             }
-            const otpMatch = msg.match(/##ATLAS_WA_OTP##(.+)##END_OTP##/);
+            const otpMatch = msg.match(/##BHAI_WA_OTP##(.+)##END_OTP##/);
             if (otpMatch) {
                 waOtpPayload(otpMatch[1]).then(p => {
                     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("whatsapp-otp", p);
@@ -2173,7 +2185,7 @@ let overlayGlassNative; // undefined = not loaded yet, null = unavailable
 function attachOverlayGlass(win) {
     try {
         if (overlayGlassNative === undefined) {
-            overlayGlassNative = require(path.join(BOT_DIR, "native", `atlas-native.darwin-${process.arch}.node`));
+            overlayGlassNative = require(path.join(BOT_DIR, "native", `bhai-native.darwin-${process.arch}.node`));
         }
         const [w, h] = win.getContentSize();
         // Dark glass gets a smoky tint so white text stays readable over busy or
@@ -2261,10 +2273,10 @@ function createOverlayWindow() {
     // Retry loading if the bot server isn't ready yet (race condition on first show)
     overlayWindow.webContents.on("did-fail-load", (_e, errCode, errDesc, url) => {
         if (errCode === -102 || errCode === -6 || errDesc === "ERR_CONNECTION_REFUSED") {
-            // Bot server not up yet: the bot's ##ATLAS_READY## line reloads it the
+            // Bot server not up yet: the bot's ##BHAI_READY## line reloads it the
             // moment it listens; this slower retry is only a fallback.
             // Not coming up at all: say why instead of retrying forever. Still
-            // flagged failed so a later start's ##ATLAS_READY## loads the overlay.
+            // flagged failed so a later start's ##BHAI_READY## loads the overlay.
             if (botDownMessage && !isAlive(botProcess)) {
                 overlayLoadFailed = true;
                 overlayWindow.loadURL(overlaySplash(botDownMessage));
@@ -2480,8 +2492,8 @@ function toggleLiveVoice() {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow.webContents.executeJavaScript(`
             (function() {
-                if (window._atlasWS && window._atlasWS.readyState === 1) {
-                    window._atlasWS.send(JSON.stringify({ type: "${msgType}" }));
+                if (window._bhaiWS && window._bhaiWS.readyState === 1) {
+                    window._bhaiWS.send(JSON.stringify({ type: "${msgType}" }));
                     return true;
                 }
                 return false;
@@ -2604,7 +2616,7 @@ function registerIPC() {
         // F3: lock down the auth window — it's the only window we load remote
         // content into. setWindowOpenHandler denies window.open() from the
         // page; will-navigate confines the renderer to the auth page's host.
-        const authUrl = process.env.ATLAS_AUTH_URL || `${CONVEX_SITE_URL}/auth-login`;
+        const authUrl = envOf("AUTH_URL") || `${CONVEX_SITE_URL}/auth-login`;
         const authHost = (() => { try { return new URL(authUrl).host; } catch { return "tryatlasagi.com"; } })();
         hardenBrowserWindow(authWindow, { allowedNavigateOrigins: [authHost], allowLocal: false });
         // OTPless SDK requires a real HTTPS origin; auth-login/ hosts the
@@ -2825,12 +2837,12 @@ function registerIPC() {
     // Use saveEnvKVs (merge strategy) so saving from Settings does NOT
     // wipe channel credentials that channels:save-config wrote (Email,
     // Discord, Slack, WhatsApp, Matrix, etc.) or other env keys like
-    // CONVEX_URL / ATLAS_ENV. Only the keys explicitly present in the
+    // CONVEX_URL / BHAI_ENV. Only the keys explicitly present in the
     // payload are touched; everything else in .env is preserved.
     ipcMain.handle("settings:save", (_, settings) => {
         try {
             const kvs = {};
-            for (const key of ["TELEGRAM_BOT_TOKEN", "ALLOWED_USER_IDS", "GITHUB_TOKEN", "ATLAS_WORKSPACE"]) {
+            for (const key of ["TELEGRAM_BOT_TOKEN", "ALLOWED_USER_IDS", "GITHUB_TOKEN", "BHAI_WORKSPACE"]) {
                 if (Object.prototype.hasOwnProperty.call(settings, key)) {
                     kvs[key] = settings[key] ?? "";
                 }
@@ -2893,8 +2905,8 @@ function registerIPC() {
     // Bhai's own folders (src/config/paths.ts getWorkspaceDir's candidates): images it made live there.
     function workspaceRoots() {
         const home = app.getPath("home");
-        return [loadEnvKey("ATLAS_WORKSPACE"), store.get("workspace"), path.join(app.getPath("desktop"), "Bhai Files"),
-            path.join(home, "Documents", "Bhai Files"), path.join(home, ".atlas", "files"), path.join(home, "Bhai Files")]
+        return [loadEnvKey("BHAI_WORKSPACE"), store.get("workspace"), path.join(app.getPath("desktop"), "Bhai Files"),
+            path.join(home, "Documents", "Bhai Files"), path.join(BHAI_HOME, "files"), path.join(home, "Bhai Files")]
             .filter((d) => typeof d === "string" && d)
             .map((d) => { try { return fs.realpathSync(d); } catch { return null; } })
             .filter(Boolean);
@@ -4371,9 +4383,9 @@ function registerIPC() {
 
     // W3: Magic Moment rich detection. Returns running-app snapshot.
     // Called once per Ready Hub mount. Best-effort: empty array on
-    // failure or when ATLAS_NO_MAGIC_MOMENT_RICH=true.
+    // failure or when BHAI_NO_MAGIC_MOMENT_RICH=true.
     ipcMain.handle("setup:detect-magic-moment", async () => {
-        if (process.env.ATLAS_NO_MAGIC_MOMENT_RICH === "true") {
+        if (envOf("NO_MAGIC_MOMENT_RICH") === "true") {
             return { names: [], platform: process.platform, disabled: true };
         }
         try {
@@ -4502,8 +4514,8 @@ function registerIPC() {
     function resolveWorkspaceOptions() {
         try {
             const env = loadEnvDecrypted() || "";
-            const wsLine = env.split("\n").find((l) => l.startsWith("ATLAS_WORKSPACE="));
-            if (wsLine) return { workspace: wsLine.slice("ATLAS_WORKSPACE=".length).trim() };
+            const wsLine = env.split("\n").find((l) => l.startsWith("BHAI_WORKSPACE="));
+            if (wsLine) return { workspace: wsLine.slice("BHAI_WORKSPACE=".length).trim() };
         } catch { /* ignore */ }
         return {};
     }
@@ -4735,7 +4747,7 @@ function registerIPC() {
     }
 
     ipcMain.handle("settings:integrations", () => {
-        const custom = loadEnvKey("ATLAS_WORKSPACE") || "";
+        const custom = loadEnvKey("BHAI_WORKSPACE") || "";
         return {
             workspace: custom || path.join(app.getPath("desktop"), "Bhai Files"),
             workspaceIsDefault: !custom,
@@ -4768,7 +4780,7 @@ function registerIPC() {
     });
 
     ipcMain.handle("settings:open-workspace", () => {
-        const dir = loadEnvKey("ATLAS_WORKSPACE") || path.join(app.getPath("desktop"), "Bhai Files");
+        const dir = loadEnvKey("BHAI_WORKSPACE") || path.join(app.getPath("desktop"), "Bhai Files");
         fs.mkdirSync(dir, { recursive: true });
         return shell.openPath(dir);
     });
@@ -5165,7 +5177,7 @@ function registerIPC() {
 
     // Setup: persist personalize block (hotkey/theme/voice/wakeWord) into
     // electron-store AND mirror voice + wake-word + hotkey into .env.enc via
-    // ATLAS_* env keys so the bot actually reads the user's choice on next boot.
+    // BHAI_* env keys so the bot actually reads the user's choice on next boot.
     ipcMain.handle("setup:save-personalize", async (_evt, update) => {
         try {
             const { mergePersonalize, envKVsFromPersonalize } = require(path.join(__dirname, "wizard", "personalize-reducer.js"));
@@ -5500,7 +5512,7 @@ function registerIPC() {
     });
 
     // ── Store IPC ───────────────────────────────────────────────
-    const STORE_DIR = path.join(app.getPath("home"), ".atlas", "store");
+    const STORE_DIR = path.join(BHAI_HOME, "store");
 
     // Fetch store items via the session-authenticated proxy. Store Convex
     // functions are internalQuery-only (security audit fb99bbf) and are not
@@ -5746,7 +5758,7 @@ function registerIPC() {
     // Bhai's own key; add more as ecosystem partners are vetted. Stored as
     // an env-overridable allowlist so we don't ship a hardcoded list that's
     // tedious to rotate.
-    const TRUSTED_PUBLISHER_KEYS = (process.env.ATLAS_TRUSTED_PUBLISHER_KEYS || "")
+    const TRUSTED_PUBLISHER_KEYS = (envOf("TRUSTED_PUBLISHER_KEYS") || "")
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
@@ -5969,7 +5981,7 @@ function registerIPC() {
 
             // If ZIP contains MCP config or package.json, detect type
             let itemType = "skill";
-            if (extractedFiles.some(f => f.includes("atlas.config.json") || f.includes("package.json"))) {
+            if (extractedFiles.some(f => f.includes("bhai.config.json") || f.includes("atlas.config.json") || f.includes("package.json"))) {
                 itemType = "mcp";
             }
 
@@ -5983,8 +5995,8 @@ function registerIPC() {
                 zip.extractAllTo(skillDir, true);
             }
 
-            // Write/overwrite the skill markdown with ATLAS-compatible frontmatter
-            const atlasContent = `---
+            // Write/overwrite the skill markdown with Bhai-compatible frontmatter
+            const bhaiContent = `---
 name: ${name}
 description: ${description}
 categories: ${JSON.stringify(categories)}
@@ -5993,7 +6005,7 @@ version: ${version}
 sideloaded_at: ${new Date().toISOString()}
 ---
 ${body}`;
-            fs.writeFileSync(path.join(skillDir, "SKILL.md"), atlasContent);
+            fs.writeFileSync(path.join(skillDir, "SKILL.md"), bhaiContent);
 
             // Update installs.json
             const installsPath = path.join(STORE_DIR, "installs.json");
@@ -6457,7 +6469,7 @@ ${body}`;
     // Setup: start a WhatsApp pair session from inside the wizard.
     // Runs Baileys directly from main.js so the user can scan the QR BEFORE
     // the bot has booted. Emits QR strings on the existing `whatsapp-qr`
-    // channel (which preload.js:152 bridges to window.atlas.onWhatsAppQR).
+    // channel (which preload.js:152 bridges to window.bhai.onWhatsAppQR).
     // Emits the literal string "connected" when pairing completes.
     ipcMain.handle("setup:wa-pair-start", async () => {
         try {
@@ -6587,11 +6599,11 @@ function downloadAndInstallNode(sendProgress) {
 
 // Augment PATH with common binary locations missing from Electron's stripped
 // dock-launch PATH. brew (Apple Silicon at /opt/homebrew/bin), ollama, python3,
-// and ATLAS-managed tools all live in non-default locations.
+// and Bhai-managed tools all live in non-default locations.
 function buildAugmentedPath() {
     if (process.platform === "win32") return process.env.PATH || "";
     const extras = [
-        path.join(require("os").homedir(), ".atlas", "bin"),
+        path.join(BHAI_HOME, "bin"),
         "/opt/homebrew/bin",       // Homebrew (Apple Silicon)
         "/usr/local/bin",          // Homebrew (Intel) / general
         "/opt/homebrew/sbin",

@@ -9,14 +9,14 @@ const { initSession, sessionNeedsSignIn, sessionRetryAfterMs } = await import(".
 
 afterEach(() => {
     vi.unstubAllGlobals();
-    delete process.env.ATLAS_OTPLESS_USER_ID;
-    delete process.env.ATLAS_DEVICE_SECRET;
+    delete process.env.BHAI_OTPLESS_USER_ID;
+    delete process.env.BHAI_DEVICE_SECRET;
 });
 
 describe("bot session and the device secret", () => {
     it("sends the secret, and a sign_in_required refusal means sign in again, not retry", async () => {
-        process.env.ATLAS_OTPLESS_USER_ID = "u1";
-        process.env.ATLAS_DEVICE_SECRET = "s3cret";
+        process.env.BHAI_OTPLESS_USER_ID = "u1";
+        process.env.BHAI_DEVICE_SECRET = "s3cret";
         const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: "sign_in_required" }), { status: 401 }));
         vi.stubGlobal("fetch", fetchMock);
 
@@ -27,7 +27,7 @@ describe("bot session and the device secret", () => {
     });
 
     it("a server error is not a sign-in problem", async () => {
-        process.env.ATLAS_OTPLESS_USER_ID = "u1";
+        process.env.BHAI_OTPLESS_USER_ID = "u1";
         vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Session creation failed" }), { status: 403 })));
         expect(await initSession()).toBe(false);
         expect(sessionNeedsSignIn()).toBe(false);
@@ -35,7 +35,7 @@ describe("bot session and the device secret", () => {
     });
 
     it("a rate limit says how long to wait before asking again", async () => {
-        process.env.ATLAS_OTPLESS_USER_ID = "u1";
+        process.env.BHAI_OTPLESS_USER_ID = "u1";
         const limited = (h: Record<string, string>) =>
             new Response(JSON.stringify({ error: "Rate limit exceeded" }), { status: 429, headers: h });
         vi.stubGlobal("fetch", vi.fn(async () => limited({ "Retry-After": "60" })));

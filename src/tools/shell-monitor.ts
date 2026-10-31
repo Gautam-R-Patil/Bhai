@@ -64,7 +64,7 @@ function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 
 // ── Constants ─────────────────────────────────
 
-const LOG_DIR = join(process.env.ATLAS_DATA_DIR || join(process.cwd(), "data"), "process-logs");
+const LOG_DIR = join(process.env.BHAI_DATA_DIR || join(process.cwd(), "data"), "process-logs");
 const MAX_OUTPUT_PREVIEW = 5000; // chars in status preview
 const MAX_WAIT_MS = 86_400_000; // 24 hours max wait
 

@@ -10,7 +10,7 @@ import { findClickTarget } from "../perception-router.js";
 
 // Retina-style capture: a 1568x980 logical window captured at 2x = 3136x1960 px.
 async function writeRetinaPng(): Promise<string> {
-    const p = join(tmpdir(), `atlas_cg_scale_${Date.now()}_${Math.random().toString(36).slice(2)}.png`);
+    const p = join(tmpdir(), `bhai_cg_scale_${Date.now()}_${Math.random().toString(36).slice(2)}.png`);
     const buf = await sharp({ create: { width: 3136, height: 1960, channels: 3, background: "#fff" } }).png().toBuffer();
     await fs.writeFile(p, buf);
     return p;

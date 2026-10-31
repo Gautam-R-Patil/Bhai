@@ -28,13 +28,29 @@ describe("isSensitivePath — /proc and /sys (Linux env/memory exfiltration)", (
 });
 
 describe("isSensitivePath — Bhai's own state and other apps' credentials", () => {
+    it("denies both ~/.bhai and the pre-rename ~/.atlas", async () => {
+        const { homedir } = await import("node:os");
+        const { join } = await import("node:path");
+        expect(isSensitivePath(join(homedir(), ".bhai", "hooks.json")).denied).toBe(true);
+        expect(isSensitivePath(join(homedir(), ".atlas", "data", "tool-analytics.json")).denied).toBe(true);
+    });
+    it("denies a state root moved by BHAI_HOME", () => {
+        const before = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = "/srv/bhai-state";
+        try {
+            expect(isSensitivePath("/srv/bhai-state/data/forge-persist-key").denied).toBe(true);
+        } finally {
+            if (before === undefined) delete process.env.BHAI_HOME;
+            else process.env.BHAI_HOME = before;
+        }
+    });
     it("denies the data dir (memory.db, its -wal, the WhatsApp session) but not saved tool outputs", async () => {
         const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } = await import("node:fs");
         const { tmpdir } = await import("node:os");
         const { join } = await import("node:path");
         const data = mkdtempSync(join(tmpdir(), "sp-data-"));
-        const before = process.env.ATLAS_DATA_DIR;
-        process.env.ATLAS_DATA_DIR = data;
+        const before = process.env.BHAI_DATA_DIR;
+        process.env.BHAI_DATA_DIR = data;
         try {
             for (const f of ["memory.db", "memory.db-wal", "chat-history.jsonl", "whatsapp-auth/creds.json", "browser-profile/Default/Cookies"])
                 expect(isSensitivePath(join(data, f)).denied, f).toBe(true);
@@ -46,8 +62,8 @@ describe("isSensitivePath — Bhai's own state and other apps' credentials", () 
             symlinkSync(join(data, "memory.db"), join(data, "tool-outputs", "turn-1", "link.txt"));
             expect(isSensitivePath(join(data, "tool-outputs", "turn-1", "link.txt")).denied).toBe(true);
         } finally {
-            if (before === undefined) delete process.env.ATLAS_DATA_DIR;
-            else process.env.ATLAS_DATA_DIR = before;
+            if (before === undefined) delete process.env.BHAI_DATA_DIR;
+            else process.env.BHAI_DATA_DIR = before;
         }
     });
 
@@ -68,8 +84,8 @@ describe("shellNamesBhaiState", () => {
         const { join } = await import("node:path");
         const { shellNamesBhaiState } = await import("./sensitive-paths.js");
         const data = join(homedir(), "Library", "Application Support", "bhai-desktop", "data");
-        const before = process.env.ATLAS_DATA_DIR;
-        process.env.ATLAS_DATA_DIR = data;
+        const before = process.env.BHAI_DATA_DIR;
+        process.env.BHAI_DATA_DIR = data;
         try {
             expect(shellNamesBhaiState(`cat "${data}/memory.db"`)).not.toBeNull();
             expect(shellNamesBhaiState("wc -l ~/Library/Application\\ Support/bhai-desktop/data/chat-history.jsonl")).not.toBeNull();
@@ -82,8 +98,8 @@ describe("shellNamesBhaiState", () => {
             expect(shellNamesBhaiState("tail -5 x.log", join(data, "process-logs"))).toBeNull();
             expect(isSensitivePath(join(data, "process-logs", "bg-1.log")).denied).toBe(false); // shell_exec_background's log_file
         } finally {
-            if (before === undefined) delete process.env.ATLAS_DATA_DIR;
-            else process.env.ATLAS_DATA_DIR = before;
+            if (before === undefined) delete process.env.BHAI_DATA_DIR;
+            else process.env.BHAI_DATA_DIR = before;
         }
     });
 });

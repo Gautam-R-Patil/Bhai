@@ -19,7 +19,7 @@ describe("store types accept dynamic", () => {
 					version: "1.0.0",
 					installedAt: Date.now(),
 					autoUpdate: false,
-					path: "/Users/x/.atlas/store/dynamic/foo",
+					path: "/Users/x/.bhai/store/dynamic/foo",
 					forgeMeta: { source: "synchronous" },
 				},
 			},

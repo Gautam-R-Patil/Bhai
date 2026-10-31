@@ -20,7 +20,7 @@ import { getActiveLiveSession } from "./integration.js";
  * the session was active and the message was sent, false otherwise.
  *
  * The message is delivered as a synthetic user turn (`sendClientContent`),
- * prefixed with a marker so the model treats it as an ATLAS-internal status
+ * prefixed with a marker so the model treats it as a Bhai-internal status
  * update rather than direct user speech.
  */
 export function notifyLiveVoiceIfActive(text: string): boolean {
@@ -39,7 +39,7 @@ export function notifyLiveVoiceIfActive(text: string): boolean {
         // Prefix makes the provenance obvious to the model so it speaks
         // the result casually instead of reading the raw payload verbatim.
         session.sendTextInput(
-            `[BHAI SYSTEM — background task update, speak this to the user conversationally]\n${text}`,
+            `[Bhai SYSTEM — background task update, speak this to the user conversationally]\n${text}`,
         );
         return true;
     } catch {

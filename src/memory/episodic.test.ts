@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-episodic-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-episodic-"));
 
 let sqlite: typeof import("./sqlite.js");
 let raw: NonNullable<ReturnType<typeof sqlite.getRawDb>>;

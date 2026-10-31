@@ -8,12 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let dir: string;
 beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "sched-"));
-    process.env.ATLAS_DATA_DIR = dir;
+    process.env.BHAI_DATA_DIR = dir;
     vi.useFakeTimers();
 });
 afterEach(() => {
     vi.useRealTimers();
-    delete process.env.ATLAS_DATA_DIR;
+    delete process.env.BHAI_DATA_DIR;
     fs.rmSync(dir, { recursive: true, force: true });
 });
 

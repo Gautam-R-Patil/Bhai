@@ -1,11 +1,11 @@
 // desktop/overlay-preload.js
 // Preload script for the overlay chat window.
-// Exposes a minimal IPC bridge (window.atlasOverlay) so the overlay HTML can:
+// Exposes a minimal IPC bridge (window.bhaiOverlay) so the overlay HTML can:
 //   - Read and subscribe to the user's light/dark theme preference
 
 const { ipcRenderer, contextBridge } = require("electron");
 
-contextBridge.exposeInMainWorld("atlasOverlay", {
+contextBridge.exposeInMainWorld("bhaiOverlay", {
     // Open a finished research report (a .md file in the Research folder) in the default app
     openReport: (filePath) => ipcRenderer.send("overlay:open-report", filePath),
 

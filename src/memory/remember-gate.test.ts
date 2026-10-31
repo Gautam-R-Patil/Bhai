@@ -11,9 +11,9 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-remember-gate-"));
-process.env.ATLAS_MEMORY_GATE_SHADOW = "true";
-delete process.env.ATLAS_NO_MEMORY_GATE;
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-remember-gate-"));
+process.env.BHAI_MEMORY_GATE_SHADOW = "true";
+delete process.env.BHAI_NO_MEMORY_GATE;
 
 const sqlite = await import("./sqlite.js");
 const identity = await import("./identity.js");

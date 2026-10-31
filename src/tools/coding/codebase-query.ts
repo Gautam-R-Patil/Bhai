@@ -464,7 +464,7 @@ Requires the index to exist. If not, returns { success: false } with a hint to r
                 if (seeds.length === 0) {
                     return JSON.stringify({
                         success: false,
-                        error: `No symbol definitions found at or before ${file}:${line}. Is the file indexed at 'calls' depth? Re-run codebase_index build with ATLAS_INDEX_DEPTH=calls.`,
+                        error: `No symbol definitions found at or before ${file}:${line}. Is the file indexed at 'calls' depth? Re-run codebase_index build with BHAI_INDEX_DEPTH=calls.`,
                     });
                 }
                 const graph = egoGraph(

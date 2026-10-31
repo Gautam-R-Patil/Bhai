@@ -10,13 +10,13 @@ import { type ClickTarget, findClickTarget, formatCascadeResult } from "../perce
 // runner is unbounded (seen as a 10s-timeout flake on Node 24 / macOS). Disable
 // it so the controlled hint is the only AX source — the determinism the hint
 // tests already claim in their comments. No test here exercises the retry path.
-const prevNoAxRetry = process.env.ATLAS_NO_AX_RETRY;
+const prevNoAxRetry = process.env.BHAI_NO_AX_RETRY;
 beforeAll(() => {
-    process.env.ATLAS_NO_AX_RETRY = "true";
+    process.env.BHAI_NO_AX_RETRY = "true";
 });
 afterAll(() => {
-    if (prevNoAxRetry === undefined) delete process.env.ATLAS_NO_AX_RETRY;
-    else process.env.ATLAS_NO_AX_RETRY = prevNoAxRetry;
+    if (prevNoAxRetry === undefined) delete process.env.BHAI_NO_AX_RETRY;
+    else process.env.BHAI_NO_AX_RETRY = prevNoAxRetry;
 });
 
 describe("findClickTarget — tier gating + fallthrough", () => {
@@ -145,7 +145,7 @@ describe("cloud_grounding tier", () => {
         const { tmpdir } = await import("node:os");
         const { join } = await import("node:path");
         const { promises: fs } = await import("node:fs");
-        const p = join(tmpdir(), `atlas_cg_test_${Date.now()}.png`);
+        const p = join(tmpdir(), `bhai_cg_test_${Date.now()}.png`);
         await fs.writeFile(p, TINY_PNG);
         return p;
     }
@@ -182,10 +182,10 @@ describe("cloud_grounding tier", () => {
         expect(r).toBeNull();
     });
 
-    it("is disabled by ATLAS_NO_CLOUD_GROUNDING", async () => {
+    it("is disabled by BHAI_NO_CLOUD_GROUNDING", async () => {
         const png = await writeTmpPng();
-        const prev = process.env.ATLAS_NO_CLOUD_GROUNDING;
-        process.env.ATLAS_NO_CLOUD_GROUNDING = "true";
+        const prev = process.env.BHAI_NO_CLOUD_GROUNDING;
+        process.env.BHAI_NO_CLOUD_GROUNDING = "true";
         try {
             const r = await findClickTarget("the Save button", {
                 screenshotPath: png,
@@ -195,8 +195,8 @@ describe("cloud_grounding tier", () => {
             });
             expect(r).toBeNull();
         } finally {
-            if (prev === undefined) delete process.env.ATLAS_NO_CLOUD_GROUNDING;
-            else process.env.ATLAS_NO_CLOUD_GROUNDING = prev;
+            if (prev === undefined) delete process.env.BHAI_NO_CLOUD_GROUNDING;
+            else process.env.BHAI_NO_CLOUD_GROUNDING = prev;
         }
     });
 });

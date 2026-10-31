@@ -192,8 +192,8 @@ export function maskKnownValues(text: string): string {
 
 // protect() is a pure function of (text, credentials, vault generation), and an
 // agent turn re-protects the whole history before every LLM call: remember the
-// answers, up to ~4M chars of text. ATLAS_NO_PROTECT_CACHE=true turns it off.
-const MEMO = process.env.ATLAS_NO_PROTECT_CACHE !== "true";
+// answers, up to ~4M chars of text. BHAI_NO_PROTECT_CACHE=true turns it off.
+const MEMO = process.env.BHAI_NO_PROTECT_CACHE !== "true";
 const MEMO_CHARS = 4_000_000;
 type Memo = { gen: number; out: [plain?: string, credentials?: string] };
 const memo = new Map<string, Memo>(); // insertion order = LRU order
@@ -290,7 +290,7 @@ export const CODE_TOOLS = new Set([
  */
 export function protect(text: string, opts: { credentials?: boolean } = {}): string {
     if (!text) return text;
-    const credentials = opts.credentials !== false && process.env.ATLAS_NO_CREDENTIAL_POLICY !== "true";
+    const credentials = opts.credentials !== false && process.env.BHAI_NO_CREDENTIAL_POLICY !== "true";
     const slot = credentials ? 1 : 0;
     const gen = generation;
     if (MEMO) {
@@ -307,7 +307,7 @@ export function protect(text: string, opts: { credentials?: boolean } = {}): str
     const redacted = redactPii(maskKnownValues(text), handleOf);
     // Credentials by structure (Authorization headers, password=…, provider keys,
     // cookies, JWTs): credential-mask.ts. Masked for good — the model
-    // never needs them. ATLAS_NO_CREDENTIAL_POLICY=true turns it off.
+    // never needs them. BHAI_NO_CREDENTIAL_POLICY=true turns it off.
     const out = credentials ? maskCredentials(redacted.text) : redacted.text;
     if (handleOf.size > before) {
         generation++;

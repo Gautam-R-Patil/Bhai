@@ -1,14 +1,14 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import type { ToolLifecycleState, ToolMetadata, ToolSource } from "./types.js";
+import { getBhaiHome } from "../config/paths.js";
 
 const SCHEMA_VERSION = 1;
 
-const DEFAULT_DB_PATH = join(homedir(), ".atlas", "data", "skill-library.db");
+const DEFAULT_DB_PATH = join(getBhaiHome(), "data", "skill-library.db");
 
 let _db: Database.Database | null = null;
 let _path: string | null = null;

@@ -48,18 +48,18 @@ export async function proposeWithFilesystemAgent(
 ): Promise<{ config: HarnessConfig; codeChanges: CodeChange[] }> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-    // The harness always wants worktree isolation regardless of ATLAS_AGENT_WORKTREE env var.
+    // The harness always wants worktree isolation regardless of BHAI_AGENT_WORKTREE env var.
     if (!isGitRepo()) {
         console.warn("[CODE-PROPOSER] Not a git repo — filesystem-agent unavailable, falling back to JSON proposer");
         const config = await proposeNextCandidate(llm, candidate, store);
         return { config, codeChanges: [] };
     }
     // Temporarily force-enable the worktree flag for this call, then restore
-    const prevWorktreeEnv = process.env.ATLAS_AGENT_WORKTREE;
-    process.env.ATLAS_AGENT_WORKTREE = "true";
+    const prevWorktreeEnv = process.env.BHAI_AGENT_WORKTREE;
+    process.env.BHAI_AGENT_WORKTREE = "true";
     const worktree = setupAgentWorktree(`harness-${candidate.candidateId}`);
-    if (prevWorktreeEnv === undefined) delete process.env.ATLAS_AGENT_WORKTREE;
-    else process.env.ATLAS_AGENT_WORKTREE = prevWorktreeEnv;
+    if (prevWorktreeEnv === undefined) delete process.env.BHAI_AGENT_WORKTREE;
+    else process.env.BHAI_AGENT_WORKTREE = prevWorktreeEnv;
 
     if (worktree === null) {
         console.warn("[CODE-PROPOSER] git worktree creation failed — falling back to JSON proposer");

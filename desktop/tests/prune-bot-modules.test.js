@@ -20,7 +20,7 @@ describe("prodLockKeys", () => {
     it("keeps what npm ci --omit=dev installs", () => {
         const keys = prodLockKeys({
             packages: {
-                "": { name: "atlas" },
+                "": { name: "bhai" },
                 "node_modules/a": {},
                 "node_modules/b": { dev: true },
                 "node_modules/c": { optional: true },

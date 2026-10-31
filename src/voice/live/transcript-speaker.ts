@@ -89,12 +89,12 @@ function buildWavHeader(
     return h;
 }
 
-const SAY_VOICE = process.env.ATLAS_SAY_VOICE || "Samantha";
+const SAY_VOICE = process.env.BHAI_SAY_VOICE || "Samantha";
 // Default pace ~200 wpm (macOS `say` rate; espeak and SpeechSynthesizer
 // interpret the number differently but this is a reasonable middle).
 // Parse-and-validate so a bad env var doesn't break the spawn.
 const SAY_RATE = (() => {
-    const raw = Number(process.env.ATLAS_SAY_RATE);
+    const raw = Number(process.env.BHAI_SAY_RATE);
     return Number.isFinite(raw) && raw >= 80 && raw <= 400 ? String(Math.round(raw)) : "200";
 })();
 
@@ -578,7 +578,7 @@ export class TranscriptSpeaker {
             this.speakViaSystemTts("");  // no text means: just advance queue
             return;
         }
-        const wavPath = join(tmpdir(), `atlas-tts-${randomUUID()}.wav`);
+        const wavPath = join(tmpdir(), `bhai-tts-${randomUUID()}.wav`);
         try {
             writeFileSync(wavPath, Buffer.concat([buildWavHeader(pcm.length), pcm]));
         } catch (err) {
@@ -608,10 +608,10 @@ export class TranscriptSpeaker {
         this.running = child;
         // Remember the temp file so attachChildHandlers can delete it once
         // playback exits. Any-cast because ChildProcess has no user slot.
-        (child as unknown as { __atlasTempFile?: string; __atlasSpawnTs?: number; __atlasExpectedMs?: number })
-            .__atlasTempFile = wavPath;
-        (child as unknown as { __atlasSpawnTs?: number }).__atlasSpawnTs = tSpawn;
-        (child as unknown as { __atlasExpectedMs?: number }).__atlasExpectedMs = Math.round(expectedSec * 1000);
+        (child as unknown as { __bhaiTempFile?: string; __bhaiSpawnTs?: number; __bhaiExpectedMs?: number })
+            .__bhaiTempFile = wavPath;
+        (child as unknown as { __bhaiSpawnTs?: number }).__bhaiSpawnTs = tSpawn;
+        (child as unknown as { __bhaiExpectedMs?: number }).__bhaiExpectedMs = Math.round(expectedSec * 1000);
         this.attachChildHandlers(child);
         // Pipeline: kick off synth of the NEXT queued sentence RIGHT NOW so
         // by the time afplay closes, its PCM is already (or nearly) ready.
@@ -677,13 +677,13 @@ export class TranscriptSpeaker {
         const onExit = (reason: "close" | "error", code?: number | null, signal?: NodeJS.Signals | null) => {
             if (fired) return;
             fired = true;
-            const meta = child as unknown as { __atlasTempFile?: string; __atlasSpawnTs?: number; __atlasExpectedMs?: number };
-            const actualMs = meta.__atlasSpawnTs ? Date.now() - meta.__atlasSpawnTs : -1;
-            const expectedMs = meta.__atlasExpectedMs ?? -1;
+            const meta = child as unknown as { __bhaiTempFile?: string; __bhaiSpawnTs?: number; __bhaiExpectedMs?: number };
+            const actualMs = meta.__bhaiSpawnTs ? Date.now() - meta.__bhaiSpawnTs : -1;
+            const expectedMs = meta.__bhaiExpectedMs ?? -1;
             const stillActive = this.running === child;
             const short = expectedMs > 0 && actualMs > 0 && actualMs < expectedMs * 0.9;
             console.log(`[SPEAKER] child ${reason} pid=${child.pid} code=${code} signal=${signal} actualMs=${actualMs} expectedMs=${expectedMs} short=${short} stillActive=${stillActive} qLen=${this.queue.length}`);
-            const path = meta.__atlasTempFile;
+            const path = meta.__bhaiTempFile;
             if (path) {
                 try { unlinkSync(path); } catch { /* already gone */ }
             }

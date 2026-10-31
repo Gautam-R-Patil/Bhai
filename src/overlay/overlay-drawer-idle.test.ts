@@ -6,8 +6,8 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-overlay-drawer-"));
-process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-overlay-drawer-"));
+process.env.BHAI_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
 const { state } = vi.hoisted(() => ({
     state: {
@@ -42,7 +42,7 @@ it("polls only while a task runs, and still sends its progress and its end", asy
     chat.initOverlayChat({} as never);
     await vi.waitFor(() => expect(state.hook).not.toBeNull());
     const ws = new WebSocket(
-        `ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`,
+        `ws://127.0.0.1:${process.env.BHAI_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`,
     );
     const got: Array<{ type: string; taskId?: string }> = [];
     ws.on("message", (d) => got.push(JSON.parse(String(d))));

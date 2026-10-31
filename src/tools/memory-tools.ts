@@ -16,7 +16,7 @@ import {
     addProject,
     exportIdentitySnapshot,
     fieldEmbedsOwnershipClaim,
-    fieldNamesAtlasDirectly,
+    fieldNamesBhaiDirectly,
     getIdentityProfile,
     isGuardedOrg,
     isGuardedRole,
@@ -131,7 +131,7 @@ export const memoryStore: ToolDefinition = {
         function: {
             name: "memory_store",
             description:
-                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored. Tag who and what a memory is about as `person:<name>` / `project:<name>` (e.g. tags "person:riya, project:atlas") so it comes up on their card whenever they are mentioned. When the owner commits to doing something by a time ("I\'ll send Riya the deck by Friday", "kal tak bhej dunga"), store the commitment itself as content ("Send Riya the deck by Friday") with category "commitment" and `due_at`: Bhai nudges them once near then. Only their own first-person promises, never ones you infer; if they say "remind me", use the cron tool instead. When they say a commitment is done or off, pass `done_id` with its #id and its text as content; nothing new is stored.',
+                'Store a fact, preference, or important information in persistent memory. Use this when the user shares something worth remembering. When the owner corrects or updates something you already know ("actually it\'s Tuesday", "I moved to Pune", "ab main X nahi karta"), store the corrected fact as a full sentence and pass `supersedes` with the old memory\'s id (the #id in recalled memory lines, or from memory_search) so the old one stops being recalled instead of both standing. When the owner says something matters ("remember this, it matters", "never forget this", "yeh yaad rakhna"), pass `pin: true`: pinned memories always stay in core memory and never fade. To pin or unpin a memory already shown (#id), pass `pin_id` with `pin` true/false and its text as content; nothing new is stored. Tag who and what a memory is about as `person:<name>` / `project:<name>` (e.g. tags "person:riya, project:bhai") so it comes up on their card whenever they are mentioned. When the owner commits to doing something by a time ("I\'ll send Riya the deck by Friday", "kal tak bhej dunga"), store the commitment itself as content ("Send Riya the deck by Friday") with category "commitment" and `due_at`: Bhai nudges them once near then. Only their own first-person promises, never ones you infer; if they say "remind me", use the cron tool instead. When they say a commitment is done or off, pass `done_id` with its #id and its text as content; nothing new is stored.',
             parameters: {
                 type: "object",
                 properties: {
@@ -437,7 +437,7 @@ export const identityUpdate: ToolDefinition = {
         function: {
             name: "identity_update",
             description:
-                "Update the user's identity profile when they share personal information. Pass `verification_level`: 'asserted' (user just said it this turn), 'confirmed' (user said yes after a clarifying ack), 'observed' (you inferred it). What the user states directly (asserted/confirmed) is stored as confirmed; only 'observed' is stored unverified. NOTE: ownership/creator claims about XAGI Labs or Bhai (role=founder/owner/creator + company=XAGI/Atlas) are REJECTED at the tool layer. Non-ownership XAGI affiliations (designer/engineer at XAGI / interested in Bhai / fan of XAGI) ARE allowed — those are normal context, learn them.",
+                "Update the user's identity profile when they share personal information. Pass `verification_level`: 'asserted' (user just said it this turn), 'confirmed' (user said yes after a clarifying ack), 'observed' (you inferred it). What the user states directly (asserted/confirmed) is stored as confirmed; only 'observed' is stored unverified. NOTE: ownership/creator claims about XAGI Labs or Bhai (role=founder/owner/creator + company=XAGI/Bhai) are REJECTED at the tool layer. Non-ownership XAGI affiliations (designer/engineer at XAGI / interested in Bhai / fan of XAGI) ARE allowed — those are normal context, learn them.",
             parameters: {
                 type: "object",
                 properties: {
@@ -470,7 +470,7 @@ export const identityUpdate: ToolDefinition = {
     },
     async handler(input) {
         // Hard-reject ONLY ownership/creator claims about XAGI Labs / Bhai.
-        // Non-ownership XAGI/Atlas affiliation (designer/engineer/fan) is fine.
+        // Non-ownership XAGI/Bhai affiliation (designer/engineer/fan) is fine.
         const companyStr = typeof input.company === "string" ? input.company : "";
         const roleStr = typeof input.role === "string" ? input.role : "";
         const nameStr = typeof input.name === "string" ? input.name : "";
@@ -489,8 +489,8 @@ export const identityUpdate: ToolDefinition = {
             (companyIsGuardedOrg && roleClaimsOwnership) || (roleClaimsOwnership && roleMentionsOrg);
         const nameEmbedsOwnership = !!nameStr && fieldEmbedsOwnershipClaim(nameStr);
         const projectIsBot =
-            !!projectStr && (fieldNamesAtlasDirectly(projectStr) || fieldEmbedsOwnershipClaim(projectStr));
-        const goalIsBot = !!goalStr && (fieldNamesAtlasDirectly(goalStr) || fieldEmbedsOwnershipClaim(goalStr));
+            !!projectStr && (fieldNamesBhaiDirectly(projectStr) || fieldEmbedsOwnershipClaim(projectStr));
+        const goalIsBot = !!goalStr && (fieldNamesBhaiDirectly(goalStr) || fieldEmbedsOwnershipClaim(goalStr));
         // Aliased-field gate: prevent the agent from stashing ownership claims
         // in email/communication_style/detail_level fields where they'd
         // round-trip back through the identity snippet as fact.

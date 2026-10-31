@@ -38,7 +38,7 @@ const execFileAsync = promisify(execFile);
  * System.Drawing (Windows), scrot/gnome-screenshot (Linux).
  */
 export async function takeScreenshot(): Promise<Buffer> {
-    const tmpPath = join(tmpdir(), `atlas_bridge_screenshot_${Date.now()}.png`);
+    const tmpPath = join(tmpdir(), `bhai_bridge_screenshot_${Date.now()}.png`);
     try {
         await captureScreenshot(tmpPath);
         const buffer = await fs.readFile(tmpPath);

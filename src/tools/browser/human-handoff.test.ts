@@ -15,7 +15,7 @@ const solverEntry = vi.fn(() => {
     throw new Error("solver must not be called");
 });
 
-vi.mock("./core.js", () => ({ ATLAS_HUD_JS: "() => {}", getActivePage, touchBrowserActivity: vi.fn() }));
+vi.mock("./core.js", () => ({ BHAI_HUD_JS: "() => {}", getActivePage, touchBrowserActivity: vi.fn() }));
 vi.mock("./chrome-bridge.js", () => ({
     getActiveExtensionTab: vi.fn(async () => ({ id: 7, url: "https://shop.test/login" })),
     isExtensionConnected: () => true,
@@ -210,15 +210,15 @@ describe("browser_wait_for_human", () => {
         expect(out.status).toBe("cancelled");
     }, 15_000);
 
-    it("ATLAS_CAPTCHA_HANDOFF_MS=0 turns the handoff off", async () => {
-        process.env.ATLAS_CAPTCHA_HANDOFF_MS = "0";
+    it("BHAI_CAPTCHA_HANDOFF_MS=0 turns the handoff off", async () => {
+        process.env.BHAI_CAPTCHA_HANDOFF_MS = "0";
         try {
             getActivePage.mockResolvedValue(fakePage(1_000_000));
             const out = JSON.parse(await browserWaitForHuman.handler({}));
             expect(out).toMatchObject({ status: "disabled", requires_user: true });
             expect(sent).toEqual([]);
         } finally {
-            delete process.env.ATLAS_CAPTCHA_HANDOFF_MS;
+            delete process.env.BHAI_CAPTCHA_HANDOFF_MS;
         }
     });
 

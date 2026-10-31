@@ -12,6 +12,7 @@
 //   6. recallClickSite returns null cold; recordClickSuccess then recall → hit
 //   7. perception-router skip-all-tiers returns null cleanly
 
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,13 +68,13 @@ async function run() {
 
     // 5. Kill-switches
     {
-        const TEST_DB = join(tmpdir(), `atlas_smoke_clickmem_${Date.now()}.db`);
+        const TEST_DB = join(tmpdir(), `bhai_smoke_clickmem_${Date.now()}.db`);
         const { recordClickSuccess, recallClickSite } = await import("../src/screen/click-memory.js");
-        process.env.ATLAS_NO_CLICK_MEMORY = "true";
+        process.env.BHAI_NO_CLICK_MEMORY = "true";
         recordClickSuccess({ app: "X", windowTitle: "W", elementLabel: "Y" }, 100, 100, 1000, 1000, { dbPath: TEST_DB });
         const r = recallClickSite({ app: "X", windowTitle: "W", elementLabel: "Y" }, { dbPath: TEST_DB });
-        check("ATLAS_NO_CLICK_MEMORY=true → recallClickSite returns null", r === null);
-        delete process.env.ATLAS_NO_CLICK_MEMORY;
+        check("BHAI_NO_CLICK_MEMORY=true → recallClickSite returns null", r === null);
+        delete process.env.BHAI_NO_CLICK_MEMORY;
         try {
             if (existsSync(TEST_DB)) unlinkSync(TEST_DB);
         } catch {
@@ -82,18 +83,18 @@ async function run() {
     }
 
     {
-        const STORE = join(tmpdir(), `atlas_smoke_drift_${Date.now()}.json`);
+        const STORE = join(tmpdir(), `bhai_smoke_drift_${Date.now()}.json`);
         const { setDriftStorePath, applyCalibration, recordCalibrationSample } = await import(
             "../src/screen/drift-calibration.js"
         );
         setDriftStorePath(STORE);
-        process.env.ATLAS_NO_DRIFT_CALIBRATION = "true";
+        process.env.BHAI_NO_DRIFT_CALIBRATION = "true";
         for (let i = 0; i < 10; i++) {
             recordCalibrationSample("mon", { x: i * 10, y: i * 7 }, { x: i * 10 + 50, y: i * 7 + 50 });
         }
         const out = applyCalibration("mon", 100, 200);
-        check("ATLAS_NO_DRIFT_CALIBRATION=true → applyCalibration is identity", out.x === 100 && out.y === 200);
-        delete process.env.ATLAS_NO_DRIFT_CALIBRATION;
+        check("BHAI_NO_DRIFT_CALIBRATION=true → applyCalibration is identity", out.x === 100 && out.y === 200);
+        delete process.env.BHAI_NO_DRIFT_CALIBRATION;
         try {
             if (existsSync(STORE)) unlinkSync(STORE);
         } catch {
@@ -103,7 +104,7 @@ async function run() {
 
     // 6. End-to-end click-memory round trip
     {
-        const TEST_DB = join(tmpdir(), `atlas_smoke_e2e_${Date.now()}.db`);
+        const TEST_DB = join(tmpdir(), `bhai_smoke_e2e_${Date.now()}.db`);
         const { recordClickSuccess, recallClickSite, closeClickMemory } = await import("../src/screen/click-memory.js");
         closeClickMemory();
         recordClickSuccess({ app: "Demo", windowTitle: "W", elementLabel: "Login" }, 360, 240, 720, 480, { dbPath: TEST_DB });

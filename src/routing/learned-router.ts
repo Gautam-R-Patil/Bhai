@@ -15,7 +15,7 @@
 //   model by Thompson sampling, so the evidence keeps up.
 // - Only failures that are the model's doing count: provider errors, a silent fallback
 //   to another model, and cancels are not held against it.
-// Kill switch: ATLAS_NO_LEARNED_ROUTER=true.
+// Kill switch: BHAI_NO_LEARNED_ROUTER=true.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -276,7 +276,7 @@ export interface Outcome {
 
 /** Fold one turn's outcome into the evidence. */
 export function recordOutcome(cls: TaskClass, armId: string, o: Outcome, now = Date.now()): void {
-    if (process.env.ATLAS_NO_LEARNED_ROUTER === "true") return;
+    if (process.env.BHAI_NO_LEARNED_ROUTER === "true") return;
     store = undefined; // re-read: an eval run (RECORD=1) or another process may have added evidence
     const st = stat(cls, armId, now);
     const w = o.success + o.failure;

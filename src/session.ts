@@ -23,10 +23,10 @@ const SESSION_FETCH_TIMEOUT_MS = 15_000;
 
 /**
  * Get the current session token. If no session exists or it's expired, creates a new one.
- * Returns null if authentication fails (no ATLAS_OTPLESS_USER_ID).
+ * Returns null if authentication fails (no BHAI_OTPLESS_USER_ID).
  */
 export async function getSessionToken(): Promise<string | null> {
-    const userId = process.env.ATLAS_OTPLESS_USER_ID;
+    const userId = process.env.BHAI_OTPLESS_USER_ID;
     if (!userId) return null;
 
     // Return cached token if still valid
@@ -74,9 +74,9 @@ export const sessionRetryAfterMs = (): number => _retryAfterMs;
  * Initialize session on startup. Call once during boot.
  */
 export async function initSession(): Promise<boolean> {
-    const userId = process.env.ATLAS_OTPLESS_USER_ID;
+    const userId = process.env.BHAI_OTPLESS_USER_ID;
     if (!userId) {
-        console.error("[Session] No ATLAS_OTPLESS_USER_ID — cannot create session");
+        console.error("[Session] No BHAI_OTPLESS_USER_ID — cannot create session");
         return false;
     }
 
@@ -123,7 +123,7 @@ export async function revokeCurrentSession(): Promise<void> {
  * Call this when an API call returns 401.
  */
 export async function handleAuthError(): Promise<string | null> {
-    const userId = process.env.ATLAS_OTPLESS_USER_ID;
+    const userId = process.env.BHAI_OTPLESS_USER_ID;
     if (!userId) return null;
 
     console.log("[Session] Token expired or invalid, re-authenticating...");
@@ -154,7 +154,7 @@ async function createSession(otplessUserId: string): Promise<void> {
             otplessUserId,
             deviceFingerprint: getDeviceFingerprint(),
             // Issued to this device at sign-in; the desktop app passes it in.
-            deviceSecret: process.env.ATLAS_DEVICE_SECRET,
+            deviceSecret: process.env.BHAI_DEVICE_SECRET,
             clientPublicKey,
             // Tell the server which KDF version the client is prepared
             // to use. Server echoes back the version it actually used

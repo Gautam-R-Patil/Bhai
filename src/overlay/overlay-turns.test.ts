@@ -7,8 +7,8 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-overlay-turns-"));
-process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-overlay-turns-"));
+process.env.BHAI_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
 let finish: ((text: string) => void) | undefined;
 vi.mock("../agent.js", async (orig) => ({
@@ -18,7 +18,7 @@ vi.mock("../agent.js", async (orig) => ({
 
 const chat = await import("./overlay-chat.js");
 chat.initOverlayChat({} as never);
-const url = `ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`;
+const url = `ws://127.0.0.1:${process.env.BHAI_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`;
 
 type Msg = { type: string; text?: string; busy?: boolean };
 function open(): Promise<{ ws: WebSocket; next: (type: string) => Promise<Msg> }> {

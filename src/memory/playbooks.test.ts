@@ -204,7 +204,7 @@ describe("playbook store", () => {
     let tl: typeof import("./task-learnings.js");
     beforeAll(async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playbook-"));
-        process.env.ATLAS_DATA_DIR = dir;
+        process.env.BHAI_DATA_DIR = dir;
         // A pruned store: one survivor whose id is past the entry count.
         const survivor = {
             id: "learn_250",

@@ -12,15 +12,15 @@ describe("Phase 1 — Foundation smoke test", () => {
 
     beforeEach(() => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-p1-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
     });
 
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("fresh boot creates library, no migrations, empty stats", async () => {
@@ -30,15 +30,15 @@ describe("Phase 1 — Foundation smoke test", () => {
         expect(stats.libraryRows).toBe(0);
         expect(stats.activeToolsCount).toBe(0);
 
-        const dbPath = join(process.env.ATLAS_HOME!, "data", "skill-library.db");
+        const dbPath = join(process.env.BHAI_HOME!, "data", "skill-library.db");
         expect(existsSync(dbPath)).toBe(true);
 
-        const telemetryPath = join(process.env.ATLAS_HOME!, "data", "forge-telemetry.jsonl");
+        const telemetryPath = join(process.env.BHAI_HOME!, "data", "forge-telemetry.jsonl");
         expect(existsSync(telemetryPath)).toBe(true);
     });
 
     it("boot with legacy tools migrates them", async () => {
-        const legacy = join(process.env.ATLAS_HOME!, "dynamic-tools");
+        const legacy = join(process.env.BHAI_HOME!, "dynamic-tools");
         mkdirSync(legacy, { recursive: true });
         writeFileSync(join(legacy, "send_sms.json"), JSON.stringify({
             name: "send_sms", description: "Send an SMS",
@@ -56,15 +56,15 @@ describe("Phase 1 — Foundation smoke test", () => {
     });
 
     it("kill switch disables everything", async () => {
-        process.env.ATLAS_NO_FORGE = "true";
+        process.env.BHAI_NO_FORGE = "true";
         await initForge({ embedFn: async () => new Float32Array(384) });
         expect(isForgeReady()).toBe(false);
         expect(listDynamicTools()).toEqual([]);
 
-        const dbPath = join(process.env.ATLAS_HOME!, "data", "skill-library.db");
+        const dbPath = join(process.env.BHAI_HOME!, "data", "skill-library.db");
         expect(existsSync(dbPath)).toBe(false);
 
-        delete process.env.ATLAS_NO_FORGE;
+        delete process.env.BHAI_NO_FORGE;
     });
 
     it("second boot is fast (under 100ms) when library is fresh", async () => {

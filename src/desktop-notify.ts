@@ -30,7 +30,7 @@ export function plainNotifyText(md: string, max = 200): string {
     return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
 
-const desktopListening = (): boolean => process.env.ATLAS_DESKTOP_NOTIFY === "1";
+const desktopListening = (): boolean => process.env.BHAI_DESKTOP_NOTIFY === "1";
 
 /** False when no desktop app is listening (standalone bot), so the caller can fall back. */
 export function notifyDesktop(

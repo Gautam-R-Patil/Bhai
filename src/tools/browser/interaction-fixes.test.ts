@@ -46,7 +46,7 @@ describe("browser_click_at", () => {
     it("fails fast on a label whose element is gone (no 30s Locator wait)", async (ctx) => {
         if (!page) return ctx.skip();
         await page.setContent(`<button id=old onclick="window.hit=1">Old</button>`);
-        const el = { label: 1, x: 30, y: 20, tag: "button", text: "Old", atlasId: "aria-1" };
+        const el = { label: 1, x: 30, y: 20, tag: "button", text: "Old", bhaiId: "aria-1" };
         // an aria-ref Locator handle (what the snapshot scan stores), then a stale ElementHandle
         for (const handle of [page.locator("#old"), await page.$("#old")]) {
             await page.setContent(`<button id=old onclick="window.hit=1">Old</button>`);

@@ -18,7 +18,7 @@ import { _containsSecretsTs, _sanitizeSecretsTs, sanitizeSecrets } from "../secr
 // full vault (500 values), so maskKnownValues' one big regex runs every time.
 let protect: (s: string) => string;
 beforeAll(async () => {
-    vi.stubEnv("ATLAS_NO_PROTECT_CACHE", "true");
+    vi.stubEnv("BHAI_NO_PROTECT_CACHE", "true");
     vi.resetModules();
     const vault = await import("../pii-vault.js");
     vi.unstubAllEnvs();

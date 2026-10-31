@@ -9,11 +9,11 @@ describe("desktop notifications", () => {
     beforeEach(() => {
         lines = [];
         vi.spyOn(process.stdout, "write").mockImplementation((s) => (lines.push(String(s)), true));
-        process.env.ATLAS_DESKTOP_NOTIFY = "1";
+        process.env.BHAI_DESKTOP_NOTIFY = "1";
     });
     afterEach(() => {
         vi.restoreAllMocks();
-        delete process.env.ATLAS_DESKTOP_NOTIFY;
+        delete process.env.BHAI_DESKTOP_NOTIFY;
     });
     const sent = () => lines.map((l) => JSON.parse(l.replace("##BHAI_NOTIFY##", "")));
     const long = () => Date.now() - LONG_TURN_MS;
@@ -45,7 +45,7 @@ describe("desktop notifications", () => {
     });
 
     it("says false without the desktop app, so callers fall back", () => {
-        delete process.env.ATLAS_DESKTOP_NOTIFY;
+        delete process.env.BHAI_DESKTOP_NOTIFY;
         expect(notifyDesktop("handoff", "Bhai", "tap")).toBe(false);
         closeDesktopNotification("x");
         expect(lines).toHaveLength(0);

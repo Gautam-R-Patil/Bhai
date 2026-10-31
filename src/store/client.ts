@@ -144,13 +144,13 @@ export async function getCategories(): Promise<CategoryInfo[]> {
 // ── Install Operations ────────────────────────────
 
 export async function getUserInstalls(): Promise<InstallWithItem[]> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) return [];
   return await convexQuery<InstallWithItem[]>("store/installs:getByUser", { userId });
 }
 
 export async function isItemInstalled(itemId: string): Promise<boolean> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) return false;
   return await convexQuery<boolean>("store/installs:isInstalled", { userId, itemId });
 }
@@ -159,7 +159,7 @@ export async function startInstall(
   itemId: string,
   version: string
 ): Promise<{ contentUrl: string; slug: string; type: StoreItemType; version: string }> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   return await convexMutation<{
     contentUrl: string;
@@ -170,19 +170,19 @@ export async function startInstall(
 }
 
 export async function confirmInstall(itemId: string): Promise<string> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   return await convexMutation<string>("store/installs:confirmInstall", { userId, itemId });
 }
 
 export async function uninstall(itemId: string): Promise<void> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   await convexMutation<void>("store/installs:uninstall", { userId, itemId });
 }
 
 export async function checkUpdates(): Promise<UpdateAvailable[]> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) return [];
   return await convexQuery<UpdateAvailable[]>("store/installs:checkUpdates", { userId });
 }
@@ -195,7 +195,7 @@ export async function getUpdateDownload(itemId: string): Promise<{
   newVersion: string;
   changelog?: string;
 }> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   return await convexMutation<{
     contentUrl: string;
@@ -208,13 +208,13 @@ export async function getUpdateDownload(itemId: string): Promise<{
 }
 
 export async function updateVersion(itemId: string, newVersion: string): Promise<void> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   await convexMutation<void>("store/installs:updateVersion", { userId, itemId, newVersion });
 }
 
 export async function setAutoUpdate(itemId: string, autoUpdate: boolean): Promise<void> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   await convexMutation<void>("store/installs:setAutoUpdate", { userId, itemId, autoUpdate });
 }
@@ -237,7 +237,7 @@ export async function getReviewSummary(itemId: string): Promise<ReviewSummary> {
 }
 
 export async function getUserReview(itemId: string): Promise<Review | null> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) return null;
   return await convexQuery<Review | null>("store/reviews:getUserReview", { userId, itemId });
 }
@@ -247,7 +247,7 @@ export async function submitReview(
   rating: number,
   opts: { title?: string; review?: string } = {}
 ): Promise<string> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   return await convexMutation<string>("store/reviews:submit", {
     userId,
@@ -259,7 +259,7 @@ export async function submitReview(
 }
 
 export async function deleteReview(reviewId: string): Promise<void> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   await convexMutation<void>("store/reviews:remove", { userId, reviewId });
 }
@@ -281,7 +281,7 @@ export async function getItemContentUrl(itemId: string): Promise<{
   version: string;
   permissions: string[];
 }> {
-  const userId = process.env.ATLAS_OTPLESS_USER_ID;
+  const userId = process.env.BHAI_OTPLESS_USER_ID;
   if (!userId) throw new Error("Not logged in");
   return await convexMutation<{
     url: string;

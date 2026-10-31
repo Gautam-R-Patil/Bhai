@@ -170,7 +170,7 @@ describe("in-app Chats (panel.html)", () => {
             '<div id="tab-chats" class="active"></div><div id="chatsThread"></div><button id="chatsSendBtn"></button><textarea id="chatsInput"></textarea>',
         );
         const listeners = [];
-        w.atlas = { chatSend: async () => ({ ok: true }), chatStop: () => {}, onChatEvent: (cb) => listeners.push(cb) };
+        w.bhai = { chatSend: async () => ({ ok: true }), chatStop: () => {}, onChatEvent: (cb) => listeners.push(cb) };
         w.eval(`
             let chatsOpenId = null;
             const markOpenChat = () => {}, loadChats = () => {}, loadRecentChats = () => {}, showToast = () => {};

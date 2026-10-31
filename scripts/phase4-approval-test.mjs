@@ -16,8 +16,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const tmpHome = mkdtempSync(join(tmpdir(), "atlas-phase4-approval-"));
-process.env.ATLAS_HOME = tmpHome;
+const tmpHome = mkdtempSync(join(tmpdir(), "bhai-phase4-approval-"));
+process.env.BHAI_HOME = tmpHome;
 
 const PASS = (msg) => console.log(`\x1b[32m✅ PASS\x1b[0m ${msg}`);
 const FAIL = (msg, detail) => {

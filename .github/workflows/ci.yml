@@ -44,7 +44,7 @@ jobs:
       - run: npm run test:hermetic
         env:
           # macOS has a committed binary: fail loudly if it stops loading.
-          ATLAS_REQUIRE_NATIVE: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
+          BHAI_REQUIRE_NATIVE: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
 
   # The codebase predates Biome formatting, so `biome ci .` fails on most files.
   # Only the files a pull request touches are checked, which formats the repo
@@ -98,7 +98,7 @@ jobs:
       - run: npm ci
       - run: npx vitest run src/security/pii-protect.parity.test.ts src/security/secrets-sanitizer.parity.test.ts
         env:
-          ATLAS_REQUIRE_NATIVE: "true"
+          BHAI_REQUIRE_NATIVE: "true"
 
   rust-quality:
     name: Rust quality

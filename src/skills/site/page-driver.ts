@@ -238,8 +238,8 @@ export const EXPECT_JS = (spec: ExpectSpec, arm: boolean, pre: { url: string; se
 // long-poll or an event stream is not progress), or after the cap whatever
 // happens, is a failed step the skill sees.
 const REQUEST_PROGRESS_MS = 5000;
-const expectIdleMs = () => Number(process.env.ATLAS_SITE_EXPECT_IDLE_MS ?? 8000);
-const expectCapMs = () => Number(process.env.ATLAS_SITE_EXPECT_CAP_MS ?? 30_000);
+const expectIdleMs = () => Number(process.env.BHAI_SITE_EXPECT_IDLE_MS ?? 8000);
+const expectCapMs = () => Number(process.env.BHAI_SITE_EXPECT_CAP_MS ?? 30_000);
 
 // ── The submit's verdict ──────────────────────
 const UNCLEAR: CommitVerdict = { verdict: "unclear" };

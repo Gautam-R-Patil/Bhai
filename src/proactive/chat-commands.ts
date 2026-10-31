@@ -74,7 +74,7 @@ export async function tryProactiveCommand(
 
     // `shut up` / `bhai shut up` / `bhai, shut up` / `be quiet`
     if (/^(bhai,?\s+)?shut up$/.test(lower) || /^(bhai,?\s+)?be quiet$/.test(lower)) {
-        process.env.ATLAS_PROACTIVE_DISABLE = "true";
+        process.env.BHAI_PROACTIVE_DISABLE = "true";
         try {
             setQuiet(opts.configPath, true); // survives a restart (it used to resume on its own)
         } catch {
@@ -89,7 +89,7 @@ export async function tryProactiveCommand(
         (/^(bhai,?\s+)?resume$/.test(lower) || /^(bhai,?\s+)?come back$/.test(lower))
         && !/^(bhai,?\s+)?resume\s+monitor/i.test(lower)
     ) {
-        delete process.env.ATLAS_PROACTIVE_DISABLE;
+        delete process.env.BHAI_PROACTIVE_DISABLE;
         clearQuiet(); // a "not now" or serious-moment hold too
         try {
             setQuiet(opts.configPath, false);
@@ -146,7 +146,7 @@ export async function tryProactiveCommand(
         for (const ch of CHANNELS) {
             lines.push(`- ${ch}: ${cfg.postures[ch]}`);
         }
-        if (process.env.ATLAS_PROACTIVE_DISABLE === "true") {
+        if (process.env.BHAI_PROACTIVE_DISABLE === "true") {
             lines.push("");
             lines.push(
                 "Proactive messages are globally disabled right now. Say 'bhai resume' to re-enable.",

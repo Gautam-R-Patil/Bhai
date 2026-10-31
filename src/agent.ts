@@ -1327,8 +1327,8 @@ async function executeAndProcessToolCall(
     // Fence attacker-influenceable tool output (web/browser/MCP/research) so the
     // model treats it as data, not instructions (indirect prompt-injection
     // defense). Applied after offload/truncate so both the inline result and any
-    // disk-offload preview are covered. Disable with ATLAS_NO_UNTRUSTED_WRAP=true.
-    if (process.env.ATLAS_NO_UNTRUSTED_WRAP !== "true") {
+    // disk-offload preview are covered. Disable with BHAI_NO_UNTRUSTED_WRAP=true.
+    if (process.env.BHAI_NO_UNTRUSTED_WRAP !== "true") {
         try {
             const { isUntrustedToolResult, wrapUntrustedToolResult } = await import("./context-scrubber.js");
             if (isUntrustedToolResult(fnName)) {
@@ -2047,11 +2047,11 @@ async function _runAgentBody(
         (requestedCategories ?? []).every((c) => GUI_LOOP_CATEGORIES.has(c));
 
     // ── Auto Plan Mode (coding intent only) ──
-    // Off by default — opt in with ATLAS_AUTO_PLAN_MODE=true.
+    // Off by default — opt in with BHAI_AUTO_PLAN_MODE=true.
     // Never triggers for sub-agent calls (historyFork) or non-coding tasks.
     // Fail-open: any classifier error leaves plan mode untouched.
     try {
-        if (!isForked && process.env.ATLAS_AUTO_PLAN_MODE === "true" && !isPlanMode() && rawUserMessage) {
+        if (!isForked && process.env.BHAI_AUTO_PLAN_MODE === "true" && !isPlanMode() && rawUserMessage) {
             const taskType = detectTaskType(rawUserMessage);
             if (taskType === "coding") {
                 const complexity = classifyComplexity(rawUserMessage);
@@ -2173,7 +2173,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
     let promiseNudged = false; // "I'll check" with no tool call: one push to actually do it
     let lastMetaNudgeIter = -100;
     // P5.3: at most ONE adversarial progress-judge call per stuck turn (Haiku),
-    // and only when ATLAS_PROGRESS_JUDGE=true. Turn-scoped, reset per runAgent.
+    // and only when BHAI_PROGRESS_JUDGE=true. Turn-scoped, reset per runAgent.
     let judgeFired = false;
     // A2: cross-iteration dispatcher state — drives escalate/replan/critics/ask_user.
     const interventionState: InterventionState = createInterventionState();
@@ -2183,7 +2183,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
     // Per-turn loop guardrail — catches a single tool retrying identical args
     // (a spiral the whole-batch no-progress guard below misses). Warn-only
-    // unless ATLAS_TOOL_LOOP_HARDSTOP=true.
+    // unless BHAI_TOOL_LOOP_HARDSTOP=true.
     const guardrailState = createGuardrailState();
 
     // Hard loop guard: count consecutive tool batches where EVERY call failed
@@ -2194,7 +2194,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
     // narrow: only ALL-failed/empty batches count, polling tools are exempt,
     // and any usable output resets the streak — so legitimate long/iterative
     // work is never cut short. Env-tunable; 0 disables.
-    const NO_PROGRESS_LIMIT = Number(process.env.ATLAS_NO_PROGRESS_LIMIT ?? "8");
+    const NO_PROGRESS_LIMIT = Number(process.env.BHAI_NO_PROGRESS_LIMIT ?? "8");
     let noProgressStreak = 0;
 
     // Circuit breaker — trips after sustained failures or no-progress
@@ -2202,7 +2202,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
 
     let lastLlmError = ""; // the last model error this turn (to say "out of credits" plainly)
     // Hard stop for a turn that never converges (each step costs credits).
-    const MAX_AGENT_ITERATIONS = Number(process.env.ATLAS_MAX_ITERATIONS ?? "60");
+    const MAX_AGENT_ITERATIONS = Number(process.env.BHAI_MAX_ITERATIONS ?? "60");
 
     const stopped = (): AgentResponse => {
         console.log(`  🛑 Task cancelled by user`);
@@ -2242,7 +2242,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // Metacognition-driven nudge. A2: instead of a single one-shot nudge,
         // re-fire when struggle/loop PERSISTS — a stuck agent that ignored the
         // first nudge gets steered again — but on a cooldown so we never spam.
-        // Disable the repeat behavior entirely with ATLAS_NO_META_INTERVENTIONS=true
+        // Disable the repeat behavior entirely with BHAI_NO_META_INTERVENTIONS=true
         // (reverts to the original one-shot nudge).
         if (iterations > 3) {
             // C: stamp the (taskType, modelTier) the calibrator keys on. The model
@@ -2253,7 +2253,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 modelTier: interventionState.forcedModel ?? undefined,
             });
             const metaCheck = assess(metaState);
-            const interventionsOff = process.env.ATLAS_NO_META_INTERVENTIONS === "true";
+            const interventionsOff = process.env.BHAI_NO_META_INTERVENTIONS === "true";
             const NUDGE_COOLDOWN = 5;
             const cooldownPassed = iterations - lastMetaNudgeIter >= NUDGE_COOLDOWN;
             const shouldNudge = metaCheck.loopDetected || metaCheck.struggleDetected;
@@ -2274,7 +2274,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 );
             }
             // P5.3 — opt-in adversarial progress judge. Fires AT MOST ONCE per stuck
-            // turn, and ONLY when ATLAS_PROGRESS_JUDGE=true (DEFAULT OFF). Healthy
+            // turn, and ONLY when BHAI_PROGRESS_JUDGE=true (DEFAULT OFF). Healthy
             // turns (no loop AND repeats<3 AND confidence≥0.35) never enter this
             // branch → ZERO added LLM cost in the default config. When it fires it
             // makes exactly ONE Haiku call; its likely_fix overrides the heuristic
@@ -2303,7 +2303,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // A2: make MetaAssessment.intervention ACT. The text nudge above is the
             // fallback; this dispatches the computed enum (escalate/replan/critics/
             // ask_user) into concrete cooldown-gated, fail-open actions. On a healthy
-            // turn (intervention === "none") or with ATLAS_NO_META_INTERVENTIONS=true
+            // turn (intervention === "none") or with BHAI_NO_META_INTERVENTIONS=true
             // it is a no-op with ZERO added cost. Awaited because escalate/ask_user
             // set state consumed by THIS iteration's model pick below.
             await applyIntervention({
@@ -2622,7 +2622,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     /* task-learnings not initialized */
                 }
 
-                // ── Project memory (ATLAS.md walk-up) ──
+                // ── Project memory (BHAI.md walk-up) ──
                 // Only for coding-classified queries to avoid injecting
                 // project conventions into chat/research flows.
                 try {
@@ -2643,7 +2643,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // compared to the previous serial flow.
                 const cwd = process.cwd();
                 const repoMapTask = (async () => {
-                    if (process.env.ATLAS_NO_REPO_MAP === "true") return null;
+                    if (process.env.BHAI_NO_REPO_MAP === "true") return null;
                     try {
                         const { generateRepoMap } = await import("./tools/repo-map.js");
                         const map = await generateRepoMap(cwd, {
@@ -2674,7 +2674,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                 // surface in repo_map/architecture) for embedded instructions.
                 // Fails OPEN: scan error or kill-switch → inject as before.
                 const guardContext = async (label: string, body: string | null): Promise<string | null> => {
-                    if (!body || process.env.ATLAS_NO_THREAT_SCAN === "true") return body;
+                    if (!body || process.env.BHAI_NO_THREAT_SCAN === "true") return body;
                     try {
                         const { scanForThreats } = await import("./security/threat-patterns.js");
                         const r = scanForThreats(body, "context");
@@ -2708,7 +2708,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             // Tells the LLM which shell, screenshot engine, clipboard engine, OCR
             // tool, and automation helpers are actually available at runtime so it
             // avoids calling tools that will fail on this platform.
-            if (process.env.ATLAS_NO_CAPABILITY_INJECTION !== "true") {
+            if (process.env.BHAI_NO_CAPABILITY_INJECTION !== "true") {
                 try {
                     const { getPlatformCapabilities, formatCapabilitiesForContext } = await import(
                         "./utils/platform-capabilities.js"
@@ -2929,10 +2929,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             try {
                 // W2: pull persona from identity.extra.persona once per turn,
                 // narrow via asPersona, and pass into the dynamic context.
-                // ATLAS_NO_PERSONA_BIAS=true short-circuits both this read
+                // BHAI_NO_PERSONA_BIAS=true short-circuits both this read
                 // and the eventual prompt module (in dynamic-assembler).
                 let _personaForCtx: import("./prompts/persona-bias.js").Persona | undefined;
-                if (process.env.ATLAS_NO_PERSONA_BIAS !== "true") {
+                if (process.env.BHAI_NO_PERSONA_BIAS !== "true") {
                     try {
                         const idMod = await import("./memory/identity.js");
                         const biasMod = await import("./prompts/persona-bias.js");
@@ -3063,8 +3063,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                     // so we can see which subsystems are pulling weight vs
                     // returning empty. Enabled by default (low log volume,
                     // fires once per first-iteration turn); silence via
-                    // ATLAS_MEMORY_TELEMETRY=false.
-                    if (process.env.ATLAS_MEMORY_TELEMETRY !== "false") {
+                    // BHAI_MEMORY_TELEMETRY=false.
+                    if (process.env.BHAI_MEMORY_TELEMETRY !== "false") {
                         const shapes = parts.map((p) => {
                             const header = (p.match(/^[^\n]+/)?.[0] ?? "").slice(0, 40).replace(/\s+/g, " ");
                             return `${header}=${p.length}c`;
@@ -3257,7 +3257,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             !unhingedTurn &&
             turnTier !== "complex" &&
             toolSelection.classification &&
-            process.env.ATLAS_NO_LEARNED_ROUTER !== "true" &&
+            process.env.BHAI_NO_LEARNED_ROUTER !== "true" &&
             !opusWarranted(rawUserMessage, errorCount, modelHint)
         ) {
             turnClass = learnedRouter.classifyTurn(toolSelection.classification, hasMediaThisIter);
@@ -3417,10 +3417,10 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // Skip the ~14K-token Sonnet plan for UNAMBIGUOUS single-domain tasks:
         // the classifier was confident AND only one action-category is in play.
         // Genuinely multi-domain or ambiguous tasks still get a plan. Tunable
-        // via ATLAS_ALWAYS_ORCHESTRATE=true to restore the old always-on path.
+        // via BHAI_ALWAYS_ORCHESTRATE=true to restore the old always-on path.
         const classifierConf = toolSelection.classification?.confidence ?? 0;
         const unambiguousSingleStep =
-            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" && actionCategoryCount <= 1 && classifierConf >= 0.85;
+            process.env.BHAI_ALWAYS_ORCHESTRATE !== "true" && actionCategoryCount <= 1 && classifierConf >= 0.85;
 
         // ── Simple GUI/messaging fast-path gate ──
         // "open WhatsApp and send a message" classifies as cats=[os_control,
@@ -3450,8 +3450,8 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             / then |, then|after that| followed by /i.test(rawUserMessage) ||
             (rawUserMessage.match(/\b(?:and|&)\b/gi)?.length ?? 0) >= 2;
         const simpleGuiFastPath =
-            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
-            process.env.ATLAS_NO_GUI_FASTPATH !== "true" &&
+            process.env.BHAI_ALWAYS_ORCHESTRATE !== "true" &&
+            process.env.BHAI_NO_GUI_FASTPATH !== "true" &&
             allCatsSimple &&
             !multiStepIntent &&
             !multiAppOrChained &&
@@ -3461,7 +3461,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
         // chat turn doesn't need a plan however many categories it touches.
         const turnCls = toolSelection.classification;
         const classifierSaysSingleStep =
-            process.env.ATLAS_ALWAYS_ORCHESTRATE !== "true" &&
+            process.env.BHAI_ALWAYS_ORCHESTRATE !== "true" &&
             !!turnCls?.tier &&
             !turnCls.multi_step &&
             turnCls.tier !== "complex" &&
@@ -3481,9 +3481,9 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             try {
                 const planStart = Date.now();
                 // Dynamic plan-model routing by task complexity (DeepSeek/Gemini/Sonnet).
-                // ATLAS_NO_DYNAMIC_ORCHESTRATOR forces "complex" → Sonnet (old behavior).
+                // BHAI_NO_DYNAMIC_ORCHESTRATOR forces "complex" → Sonnet (old behavior).
                 const orchComplexity =
-                    process.env.ATLAS_NO_DYNAMIC_ORCHESTRATOR === "true"
+                    process.env.BHAI_NO_DYNAMIC_ORCHESTRATOR === "true"
                         ? "complex"
                         : classifyOrchestratorComplexity(rawUserMessage, {
                               activeCategories: activeCategories || [],
@@ -3492,7 +3492,7 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
                               actionCategoryCount,
                           });
                 const orchPick = pickOrchestratorModel(orchComplexity);
-                const orchShadow = process.env.ATLAS_ORCH_SHADOW === "true";
+                const orchShadow = process.env.BHAI_ORCH_SHADOW === "true";
                 const planModel = orchShadow ? MODELS.SONNET : orchPick.model;
                 const planThinking = orchShadow ? "low" : orchPick.thinkingLevel;
                 console.log(
@@ -4114,7 +4114,7 @@ PLAN:`,
             // mode that no other guard catches (the persistence-nudge fires
             // on count-of-tool-calls, not on whether the actions were
             // verified). Capped at one fire per run via verifyGate.nudgedThisRun.
-            // Kill-switch: ATLAS_NO_VERIFY_GATE=true disables.
+            // Kill-switch: BHAI_NO_VERIFY_GATE=true disables.
             if (verifyGateFires(verifyGate, responseText)) {
                 console.log(
                     `  🔍 Verify gate: ${verifyGate.lastMutator} mutated UI but no verification ran — forcing one more iteration`,
@@ -4415,7 +4415,7 @@ PLAN:`,
 
             // Credits deducted per-API-call in llm.ts
             if (_harnessTraceId) finalizeTrace(_harnessTraceId, true);
-            if (process.env.ATLAS_NO_FORGE_VERIFIER !== "true") {
+            if (process.env.BHAI_NO_FORGE_VERIFIER !== "true") {
                 import("./forge/pending-consumer.js")
                     .then(({ consumeOnePending }) => consumeOnePending())
                     .catch((e: Error) => console.warn("[forge] pending consume failed:", e.message));
@@ -4507,7 +4507,7 @@ PLAN:`,
 
             // ── Per-turn loop guardrail: identical-args repeat detection ──
             // Appends a steering hint when the same tool keeps failing with the
-            // same args. Warn-only unless ATLAS_TOOL_LOOP_HARDSTOP=true.
+            // same args. Warn-only unless BHAI_TOOL_LOOP_HARDSTOP=true.
             const guard = recordGuardrailCall(guardrailState, {
                 fnName: r.fnName,
                 fnArgs: r.fnArgs,
@@ -4561,7 +4561,7 @@ PLAN:`,
         //   • genuinely-empty-but-successful ops (mkdir, mv, grep-no-match)
         // Long-running WORK delegates out via start_long_task (handled below)
         // and never grinds this loop, so this only catches interactive spirals.
-        // Disable entirely with ATLAS_NO_PROGRESS_LIMIT=0.
+        // Disable entirely with BHAI_NO_PROGRESS_LIMIT=0.
         const LOOP_EXEMPT_TOOLS = new Set([
             "shell_check_process",
             "shell_wait_process",

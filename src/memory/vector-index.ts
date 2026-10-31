@@ -97,7 +97,7 @@ loadNativeModule();
 
 // ── Constants ─────────────────────────────────
 
-const DATA_DIR = process.env.ATLAS_DATA_DIR || path.resolve("data");
+const DATA_DIR = process.env.BHAI_DATA_DIR || path.resolve("data");
 const INDEX_PATH = path.join(DATA_DIR, "memory.hnsw.json");
 const M = 16; // Max links per node per layer
 const EF_CONSTRUCTION = 200; // Build-time search width (higher = better recall)

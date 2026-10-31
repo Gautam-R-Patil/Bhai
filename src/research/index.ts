@@ -375,7 +375,7 @@ To dig deeper into a FINISHED research ("go deeper on X", "now compare the top t
         // follow-up messages — each one is a 15-minute, 200-source, multi-MB
         // job. 3 concurrent is plenty (and matches what the rest of the
         // system can pipe back to the user without spamming).
-        const MAX_CONCURRENT_RESEARCH = Number(process.env.ATLAS_MAX_CONCURRENT_RESEARCH) || 3;
+        const MAX_CONCURRENT_RESEARCH = Number(process.env.BHAI_MAX_CONCURRENT_RESEARCH) || 3;
         let runningCount = 0;
         for (const r of activeResearches.values()) {
             if (r.status === "running") runningCount++;

@@ -20,8 +20,8 @@ vi.mock("../skills/site/mint/minter.js", async (orig) => ({
 }));
 
 const dataDir = mkdtempSync(path.join(tmpdir(), "site-mint-notify-"));
-const prevDataDir = process.env.ATLAS_DATA_DIR;
-process.env.ATLAS_DATA_DIR = dataDir;
+const prevDataDir = process.env.BHAI_DATA_DIR;
+process.env.BHAI_DATA_DIR = dataDir;
 const trace = path.join(dataDir, "site-mint", "traces", "t_1");
 mkdirSync(path.join(trace, "pages"), { recursive: true });
 writeFileSync(path.join(trace, "meta.json"), JSON.stringify({ id: "t_1", domain: "shop.test" }));
@@ -67,8 +67,8 @@ async function start(r: MintResult) {
 
 beforeEach(() => dispatch.mockClear());
 afterAll(() => {
-    if (prevDataDir === undefined) delete process.env.ATLAS_DATA_DIR;
-    else process.env.ATLAS_DATA_DIR = prevDataDir;
+    if (prevDataDir === undefined) delete process.env.BHAI_DATA_DIR;
+    else process.env.BHAI_DATA_DIR = prevDataDir;
 });
 
 describe("the owner is told when a mint ends", () => {

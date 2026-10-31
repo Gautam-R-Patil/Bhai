@@ -13,7 +13,7 @@ import {
     setDriftStorePath,
 } from "../drift-calibration.js";
 
-const TEST_STORE = join(tmpdir(), `atlas_drift_test_${Date.now()}.json`);
+const TEST_STORE = join(tmpdir(), `bhai_drift_test_${Date.now()}.json`);
 
 describe("drift calibration", () => {
     beforeEach(() => {
@@ -217,18 +217,18 @@ describe("defensive guards", () => {
         expect(Number.isFinite(r.y)).toBe(true);
     });
 
-    it("ATLAS_NO_DRIFT_CALIBRATION kill-switch makes everything a no-op", () => {
-        const orig = process.env.ATLAS_NO_DRIFT_CALIBRATION;
+    it("BHAI_NO_DRIFT_CALIBRATION kill-switch makes everything a no-op", () => {
+        const orig = process.env.BHAI_NO_DRIFT_CALIBRATION;
         try {
-            process.env.ATLAS_NO_DRIFT_CALIBRATION = "true";
+            process.env.BHAI_NO_DRIFT_CALIBRATION = "true";
             for (let i = 0; i < 10; i++) {
                 recordCalibrationSample("mac-0", { x: i * 10, y: i * 7 }, { x: i * 10 + 50, y: i * 7 + 50 });
             }
             const r = applyCalibration("mac-0", 100, 100);
             expect(r).toEqual({ x: 100, y: 100 });
         } finally {
-            if (orig === undefined) delete process.env.ATLAS_NO_DRIFT_CALIBRATION;
-            else process.env.ATLAS_NO_DRIFT_CALIBRATION = orig;
+            if (orig === undefined) delete process.env.BHAI_NO_DRIFT_CALIBRATION;
+            else process.env.BHAI_NO_DRIFT_CALIBRATION = orig;
         }
     });
 });

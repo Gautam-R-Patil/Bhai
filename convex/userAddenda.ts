@@ -5,6 +5,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { bhaiEnv } from "./envCompat";
 
 // Reserved slugs the bot cannot use for addenda (would collide with core prompts).
 const RESERVED_SLUGS = new Set([
@@ -323,12 +324,12 @@ const STALE_ADDENDUM_MS = 30 * 24 * 60 * 60 * 1000;
 // Nightly global sweep (no-arg, matches the other crons in crons.ts). Retires
 // active addenda with hits === 0 not touched in STALE_ADDENDUM_MS. Bounded per
 // run so a backlog can't exceed the mutation row limit. Only meaningful once
-// ATLAS_ADDENDA_HITS is enabled in the deployment env (otherwise hits stay 0
+// BHAI_ADDENDA_HITS is enabled in the deployment env (otherwise hits stay 0
 // and the sweep would retire everything) — so it self-gates on that flag.
 export const sweepAllStaleAddenda = internalMutation({
   args: {},
   handler: async (ctx) => {
-    if (process.env.ATLAS_ADDENDA_HITS !== "true") return { retired: 0, skipped: "hits-tracking-disabled" };
+    if (bhaiEnv("ADDENDA_HITS") !== "true") return { retired: 0, skipped: "hits-tracking-disabled" };
     const cutoff = Date.now() - STALE_ADDENDUM_MS;
     // No global by_active index exists (only user-scoped); a bounded full scan
     // is fine for a nightly job and matches the other global sweeps in crons.ts.

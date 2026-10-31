@@ -121,7 +121,7 @@ const REFUSAL = /\b(can['’]?t|cannot|unable to|won['’]?t|not able to)\b[^.]{
 const DEFAULT_MODELS = "azure/gpt-6.1-terra,azure/gpt-6-astra,azure/gpt-5.4";
 const refusals = new Map<string, number>(); // some models refuse now and then; skip one only after two
 function models(): string[] {
-    const list = (process.env.ATLAS_CAPTCHA_MODELS || DEFAULT_MODELS)
+    const list = (process.env.BHAI_CAPTCHA_MODELS || DEFAULT_MODELS)
         .split(",")
         .map((m) => m.trim())
         .filter((m) => m && (refusals.get(m) ?? 0) < 2);
@@ -323,9 +323,9 @@ export async function snapshot(d: CaptchaDriver, frame: Rect, tiles: Rect[], gri
 }
 
 let dumpSeq = 0;
-/** ATLAS_CAPTCHA_DEBUG_DIR: keep each image the model saw and its reply, for tuning. */
+/** BHAI_CAPTCHA_DEBUG_DIR: keep each image the model saw and its reply, for tuning. */
 async function debugDump(image: string, text: string): Promise<void> {
-    const dir = process.env.ATLAS_CAPTCHA_DEBUG_DIR;
+    const dir = process.env.BHAI_CAPTCHA_DEBUG_DIR;
     if (!dir) return;
     const { mkdir, writeFile } = await import("node:fs/promises");
     const base = `${dir}/${String(++dumpSeq).padStart(3, "0")}`;
@@ -352,7 +352,7 @@ async function callModel(model: string, prompt: string, image: string | null): P
         const resp = await Promise.race([
             _llm.chat({ messages, systemPrompt: SYSTEM, modelOverride: model, lean: true }),
             new Promise<null>((r) => {
-                timer = setTimeout(() => r(null), Number(process.env.ATLAS_CAPTCHA_TIMEOUT_MS) || 45_000); // local models can be slow
+                timer = setTimeout(() => r(null), Number(process.env.BHAI_CAPTCHA_TIMEOUT_MS) || 45_000); // local models can be slow
             }),
         ]);
         const text = resp?.choices?.[0]?.message?.content;
@@ -418,7 +418,7 @@ const sameTiles = (a: Answer, b: Answer) =>
     a.unsolvable === b.unsolvable && [...new Set(a.answer)].sort().join() === [...new Set(b.answer)].sort().join();
 
 /**
- * Tiles: the first two models (ATLAS_CAPTCHA_MODELS) answer together; if they agree
+ * Tiles: the first two models (BHAI_CAPTCHA_MODELS) answer together; if they agree
  * that's it, else the next one votes and each tile goes with the majority. Grid
  * answers (cells to click or drag) don't vote well, since two right answers can
  * name different cells, so those take the first usable answer down the list.
@@ -558,14 +558,14 @@ async function blank(d: CaptchaDriver, r: Rect, parts: Rect[] = [r]): Promise<bo
 
 /**
  * True once the widget holds a response token. `solved` is captcha.ts's token check
- * (passed in to keep this file free of an import cycle). Models: ATLAS_CAPTCHA_MODELS.
+ * (passed in to keep this file free of an import cycle). Models: BHAI_CAPTCHA_MODELS.
  */
 export async function solveWithVision(
     page: Page,
     solved: (page: unknown) => Promise<boolean>,
     opts: { maxRounds?: number; signal?: AbortSignal; driver?: CaptchaDriver } = {},
 ): Promise<boolean> {
-    if (!_llm || process.env.ATLAS_NO_CAPTCHA_VISION === "true") return false;
+    if (!_llm || process.env.BHAI_NO_CAPTCHA_VISION === "true") return false;
     const d = opts.driver ?? playwrightDriver(page);
     if (!d) return false;
     const maxRounds = opts.maxRounds ?? 12; // one model call per challenge page

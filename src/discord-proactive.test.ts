@@ -34,7 +34,7 @@ vi.mock("discord.js", () => {
 });
 
 const dir = mkdtempSync(join(tmpdir(), "discord-proactive-"));
-process.env.ATLAS_DATA_DIR = dir;
+process.env.BHAI_DATA_DIR = dir;
 process.env.DISCORD_BOT_TOKEN = "t";
 process.env.OWNER_DISCORD_IDS = "A,B";
 const { initDiscord, sendDiscordProactiveMessage } = await import("./discord.js");

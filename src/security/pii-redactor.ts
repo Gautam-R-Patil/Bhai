@@ -89,10 +89,10 @@ const OTP_RE =
 // The one form the policy doesn't cover: a script setting a cookie.
 const JS_COOKIE_RE = /\bdocument\.cookie\s*=\s*["'`]([^"'`\r\n]+)/gi;
 
-// ATLAS_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
+// BHAI_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
 // same spans (pii-protect.parity.test.ts). An error napi throws falls back to TS;
 // a Rust panic aborts the process (panic = "abort"), so the port must not panic.
-const NATIVE_PROTECT = process.env.ATLAS_NATIVE_PROTECT === "true";
+const NATIVE_PROTECT = process.env.BHAI_NATIVE_PROTECT === "true";
 
 export function findPii(text: string): PiiMatch[] {
     if (NATIVE_PROTECT && text) {

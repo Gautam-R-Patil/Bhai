@@ -41,10 +41,10 @@ describe("Observer", () => {
     const originalEnv = { ...process.env };
 
     beforeEach(() => {
-        dir = mkdtempSync(join(tmpdir(), "atlas-obs-"));
+        dir = mkdtempSync(join(tmpdir(), "bhai-obs-"));
         configPath = join(dir, "proactive-config.json");
         for (const k of Object.keys(process.env)) {
-            if (k.startsWith("ATLAS_PROACTIVE")) delete process.env[k];
+            if (/^(?:BHAI|ATLAS)_PROACTIVE/.test(k)) delete process.env[k];
         }
     });
 
@@ -66,15 +66,15 @@ describe("Observer", () => {
         obs.stop();
     });
 
-    it("rejects when ATLAS_PROACTIVE_DISABLE=true", () => {
-        process.env.ATLAS_PROACTIVE_DISABLE = "true";
+    it("rejects when BHAI_PROACTIVE_DISABLE=true", () => {
+        process.env.BHAI_PROACTIVE_DISABLE = "true";
         const obs = new Observer({ llm: null as never, configPath });
         expect(obs.enqueue(validIntent())).toBe(false);
         obs.stop();
     });
 
     it("rejects when source is disabled", () => {
-        process.env.ATLAS_PROACTIVE_DISABLE_SOURCES = "memory_anticipation";
+        process.env.BHAI_PROACTIVE_DISABLE_SOURCES = "memory_anticipation";
         const obs = new Observer({ llm: null as never, configPath });
         expect(obs.enqueue(validIntent())).toBe(false);
         obs.stop();
@@ -93,7 +93,7 @@ describe("Observer.tuneSourceWeights", () => {
     let configPath: string;
 
     beforeEach(() => {
-        dir = mkdtempSync(join(tmpdir(), "atlas-obs-tune-"));
+        dir = mkdtempSync(join(tmpdir(), "bhai-obs-tune-"));
         configPath = join(dir, "proactive-config.json");
     });
 
@@ -201,7 +201,7 @@ describe("owner-memory nudges", () => {
     it("go to the owners only and give the slot back when the sender refuses", async () => {
         const native = await import("../../native/index.js");
         const { registerChannelSender } = await import("../tools/channel-send.js");
-        const dir = mkdtempSync(join(tmpdir(), "atlas-obs-own-"));
+        const dir = mkdtempSync(join(tmpdir(), "bhai-obs-own-"));
         const calls: unknown[][] = [];
         registerChannelSender("telegram", async (...args) => {
             calls.push(args);
@@ -230,7 +230,7 @@ describe("owner-memory nudges", () => {
 
     it("a morning batch that doesn't go out gives back its one slot, once, with every topic", async () => {
         const native = await import("../../native/index.js");
-        const dir = mkdtempSync(join(tmpdir(), "atlas-obs-batch-"));
+        const dir = mkdtempSync(join(tmpdir(), "bhai-obs-batch-"));
         const obs = new Observer({ llm: null as never, configPath: join(dir, "c.json") });
         for (const id of ["m1", "m2"]) {
             expect(obs.enqueue({ ...validIntent(), id, payload: { kind: "tasks_today", text: id } })).toBe(true);

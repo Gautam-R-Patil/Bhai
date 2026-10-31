@@ -642,7 +642,8 @@ export class ChromeExtensionBackend implements BrowserBackend {
                 y: number;
                 tag: string;
                 text: string;
-                atlasId: string;
+                bhaiId?: string;
+                atlasId?: string; // an extension from before the rename sends this instead
                 editorType?: string;
             }>;
         };
@@ -654,7 +655,7 @@ export class ChromeExtensionBackend implements BrowserBackend {
             y: e.y,
             tag: e.tag,
             text: e.text,
-            atlasId: e.atlasId,
+            bhaiId: e.bhaiId ?? e.atlasId ?? "",
             handle: undefined, // No Playwright handles in Chrome mode
             editorType: e.editorType as InteractiveElement["editorType"],
         }));

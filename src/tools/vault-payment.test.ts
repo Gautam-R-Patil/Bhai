@@ -19,7 +19,7 @@ const { _resetConsent, noteOwnerMessage } = await import("../security/consent.js
 const { withSwarmRun, withSwarmStep } = await import("../agents/swarm-context.js");
 
 beforeEach(() => {
-    delete process.env.ATLAS_NO_VAULT;
+    delete process.env.BHAI_NO_VAULT;
     _resetConsent();
     liveHost = "https://checkout.zomato.com/pay";
     handleDesktopLine(`##BHAI_VAULT##${JSON.stringify([{ id: "gpay", label: "GPay", kind: "upi", vpa: "me@okhdfcbank" }])}`);

@@ -53,12 +53,12 @@ const ENTRIES = [
 ];
 
 beforeEach(() => {
-    delete process.env.ATLAS_NO_VAULT;
+    delete process.env.BHAI_NO_VAULT;
     _resetConsent();
     handleDesktopLine(`##BHAI_VAULT##${JSON.stringify(ENTRIES)}`); // the desktop app's stdin line
 });
 afterEach(() => {
-    delete process.env.ATLAS_NO_VAULT;
+    delete process.env.BHAI_NO_VAULT;
 });
 
 describe("vault: the model sees labels and tokens, never values", () => {
@@ -293,8 +293,8 @@ describe("vault: taint and masks are per-task, not cleared by a mid-task vault e
 });
 
 describe("vault: kill switch", () => {
-    it("ATLAS_NO_VAULT=true turns off resolution and the tools", async () => {
-        process.env.ATLAS_NO_VAULT = "true";
+    it("BHAI_NO_VAULT=true turns off resolution and the tools", async () => {
+        process.env.BHAI_NO_VAULT = "true";
         expect(
             await resolveVaultArgs("browser_type", { text: "{{vault:zomato.password}}" }, owner("https://zomato.com")),
         ).toHaveProperty("error");

@@ -248,7 +248,7 @@ export function findForgettable(query: string): ForgetItem[] {
         const text = [l.taskPattern, l.context, ...l.whatWorked, ...l.whatFailed, ...l.tips].join(" · ");
         if (hit(text)) add("task learning", l.id, l.lastSeen, text);
     }
-    // conversation_messages is absent with ATLAS_NO_SESSION_SEARCH; goals and the graph come up at boot.
+    // conversation_messages is absent with BHAI_NO_SESSION_SEARCH; goals and the graph come up at boot.
     if (hasTable("conversation_messages")) {
         for (const r of rows<{ id: number; content: string; created_at: string }>(
             "SELECT id, content, created_at FROM conversation_messages WHERE instr(lower(content), @t) > 0",

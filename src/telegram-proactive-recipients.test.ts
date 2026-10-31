@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 const dir = mkdtempSync(join(tmpdir(), "tg-proactive-"));
-process.env.ATLAS_DATA_DIR = dir;
+process.env.BHAI_DATA_DIR = dir;
 process.env.OWNER_TELEGRAM_IDS = "111";
 const { sendProactiveMessage } = await import("./telegram.js");
 const config = { allowedUserIds: new Set([111, 222]) };

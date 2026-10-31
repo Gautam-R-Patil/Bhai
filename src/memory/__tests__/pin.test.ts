@@ -8,7 +8,7 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { CronCallerContext } from "../../tools/cron-tool.js";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-pin-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-pin-"));
 
 let sqlite: typeof import("../sqlite.js");
 let tools: typeof import("../../tools/memory-tools.js");

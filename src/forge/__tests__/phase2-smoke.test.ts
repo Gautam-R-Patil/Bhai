@@ -25,16 +25,16 @@ describe("Phase 2 — Lookup-first smoke", () => {
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-p2-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
         await initForge({ embedFn: async () => vector(0) });
     });
 
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("end-to-end: insert → lookup", async () => {
@@ -53,19 +53,19 @@ describe("Phase 2 — Lookup-first smoke", () => {
         expect(found!.slug).toBe("extract_pdf");
     });
 
-    it("ATLAS_NO_FORGE_LOOKUP=true disables lookup entirely", async () => {
+    it("BHAI_NO_FORGE_LOOKUP=true disables lookup entirely", async () => {
         insertTool({
             slug: "x", description: "test",
             schemaJson: "{}", handlerHash: "x", embedding: vector(0),
             source: "synchronous", createdAt: Date.now(),
         });
 
-        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        process.env.BHAI_NO_FORGE_LOOKUP = "true";
         try {
             const found = await lookupTool("test", {});
             expect(found).toBeNull();
         } finally {
-            delete process.env.ATLAS_NO_FORGE_LOOKUP;
+            delete process.env.BHAI_NO_FORGE_LOOKUP;
         }
     });
 });

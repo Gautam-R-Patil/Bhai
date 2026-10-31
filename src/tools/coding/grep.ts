@@ -26,7 +26,8 @@ const SENSITIVE_GLOBS = [
     "!.npmrc",
     "!.git-credentials",
     "!*_history",
-    "!.atlas",
+    "!.bhai",
+    "!.atlas", // pre-rename state root (older builds still use it)
     // Bhai's own secrets in its data dir (read refuses them; grep walked straight in).
     "!google-credentials.json",
     "!google-tokens",

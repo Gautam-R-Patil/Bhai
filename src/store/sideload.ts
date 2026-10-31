@@ -9,13 +9,13 @@
 import { promises as fs } from "node:fs";
 import { existsSync } from "node:fs";
 import { join, basename } from "node:path";
-import { homedir } from "node:os";
 import matter from "gray-matter";
 import type { ToolDefinition } from "../tools/get-current-time.js";
 import { scanSkillContent as deepScanSkillContent } from "../security/skill-scanner.js";
 import type { SkillScanResult } from "../security/skill-scanner.js";
+import { getBhaiHome } from "../config/paths.js";
 
-const STORE_BASE = join(homedir(), ".atlas", "store");
+const STORE_BASE = join(getBhaiHome(), "store");
 const SKILLS_PATH = join(STORE_BASE, "skills");
 const MANIFEST_PATH = join(STORE_BASE, "installs.json");
 

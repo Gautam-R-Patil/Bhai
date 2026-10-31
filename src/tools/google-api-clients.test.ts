@@ -51,7 +51,7 @@ beforeAll(async () => {
     );
     const token = { access_token: "tok", token_type: "Bearer", expiry_date: Date.now() + 3_600_000 };
     writeFileSync(join(dir, "google-tokens", "me@example_com.json"), JSON.stringify(token));
-    vi.stubEnv("ATLAS_DATA_DIR", dir);
+    vi.stubEnv("BHAI_DATA_DIR", dir);
 
     vi.spyOn(OAuth2Client.prototype, "request").mockImplementation(async (opts) => {
         const o = opts as Req;

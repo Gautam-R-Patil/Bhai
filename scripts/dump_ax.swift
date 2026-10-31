@@ -33,12 +33,12 @@
 //   hit the messaging timeout, or the walk ran out of its total time budget.
 //
 // Environment switches:
-//   ATLAS_NO_AX_BATCH=true         the old per-attribute walk (one IPC per attribute)
+//   BHAI_NO_AX_BATCH=true         the old per-attribute walk (one IPC per attribute)
 //                                  instead of one AXUIElementCopyMultipleAttributeValues
 //                                  per node, the default since parity passed on the owner's Mac
-//   ATLAS_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (clamped 100-5000). Two
+//   BHAI_AX_MSG_TIMEOUT_MS=N      per-call AX messaging timeout (clamped 100-5000). Two
 //                                  timeouts in a row count as a hung app and end the walk.
-//   ATLAS_AX_BUDGET_MS=N           whole-walk budget (default 3000, min 500)
+//   BHAI_AX_BUDGET_MS=N           whole-walk budget (default 3000, min 500)
 // Either way the whole walk stops after budgetMs (below), so a slow app gets a partial dump
 // instead of ax-dump.ts's 5 s exec kill, which loses all of it.
 //
@@ -111,10 +111,10 @@ if pid == 0 {
 // ── AX helpers ───────────────────────────────────
 
 let env = ProcessInfo.processInfo.environment
-let useBatch = env["ATLAS_NO_AX_BATCH"] != "true"
+let useBatch = env["BHAI_NO_AX_BATCH"] != "true"
 /// nil = timeout off: the system default (~6s) applies and no hang tracking runs,
 /// exactly the walk this helper had before the timeout existed.
-let msgTimeoutMs: Int? = Int(env["ATLAS_AX_MSG_TIMEOUT_MS"] ?? "").flatMap { $0 > 0 ? max(100, min(5000, $0)) : nil }
+let msgTimeoutMs: Int? = Int(env["BHAI_AX_MSG_TIMEOUT_MS"] ?? "").flatMap { $0 > 0 ? max(100, min(5000, $0)) : nil }
 // A kAXErrorCannotComplete that comes back fast is an app quirk, not a timeout: only a
 // call that ran for at least half the timeout counts.
 let hangNs: UInt64? = msgTimeoutMs.map { UInt64($0) * 500_000 }
@@ -126,8 +126,8 @@ func now() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
 
 /// Whole-walk budget, well under ax-dump.ts's 5 s exec timeout (launch and JSON encode
 /// fit in the rest, even on a loaded machine). Past it every read is skipped and the dump
-/// is partial. ATLAS_AX_BUDGET_MS overrides it (parity runs lift it to compare whole trees).
-let budgetMs: UInt64 = UInt64(env["ATLAS_AX_BUDGET_MS"] ?? "").map { max(500, $0) } ?? 3000
+/// is partial. BHAI_AX_BUDGET_MS overrides it (parity runs lift it to compare whole trees).
+let budgetMs: UInt64 = UInt64(env["BHAI_AX_BUDGET_MS"] ?? "").map { max(500, $0) } ?? 3000
 let deadline = now() + budgetMs * 1_000_000
 let app = AXUIElementCreateApplication(pid)
 let systemWide = AXUIElementCreateSystemWide()

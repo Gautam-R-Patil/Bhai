@@ -16,10 +16,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const tmpHome = mkdtempSync(join(tmpdir(), "atlas-phase4-e2e-"));
-process.env.ATLAS_HOME = tmpHome;
-process.env.ATLAS_FORGE_STUB_LLM = "true"; // not used, but defensive
-process.env.ATLAS_FORGE_CALL_TIMEOUT_MS = "10000";
+const tmpHome = mkdtempSync(join(tmpdir(), "bhai-phase4-e2e-"));
+process.env.BHAI_HOME = tmpHome;
+process.env.BHAI_FORGE_STUB_LLM = "true"; // not used, but defensive
+process.env.BHAI_FORGE_CALL_TIMEOUT_MS = "10000";
 
 const PASS = (msg) => console.log(`\x1b[32m✅ PASS\x1b[0m ${msg}`);
 const FAIL = (msg, detail) => {

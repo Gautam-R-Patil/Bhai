@@ -173,7 +173,7 @@ export async function sendPushNotification(
     try {
         webPush = await loadWebPush();
         // Configure web-push with VAPID details
-        const contactEmail = process.env.EMAIL_USER || "atlas@localhost";
+        const contactEmail = process.env.EMAIL_USER || "bhai@localhost";
         webPush.setVapidDetails(`mailto:${contactEmail}`, keys.publicKey, keys.privateKey);
     } catch (err) {
         console.warn("[PUSH] web-push setup failed:", (err as Error).message);
@@ -184,8 +184,8 @@ export async function sendPushNotification(
         title,
         body: body.length > 200 ? body.substring(0, 197) + "..." : body,
         url: url || "/",
-        icon: "/atlas-icon.png",
-        badge: "/atlas-badge.png",
+        icon: "/bhai-icon.png",
+        badge: "/bhai-badge.png",
         timestamp: Date.now(),
     });
 

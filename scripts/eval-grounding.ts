@@ -9,6 +9,7 @@
 // Same prompt and downscale as src/screen/cloud-grounding.ts. Azure models need AZ_ENDPOINT
 // and AZ_KEY, Claude needs ANTHROPIC_API_KEY. Only low-personal-content apps are captured,
 // and only their own window (screenshots go to the model providers).
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import Anthropic from "@anthropic-ai/sdk";
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

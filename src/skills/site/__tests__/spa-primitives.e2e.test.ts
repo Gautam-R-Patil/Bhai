@@ -65,9 +65,9 @@ const install = (withExpect: boolean, source = skillSource(withExpect)) => {
 // biome-ignore lint/suspicious/noExplicitAny: playwright is optional here
 let browser: any = null;
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
     // These time the page's own outcomes; Bhai's cursor glide would pad them (agent-cursor.test covers it).
-    process.env.ATLAS_NO_AGENT_CURSOR = "true";
+    process.env.BHAI_NO_AGENT_CURSOR = "true";
     try {
         const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -77,8 +77,8 @@ beforeAll(async () => {
     }
 }, 60_000);
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
-    delete process.env.ATLAS_NO_AGENT_CURSOR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_NO_AGENT_CURSOR;
     await browser?.close();
 });
 
@@ -127,11 +127,11 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             // The wait ends when the results show (600 ms after the click), not on the idle
             // fallback: with the fallback at 20 s, anything under 8 s can only be the results.
             // (A tight bound measured Windows process start, not the wait.)
-            process.env.ATLAS_SITE_EXPECT_IDLE_MS = "20000";
+            process.env.BHAI_SITE_EXPECT_IDLE_MS = "20000";
             const t0 = Date.now();
             const s = await runSiteTask({ skillPath, phase: "search", input: { query: "paneer" }, driver: b.driver });
             const ms = Date.now() - t0;
-            delete process.env.ATLAS_SITE_EXPECT_IDLE_MS;
+            delete process.env.BHAI_SITE_EXPECT_IDLE_MS;
             expect([s.status, s.task.lastOutcome, s.options?.map((o) => o.id)]).toEqual(["options", "results", ["p1", "p2"]]);
             expect(ms).toBeLessThan(8000);
             expect(s.task.stepCount).toBeLessThanOrEqual(6); // accept, type, click + 3 skill calls
@@ -169,14 +169,14 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             const text = (await driver.snapshot()).text;
             expect([text.includes("Dal Makhani"), text.includes("Paneer Tikka")]).toEqual([true, false]);
 
-            process.env.ATLAS_SITE_EXPECT_IDLE_MS = "300";
+            process.env.BHAI_SITE_EXPECT_IDLE_MS = "300";
             const t1 = Date.now();
             await expect(driver.act({ ...search, expect: { never: { sel: "#nope" } } })).rejects.toThrow(/^no_outcome: none of never/);
             // The fetch in flight and the re-render count as progress; then 300 ms of quiet ends it.
             expect(Date.now() - t1).toBeGreaterThanOrEqual(600);
             expect(Date.now() - t1).toBeLessThan(3000);
         } finally {
-            delete process.env.ATLAS_SITE_EXPECT_IDLE_MS;
+            delete process.env.BHAI_SITE_EXPECT_IDLE_MS;
             await context.close();
             await shop.close();
         }
@@ -387,8 +387,8 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
         if (!browser) return ctx.skip();
         const shop = await startShop({ spa: true, ticker: true });
         const { context, driver } = await open(shop.url);
-        process.env.ATLAS_SITE_EXPECT_IDLE_MS = "300";
-        process.env.ATLAS_SITE_EXPECT_CAP_MS = "20000";
+        process.env.BHAI_SITE_EXPECT_IDLE_MS = "300";
+        process.env.BHAI_SITE_EXPECT_CAP_MS = "20000";
         try {
             await driver.act({ op: "click", target: { sel: "#accept" } });
             await driver.act({ op: "type", target: { sel: "#q" }, value: "paneer" });
@@ -398,8 +398,8 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             // The long-poll counts as progress for 5 s, the countdown for its first 3 ticks; then 300 ms of quiet.
             expect(Date.now() - t0).toBeLessThan(8000);
         } finally {
-            delete process.env.ATLAS_SITE_EXPECT_IDLE_MS;
-            delete process.env.ATLAS_SITE_EXPECT_CAP_MS;
+            delete process.env.BHAI_SITE_EXPECT_IDLE_MS;
+            delete process.env.BHAI_SITE_EXPECT_CAP_MS;
             await context.close();
             await shop.close();
         }

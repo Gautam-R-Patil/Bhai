@@ -18,16 +18,16 @@ const NATIVE = isNativeAvailable();
 
 describe.skipIf(!NATIVE)("Phase 4 end-to-end smoke", () => {
     let tmpHome: string;
-    const ORIG_ATLAS_HOME = process.env.ATLAS_HOME;
+    const ORIG_BHAI_HOME = process.env.BHAI_HOME;
 
     beforeEach(() => {
-        tmpHome = mkdtempSync(join(tmpdir(), "atlas-phase4-smoke-"));
-        process.env.ATLAS_HOME = tmpHome;
+        tmpHome = mkdtempSync(join(tmpdir(), "bhai-phase4-smoke-"));
+        process.env.BHAI_HOME = tmpHome;
     });
 
     afterEach(() => {
-        if (ORIG_ATLAS_HOME === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = ORIG_ATLAS_HOME;
+        if (ORIG_BHAI_HOME === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = ORIG_BHAI_HOME;
         rmSync(tmpHome, { recursive: true, force: true });
     });
 

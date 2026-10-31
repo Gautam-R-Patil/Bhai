@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PersistedToolManifest } from "../types.js";
 
-const ORIG_ATLAS_HOME = process.env.ATLAS_HOME;
+const ORIG_BHAI_HOME = process.env.BHAI_HOME;
 let tmpHome: string;
 
 const exampleManifest: PersistedToolManifest = {
@@ -25,18 +25,18 @@ const exampleManifest: PersistedToolManifest = {
 };
 
 beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "atlas-forge-manifest-test-"));
-    process.env.ATLAS_HOME = tmpHome;
+    tmpHome = mkdtempSync(join(tmpdir(), "bhai-forge-manifest-test-"));
+    process.env.BHAI_HOME = tmpHome;
 });
 
 afterEach(() => {
     rmSync(tmpHome, { recursive: true, force: true });
-    if (ORIG_ATLAS_HOME === undefined) delete process.env.ATLAS_HOME;
-    else process.env.ATLAS_HOME = ORIG_ATLAS_HOME;
+    if (ORIG_BHAI_HOME === undefined) delete process.env.BHAI_HOME;
+    else process.env.BHAI_HOME = ORIG_BHAI_HOME;
 });
 
 describe("manifest dir + slug validation", () => {
-    it("manifestDir returns <atlasHome>/store/dynamic/<slug>", async () => {
+    it("manifestDir returns <bhaiHome>/store/dynamic/<slug>", async () => {
         const { manifestDir, getDynamicStoreDir } = await import("../manifest.js");
         expect(getDynamicStoreDir()).toBe(join(tmpHome, "store", "dynamic"));
         expect(manifestDir("extract_invoice")).toBe(

@@ -14,7 +14,7 @@
 
 import os from "node:os";
 import path from "node:path";
-import { getDataDir } from "../config/paths.js";
+import { getBhaiHome, getDataDir } from "../config/paths.js";
 import { realResolve } from "./allowlist.js";
 
 const HOME = os.homedir();
@@ -53,7 +53,7 @@ function exactDeniedPaths(): string[] {
 }
 
 // Inside the data dir, only these are the model's to read: saved tool outputs (masked),
-// research reports, video projects, coders' worktrees (ATLAS_AGENT_WORKTREE) and background
+// research reports, video projects, coders' worktrees (BHAI_AGENT_WORKTREE) and background
 // commands' logs (shell_exec_background hands out their log_file). Everything else there is
 // Bhai's state.
 const READABLE_DATA_SUBDIRS = ["tool-outputs", "research", "video-projects", "agent-worktrees", "process-logs"];
@@ -64,12 +64,14 @@ function deniedDirPrefixes(): string[] {
         path.join(HOME, ".ssh"),
         path.join(HOME, ".aws"),
         path.join(HOME, ".gnupg"),
-        path.join(HOME, ".atlas"),
+        path.join(HOME, ".bhai"),
+        path.join(HOME, ".atlas"), // pre-rename state root: older builds still use it, and so does Bhai when the copy to ~/.bhai fails
+        getBhaiHome(), // the one in use, when BHAI_HOME (or the old ATLAS_HOME) moved it elsewhere
         // Bhai's own state: memory.db (+ -wal), chat history, the WhatsApp session, its
         // browser's cookies, the account session. The deny list named "memories.db", an
         // empty decoy, and the rest of the folder was readable.
         getDataDir(),
-        ...(process.env.ATLAS_USER_DATA_DIR ? [process.env.ATLAS_USER_DATA_DIR] : []),
+        ...(process.env.BHAI_USER_DATA_DIR ? [process.env.BHAI_USER_DATA_DIR] : []),
         // Credentials other apps keep in plain or decryptable form.
         path.join(HOME, ".config", "gh"),
         path.join(HOME, ".config", "gcloud"),
@@ -127,7 +129,7 @@ const FILENAME_PATTERNS: RegExp[] = [
 export function outboundFileRefusal(filePath: string): string | null {
     const check = isSensitivePath(filePath);
     if (check.denied) return `Refused to send it: ${check.reason} Secrets, keys and Bhai's own data never leave the machine.`;
-    // A folder that holds one (zipping ~ sweeps in ~/.ssh and ~/.atlas).
+    // A folder that holds one (zipping ~ sweeps in ~/.ssh and ~/.bhai).
     const dir = normalize(filePath) + path.sep;
     const inside = [...deniedDirPrefixes(), ...exactDeniedPaths()].find((p) => startsWith(normalize(p), dir));
     return inside ? `Refused: "${filePath}" contains ${inside}, and secrets never leave the machine.` : null;
@@ -144,7 +146,7 @@ export function shellNamesBhaiState(command: string, cwd?: string): string | nul
     // A command run from inside the folder ("cat memory.db" with cwd = data) names it through cwd.
     const text = `${cwd ? `"${path.resolve(cwd)}" ` : ""}${command}`.replace(/\\ /g, " ").replace(/\$\{?HOME\}?/g, HOME).replace(/(^|[\s"'=:])~(?=\/)/g, `$1${HOME}`);
     const hay = IS_CASE_INSENSITIVE_FS ? text.toLowerCase() : text;
-    const roots = [getDataDir(), process.env.ATLAS_USER_DATA_DIR].filter((r): r is string => !!r).map((r) => path.resolve(r));
+    const roots = [getDataDir(), process.env.BHAI_USER_DATA_DIR].filter((r): r is string => !!r).map((r) => path.resolve(r));
     for (const root of roots) {
         const needle = IS_CASE_INSENSITIVE_FS ? root.toLowerCase() : root;
         for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {

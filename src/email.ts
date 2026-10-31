@@ -9,7 +9,7 @@
 import type { ImapFlow } from "imapflow";
 import type { SendMailOptions, Transporter } from "nodemailer/lib/mailer";
 import { type ChannelContext, runAgent } from "./agent.js";
-import { withStuckReplyLine } from "./channel-text.js";
+import { sanitizeIncomingChannelText, withStuckReplyLine } from "./channel-text.js";
 import type { Config } from "./config.js";
 import type { LLMClient } from "./llm.js";
 import { sendOverlayNotification } from "./overlay/overlay-chat.js";
@@ -57,19 +57,8 @@ export function emailChannelContext(
     return { channel: "email", userId: sender.email, userName: sender.name, isOwner: owner, isPrivate: owner && alone };
 }
 
-// Sanitize attacker-controlled inbound text before wrapping in channel
-// delimiters. Strips framing tokens the LLM treats as authoritative.
-export function sanitizeIncomingChannelText(text: string): string {
-    if (!text) return text;
-    return text
-        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
-        .replace(/\[ATLAS-INTERNAL\b/gi, "[user-quoted-text")
-        .replace(/<system_log>/gi, "&lt;system_log&gt;")
-        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
-        .replace(/<tool_log/gi, "&lt;tool_log")
-        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
-        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
-}
+// bhai-mail.ts and the channel tests import it from here.
+export { sanitizeIncomingChannelText };
 
 // ── Email Authentication Helpers ──────────────
 
@@ -111,7 +100,7 @@ function aligned(authDomain: string, fromDomain: string): boolean {
  * (smtp.mailfrom). An unaligned pass is what a spoofer gets for free: their
  * own domain passes SPF while From: says the owner's address. Any explicit
  * fail/softfail rejects. ARC-Authentication-Results is not trusted (anyone
- * upstream can write one). ATLAS_EMAIL_REQUIRE_DMARC=true additionally
+ * upstream can write one). BHAI_EMAIL_REQUIRE_DMARC=true additionally
  * requires dmarc=pass.
  */
 export function isEmailAuthenticated(rawSource: string): { authenticated: boolean; details: string } {
@@ -157,8 +146,8 @@ export function isEmailAuthenticated(rawSource: string): { authenticated: boolea
             details: `No pass aligned with the From: domain (${fromDomain || "unknown"}): ${details}`,
         };
     }
-    if (process.env.ATLAS_EMAIL_REQUIRE_DMARC === "true" && !dmarcPass) {
-        return { authenticated: false, details: `ATLAS_EMAIL_REQUIRE_DMARC set but dmarc != pass: ${details}` };
+    if (process.env.BHAI_EMAIL_REQUIRE_DMARC === "true" && !dmarcPass) {
+        return { authenticated: false, details: `BHAI_EMAIL_REQUIRE_DMARC set but dmarc != pass: ${details}` };
     }
     return { authenticated: true, details };
 }
@@ -219,7 +208,7 @@ async function createSMTPTransport(config: Config): Promise<Transporter> {
  * Send an email from Bhai's own email account.
  * Available as a tool for the agent and internally for email replies.
  */
-export async function sendEmailFromAtlas(
+export async function sendEmailFromBhai(
     to: string,
     subject: string,
     body: string,
@@ -512,10 +501,10 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
 
             // ── Run through agent ──
             // Strip attacker-controlled framing tokens before wrapping in delimiters
-            // (prompt-injection defence: only [ATLAS-INTERNAL — lines are authoritative).
+            // (prompt-injection defence: only [BHAI-INTERNAL — lines are authoritative).
             const sanitizedBody = sanitizeIncomingChannelText(email.bodyText);
             const sanitizedSubject = sanitizeIncomingChannelText(email.subject);
-            const agentMessage = `[EMAIL from ${email.senderName} <${email.senderEmail}>]\nSubject: ${sanitizedSubject}\n\n<channel_message_content>\n${sanitizedBody}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This message arrived via email. Respond naturally; your reply is sent back as an email reply.]`;
+            const agentMessage = `[EMAIL from ${email.senderName} <${email.senderEmail}>]\nSubject: ${sanitizedSubject}\n\n<channel_message_content>\n${sanitizedBody}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: This message arrived via email. Respond naturally; your reply is sent back as an email reply.]`;
 
             try {
                 console.log("   🤖 Processing email through agent...");
@@ -556,13 +545,13 @@ async function processUnseenEmails(config: Config, llm: LLMClient): Promise<void
                     const thread = { inReplyTo: email.messageId, references: email.messageId };
                     // The turn's generated images ride along as attachments.
                     const images = response.images ?? [];
-                    let result = await sendEmailFromAtlas(email.senderEmail, replySubject, replyText, {
+                    let result = await sendEmailFromBhai(email.senderEmail, replySubject, replyText, {
                         ...thread,
                         ...(images.length ? { attachments: images.map((i) => ({ path: i.path })) } : {}),
                     });
                     // Too big for the server (or unreadable): the reply still goes, saying so.
                     if (!result.success && images.length)
-                        result = await sendEmailFromAtlas(
+                        result = await sendEmailFromBhai(
                             email.senderEmail,
                             replySubject,
                             `${replyText}\n\n(The image couldn't be attached to this email.)`,

@@ -435,15 +435,15 @@ export function shouldReflect(): boolean {
 // Zero-LLM continuity hook for context-pruning: the prune call reads the prior
 // structured summary so it can continue Completed Actions numbering, then writes
 // the new one back. Returns null (not "") when empty so buildCompressionUserPrompt
-// skips the continuation block. Killable via ATLAS_NO_PRUNE_CONTINUITY=true.
+// skips the continuation block. Killable via BHAI_NO_PRUNE_CONTINUITY=true.
 
 export function getLastCompressionSummary(): string | null {
-    if (process.env.ATLAS_NO_PRUNE_CONTINUITY === "true") return null;
+    if (process.env.BHAI_NO_PRUNE_CONTINUITY === "true") return null;
     return currentSession?.lastCompressionSummary || null;
 }
 
 export function setLastCompressionSummary(summary: string): void {
-    if (process.env.ATLAS_NO_PRUNE_CONTINUITY === "true") return;
+    if (process.env.BHAI_NO_PRUNE_CONTINUITY === "true") return;
     if (!currentSession || !summary) return;
     currentSession.lastCompressionSummary = summary;
     persistSession();

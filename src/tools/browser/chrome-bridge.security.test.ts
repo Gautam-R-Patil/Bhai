@@ -5,7 +5,7 @@
 // was unsafe — a non-browser caller (curl, node) can set or omit it freely.
 //
 // This test re-implements the access-control logic out-of-line so we can
-// exercise it without booting the full bridge (which writes to ~/.atlas
+// exercise it without booting the full bridge (which writes to ~/.bhai
 // and binds 18800). The test asserts that the same predicate used in the
 // real handler accepts only extension origins.
 

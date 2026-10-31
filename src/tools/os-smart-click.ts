@@ -82,7 +82,7 @@ function recordClick(
 async function base64ToTempFile(base64: string, ext = "png"): Promise<string> {
     // crypto.randomBytes is unpredictable — defends against tmpdir symlink attacks
     // where an attacker pre-creates a known filename to capture the screenshot.
-    const tmp = join(tmpdir(), `atlas_smartclick_${randomBytes(8).toString("hex")}.${ext}`);
+    const tmp = join(tmpdir(), `bhai_smartclick_${randomBytes(8).toString("hex")}.${ext}`);
     const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
     await fs.writeFile(tmp, buf, { mode: 0o600 });
     return tmp;
@@ -164,9 +164,9 @@ async function activateApp(appName: string): Promise<"already" | "raised" | "fai
     }
 }
 
-/** Window-scoped capture (kill-switch ATLAS_NO_WINDOW_SCOPED_CAPTURE forces full-screen). */
+/** Window-scoped capture (kill-switch BHAI_NO_WINDOW_SCOPED_CAPTURE forces full-screen). */
 async function captureWindowRegion(fw: Rect): Promise<Buffer | null> {
-    if (process.env.ATLAS_NO_WINDOW_SCOPED_CAPTURE === "true") return null;
+    if (process.env.BHAI_NO_WINDOW_SCOPED_CAPTURE === "true") return null;
     return captureRegion(fw);
 }
 
@@ -292,7 +292,7 @@ export const osSmartClick: ToolDefinition = {
             action === "click" &&
             appName &&
             !/^dock$/i.test(appName.trim()) && // the Dock has its own search (dockFirst) and is never in front
-            process.env.ATLAS_NO_BACKGROUND_PRESS !== "true"
+            process.env.BHAI_NO_BACKGROUND_PRESS !== "true"
         ) {
             const done = await pressInBackground(appName, instruction);
             if (done) return JSON.stringify({ success: true, instruction, ...done });
@@ -315,8 +315,8 @@ export const osSmartClick: ToolDefinition = {
         }
 
         const site = { app: appName, windowTitle, elementLabel: instruction };
-        const verifyOn = process.env.ATLAS_NO_SMARTCLICK_VERIFY !== "true";
-        const selfCorrectOn = process.env.ATLAS_NO_SMARTCLICK_SELFCORRECT !== "true";
+        const verifyOn = process.env.BHAI_NO_SMARTCLICK_VERIFY !== "true";
+        const selfCorrectOn = process.env.BHAI_NO_SMARTCLICK_SELFCORRECT !== "true";
 
         // A frame of the region the click is judged in: the focused window when
         // its rect is known and holds `at`, else the monitor (a menu-bar click).
@@ -453,9 +453,9 @@ export const osSmartClick: ToolDefinition = {
             // agents routinely pass a STALE screenshot_base64 (pixels from before
             // the UI changed) → wrong_target / cascade_miss (observed live). The
             // caller's base64 is used ONLY as a last resort when fresh capture
-            // fails, or when ATLAS_SMARTCLICK_USE_CALLER_SCREENSHOT=true restores
+            // fails, or when BHAI_SMARTCLICK_USE_CALLER_SCREENSHOT=true restores
             // the old "trust caller pixels" behavior.
-            const preferCaller = process.env.ATLAS_SMARTCLICK_USE_CALLER_SCREENSHOT === "true";
+            const preferCaller = process.env.BHAI_SMARTCLICK_USE_CALLER_SCREENSHOT === "true";
             const captureShot = async (): Promise<{ path: string; dims: ScreenDimensions } | null> => {
                 if (tempPath) return { path: tempPath, dims: cascadeDims };
                 if (preferCaller && input.screenshot_base64) {
@@ -480,7 +480,7 @@ export const osSmartClick: ToolDefinition = {
                     }
                 }
                 if (buf) {
-                    tempPath = join(tmpdir(), `atlas_smartclick_${randomBytes(6).toString("hex")}.png`);
+                    tempPath = join(tmpdir(), `bhai_smartclick_${randomBytes(6).toString("hex")}.png`);
                     await fs.writeFile(tempPath, buf, { mode: 0o600 });
                     return { path: tempPath, dims: cascadeDims };
                 }

@@ -5,10 +5,10 @@
 //
 //   npx tsx scripts/test-gemini-live.ts
 //
-// Requires: Convex session (same env Bhai uses) — ATLAS_OTPLESS_USER_ID set,
+// Requires: Convex session (same env Bhai uses) — BHAI_OTPLESS_USER_ID set,
 // or GOOGLE_API_KEY as env override for direct use.
 
-import "dotenv/config";
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { GoogleGenAI, Modality, FunctionResponseScheduling } from "@google/genai";
 import { initSession, getSessionToken } from "../src/session.js";
 import { getConvexSiteUrl } from "../src/config/keys.js";
@@ -20,7 +20,7 @@ async function fetchGoogleKey(): Promise<string> {
     }
     console.log("[TEST] No GOOGLE_API_KEY env — fetching from Convex…");
     const ok = await initSession();
-    if (!ok) throw new Error("initSession failed — set ATLAS_OTPLESS_USER_ID in .env");
+    if (!ok) throw new Error("initSession failed — set BHAI_OTPLESS_USER_ID in .env");
     const token = await getSessionToken();
     if (!token) throw new Error("No session token available");
     const url = `${getConvexSiteUrl()}/api/keys/voice`;

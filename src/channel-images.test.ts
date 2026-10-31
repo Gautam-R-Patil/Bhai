@@ -45,7 +45,7 @@ vi.mock("discord.js", () => {
 });
 
 const dir = mkdtempSync(join(tmpdir(), "channel-images-"));
-process.env.ATLAS_DATA_DIR = dir;
+process.env.BHAI_DATA_DIR = dir;
 const png = join(dir, "cat.png");
 const jpg = join(dir, "dog.jpg");
 writeFileSync(png, "png");

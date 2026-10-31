@@ -5,6 +5,7 @@
 //
 // Run with: npx tsx scripts/smoke_test_documents.ts
 
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import fs from "node:fs";
 import { saveDocument, loadDocument, listDocuments, deleteDocument } from "../src/documents/store.js";
 import { renderDocument } from "../src/documents/render.js";

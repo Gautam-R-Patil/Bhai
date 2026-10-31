@@ -12,7 +12,7 @@ import {
 describe("capabilities parse", () => {
     it("parseCapabilities accepts a well-formed declaration", () => {
         const caps = parseCapabilities({
-            fs_read: ["~/Downloads/", "~/.atlas/store/dynamic/self/"],
+            fs_read: ["~/Downloads/", "~/.bhai/store/dynamic/self/"],
             fs_write: [],
             net: ["api.openai.com"],
             exec: ["pdftotext"],
@@ -190,18 +190,24 @@ describe("isPathHardDenied", () => {
     });
 
     it("catches encrypted Bhai source paths", () => {
-        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/src/agent.ts")).toBe(true);
-        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/native/index.js")).toBe(true);
-        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/prompts/identity.md")).toBe(true);
-        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/convex/http.ts")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/BHAI/src/agent.ts")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/BHAI/native/index.js")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/BHAI/prompts/identity.md")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/BHAI/convex/http.ts")).toBe(true);
     });
 
-    it("DOES flag ~/.atlas/store/dynamic (tools must not self-tamper or cross-tamper)", () => {
+    it("DOES flag ~/.bhai/store/dynamic (tools must not self-tamper or cross-tamper)", () => {
         // Tools cannot declare fs_write caps to any tool dir (including their
         // own). The supervisor writes handler.js via direct FS calls outside
         // the capability layer; tool-declared fs_write to that prefix is
         // always rejected to prevent self-tampering / other-tool overwriting.
+        expect(isPathHardDenied("/Users/x/.bhai/store/dynamic/foo/handler.js")).toBe(true);
+    });
+
+    it("flags the pre-rename ~/.atlas state root too", () => {
         expect(isPathHardDenied("/Users/x/.atlas/store/dynamic/foo/handler.js")).toBe(true);
+        expect(isPathHardDenied("/Users/x/.atlas/data/forge-pending.json")).toBe(true);
+        expect(isPathHardDenied("/Users/x/.atlas/dynamic-tools/foo.json")).toBe(true);
     });
 
     it("does NOT flag arbitrary user paths", () => {
@@ -221,7 +227,7 @@ describe("isPathHardDenied", () => {
 
     it("catches mixed-case encrypted source paths on darwin/win32", () => {
         if (process.platform === "linux") return;
-        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/SRC/agent.ts")).toBe(true);
-        expect(isPathHardDenied("/Users/x/Desktop/ATLAS/Convex/http.ts")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/BHAI/SRC/agent.ts")).toBe(true);
+        expect(isPathHardDenied("/Users/x/Desktop/BHAI/Convex/http.ts")).toBe(true);
     });
 });

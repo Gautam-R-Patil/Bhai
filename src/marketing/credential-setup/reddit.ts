@@ -24,7 +24,7 @@ export async function setupRedditAutonomous(
         "",
         "I've opened Reddit app preferences. Please:",
         "1. Click **are you a developer? create an app...**",
-        `2. Name: \`ATLAS-${brandId}\` → Type: **script**`,
+        `2. Name: \`Bhai-${brandId}\` → Type: **script**`,
         `3. Redirect URI: \`${REDDIT_REDIRECT_URI}\``,
         "4. Click **Create App**",
         "5. Copy the **Client ID** (shown under the app name, short string)",
@@ -78,7 +78,7 @@ export async function completeRedditOAuth(
       headers: {
         Authorization: `Basic ${credentials}`,
         "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "ATLAS-Marketing/1.0",
+        "User-Agent": "BHAI-Marketing/1.0",
       },
       body: new URLSearchParams({
         grant_type: "authorization_code",
@@ -116,7 +116,7 @@ export function getRedditGuidedInstructions(brandId: string): string {
     "",
     "1. Go to https://www.reddit.com/prefs/apps",
     "2. Click 'are you a developer? create an app'",
-    `3. Name: \`ATLAS-${brandId}\`, Type: script`,
+    `3. Name: \`Bhai-${brandId}\`, Type: script`,
     "4. Redirect URI: `http://localhost:18844/callback`",
     "5. Copy Client ID and Client Secret",
     "6. Reply with: `client_id: YOUR_ID client_secret: YOUR_SECRET`",

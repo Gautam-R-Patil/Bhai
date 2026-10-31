@@ -17,7 +17,7 @@ beforeEach(() => {
     qrCallback = null;
     // Force the plain-code QR fallback (no real canvas renderer in jsdom).
     window.QRCode = {};
-    window.atlas = {
+    window.bhai = {
         onWhatsAppQR: vi.fn((cb) => { qrCallback = cb; }), // preload registers once
         setupWaPairCancel: vi.fn(() => Promise.resolve({ ok: true })),
         setupWaPairStart: vi.fn(() => Promise.resolve({ ok: true })),
@@ -41,7 +41,7 @@ describe("ChannelCard WhatsApp QR — retry renders", () => {
 
         // Attempt 2 (simulating "Try again"): listener is NOT re-attached.
         await card._startWhatsApp();
-        expect(window.atlas.onWhatsAppQR).toHaveBeenCalledTimes(1);
+        expect(window.bhai.onWhatsAppQR).toHaveBeenCalledTimes(1);
         expect(qrBoxText()).toContain("Generating"); // reset to the generating state
 
         // The one live listener must still render for the active attempt.

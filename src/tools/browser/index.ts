@@ -45,7 +45,7 @@ export {
 } from "./chrome-bridge.js";
 // Export core utilities
 export {
-    ATLAS_HUD_JS,
+    BHAI_HUD_JS,
     AUTO_SCROLL_JS,
     buildElementsText,
     CLICK_INDICATOR_JS,

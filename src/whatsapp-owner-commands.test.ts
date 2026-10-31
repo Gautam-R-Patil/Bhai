@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-wa-cmds-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-wa-cmds-"));
 const users = await import("./whatsapp-users.js");
 
 describe("allow / block", () => {
@@ -77,7 +77,7 @@ describe("owner questions survive a restart", () => {
         expect(JSON.parse(out as string).success).toBe(true);
         expect(ask.inContactRun()).toBe(false);
         expect(sent[0]).toContain('"Can Kunal borrow the car Sunday?"');
-        const file = path.join(process.env.ATLAS_DATA_DIR!, "whatsapp-owner-questions.json");
+        const file = path.join(process.env.BHAI_DATA_DIR!, "whatsapp-owner-questions.json");
         expect(JSON.parse(fs.readFileSync(file, "utf-8"))[0].contactName).toBe("Kunal");
         const q = ask.resolveLatestQueryForOwner(owner);
         expect(q?.question).toBe("Can Kunal borrow the car Sunday?");

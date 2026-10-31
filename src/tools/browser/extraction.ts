@@ -463,7 +463,7 @@ export const browserUploadFile: ToolDefinition = {
                 path.resolve(getWorkspaceDir()),
                 path.join(os.homedir(), "Downloads"),
             ];
-            const extra = process.env.ATLAS_BROWSER_UPLOAD_ROOTS;
+            const extra = process.env.BHAI_BROWSER_UPLOAD_ROOTS;
             if (extra) {
                 for (const p of extra.split(path.delimiter)) {
                     if (p.trim()) allowedRoots.push(path.resolve(p.trim()));

@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Sign-in step: single OTPless CTA. Tapping opens the OTPless popup
-// (atlas.openAuthWindow). The wizard advances automatically once
+// (bhai.openAuthWindow). The wizard advances automatically once
 // account.signedIn flips true (handled by boot.js refreshState).
 (function () {
     "use strict";
@@ -76,9 +76,9 @@
         waiting.setAttribute("aria-live", "polite");
 
         cta.addEventListener("click", async function () {
-            if (!(window.atlas && typeof window.atlas.openAuthWindow === "function")) return;
+            if (!(window.bhai && typeof window.bhai.openAuthWindow === "function")) return;
             let res = null;
-            try { res = await window.atlas.openAuthWindow(); } catch (_) { /* shown below */ }
+            try { res = await window.bhai.openAuthWindow(); } catch (_) { /* shown below */ }
             if (res && res.alreadySignedIn) {
                 // Already signed in (e.g. re-running setup): just move on.
                 if (ctx && typeof ctx.onAdvance === "function") ctx.onAdvance();

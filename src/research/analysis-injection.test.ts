@@ -124,8 +124,8 @@ describe("Sources section with hostile page titles", () => {
 describe("research checkpoint persistence", () => {
     it("writes atomically, refuses ids not minted by deep_research, and checks the stored id", async () => {
         const dir = mkdtempSync(join(tmpdir(), "research-state-"));
-        const prev = process.env.ATLAS_DATA_DIR;
-        process.env.ATLAS_DATA_DIR = dir;
+        const prev = process.env.BHAI_DATA_DIR;
+        process.env.BHAI_DATA_DIR = dir;
         vi.resetModules();
         try {
             const { saveResearchState, loadResearchState, isResearchId } = await import("./persistence.js");
@@ -145,8 +145,8 @@ describe("research checkpoint persistence", () => {
             );
             expect(await loadResearchState("research_4_1")).toBeNull();
         } finally {
-            if (prev === undefined) delete process.env.ATLAS_DATA_DIR;
-            else process.env.ATLAS_DATA_DIR = prev;
+            if (prev === undefined) delete process.env.BHAI_DATA_DIR;
+            else process.env.BHAI_DATA_DIR = prev;
         }
     });
 });

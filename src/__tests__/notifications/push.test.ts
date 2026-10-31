@@ -14,7 +14,7 @@ const loaded = vi.hoisted(() => [] as string[]);
 vi.mock("web-push", () => { loaded.push("web-push"); return { default: {} }; });
 
 it("generates valid VAPID keys synchronously on first boot", async () => {
-    vi.stubEnv("ATLAS_DATA_DIR", mkdtempSync(join(tmpdir(), "push-test-")));
+    vi.stubEnv("BHAI_DATA_DIR", mkdtempSync(join(tmpdir(), "push-test-")));
     const push = await import("../../notifications/push.js");
 
     const done = push.initPushNotifications(); // not awaited, as in overlay-chat.ts
@@ -26,7 +26,7 @@ it("generates valid VAPID keys synchronously on first boot", async () => {
     // Keys must be accepted by web-push itself.
     const { createRequire } = await import("node:module");
     const helper = createRequire(import.meta.url)("web-push/src/vapid-helper.js");
-    const keys = JSON.parse((await import("node:fs")).readFileSync(join(process.env.ATLAS_DATA_DIR as string, "vapid-keys.json"), "utf8"));
+    const keys = JSON.parse((await import("node:fs")).readFileSync(join(process.env.BHAI_DATA_DIR as string, "vapid-keys.json"), "utf8"));
     expect(keys.publicKey).toBe(pub);
     expect(() => helper.validatePublicKey(keys.publicKey)).not.toThrow();
     expect(() => helper.validatePrivateKey(keys.privateKey)).not.toThrow();

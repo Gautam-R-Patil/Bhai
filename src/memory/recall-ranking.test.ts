@@ -8,8 +8,8 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 // Hermetic: point the memory DB at a throwaway temp dir BEFORE importing sqlite
-// (its DATA_DIR const reads process.env.ATLAS_DATA_DIR at load).
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-recall-ranking-"));
+// (its DATA_DIR const reads process.env.BHAI_DATA_DIR at load).
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-recall-ranking-"));
 
 type SqliteModule = typeof import("./sqlite.js");
 let sqlite: SqliteModule;

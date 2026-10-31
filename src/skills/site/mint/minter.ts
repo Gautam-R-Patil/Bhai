@@ -7,7 +7,7 @@
 // review call; a pass installs the skill as awaiting_approval, which the
 // registry skips until the owner approves it (approveSiteSkill, ownerApproved).
 //
-// Budgets: 12 model turns (ATLAS_SITE_MINT_MAX_TURNS), 10 minutes, 2 review
+// Budgets: 12 model turns (BHAI_SITE_MINT_MAX_TURNS), 10 minutes, 2 review
 // rounds, 2 replies in a row with no tool call. Sonnet throughout; Opus for at
 // most 2 turns once 2 replays failed at turn ≥6. So a mint never costs more than
 // maxMintCredits(): with 12 turns, 16 credits.
@@ -38,9 +38,8 @@
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
 import path from "node:path";
-import { getDataDir } from "../../../config/paths.js";
+import { getBhaiHome, getDataDir } from "../../../config/paths.js";
 import { type ChatCompletionMessageParam, type ChatCompletionTool, type LLMClient, MODELS } from "../../../llm.js";
 import { ownerApproved } from "../../../security/consent.js";
 import { maskCredentials } from "../../../security/credential-mask.js";
@@ -56,7 +55,7 @@ import { type PhaseName, type ReplayReport, replaySkill, type Verdict } from "./
 let acornMod: typeof import("acorn") | undefined;
 const acorn = (): typeof import("acorn") => (acornMod ??= createRequire(import.meta.url)("acorn"));
 
-export const maxTurns = () => Math.max(1, Number(process.env.ATLAS_SITE_MINT_MAX_TURNS) || 12);
+export const maxTurns = () => Math.max(1, Number(process.env.BHAI_SITE_MINT_MAX_TURNS) || 12);
 const WALL_MS = 10 * 60_000;
 const REPAIR_TURNS = 6;
 const REPAIR_WALL_MS = 5 * 60_000;
@@ -69,7 +68,7 @@ export const maxMintCredits = (turns = maxTurns()) => turns + MAX_OPUS_TURNS + M
 // Mirrors convex/credit_cost.ts for the three ids used here.
 export const creditCost = (model: string) => (/opus/i.test(model) ? 2 : /haiku/i.test(model) ? 0.25 : 1);
 
-export const siteSkillStore = () => path.join(homedir(), ".atlas", "store", "site-skills");
+export const siteSkillStore = () => path.join(getBhaiHome(), "store", "site-skills");
 export const mintJobsDir = () => path.join(getDataDir(), "site-mint", "jobs");
 /** Sessions a skill was verified on, kept past trace retention for its repairs' regression replays (never in the store). */
 export const fixturesDir = () => path.join(getDataDir(), "site-mint", "fixtures");
@@ -837,7 +836,7 @@ export async function mintSiteSkill(job: MintJob): Promise<MintResult> {
             safetyOf(m) === safetyOf(r.manifest) &&
             r.olds.length > 0 &&
             kept &&
-            process.env.ATLAS_SITE_REPAIR_REQUIRE_APPROVAL !== "true";
+            process.env.BHAI_SITE_REPAIR_REQUIRE_APPROVAL !== "true";
         if (auto) m.status = "active";
         writeFileSync(path.join(stage, "skill.json"), JSON.stringify(m, null, 2));
         if (!auto) return { status: "installed", slug, dir: install(stage, path.dirname(r.dir), slug) };

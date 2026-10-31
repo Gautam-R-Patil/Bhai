@@ -149,7 +149,7 @@ export interface LongTaskProgress {
 
 // ── Constants ─────────────────────────────────
 
-const DATA_DIR = join(process.env.ATLAS_DATA_DIR || join(process.cwd(), "data"), "long-tasks");
+const DATA_DIR = join(process.env.BHAI_DATA_DIR || join(process.cwd(), "data"), "long-tasks");
 const MAX_PHASES = 20;           // Hard cap — most tasks need 2-8 phases
 const DEFAULT_PHASE_ITERATIONS = 50;    // Sub-agents rarely need >30 iterations
 const DEFAULT_PHASE_TIMEOUT = 600_000;  // 10 minutes per phase

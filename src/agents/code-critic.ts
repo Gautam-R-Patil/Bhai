@@ -381,7 +381,7 @@ async function runSastCheck(cwd: string, timeoutMs: number): Promise<Perspective
 
     // Honor a global kill-switch to avoid adding latency when the user
     // hasn't opted into Semgrep (it can be slow on large repos).
-    if (process.env.ATLAS_NO_SAST === "true") return result;
+    if (process.env.BHAI_NO_SAST === "true") return result;
 
     // Scan only changed files if in a git repo — massively faster on big trees.
     let scanArgs: string[] = ["--config=auto", "--json", "--quiet", "--error"];
@@ -406,7 +406,7 @@ async function runSastCheck(cwd: string, timeoutMs: number): Promise<Perspective
     result.ran = true;
     if (run.timedOut) {
         result.score = 75;
-        result.issues.push("semgrep timed out — narrow the scope or set ATLAS_NO_SAST=true");
+        result.issues.push("semgrep timed out — narrow the scope or set BHAI_NO_SAST=true");
         return result;
     }
     if (run.code === 0) return result; // clean
@@ -662,10 +662,10 @@ export async function runCodeCriticIfCoder(
     taskDescription?: string,
     cwd?: string,
 ): Promise<ConsensusReflection | null> {
-    if (!roles.includes("coder") || process.env.ATLAS_NO_CODE_CRITIC === "true") return null;
-    // Phase 4J: when ATLAS_VERIFY_URL is set, also run the browser-verify
+    if (!roles.includes("coder") || process.env.BHAI_NO_CODE_CRITIC === "true") return null;
+    // Phase 4J: when BHAI_VERIFY_URL is set, also run the browser-verify
     // perspective. Designed for dev workflows where the user starts the
     // dev server once and wants every coder step auto-verified in-browser.
-    const verifyUrl = process.env.ATLAS_VERIFY_URL?.trim() || undefined;
+    const verifyUrl = process.env.BHAI_VERIFY_URL?.trim() || undefined;
     return runCodeMultiCritic({ cwd, taskDescription, verifyUrl });
 }

@@ -13,7 +13,7 @@ const h = vi.hoisted(() => {
     const os = require("node:os") as typeof import("node:os");
     const path = require("node:path") as typeof import("node:path");
     const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bhai-genimg-")));
-    process.env.ATLAS_WORKSPACE = ws;
+    process.env.BHAI_WORKSPACE = ws;
     return { ws, fetch: vi.fn() };
 });
 vi.mock("../../crypto-transport.js", () => ({ encryptedFetch: h.fetch }));
@@ -159,7 +159,7 @@ describe("generate_image", () => {
         pushGenerated("restart", gone);
         rememberInboundImages("restart", [{ base64: "U0VDUkVU", mimeType: "image/jpeg" }]);
         rmSync(gone);
-        expect(readFileSync(join(process.env.ATLAS_DATA_DIR as string, "image-history.json"), "utf8")).not.toContain("U0VDUkVU");
+        expect(readFileSync(join(process.env.BHAI_DATA_DIR as string, "image-history.json"), "utf8")).not.toContain("U0VDUkVU");
         vi.resetModules();
         const fresh = await import("../../media/image-memory.js");
         expect(fresh.currentGenerated("restart")).toBe(keep);
@@ -199,6 +199,21 @@ describe("generate_image", () => {
         expect((await call({ prompt: "x", source: join(h.ws, "Images", "in.jpg") }, { isOwner: false })).res.error).toMatch(/owner/);
         expect(h.fetch).not.toHaveBeenCalled();
         rmSync(outside, { recursive: true, force: true });
+    });
+
+    it("accepts a path in the received-media dir, old atlas_media name included", async () => {
+        h.fetch.mockImplementation(async () => reply(200, { images: [{ data: jpeg, mimeType: "image/jpeg" }] }));
+        for (const dir of ["bhai_media", "atlas_media"]) {
+            const media = join(tmpdir(), dir);
+            mkdirSync(media, { recursive: true });
+            const file = join(media, `genimg-test-${process.pid}.jpg`);
+            writeFileSync(file, Buffer.from(jpeg, "base64"));
+            try {
+                expect((await call({ prompt: "Make it blue", source: file })).res.success).toBe(true);
+            } finally {
+                rmSync(file, { force: true });
+            }
+        }
     });
 
     it("a safety block (422) suggests rephrasing", async () => {

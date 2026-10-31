@@ -412,7 +412,7 @@ const CATEGORIES: Record<string, CategoryDef> = {
     },
     codebase: {
         description:
-            "Understanding code repositories, mapping codebase structure, finding functions and classes in a project, getting an overview of a repository's architecture, listing symbols (functions, classes, interfaces, types) across files, tracing call-graphs, finding where a symbol is used, generating AGENTS.md + .atlas/agents/*.md onboarding docs, reading recent git activity (commits, hot files, diffs, blame) for context. Repository analysis, navigation, and onboarding.",
+            "Understanding code repositories, mapping codebase structure, finding functions and classes in a project, getting an overview of a repository's architecture, listing symbols (functions, classes, interfaces, types) across files, tracing call-graphs, finding where a symbol is used, generating AGENTS.md + .bhai/agents/*.md onboarding docs, reading recent git activity (commits, hot files, diffs, blame) for context. Repository analysis, navigation, and onboarding.",
         tools: ["repo_map", "codebase_index", "codebase_query", "code_change_summary", "agents_md_scaffold"],
     },
     tool_creation: {
@@ -530,8 +530,8 @@ const INTENT_CACHE_TTL_MS = 120_000; // 2 minutes
 // nano stalls (or its own chat() fallback chain is grinding), 12s of blocked
 // routing is worse than dropping to the keyword/embedding fallback. 5s catches
 // the rare slow nano while failing fast on a genuine stall. Override with
-// ATLAS_TOOL_ROUTER_TIMEOUT_MS.
-const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.ATLAS_TOOL_ROUTER_TIMEOUT_MS) || 5000;
+// BHAI_TOOL_ROUTER_TIMEOUT_MS.
+const LLM_CLASSIFIER_TIMEOUT_MS = Number(process.env.BHAI_TOOL_ROUTER_TIMEOUT_MS) || 5000;
 
 // The whole routing step shares one deadline: classifier, then the fallback's
 // message embedding gets whatever is left (none → structural scores only).
@@ -574,7 +574,7 @@ export function isConversationalBanter(message: string): boolean {
 // (scripts/bench-decision.ts on the 49 eval tasks: every needed category 48/49 vs 32/49 for the
 // gpt-4.1-nano classifier; ~0.5s vs ~1s; ~$0.0001 a turn; chat prompts 6/6 chat). Called via
 // Convex /api/decide (the Azure key stays server-side); any failure falls back to the LLM.
-// On by default; ATLAS_NO_DECISION_ROUTER=true turns it off (see classifyWithDecision).
+// On by default; BHAI_NO_DECISION_ROUTER=true turns it off (see classifyWithDecision).
 export type DecisionTransport = (
     state: string,
     questions: Record<string, unknown>,
@@ -619,7 +619,7 @@ async function classifyWithDecision(message: string, context: string, deadline: 
     // Full 50 in router mode, same browser priors: 50/50 either way at $0.0013 a task, tool
     // selection 1151 vs 1390 ms mean. Two failures in a row pause it for 10 minutes, so an
     // outage costs at most two short waits before the LLM classifier takes over.
-    if (!decisionTransport || process.env.ATLAS_NO_DECISION_ROUTER === "true" || Date.now() < decisionPausedUntil)
+    if (!decisionTransport || process.env.BHAI_NO_DECISION_ROUTER === "true" || Date.now() < decisionPausedUntil)
         return null;
     const cats = Object.entries(CATEGORIES).filter(([, def]) => !def.alwaysInclude);
     const questions: Record<string, unknown> = {};
@@ -1218,7 +1218,7 @@ export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: numb
     },
     { pattern: /\b(dependency.?chain|import.?path|how.*depends.*on)\b/i, category: "codebase", minScore: 0.75 },
     {
-        pattern: /\b(agents\.?md|AGENTS\.?md|atlas.?agents?|project.?memory.?doc)\b/i,
+        pattern: /\b(agents\.?md|AGENTS\.?md|(?:bhai|atlas).?agents?|project.?memory.?doc)\b/i,
         category: "codebase",
         minScore: 0.85,
     },
@@ -1563,10 +1563,10 @@ async function classifyToolNeeds(
     // Multiplies each category's score by the persona-specific weight
     // (~0.7-1.4). Default = 1.0 (unbiased). Reads persona lazily from
     // identity.extra.persona so a cold tool-router call (before identity
-    // init) just skips the overlay. ATLAS_NO_PERSONA_BIAS=true short-
+    // init) just skips the overlay. BHAI_NO_PERSONA_BIAS=true short-
     // circuits the entire block. Best-effort: a thrown identity read
     // never blocks tool routing.
-    if (process.env.ATLAS_NO_PERSONA_BIAS !== "true") {
+    if (process.env.BHAI_NO_PERSONA_BIAS !== "true") {
         try {
             const { getIdentityProfile } = await import("./memory/identity.js");
             const { asPersona, getPersonaToolWeights } = await import("./prompts/persona-bias.js");
@@ -2326,7 +2326,7 @@ export async function handleToolRequest(request: ToolRequest): Promise<{
         // ── FORGE Phase 2: auto-queue synthesis candidate ──
         // If forge is ready and the kill switch isn't set, queue a synthesis job.
         // The agent will see the synthesized tool on a subsequent iteration.
-        if (process.env.ATLAS_NO_FORGE_AUTO_SYNTHESIS !== "true") {
+        if (process.env.BHAI_NO_FORGE_AUTO_SYNTHESIS !== "true") {
             try {
                 const { queueSynthesisCandidate, isForgeReady } = await import("./forge/orchestrator.js");
                 if (isForgeReady()) {

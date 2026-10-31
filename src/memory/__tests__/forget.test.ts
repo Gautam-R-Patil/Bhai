@@ -8,7 +8,7 @@ import path from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CronCallerContext } from "../../tools/cron-tool.js";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-forget-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-forget-"));
 
 let sqlite: typeof import("../sqlite.js");
 let forget: typeof import("../forget.js");
@@ -143,10 +143,10 @@ describe("memory_forget across tiers", () => {
         raw.prepare("INSERT INTO memory_insights (kind, title, body) VALUES ('most_discussed', 'People', 'You talk about Маша a lot')").run();
         const tools = await import("../../tools/tool-intelligence.js");
         tools.setCache("memory_search", { query: "маша" }, "Маша moved to Pune");
-        fs.writeFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "memory-gate.jsonl"), '{"content_preview":"x\\nМаша moved"}\n{"sha":"1"}\n');
+        fs.writeFileSync(path.join(process.env.BHAI_DATA_DIR as string, "memory-gate.jsonl"), '{"content_preview":"x\\nМаша moved"}\n{"sha":"1"}\n');
         // Only memory lines leave the audit trail; a shell command naming Маша is the owner's security record.
         fs.writeFileSync(
-            path.join(process.env.ATLAS_DATA_DIR as string, "audit.jsonl"),
+            path.join(process.env.BHAI_DATA_DIR as string, "audit.jsonl"),
             '{"tool":"memory_store","args":{"content":"Маша"}}\n{"action":"memory_identity_updated","value":"Маша"}\n{"action":"shell_exec","command":"echo Маша"}\n',
         );
         // A chat log where the fact sits only in a tool call's arguments is still found.
@@ -165,10 +165,10 @@ describe("memory_forget across tiers", () => {
             expect(count(`SELECT COUNT(*) n FROM ${t}`)).toBe(0);
         }
         expect(tools.getCached("memory_search", { query: "маша" })).toBeNull();
-        const gate = fs.readFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "memory-gate.jsonl"), "utf8");
+        const gate = fs.readFileSync(path.join(process.env.BHAI_DATA_DIR as string, "memory-gate.jsonl"), "utf8");
         expect(gate).not.toContain("Маша");
         expect(gate).toContain('"sha":"1"');
-        const audit = fs.readFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "audit.jsonl"), "utf8");
+        const audit = fs.readFileSync(path.join(process.env.BHAI_DATA_DIR as string, "audit.jsonl"), "utf8");
         expect(audit.trim().split("\n")).toEqual(['{"action":"shell_exec","command":"echo Маша"}']);
     });
 

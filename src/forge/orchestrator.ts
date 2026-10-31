@@ -2,7 +2,6 @@
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { LLMClient } from "../llm.js";
 import { selectForToolSynthesis } from "../model-router.js";
@@ -44,6 +43,7 @@ import type {
     ToolMetadata,
 } from "./types.js";
 import { parseCapabilitiesLooseInput, runVerifier } from "./verifier.js";
+import { getBhaiHome } from "../config/paths.js";
 
 type FunctionGemmaFn = (
     query: string,
@@ -61,10 +61,6 @@ let _ready = false;
 let _embedFn: ((text: string) => Promise<Float32Array>) | null = null;
 let _llmClient: LLMClient | null = null;
 
-function atlasHome(): string {
-    return process.env.ATLAS_HOME ?? join(homedir(), ".atlas");
-}
-
 function hashSync(s: string): string {
     return createHash("sha256").update(s).digest("hex").substring(0, 16);
 }
@@ -74,8 +70,8 @@ export interface InitForgeOpts {
 }
 
 export async function initForge(opts: InitForgeOpts): Promise<void> {
-    if (process.env.ATLAS_NO_FORGE === "true") {
-        console.log("🔧 Forge: disabled via ATLAS_NO_FORGE");
+    if (process.env.BHAI_NO_FORGE === "true") {
+        console.log("🔧 Forge: disabled via BHAI_NO_FORGE");
         return;
     }
 
@@ -83,7 +79,7 @@ export async function initForge(opts: InitForgeOpts): Promise<void> {
     _embedFn = opts.embedFn;
 
     try {
-        const home = atlasHome();
+        const home = getBhaiHome();
         const libraryPath = join(home, "data", "skill-library.db");
         const telemetryPath = join(home, "data", "forge-telemetry.jsonl");
 
@@ -241,7 +237,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
         };
     }
 
-    if (process.env.ATLAS_NO_FORGE_LOOKUP !== "true" && _embedFn) {
+    if (process.env.BHAI_NO_FORGE_LOOKUP !== "true" && _embedFn) {
         const fgFn = await loadFunctionGemmaFn();
         const hit = await runLookupPipeline({
             description: req.description,
@@ -257,11 +253,11 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
         }
     }
 
-    if (process.env.ATLAS_FORGE_STUB_LLM === "true") {
+    if (process.env.BHAI_FORGE_STUB_LLM === "true") {
         return await synthesizeWithStubLLM(req);
     }
 
-    if (process.env.ATLAS_NO_FORGE_VERIFIER === "true") {
+    if (process.env.BHAI_NO_FORGE_VERIFIER === "true") {
         return await synthesizeWithStubLLM(req);
     }
 
@@ -279,7 +275,7 @@ export async function synthesizeTool(req: SynthesisRequest): Promise<SynthesisRe
         };
     }
 
-    const home = atlasHome();
+    const home = getBhaiHome();
     const failedDir = join(home, "store", "dynamic", "_failed");
 
     const modelSel = selectForToolSynthesis(req.source === "dream_replay");
@@ -569,7 +565,7 @@ export async function revokeDynamicTool(slug: string): Promise<void> {
     emitForgeEvent({ event: "tool_revoked", ts: Date.now(), slug } as never);
 }
 
-/// Boot-scan: walk ~/.atlas/store/dynamic/* and re-register any active
+/// Boot-scan: walk ~/.bhai/store/dynamic/* and re-register any active
 /// (approved) manifests in the agent's tool registry.
 async function scanAndRegisterApprovedTools(): Promise<{ registered: number; archived: number }> {
     const dir = getDynamicStoreDir();
@@ -662,7 +658,7 @@ async function scanAndRegisterApprovedTools(): Promise<{ registered: number; arc
 
 // ── Pending queue with HMAC integrity (F6) ────────────────
 //
-// Threat: a malicious actor who can write to ~/.atlas/data/forge-pending.json
+// Threat: a malicious actor who can write to ~/.bhai/data/forge-pending.json
 // could inject crafted SynthesisRequests that the consumer picks up and
 // passes into the verifier loop. We can't stop them from writing to disk
 // (filesystem is shared with the user), but we can refuse to consume
@@ -731,7 +727,7 @@ function verifyEntry(entry: SignedPendingEntry): boolean {
 }
 
 function pendingPath(): string {
-    return join(atlasHome(), "data", "forge-pending.json");
+    return join(getBhaiHome(), "data", "forge-pending.json");
 }
 
 function loadPending(): PendingQueue {

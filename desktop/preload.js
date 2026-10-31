@@ -8,7 +8,7 @@
 
 const { contextBridge, ipcRenderer } = require("electron");
 
-contextBridge.exposeInMainWorld("atlas", {
+contextBridge.exposeInMainWorld("bhai", {
     // ── Window Controls ───────────────────────
     minimize: () => ipcRenderer.invoke("window:minimize"),
     close: () => ipcRenderer.invoke("window:close"),

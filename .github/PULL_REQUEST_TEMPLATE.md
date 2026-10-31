@@ -18,4 +18,4 @@
 - [ ] No secrets, tokens, customer data, or `.env` contents in the diff
 - [ ] Convex changes deployed or noted (`npx convex deploy`)
 - [ ] Server prompt changes reseeded or noted (`scripts/seed-system-content.ts`)
-- [ ] New `ATLAS_*` kill switches documented in `CLAUDE.md`
+- [ ] New `BHAI_*` kill switches documented in `CLAUDE.md`

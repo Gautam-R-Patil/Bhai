@@ -25,9 +25,9 @@ describe("create_tool routes through forge.synthesizeTool when ready", () => {
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-ctv-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
-        process.env.ATLAS_FORGE_STUB_LLM = "true";
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
+        process.env.BHAI_FORGE_STUB_LLM = "true";
         registry = new Map();
         setRegistryRef(registry);
         await initForge({ embedFn: async () => vector(0) });
@@ -36,9 +36,9 @@ describe("create_tool routes through forge.synthesizeTool when ready", () => {
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        delete process.env.ATLAS_FORGE_STUB_LLM;
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        delete process.env.BHAI_FORGE_STUB_LLM;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("forge-routed synthesis registers a tool", async () => {
@@ -54,8 +54,8 @@ describe("create_tool routes through forge.synthesizeTool when ready", () => {
         expect(result.lookup_hit || result.synthesized).toBeTruthy();
     });
 
-    it("ATLAS_NO_FORGE_VERIFIER=true falls back to legacy path", async () => {
-        process.env.ATLAS_NO_FORGE_VERIFIER = "true";
+    it("BHAI_NO_FORGE_VERIFIER=true falls back to legacy path", async () => {
+        process.env.BHAI_NO_FORGE_VERIFIER = "true";
         const r = await createTool.handler({
             name: "legacy_path",
             description: "Legacy path",
@@ -65,6 +65,6 @@ describe("create_tool routes through forge.synthesizeTool when ready", () => {
         const result = JSON.parse(r);
         expect(result.success).toBe(true);
         expect(registry.has("legacy_path")).toBe(true);
-        delete process.env.ATLAS_NO_FORGE_VERIFIER;
+        delete process.env.BHAI_NO_FORGE_VERIFIER;
     });
 });

@@ -8,7 +8,7 @@ import path from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { LLMClient } from "../llm.js";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-memimport-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-memimport-"));
 
 // The real store, with remember() wrapped so the tests can see how it was called.
 vi.mock("./sqlite.js", async (orig) => {
@@ -426,8 +426,8 @@ describe("saveImportedFacts", () => {
         });
         expect(hardAllow("Grows chillies on the balcony", "user", 5, "general").allow).toBe(false);
 
-        const prev = process.env.ATLAS_MEMORY_GATE_SHADOW;
-        process.env.ATLAS_MEMORY_GATE_SHADOW = "false"; // enforce the gate
+        const prev = process.env.BHAI_MEMORY_GATE_SHADOW;
+        process.env.BHAI_MEMORY_GATE_SHADOW = "false"; // enforce the gate
         const drop = stubLLM(() => "DROP");
         sqlite.setMemoryLLM(drop);
         try {
@@ -445,7 +445,7 @@ describe("saveImportedFacts", () => {
             ]);
             expect(unreviewed).toMatchObject({ added: 0, rejected: 1 });
         } finally {
-            process.env.ATLAS_MEMORY_GATE_SHADOW = prev;
+            process.env.BHAI_MEMORY_GATE_SHADOW = prev;
             sqlite.setMemoryLLM(null as unknown as LLMClient);
         }
     });

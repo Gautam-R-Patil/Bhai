@@ -154,7 +154,7 @@ export function getFieldValue(field: string | VerifiedField | undefined): string
 
 // Guarded ownership/creator claims about XAGI Labs / Bhai.
 // We reject ONLY ownership/creator role + XAGI company combinations.
-// Working at, interested in, being a fan of XAGI/Atlas is fine — the bot
+// Working at, interested in, being a fan of XAGI/Bhai is fine — the bot
 // should learn that context normally.
 // Canonical-form tokens for guarded orgs.
 // "a.t.l.a.s" canonicalizes to "a t l a s" so include that spaced form here.
@@ -264,8 +264,8 @@ export function fieldEmbedsOwnershipClaim(value: string): boolean {
     return hasOrg && hasOwnership;
 }
 
-export function fieldNamesAtlasDirectly(value: string): boolean {
-    // project="Bhai" / goal="build bhai" / project="atlas-core" /
+export function fieldNamesBhaiDirectly(value: string): boolean {
+    // project="Bhai" / goal="build bhai" / project="bhai-core" /
     // goal="ship bhai v2" — claims to projects/goals NAMED after the bot
     // or its creator org. The bot is Bhai; it cannot be a user's
     // "project" or "goal" to build.
@@ -277,7 +277,7 @@ export function fieldNamesAtlasDirectly(value: string): boolean {
     if (/\b(build|ship|create|launch|run|own|maintain|develop|design)\s+/.test(c)) {
         if (c.includes("bhai") || c.includes("xagi") || c.includes("a t l a s")) return true;
     }
-    // Compound names like "atlas-core" / "bhai v2" / "xagi labs platform"
+    // Compound names like "bhai-core" / "bhai v2" / "xagi labs platform"
     // canonicalize to "bhai core" / "bhai v2" / "xagi labs platform".
     if (/^(bhai|xagi|a t l a s)(\s|$)/.test(c)) return true;
     if (/(\s|^)(bhai|xagi|a t l a s)$/.test(c)) return true;

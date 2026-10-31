@@ -9,7 +9,7 @@
  *   getPersonaIdentityLine(p)   → string injected into dynamic prompt
  *   getPersonaToolWeights(p)    → category → multiplier map for tool router
  *
- * Both consumers gate their use behind ATLAS_NO_PERSONA_BIAS=true.
+ * Both consumers gate their use behind BHAI_NO_PERSONA_BIAS=true.
  * Persona is stored in identity.extra (set during wizard) and read
  * once per agent turn — see src/agent.ts and src/tool-router.ts.
  */

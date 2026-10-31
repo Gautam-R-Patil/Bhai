@@ -206,9 +206,9 @@ const REFERENCE_INPUTS: Array<{ name: string; input: string }> = [
 
 describe("Secrets-sanitizer Rust ↔ TS parity (Phase 1.1)", () => {
     if (!isNativeAvailable()) {
-        // CI's native job sets ATLAS_REQUIRE_NATIVE=true after building the binary.
-        if (process.env.ATLAS_REQUIRE_NATIVE === "true")
-            it("the native binary is loaded (ATLAS_REQUIRE_NATIVE)", () => expect(isNativeAvailable()).toBe(true));
+        // CI's native job sets BHAI_REQUIRE_NATIVE=true after building the binary.
+        if (process.env.BHAI_REQUIRE_NATIVE === "true")
+            it("the native binary is loaded (BHAI_REQUIRE_NATIVE)", () => expect(isNativeAvailable()).toBe(true));
         else it.skip("native module unavailable — skipping parity tests", () => {});
         return;
     }

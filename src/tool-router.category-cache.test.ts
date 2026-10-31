@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "tool-router-cache-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "tool-router-cache-"));
 
 const { emb } = vi.hoisted(() => ({ emb: { texts: [] as string[], salt: 0 } }));
 vi.mock("./memory/embeddings.js", () => {
@@ -31,7 +31,7 @@ async function boot() {
     emb.texts.length = 0;
     const router = await import("./tool-router.js");
     await router.initToolRouter();
-    for (let i = 0; i < 50 && !fs.existsSync(path.join(process.env.ATLAS_DATA_DIR as string, "tool-router-categories.json")); i++) {
+    for (let i = 0; i < 50 && !fs.existsSync(path.join(process.env.BHAI_DATA_DIR as string, "tool-router-categories.json")); i++) {
         await new Promise((r) => setTimeout(r, 10));
     }
     return emb.texts.length;

@@ -25,7 +25,7 @@
  * The runAgent loop tracks both flags per run and forces one extra iteration
  * with a system reminder if the LLM tries to exit with mutations but no verify.
  *
- * Kill-switch: ATLAS_NO_VERIFY_GATE=true disables the gate entirely.
+ * Kill-switch: BHAI_NO_VERIFY_GATE=true disables the gate entirely.
  */
 
 import { getActiveChannel } from "../tools/channel-send.js";
@@ -287,7 +287,7 @@ export function pickReceipt(
  *  - the user hasn't disabled the gate.
  */
 export function shouldForceVerify(state: VerifyGateState): boolean {
-    if (process.env.ATLAS_NO_VERIFY_GATE === "true") return false;
+    if (process.env.BHAI_NO_VERIFY_GATE === "true") return false;
     if (state.nudgedThisRun) return false;
     return state.osStateMutated && !state.verifyCalled;
 }

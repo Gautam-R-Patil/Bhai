@@ -14,7 +14,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getBhaiHome } from "../config/paths.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -38,7 +38,7 @@ interface StrategyStore {
 
 // ── State ─────────────────────────────────────
 
-const DATA_DIR = join(homedir(), ".atlas", "data");
+const DATA_DIR = join(getBhaiHome(), "data");
 const STORE_FILE = join(DATA_DIR, "strategy-library.json");
 const MAX_STRATEGIES = 200;
 const SAVE_DEBOUNCE_MS = 3000;

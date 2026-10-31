@@ -108,8 +108,8 @@ export type StepResult = z.infer<typeof StepResultSchema>;
 
 // The deadline bounds the skill's code (its load and step), not starting Node:
 // a fresh child gets bootMs to say it's up, then the deadline starts.
-const deadlineMs = () => Number(process.env.ATLAS_SITE_SKILL_DEADLINE_MS ?? 5000);
-const bootMs = () => Number(process.env.ATLAS_SITE_SKILL_BOOT_MS ?? 30000);
+const deadlineMs = () => Number(process.env.BHAI_SITE_SKILL_DEADLINE_MS ?? 5000);
+const bootMs = () => Number(process.env.BHAI_SITE_SKILL_BOOT_MS ?? 30000);
 
 function shimPath(): string {
     return (

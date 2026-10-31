@@ -5,17 +5,17 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// We import via dynamic import after setting ATLAS_WORKSPACE so the
+// We import via dynamic import after setting BHAI_WORKSPACE so the
 // workspace dir resolves to our scratch dir.
 let workspaceDir: string;
 let resolveSafePath: (p: string) => string | null;
 let scratchRoot: string;
 
 beforeAll(async () => {
-    scratchRoot = mkdtempSync(join(tmpdir(), "atlas-overlay-path-"));
+    scratchRoot = mkdtempSync(join(tmpdir(), "bhai-overlay-path-"));
     workspaceDir = join(scratchRoot, "workspace");
     mkdirSync(workspaceDir, { recursive: true });
-    process.env.ATLAS_WORKSPACE = workspaceDir;
+    process.env.BHAI_WORKSPACE = workspaceDir;
 
     // Seed files
     writeFileSync(join(workspaceDir, "foo.txt"), "hello");
@@ -39,7 +39,7 @@ beforeAll(async () => {
 
 afterAll(() => {
     rmSync(scratchRoot, { recursive: true, force: true });
-    delete process.env.ATLAS_WORKSPACE;
+    delete process.env.BHAI_WORKSPACE;
 });
 
 describe("F2: resolveSafePath — workspace containment + deny-list", () => {

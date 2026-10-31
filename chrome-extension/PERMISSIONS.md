@@ -17,7 +17,7 @@ because Chrome warns on unrecognized (`_`-prefixed) manifest keys.
   when its own Playwright browser hits a login/OTP wall on that site, so it can
   continue in the user's existing session instead of asking them to sign in again.
 
-- **`nativeMessaging`** — `chrome.runtime.sendNativeMessage("com.atlas.bridge", { action: "get_config" })`
+- **`nativeMessaging`** — `chrome.runtime.sendNativeMessage("com.bhai.bridge", { action: "get_config" })` (falling back to `com.atlas.bridge`, the name a bot from before the rename registers)
   fetches the bridge token from the local native-messaging host Bhai registers
   (`src/tools/browser/chrome-bridge.ts`), scoped to this OS user. Once that works,
   `/discover` stops serving the token over HTTP.

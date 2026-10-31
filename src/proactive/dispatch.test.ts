@@ -19,8 +19,8 @@ describe("proactive push", () => {
         _setFatigueCheckForTests(null);
     });
     afterEach(() => {
-        delete process.env.ATLAS_PROACTIVE_DISABLE;
-        delete process.env.ATLAS_PROACTIVE_SHADOW;
+        delete process.env.BHAI_PROACTIVE_DISABLE;
+        delete process.env.BHAI_PROACTIVE_SHADOW;
     });
 
     it("an overlay delivery is pushed once, as composed", async () => {
@@ -37,12 +37,12 @@ describe("proactive push", () => {
     });
 
     it("nothing is pushed when proactive is off, shadowed or fatigued", async () => {
-        process.env.ATLAS_PROACTIVE_DISABLE = "true"; // "shut up"
+        process.env.BHAI_PROACTIVE_DISABLE = "true"; // "shut up"
         await dispatchProactiveMessage("overlay", "x", "fyi");
-        delete process.env.ATLAS_PROACTIVE_DISABLE;
-        process.env.ATLAS_PROACTIVE_SHADOW = "true";
+        delete process.env.BHAI_PROACTIVE_DISABLE;
+        process.env.BHAI_PROACTIVE_SHADOW = "true";
         await dispatchProactiveMessage("overlay", "x", "fyi");
-        delete process.env.ATLAS_PROACTIVE_SHADOW;
+        delete process.env.BHAI_PROACTIVE_SHADOW;
         _setFatigueCheckForTests(() => true);
         await dispatchProactiveMessage("overlay", "x", "question");
         await flush();
@@ -72,7 +72,7 @@ describe("proactive push", () => {
         let lines: string[];
         beforeEach(() => {
             active.value = true;
-            process.env.ATLAS_DESKTOP_NOTIFY = "1";
+            process.env.BHAI_DESKTOP_NOTIFY = "1";
             process.env.PRIMARY_CHANNEL = "telegram";
             lines = [];
             vi.spyOn(process.stdout, "write").mockImplementation((s) => {
@@ -82,7 +82,7 @@ describe("proactive push", () => {
         });
         afterEach(() => {
             active.value = false;
-            delete process.env.ATLAS_DESKTOP_NOTIFY;
+            delete process.env.BHAI_DESKTOP_NOTIFY;
             delete process.env.PRIMARY_CHANNEL;
             _setFatigueCheckForTests(null);
             vi.restoreAllMocks();

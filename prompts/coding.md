@@ -29,7 +29,7 @@ You are acting on code. Follow these rules unless the user tells you otherwise.
 ## Planning and specs
 
 - For non-trivial coding tasks, enter plan mode first (`enter_plan_mode`) so you can investigate without the temptation to edit prematurely. Exit with `exit_plan_mode` once you have a concrete plan.
-- For new features or architectural changes where acceptance criteria should be written down, use spec mode (`enter_spec_mode` → write the spec to `.atlas/specs/` → `finalize_spec`). Spec → plan → act is the three-stage flow.
+- For new features or architectural changes where acceptance criteria should be written down, use spec mode (`enter_spec_mode` → write the spec to the `spec_path` it returns → `finalize_spec`). Spec → plan → act is the three-stage flow.
 
 ## Web design & UI/UX
 
@@ -64,7 +64,7 @@ On the first iteration of a coding task, the agent loop auto-triggers a codebase
 - `codebase_index` — build, refresh, inspect, or wipe the per-repo sidecar SQLite index. Use `build` only on a virgin repo or when `stats` shows the index is stale; otherwise prefer `refresh` (Merkle-based, skips unchanged files). `stats` is a cheap read.
 - `codebase_query` — six pure-SQL operations: `find_symbol`, `find_usages`, `file_neighborhood`, `describe_file`, `architecture_overview`, `dependency_chain`. Prefer these over raw `grep` when you know the symbol or file name — the results are structured and include call-sites resolved across the repo.
 - `code_change_summary` — read-only local git context (`recent_commits`, `hot_files`, `diff`, `blame`). Safe to call any time to understand recent activity; never mutates.
-- `agents_md_scaffold` — generates or refreshes `AGENTS.md` + `.atlas/agents/*.md`. Refuses to overwrite human-edited files (those without a `<!-- @atlas:auto -->` marker). Use `only: ["recent.md"]` for a daily hot-files refresh without touching anything else.
+- `agents_md_scaffold` — generates or refreshes `AGENTS.md` + `.bhai/agents/*.md` (or `.atlas/agents/*.md` in repos that already have that folder). Refuses to overwrite human-edited files (those without a `<!-- @bhai:auto -->` or older `<!-- @atlas:auto -->` marker). Use `only: ["recent.md"]` for a daily hot-files refresh without touching anything else.
 - Prefer `codebase_query find_symbol` + `codebase_query find_usages` over `lsp`/`grep` when the index exists — cheaper and structured.
 
 ## Git operations

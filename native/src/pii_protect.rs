@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Linear-time port of src/security/credential-mask.ts (`maskCredentials`) and
-// src/security/pii-redactor.ts (`findPii`). Opt-in: ATLAS_NATIVE_PROTECT=true.
+// src/security/pii-redactor.ts (`findPii`). Opt-in: BHAI_NATIVE_PROTECT=true.
 //
 // Why Rust here: both run over the whole history on every LLM call, every tool
 // result and every console line, and V8's backtracking regexes have no

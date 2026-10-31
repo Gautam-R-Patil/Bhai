@@ -220,8 +220,8 @@ const PRE_E2E_PLAINTEXT_PATHS = new Set([
 // attempt — not the whole chain. A hung/dead model (e.g. a 404 slug that never
 // answers) is abandoned at this deadline and the chain advances to the next
 // model, instead of stalling the previous 45s and stacking into ~55s+ totals.
-// Override with ATLAS_LLM_ATTEMPT_TIMEOUT_MS for slow links.
-const ATTEMPT_TIMEOUT_MS = Number(process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS) || 25_000;
+// Override with BHAI_LLM_ATTEMPT_TIMEOUT_MS for slow links.
+const ATTEMPT_TIMEOUT_MS = Number(process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS) || 25_000;
 
 function urlPathOf(rawUrl: string): string {
     try {

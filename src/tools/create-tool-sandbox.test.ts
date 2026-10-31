@@ -133,8 +133,8 @@ describe("legacy create_tool vs approved Forge tools", () => {
     it("does not replace an approved, kernel-sandboxed tool", async () => {
         const reg = new Map<string, ToolDefinition>();
         setRegistryRef(reg);
-        const prev = process.env.ATLAS_NO_FORGE_VERIFIER;
-        process.env.ATLAS_NO_FORGE_VERIFIER = "true";
+        const prev = process.env.BHAI_NO_FORGE_VERIFIER;
+        process.env.BHAI_NO_FORGE_VERIFIER = "true";
         const approved: ToolDefinition = {
             schema: { type: "function", function: { name: "approved_tool", parameters: { type: "object" } } },
             handler: async () => "sandboxed",
@@ -154,8 +154,8 @@ describe("legacy create_tool vs approved Forge tools", () => {
             expect(JSON.parse(again).success).toBe(true);
         } finally {
             unregisterDynamicTool("approved_tool");
-            if (prev === undefined) delete process.env.ATLAS_NO_FORGE_VERIFIER;
-            else process.env.ATLAS_NO_FORGE_VERIFIER = prev;
+            if (prev === undefined) delete process.env.BHAI_NO_FORGE_VERIFIER;
+            else process.env.BHAI_NO_FORGE_VERIFIER = prev;
         }
     });
 });

@@ -171,7 +171,8 @@ export const claimHandoff = internalMutation({
 // ── Sign-in page (GET /auth-login) ──────────────────────────────────────
 // Loaded by the desktop sign-in window. The OTPless SDK rejects file://
 // origins, so the page is served over HTTPS from this deployment and the
-// token goes back to the app via window.atlasAuth. Opened in a plain browser
+// token goes back to the app via window.bhaiAuth (window.atlasAuth in
+// installs from before the rename). Opened in a plain browser
 // from the email link, it hands the token to that window instead (above).
 
 export const OTPLESS_APP_ID = "F1WCDC7B2QKKDI2UTGVD";
@@ -237,7 +238,9 @@ export const AUTH_LOGIN_HTML = `<!DOCTYPE html>
   const codeInput = document.getElementById("code-input");
   const retryBtn = document.getElementById("retry");
   const error = document.getElementById("error");
-  const inApp = !!(window.atlasAuth && window.atlasAuth.submitToken);
+  // atlasAuth: the preload name in installs from before the rename. Keep it.
+  const bridge = window.bhaiAuth || window.atlasAuth;
+  const inApp = !!(bridge && bridge.submitToken);
   const params = new URLSearchParams(location.search);
   const NONCE = /^[0-9a-f]{64}$/;
   const EXPIRED = "This sign-in link has expired or was already used. Go back to Bhai and request a new one.";
@@ -278,7 +281,7 @@ export const AUTH_LOGIN_HTML = `<!DOCTYPE html>
     busy = true;
     show("Verifying…");
     try {
-      const res = await window.atlasAuth.submitToken(token);
+      const res = await bridge.submitToken(token);
       if (res && res.success) return show("Signed in. Returning to Bhai…");
       fail((res && res.error) || "Sign-in failed. Please try again.");
     } catch (err) {

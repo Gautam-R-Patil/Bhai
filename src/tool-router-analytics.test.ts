@@ -5,16 +5,16 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const home = mkdtempSync(join(tmpdir(), "tool-analytics-"));
-vi.mock("node:os", async (orig) => ({ ...(await orig<typeof import("node:os")>()), homedir: () => home }));
+process.env.BHAI_HOME = join(home, ".bhai");
 
 describe("tool-router-analytics", () => {
     it("loads learned intents from a v3 file that still carries the dropped usage/failure fields", async () => {
-        mkdirSync(join(home, ".atlas", "data"), { recursive: true });
+        mkdirSync(join(home, ".bhai", "data"), { recursive: true });
         writeFileSync(
-            join(home, ".atlas", "data", "tool-analytics.json"),
+            join(home, ".bhai", "data", "tool-analytics.json"),
             JSON.stringify({
                 matrix: { a: { b: 9 } },
                 recentUsage: [],

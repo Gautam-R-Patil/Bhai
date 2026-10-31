@@ -20,7 +20,7 @@ let browser: any = null;
 // biome-ignore lint/suspicious/noExplicitAny: Playwright BrowserContext
 let shopRoute: (c: any) => Promise<any> = async (c) => c;
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // 100 orders × ₹249 would hit the real ₹10k/day cap
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000"; // 100 orders × ₹249 would hit the real ₹10k/day cap
     try {
         const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -31,7 +31,7 @@ beforeAll(async () => {
     }
 }, 60_000);
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
     await browser?.close();
 });
 

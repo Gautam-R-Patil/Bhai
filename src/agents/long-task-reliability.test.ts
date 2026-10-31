@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-process.env.ATLAS_DATA_DIR = mkdtempSync(join(tmpdir(), "lt-test-"));
+process.env.BHAI_DATA_DIR = mkdtempSync(join(tmpdir(), "lt-test-"));
 
 // Each running phase queues its release; the test waits for a real one (a no-op default
 // made "is it a function yet?" pass at once, releasing a phase that didn't exist — flaky under load).

@@ -2,10 +2,10 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 //
-// dump_ax_bin: the batched walk (default; ATLAS_NO_AX_BATCH=true turns it off) must produce the same tree as
+// dump_ax_bin: the batched walk (default; BHAI_NO_AX_BATCH=true turns it off) must produce the same tree as
 // the per-attribute walk. The rule (compareRuns) is unit-tested here on every run. The
 // live check dumps Finder, so it depends on the UI: it runs only with
-// ATLAS_AX_LIVE_TESTS=true on a Mac with the helper built (npm run build:ax) and
+// BHAI_AX_LIVE_TESTS=true on a Mac with the helper built (npm run build:ax) and
 // Accessibility permission.
 
 import { spawnSync } from "node:child_process";
@@ -19,7 +19,7 @@ import type { AxNode } from "../ax-dump.js";
 const BIN = join(getScriptsDir(), "dump_ax_bin");
 
 function liveTarget(): number | null {
-    if (process.env.ATLAS_AX_LIVE_TESTS !== "true") return null;
+    if (process.env.BHAI_AX_LIVE_TESTS !== "true") return null;
     if (process.platform !== "darwin" || !existsSync(BIN)) return null;
     const pid = pidOf("Finder");
     if (!pid) return null;
@@ -104,7 +104,7 @@ describe("compareRuns (parity rule)", () => {
 
 const pid = liveTarget();
 
-describe.skipIf(pid === null)("dump_ax_bin batched vs per-attribute walk (live Finder, ATLAS_AX_LIVE_TESTS)", () => {
+describe.skipIf(pid === null)("dump_ax_bin batched vs per-attribute walk (live Finder, BHAI_AX_LIVE_TESTS)", () => {
     it("produces the same tree", { timeout: 120_000 }, () => {
         let r = parityRuns(BIN, pid as number, 3);
         if (!r.cmp.ok) r = parityRuns(BIN, pid as number, 3); // live UI: confirm once

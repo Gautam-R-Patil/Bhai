@@ -6,8 +6,8 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-overlay-placeholder-"));
-process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-overlay-placeholder-"));
+process.env.BHAI_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
 const { front } = vi.hoisted(() => ({ front: { app: "TextEdit" } }));
 vi.mock("../proactive/activity.js", () => ({
@@ -18,7 +18,7 @@ it("sends the placeholder once, and again only when it changes", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "Date"] });
     const chat = await import("./overlay-chat.js");
     chat.initOverlayChat({} as never);
-    const ws = new WebSocket(`ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.BHAI_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`);
     const got: string[] = [];
     ws.on("message", (d) => {
         const m = JSON.parse(String(d));

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "codebase-bundle-data-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "codebase-bundle-data-"));
 
 function project(withBundle: boolean): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codebase-bundle-"));

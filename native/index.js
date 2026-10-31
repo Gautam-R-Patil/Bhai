@@ -12,9 +12,20 @@
 try {
     require("./binding.js");
 } catch (e) {
+    // A dev checkout whose last native build predates the rename still has
+    // atlas-native.<triple>.node instead of bhai-native.<triple>.node.
+    let legacy = null;
+    try {
+        const name = require("node:fs")
+            .readdirSync(__dirname)
+            .find((f) => f.startsWith(`atlas-native.${process.platform}-${process.arch}`) && f.endsWith(".node"));
+        if (name) legacy = require(`./${name}`);
+    } catch {
+        /* no usable old binary either */
+    }
     // CI on macOS ships the binary, so a load failure there is a real break.
-    if (process.env.ATLAS_REQUIRE_NATIVE === "true") throw e;
+    if (!legacy && process.env.BHAI_REQUIRE_NATIVE === "true") throw e;
     const id = require.resolve("./binding.js");
-    require.cache[id] = { id, filename: id, loaded: true, exports: {} };
+    require.cache[id] = { id, filename: id, loaded: true, exports: legacy ?? {} };
 }
 module.exports = require("./binding.js");

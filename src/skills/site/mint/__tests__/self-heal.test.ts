@@ -178,7 +178,7 @@ async function mintAndApprove(store: string): Promise<string> {
 }
 
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
     try {
         const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -205,12 +205,12 @@ beforeAll(async () => {
     }
 }, 60_000);
 beforeEach(() => {
-    process.env.ATLAS_DATA_DIR = tmp(); // run log, captures, repair history, fixtures: per test
+    process.env.BHAI_DATA_DIR = tmp(); // run log, captures, repair history, fixtures: per test
     _resetConsent();
 });
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
-    delete process.env.ATLAS_DATA_DIR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_DATA_DIR;
     await browser?.close();
 });
 

@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 // List Gemini models the configured API key can access, focusing on live/audio.
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { initSession, getSessionToken } from "../src/session.js";
 import { getConvexSiteUrl } from "../src/config/keys.js";
 

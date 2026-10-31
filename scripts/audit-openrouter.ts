@@ -1,6 +1,6 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Usage:  ADMIN_API_KEY=... npx tsx scripts/audit-openrouter.ts
-// Optional:  ATLAS_ENV=prod            # probe the prod Convex deployment
+// Optional:  BHAI_ENV=prod            # probe the prod Convex deployment
 //            CONVEX_SITE_URL=https://...  # override the endpoint URL
 //
 // Calls the admin-gated /api/llm/audit Convex route; the server holds the
@@ -8,6 +8,7 @@
 // the catalog against the model IDs Bhai references in src/llm.ts and
 // reports gaps + same-provider alternates.
 
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { MODELS } from "../src/llm.js";
 import { getConvexSiteUrl } from "../src/config/keys.js";
 

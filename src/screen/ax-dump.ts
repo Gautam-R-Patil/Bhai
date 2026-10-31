@@ -35,7 +35,7 @@ export interface AxDump {
     root: AxNode;
     trusted: boolean;
     depth: number;
-    /** macOS helper: an AX read timed out (ATLAS_AX_MSG_TIMEOUT_MS), so elements are missing. */
+    /** macOS helper: an AX read timed out (BHAI_AX_MSG_TIMEOUT_MS), so elements are missing. */
     partial?: boolean;
     // Added by the wrapper, not present in raw helper output:
     elapsedMs: number;
@@ -171,7 +171,7 @@ async function dumpMacOS(opts: AxDumpOptions, timeoutMs: number): Promise<AxDump
     }
     if (opts.depth) args.push("--depth", String(opts.depth));
     if (opts.bboxOnly) args.push("--bbox-only");
-    const env = opts.budgetMs ? { ...process.env, ATLAS_AX_BUDGET_MS: String(opts.budgetMs) } : undefined;
+    const env = opts.budgetMs ? { ...process.env, BHAI_AX_BUDGET_MS: String(opts.budgetMs) } : undefined;
     return parseDump(await runSwiftHelper(exec, args, timeoutMs, env));
 }
 
@@ -395,9 +395,9 @@ function isInteractiveRole(role: string | null | undefined): boolean {
  */
 export function flattenInteractive(dump: AxDump): AxFlatElement[] {
     // Kill-switch per CLAUDE.md rollout pattern. JSON round-trip dominates for trees <200 nodes,
-    // so TS is often faster. Default: TS (force opt-in to Rust via ATLAS_NATIVE_AX=true).
+    // so TS is often faster. Default: TS (force opt-in to Rust via BHAI_NATIVE_AX=true).
     // Once bench-native.ts shows a measured win across representative inputs, flip the default.
-    if (process.env.ATLAS_NATIVE_AX === "true") {
+    if (process.env.BHAI_NATIVE_AX === "true") {
         const native = loadNative();
         if (native?.axFlattenInteractive) {
             try {

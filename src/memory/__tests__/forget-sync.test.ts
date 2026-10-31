@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-forget-sync-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-forget-sync-"));
 
 const clearResponseCache = vi.fn();
 vi.mock("../../llm-cache.js", () => ({ clearCache: clearResponseCache }));

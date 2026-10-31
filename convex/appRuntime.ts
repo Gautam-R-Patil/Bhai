@@ -3,10 +3,11 @@
 
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
+import { bhaiEnv } from "./envCompat";
 
 /**
  * Derive a per-installation runtime key.
- * Key = HMAC-SHA256(ATLAS_RUNTIME_MASTER_SECRET, deviceFingerprint || otplessUserId)
+ * Key = HMAC-SHA256(BHAI_RUNTIME_MASTER_SECRET, deviceFingerprint || otplessUserId)
  * Returns the key as a hex string (64 chars).
  */
 export const deriveRuntimeKey = internalAction({
@@ -15,9 +16,11 @@ export const deriveRuntimeKey = internalAction({
     deviceFingerprint: v.optional(v.string()),
   },
   handler: async (_ctx, { otplessUserId, deviceFingerprint }): Promise<string> => {
-    const masterSecret = process.env.ATLAS_RUNTIME_MASTER_SECRET;
+    // If BHAI_RUNTIME_MASTER_SECRET is ever set it must equal the ATLAS_ value,
+    // or every install's runtime key changes.
+    const masterSecret = bhaiEnv("RUNTIME_MASTER_SECRET");
     if (!masterSecret) {
-      throw new Error("ATLAS_RUNTIME_MASTER_SECRET not configured");
+      throw new Error("BHAI_RUNTIME_MASTER_SECRET not configured");
     }
 
     const bindingMaterial = deviceFingerprint || otplessUserId;

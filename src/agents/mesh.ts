@@ -285,7 +285,7 @@ export async function executeMesh(
         }
 
         // ── Phase 4G: worktree isolation for parallel coder steps ──
-        // Opt-in via ATLAS_AGENT_WORKTREE=true. Allocates one throwaway
+        // Opt-in via BHAI_AGENT_WORKTREE=true. Allocates one throwaway
         // git worktree per coder step in the wave when >= 2 coder steps
         // run in parallel, so each agent operates on its own checkout
         // without file conflicts. Worktrees are torn down at end of wave.
@@ -306,10 +306,10 @@ export async function executeMesh(
         // Cap the number of steps in this wave that may speculate (Phase 4F
         // safety). Without a cap, three concurrent coder steps would fork
         // to 6 parallel LLM conversations, doubling rate-limit pressure for
-        // marginal quality gains. Configurable via ATLAS_WAVE_SPECULATION_CAP
+        // marginal quality gains. Configurable via BHAI_WAVE_SPECULATION_CAP
         // (default 1; set to "off" to disable speculation entirely or a
         // larger number for more aggressive racing).
-        const rawCap = process.env.ATLAS_WAVE_SPECULATION_CAP ?? "1";
+        const rawCap = process.env.BHAI_WAVE_SPECULATION_CAP ?? "1";
         const waveSpeculationCap = rawCap === "off" ? 0 : Math.max(0, Number.parseInt(rawCap, 10) || 1);
         const speculationBudget = { remaining: waveSpeculationCap };
 

@@ -20,9 +20,9 @@ describe("tool_synthesis task type", () => {
         if (info) expect(info.tier).toBeLessThanOrEqual(2);
     });
 
-    it("ATLAS_NO_SYNTHESIS_ESCALATION skips the escalation", () => {
+    it("BHAI_NO_SYNTHESIS_ESCALATION skips the escalation", () => {
         const escalated = selectForToolSynthesis(false);
-        process.env.ATLAS_NO_SYNTHESIS_ESCALATION = "true";
+        process.env.BHAI_NO_SYNTHESIS_ESCALATION = "true";
         try {
             const skipped = selectForToolSynthesis(false);
             expect(skipped.reason).not.toContain("forge synthesis escalation");
@@ -34,7 +34,7 @@ describe("tool_synthesis task type", () => {
                 expect(escalated.reason).toContain("forge synthesis escalation");
             }
         } finally {
-            delete process.env.ATLAS_NO_SYNTHESIS_ESCALATION;
+            delete process.env.BHAI_NO_SYNTHESIS_ESCALATION;
         }
     });
 
@@ -47,8 +47,8 @@ describe("tool_synthesis task type", () => {
         }
     });
 
-    it("ATLAS_FORGE_DREAM_OPUS routes Track B to Opus", () => {
-        process.env.ATLAS_FORGE_DREAM_OPUS = "true";
+    it("BHAI_FORGE_DREAM_OPUS routes Track B to Opus", () => {
+        process.env.BHAI_FORGE_DREAM_OPUS = "true";
         try {
             const r = selectForToolSynthesis(true);
             const info = MODEL_REGISTRY[r.modelId];
@@ -57,7 +57,7 @@ describe("tool_synthesis task type", () => {
                 expect(info.tier).toBe(0);
             }
         } finally {
-            delete process.env.ATLAS_FORGE_DREAM_OPUS;
+            delete process.env.BHAI_FORGE_DREAM_OPUS;
         }
     });
 });

@@ -326,7 +326,7 @@ export const scaffoldProject: ToolDefinition = {
             return JSON.stringify({ error: `Unsupported template: ${template}` });
         }
         // Default parent: the user's workspace Code/ directory — `Bhai Files/Code`
-        // on fresh installs. The installer sets ATLAS_WORKSPACE; fallbacks resolve
+        // on fresh installs. The installer sets BHAI_WORKSPACE; fallbacks resolve
         // to Desktop / Documents / ~/ variants. Explicit parent_dir from the user
         // always wins.
         const parentDir = path.resolve((input.parent_dir as string) || getCodeDir());

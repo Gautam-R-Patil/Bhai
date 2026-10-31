@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-session-expiry-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-session-expiry-"));
 const sqlite = await import("./sqlite.js");
 await sqlite.initMemoryDB();
 const { touchSession } = await import("./session.js");

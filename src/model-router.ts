@@ -370,7 +370,7 @@ export function selectModel(opts: {
         };
     }
 
-    // tool_synthesis ⇒ always Pro tier (Sonnet) unless ATLAS_NO_SYNTHESIS_ESCALATION
+    // tool_synthesis ⇒ always Pro tier (Sonnet) unless BHAI_NO_SYNTHESIS_ESCALATION
     // is set. Native router may not yet recognize the new task type (Task 7
     // adds it), so this TS-side guard keeps the contract intact.
     if (opts.taskType === "tool_synthesis") {
@@ -380,13 +380,13 @@ export function selectModel(opts: {
         } catch { /* additive — fall through */ }
     }
 
-    // Cost-aware routing safety net (gated by ATLAS_NO_COST_ROUTING, default ON).
+    // Cost-aware routing safety net (gated by BHAI_NO_COST_ROUTING, default ON).
     // Belt-and-suspenders cap: plain single-turn chat must not reach Opus even
     // if the native binary is stale (pre-rebuild) and still routes upward. The
     // Flash/GPT down-routing for casual chat lives in the native binary; this
     // net only enforces the conservative Opus→Sonnet cap, which is the part
     // we can re-derive purely from the selection without personality_need.
-    if (process.env.ATLAS_NO_COST_ROUTING !== "true") {
+    if (process.env.BHAI_NO_COST_ROUTING !== "true") {
         const plainSingleTurn =
             result.taskType === "first_iteration" || result.taskType === "simple_chat";
         if (
@@ -455,7 +455,7 @@ export function selectForAgent(
     // The escalations below can return Opus directly (design sites, "stuck"
     // loops); apply the same gate as selectModel's cost cap.
     if (
-        process.env.ATLAS_NO_COST_ROUTING !== "true" &&
+        process.env.BHAI_NO_COST_ROUTING !== "true" &&
         claudeTier(pick.modelId) === "opus" &&
         !opusWarranted(message, errorCount, modelHint)
     ) {
@@ -489,7 +489,7 @@ function selectForAgentUncapped(
     // ── Synthesis escalation ──
     // When the agent is about to invoke create_tool (or just did), bump to
     // Pro tier so the Forge verifier loop runs against Sonnet. Disable with
-    // ATLAS_NO_SYNTHESIS_ESCALATION=true. Runs FIRST — most specific match wins.
+    // BHAI_NO_SYNTHESIS_ESCALATION=true. Runs FIRST — most specific match wins.
     try {
         if (lastToolCalls?.some((t) => t.function.name === "create_tool")) {
             const escalated = maybeEscalateForSynthesis(base, false);
@@ -502,7 +502,7 @@ function selectForAgentUncapped(
     // need Pro tier (Sonnet) for spatial reasoning, and Opus when stuck.
     // Runs BEFORE coding escalation — browser detection is more specific.
     try {
-        if (process.env.ATLAS_NO_BROWSER_ESCALATION !== "true") {
+        if (process.env.BHAI_NO_BROWSER_ESCALATION !== "true") {
             const escalated = maybeEscalateForBrowser(base, message, iteration, errorCount, lastToolCalls);
             if (escalated) return escalated;
         }
@@ -512,9 +512,9 @@ function selectForAgentUncapped(
     // When the message looks like complex coding work — multi-file refactor,
     // debugging session with repeated errors, or a new-feature request — and
     // the base router picked a light-tier model, bump to Sonnet. Disable
-    // with ATLAS_NO_CODING_ESCALATION=true if it ever mis-fires.
+    // with BHAI_NO_CODING_ESCALATION=true if it ever mis-fires.
     try {
-        if (process.env.ATLAS_NO_CODING_ESCALATION !== "true") {
+        if (process.env.BHAI_NO_CODING_ESCALATION !== "true") {
             const escalated = maybeEscalateForCoding(base, message, errorCount, lastToolCalls);
             if (escalated) return escalated;
         }
@@ -872,7 +872,7 @@ function maybeEscalateForCoding(
     // the thinking budget when signals indicate architectural reasoning
     // would pay off; otherwise leaves base.thinkingLevel untouched.
     let thinkingLevel = base.thinkingLevel;
-    if (process.env.ATLAS_NO_CODING_THINKING !== "true") {
+    if (process.env.BHAI_NO_CODING_THINKING !== "true") {
         const ultra = /\b(refactor\s+architecture|design\s+system|re.?architect|port\s+.*\s+to)\b/i.test(message);
         const heavy = multiFile || (errorDense && errorCount >= 4);
         if (ultra) thinkingLevel = "max";
@@ -901,23 +901,23 @@ function maybeEscalateForCoding(
 // Tool synthesis is structurally a coding task: produce an exact JSON envelope
 // with a working handler + tests. Forge's verifier loop runs against this
 // LLM, so we pin it to Pro tier (Sonnet) by default; Track B opts into Opus
-// for dream-replay batch synthesis via ATLAS_FORGE_DREAM_OPUS=true.
-// Disable globally with ATLAS_NO_SYNTHESIS_ESCALATION=true.
+// for dream-replay batch synthesis via BHAI_FORGE_DREAM_OPUS=true.
+// Disable globally with BHAI_NO_SYNTHESIS_ESCALATION=true.
 export function maybeEscalateForSynthesis(
     base: ModelSelection,
     isDreamReplay: boolean = false,
 ): ModelSelection | null {
-    if (process.env.ATLAS_NO_SYNTHESIS_ESCALATION === "true") return null;
+    if (process.env.BHAI_NO_SYNTHESIS_ESCALATION === "true") return null;
     const tier = MODEL_REGISTRY[base.modelId]?.tier ?? 99;
 
     if (isDreamReplay) {
-        // Track B — Sonnet + high thinking by default; ATLAS_FORGE_DREAM_OPUS opts into Opus + max.
-        const wantOpus = process.env.ATLAS_FORGE_DREAM_OPUS === "true";
+        // Track B — Sonnet + high thinking by default; BHAI_FORGE_DREAM_OPUS opts into Opus + max.
+        const wantOpus = process.env.BHAI_FORGE_DREAM_OPUS === "true";
         const target = wantOpus
             ? Object.values(MODEL_REGISTRY).find((m) => m.tier === 0 && m.supportsTools !== false)
             : Object.values(MODEL_REGISTRY).find((m) => m.tier === 2 && m.supportsTools !== false);
         if (!target || tier <= target.tier) return null;
-        const thinking = process.env.ATLAS_NO_SYNTHESIS_THINKING === "true"
+        const thinking = process.env.BHAI_NO_SYNTHESIS_THINKING === "true"
             ? base.thinkingLevel
             : (wantOpus ? "max" : "high");
         return {
@@ -933,7 +933,7 @@ export function maybeEscalateForSynthesis(
     if (tier <= 2) return null;
     const sonnet = Object.values(MODEL_REGISTRY).find((m) => m.tier === 2 && m.supportsTools !== false);
     if (!sonnet) return null;
-    const thinking = process.env.ATLAS_NO_SYNTHESIS_THINKING === "true"
+    const thinking = process.env.BHAI_NO_SYNTHESIS_THINKING === "true"
         ? base.thinkingLevel
         : "high";
     return {
@@ -1013,7 +1013,7 @@ export function maybeEscalateForBrowser(
     }
 
     // ── Kill-switch: restore old "any browser loop → Sonnet" behavior ──
-    if (process.env.ATLAS_NO_DYNAMIC_BROWSER_ROUTING === "true") {
+    if (process.env.BHAI_NO_DYNAMIC_BROWSER_ROUTING === "true") {
         if (isInBrowserLoop && currentTier > PRO_TIER_CEILING && sonnet) {
             return {
                 ...base,

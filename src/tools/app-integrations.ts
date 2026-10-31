@@ -23,7 +23,7 @@ const execFileAsync = promisify(execFile);
 // 25s: a cold Reminders launch took over 10s, and the kill read as "Command failed" with no
 // reason. (Not retried: the first attempt may have gone through, and a retry would duplicate.)
 async function runAS(script: string, timeout = 25000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_app_${Date.now()}.scpt`);
+    const tmpFile = join(tmpdir(), `bhai_app_${Date.now()}.scpt`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout });
@@ -44,7 +44,7 @@ function asStr(s: string): string {
 }
 
 async function runJXA(script: string, timeout = 10000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_app_${Date.now()}.js`);
+    const tmpFile = join(tmpdir(), `bhai_app_${Date.now()}.js`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout });

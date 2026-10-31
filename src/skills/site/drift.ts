@@ -133,7 +133,7 @@ export function noteRepair(slug: string, skillDir: string, status: string, reaso
 
 /** Why a repair of `slug` can't run now, or null. */
 export function repairBlocked(slug: string, skillDir: string): string | null {
-    if (process.env.ATLAS_NO_SITE_REPAIR === "true" || process.env.ATLAS_NO_SITE_MINT === "true") return "repairs_off";
+    if (process.env.BHAI_NO_SITE_REPAIR === "true" || process.env.BHAI_NO_SITE_MINT === "true") return "repairs_off";
     if (readJson(path.join(skillDir, "skill.json"))?.status === "archived") return "archived";
     const last = repairHistory(slug)
         .filter((h) => h.reason !== "cancelled") // a cancelled repair may run again

@@ -28,15 +28,15 @@ function makeLLM(chat: LLMClient["chat"]): LLMClient {
 
 describe("progress-judge — gate + mapping", () => {
     afterEach(() => {
-        delete process.env.ATLAS_PROGRESS_JUDGE;
+        delete process.env.BHAI_PROGRESS_JUDGE;
     });
 
-    it("progressJudgeEnabled reflects ATLAS_PROGRESS_JUDGE", () => {
-        delete process.env.ATLAS_PROGRESS_JUDGE;
+    it("progressJudgeEnabled reflects BHAI_PROGRESS_JUDGE", () => {
+        delete process.env.BHAI_PROGRESS_JUDGE;
         expect(progressJudgeEnabled()).toBe(false);
-        process.env.ATLAS_PROGRESS_JUDGE = "true";
+        process.env.BHAI_PROGRESS_JUDGE = "true";
         expect(progressJudgeEnabled()).toBe(true);
-        process.env.ATLAS_PROGRESS_JUDGE = "1";
+        process.env.BHAI_PROGRESS_JUDGE = "1";
         expect(progressJudgeEnabled()).toBe(false); // only exact "true"
     });
 
@@ -64,7 +64,7 @@ describe("progress-judge — runProgressJudge", () => {
     const msgs: ChatCompletionMessageParam[] = [{ role: "assistant", content: "stuck" }];
 
     beforeEach(() => {
-        delete process.env.ATLAS_PROGRESS_JUDGE;
+        delete process.env.BHAI_PROGRESS_JUDGE;
     });
 
     it("parses a well-formed JSON verdict and clamps progress to [0,100]", async () => {

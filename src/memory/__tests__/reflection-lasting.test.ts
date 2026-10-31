@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-reflect-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-reflect-"));
 
 const llmFor = (summary: object) => ({
     chat: vi.fn(async ({ systemPrompt }: { systemPrompt?: string }) => ({

@@ -8,7 +8,7 @@ import { hashContent, recordRead } from "./read-registry.js";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-edit-"));
 beforeAll(() => {
-    process.env.ATLAS_NO_POST_EDIT_DIAGNOSTICS = "true";
+    process.env.BHAI_NO_POST_EDIT_DIAGNOSTICS = "true";
 });
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 

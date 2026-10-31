@@ -128,7 +128,7 @@ export class Observer {
     constructor(private deps: ObserverDeps) {
         this.cfg = loadProactiveConfig(deps.configPath);
         // An earlier "shut up" still holds after a restart (the observer starts at boot).
-        if (this.cfg.quiet) process.env.ATLAS_PROACTIVE_DISABLE = "true";
+        if (this.cfg.quiet) process.env.BHAI_PROACTIVE_DISABLE = "true";
         this.configureAllPostures();
         this.cfgMtime = this.configMtime();
         this.restoreSchedulerState();
@@ -327,8 +327,8 @@ export class Observer {
 
     onBoundary(e: BoundaryEvent): void {
         // Every app switch (~30s apart): 605 lines a day in the log and the JSONL. Plumbing,
-        // not a proactive decision, so only with ATLAS_PROACTIVE_DEBUG=verbose.
-        if (process.env.ATLAS_PROACTIVE_DEBUG === "verbose") debugProactive("observer_boundary", { kind: e.kind, ts: e.ts });
+        // not a proactive decision, so only with BHAI_PROACTIVE_DEBUG=verbose.
+        if (process.env.BHAI_PROACTIVE_DEBUG === "verbose") debugProactive("observer_boundary", { kind: e.kind, ts: e.ts });
         for (const ch of ALL_CHANNELS) {
             native.schedulerMarkBoundary(ch, BOUNDARY_WINDOW_MS);
         }

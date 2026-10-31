@@ -47,8 +47,8 @@
         this._sel = sel;
 
         let list = [];
-        if (window.atlas && window.atlas.setupListVoices) {
-            try { list = await window.atlas.setupListVoices(); }
+        if (window.bhai && window.bhai.setupListVoices) {
+            try { list = await window.bhai.setupListVoices(); }
             catch { list = []; }
         }
         const grouped = groupVoicesByBackend(list);
@@ -82,9 +82,9 @@
         if (parts.length !== 2) return;
         const backend = parts[0];
         const name = parts[1];
-        if (!window.atlas || !window.atlas.setupPreviewVoice) return;
+        if (!window.bhai || !window.bhai.setupPreviewVoice) return;
         let res;
-        try { res = await window.atlas.setupPreviewVoice(backend, name); }
+        try { res = await window.bhai.setupPreviewVoice(backend, name); }
         catch { return; }
         if (!res || !res.ok || !res.url) return;
         if (this._audio) { try { this._audio.pause(); } catch {} }

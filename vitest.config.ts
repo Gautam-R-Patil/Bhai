@@ -27,6 +27,8 @@ export default defineConfig({
             "src/voice/**/*.test.ts",
             "src/forge/**/*.test.ts",
             "src/store/**/*.test.ts",
+            "src/hooks/**/*.test.ts",
+            "src/mcp/**/*.test.ts",
             "src/screen/**/*.test.ts",
             "src/research/**/*.test.ts",
             "src/social/**/*.test.ts",
@@ -37,7 +39,7 @@ export default defineConfig({
             "convex/**/*.test.ts",
         ],
         environment: "node",
-        // An empty home per test file: tests must never touch the owner's ~/.atlas.
+        // An empty home per test file: tests must never touch the owner's ~/.bhai.
         setupFiles: ["./vitest.setup.ts"],
         testTimeout: 30_000,
         // Closing Chromium or an HTTP server can take >10s on a Windows runner —

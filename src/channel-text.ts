@@ -12,6 +12,22 @@ import { smartChunkMessage } from "./alive-ux.js";
 
 export const TELEGRAM_MAX_MESSAGE = 4096;
 
+// Sanitize attacker-controlled inbound text before wrapping in channel
+// delimiters. Strips framing tokens the LLM treats as authoritative. The old
+// [ATLAS-INTERNAL spelling stays neutralised for good: stored history still
+// shows the model that form, so a sender could forge it.
+export function sanitizeIncomingChannelText(text: string): string {
+    if (!text) return text;
+    return text
+        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
+        .replace(/\[(?:BHAI|ATLAS)-INTERNAL\b/gi, "[user-quoted-text")
+        .replace(/<system_log>/gi, "&lt;system_log&gt;")
+        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
+        .replace(/<tool_log/gi, "&lt;tool_log")
+        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
+        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
+}
+
 function escapeHtml(text: string): string {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

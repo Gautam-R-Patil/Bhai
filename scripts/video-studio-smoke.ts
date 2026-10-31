@@ -3,6 +3,7 @@
 // This software is proprietary. Copying or reuse is prohibited.
 // See LICENSE.md for details.
 
+import "../src/config/env-compat.js"; // first: .env + ATLAS_* → BHAI_* mirror
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { promisify } from "node:util";
@@ -101,7 +102,7 @@ function makePlan(
 }
 
 async function runHeavyLegs(fixturePath: string, projectRoot: string, baselineSize: number): Promise<void> {
-    log("\n=== Phase 2 Heavy-Path Legs (ATLAS_VIDEO_SMOKE_HEAVY=1) ===\n");
+    log("\n=== Phase 2 Heavy-Path Legs (BHAI_VIDEO_SMOKE_HEAVY=1) ===\n");
     const exercised: string[] = [];
     const skipped: string[] = [];
 
@@ -211,10 +212,10 @@ async function main(): Promise<void> {
     await ffprobeReadable(outputPath);
     const baselineStat = await fs.stat(outputPath);
 
-    if (process.env.ATLAS_VIDEO_SMOKE_HEAVY === "1") {
+    if (process.env.BHAI_VIDEO_SMOKE_HEAVY === "1") {
         await runHeavyLegs(fixturePath, project.rootDir, baselineStat.size);
     } else {
-        log("\nPhase 2 heavy-path skipped (set ATLAS_VIDEO_SMOKE_HEAVY=1 to enable).");
+        log("\nPhase 2 heavy-path skipped (set BHAI_VIDEO_SMOKE_HEAVY=1 to enable).");
     }
 
     log("Step 7: Cleaning up...");

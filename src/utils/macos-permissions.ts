@@ -68,7 +68,7 @@ async function probeAppleScript(): Promise<{ ok: boolean; reason?: string }> {
  * desktop-only screenshot (no windows) or fails outright depending on OS version.
  */
 async function probeScreenRecording(): Promise<{ ok: boolean; reason?: string }> {
-    const probePath = join(tmpdir(), `atlas_perm_probe_${Date.now()}.png`);
+    const probePath = join(tmpdir(), `bhai_perm_probe_${Date.now()}.png`);
     try {
         // Capture the full screen (we need a real capture to detect window stripping)
         // -x = no sound, -t png
@@ -121,7 +121,7 @@ export async function probeAndLogMacPermissions(): Promise<MacPermissionState> {
     // denial means Accessibility; an Apple Events (Automation) denial or a slow System Events
     // launch would send the user to the wrong pane.
     const axDenied = state.appleScript.reason === "tcc_denied";
-    if (axDenied || !srOk) console.log(`##ATLAS_PERMS##${JSON.stringify({ accessibility: !axDenied, screen: srOk })}`);
+    if (axDenied || !srOk) console.log(`##BHAI_PERMS##${JSON.stringify({ accessibility: !axDenied, screen: srOk })}`);
     console.warn("⚠️  [permissions] One or more macOS permissions missing — vision-nav will degrade:");
     if (!axOk) {
         console.warn(`   ✗ Accessibility / Apple Events: ${state.appleScript.reason}`);

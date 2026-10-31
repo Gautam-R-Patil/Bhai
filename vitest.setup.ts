@@ -1,7 +1,7 @@
 // © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 //
 // Tests never touch the real home folder. Modules build paths from os.homedir()
-// (~/.atlas/data, ~/.atlas/store, the Chrome bridge's discovery and token files),
+// (~/.bhai/data, ~/.bhai/store, the Chrome bridge's discovery and token files),
 // and those are the files the owner's running Bhai is using: the suite wrote into
 // them (tool analytics, forge telemetry) and stopped the live bot mid-run. Each test
 // file gets its own empty home. Playwright's browsers stay where they are installed.
@@ -22,7 +22,10 @@ if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-test-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// An explicit state root (the desktop app's dev shell sets one) would point getBhaiHome() back at the real one.
+delete process.env.BHAI_HOME;
+delete process.env.ATLAS_HOME;
 // Bhai's data dir too: unset, it falls back to ./data in the repo, so a test that saves
 // state (proactive-daily.json, cron jobs…) wrote into the working tree and leaked into
-// the next run. A test file that sets its own ATLAS_DATA_DIR still wins.
-if (!process.env.ATLAS_DATA_DIR) process.env.ATLAS_DATA_DIR = path.join(home, "data");
+// the next run. A test file that sets its own BHAI_DATA_DIR still wins.
+if (!process.env.BHAI_DATA_DIR) process.env.BHAI_DATA_DIR = path.join(home, "data");

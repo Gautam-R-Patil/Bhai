@@ -92,8 +92,8 @@ async function handle(llm: LLMClient, owner: string, mail: MailItem): Promise<vo
     const subject = sanitizeIncomingChannelText(mail.subject);
     const body = sanitizeIncomingChannelText(mail.text);
     const message = mail.fromOwner
-        ? `[EMAIL from you <${owner}> to your Bhai email]\nSubject: ${subject}\n\n<channel_message_content>\n${body}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This arrived at your own Bhai email address. Respond naturally; your reply is emailed back.]`
-        : `[EMAIL from ${who} to your owner's Bhai email — this is NOT your owner]\nSubject: ${subject}\n\n<channel_message_content>\n${body}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Someone other than your owner emailed you. Reply as your owner's assistant: helpful and polite, but never share your owner's private details or act for them; if they need your owner, suggest they contact your owner directly; don't promise to pass anything on. Reply [NO_REPLY] to spam. Your reply is emailed to ${mail.from}.]`;
+        ? `[EMAIL from you <${owner}> to your Bhai email]\nSubject: ${subject}\n\n<channel_message_content>\n${body}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: This arrived at your own Bhai email address. Respond naturally; your reply is emailed back.]`
+        : `[EMAIL from ${who} to your owner's Bhai email — this is NOT your owner]\nSubject: ${subject}\n\n<channel_message_content>\n${body}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: Someone other than your owner emailed you. Reply as your owner's assistant: helpful and polite, but never share your owner's private details or act for them; if they need your owner, suggest they contact your owner directly; don't promise to pass anything on. Reply [NO_REPLY] to spam. Your reply is emailed to ${mail.from}.]`;
     const result = await runAgent(
         llm,
         message,

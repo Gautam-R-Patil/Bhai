@@ -568,9 +568,9 @@ async function ensureYdotoold(): Promise<void> {
 // terminals, key-repeat-sensitive fields, and to avoid clobbering the user's
 // clipboard. We use real keystrokes for short ASCII text and fall back to the
 // (faster, unicode-safe) clipboard-paste only for long or non-ASCII strings.
-// ATLAS_TYPE_VIA_CLIPBOARD=true forces the old paste behavior everywhere.
+// BHAI_TYPE_VIA_CLIPBOARD=true forces the old paste behavior everywhere.
 export function shouldRealKeystroke(text: string): boolean {
-    if (process.env.ATLAS_TYPE_VIA_CLIPBOARD === "true") return false;
+    if (process.env.BHAI_TYPE_VIA_CLIPBOARD === "true") return false;
     // ASCII printable only, and short enough that per-char synthesis isn't slow.
     return text.length <= 200 && /^[\x20-\x7e]*$/.test(text);
 }

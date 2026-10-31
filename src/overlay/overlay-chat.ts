@@ -15,7 +15,7 @@ import { tmpdir, homedir } from "node:os";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { getDownloadsDir, getImagesDir, getWorkspaceDir } from "../config/paths.js";
+import { getDownloadsDir, getImagesDir, getWorkspaceDir, getBhaiHome } from "../config/paths.js";
 import { isStuckReplyPhrase, stuckActionButtons, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
 import {
@@ -69,13 +69,13 @@ import { globalInboxBus, getInboxManager, type InboxEvent } from "../proactive/i
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// ATLAS_OVERLAY_PORT is for tests, so they never touch a running Bhai on 18792.
-const OVERLAY_PORT = Number(process.env.ATLAS_OVERLAY_PORT) || 18792;
+// BHAI_OVERLAY_PORT is for tests, so they never touch a running Bhai on 18792.
+const OVERLAY_PORT = Number(process.env.BHAI_OVERLAY_PORT) || 18792;
 
 // DNS-rebinding guard (see security/loopback.ts): "/" embeds the owner token.
 export const isLoopbackHost = (host: string | undefined) => isLoopbackHostFor(host, OVERLAY_PORT);
 // ── Local-bootstrap auth token ──────────────────
-// Written 0o600 to ~/.atlas/overlay-local-token at boot.
+// Written 0o600 to ~/.bhai/overlay-local-token at boot.
 // The native Swift overlay reads this file and supplies it as `Bearer <token>`
 // for HTTP endpoints OR `?localToken=<token>` for the WS handshake.
 // Distinct from WIDGET_TOKEN (which gates the web-widget surface).
@@ -84,7 +84,7 @@ let _localToken: string | null = null;
 
 export function getOverlayLocalToken(): string {
     if (_localToken) return _localToken;
-    const tokenPath = join(homedir(), ".atlas", "overlay-local-token");
+    const tokenPath = join(getBhaiHome(), "overlay-local-token");
     try {
         if (existsSync(tokenPath)) {
             const existing = readFileSync(tokenPath, "utf-8").trim();
@@ -294,7 +294,7 @@ export function initOverlayChat(llm: LLMClient): void {
     // overlay (and any other local-process client) can authenticate.
     try {
         getOverlayLocalToken();
-        console.log(`🔐 [OVERLAY] local-auth token at ~/.atlas/overlay-local-token (0o600)`);
+        console.log(`🔐 [OVERLAY] local-auth token at ~/.bhai/overlay-local-token (0o600)`);
     } catch (err) {
         console.warn(`[OVERLAY] Failed to init local-auth token: ${(err as Error).message}`);
     }
@@ -330,15 +330,15 @@ export function initOverlayChat(llm: LLMClient): void {
                     // Inject the loopback auth token so the page's WebSocket can
                     // authenticate (the server rejects token-less WS handshakes).
                     // Token only travels over 127.0.0.1 to a 0o600-gated client.
-                    // overlay.html reads it via both %%ATLAS_LOCAL_TOKEN%% (primary,
-                    // window.__ATLAS_LOCAL_TOKEN__) and window.__atlasLocalToken.
+                    // overlay.html reads it via both %%BHAI_LOCAL_TOKEN%% (primary,
+                    // window.__BHAI_LOCAL_TOKEN__) and window.__bhaiLocalToken.
                     // Only the desktop app's own overlay window gets the owner token: it sends
                     // it back in X-Bhai-Overlay (desktop/main.js). Any other load — the agent's
                     // browser sent here by a web page, another local process or account —
                     // gets the page without it, so it can't be read off this page.
                     const token = overlayPageToken(req.headers["x-bhai-overlay"]);
-                    html = html.replace(/%%ATLAS_LOCAL_TOKEN%%/g, token);
-                    const injection = `<script>window.__atlasLocalToken=${JSON.stringify(token)};</script>`;
+                    html = html.replace(/%%BHAI_LOCAL_TOKEN%%/g, token);
+                    const injection = `<script>window.__bhaiLocalToken=${JSON.stringify(token)};</script>`;
                     if (html.includes("</head>")) {
                         html = html.replace("</head>", `${injection}</head>`);
                     } else {
@@ -519,7 +519,7 @@ export function initOverlayChat(llm: LLMClient): void {
         // ── A2A (Agent-to-Agent) protocol endpoints ──
         // No wildcard CORS: the agent card at /.well-known/agent.json is
         // public but we don't allow cross-origin browser POSTs; mutating
-        // routes require ATLAS_A2A_TOKEN. Without that token in env, only
+        // routes require BHAI_A2A_TOKEN. Without that token in env, only
         // /.well-known/agent.json works.
         } else if (isA2ARoute(url.pathname)) {
             const authHeader = (req.headers["authorization"] as string | undefined) || null;
@@ -924,7 +924,7 @@ export function initOverlayChat(llm: LLMClient): void {
     httpServer.listen(OVERLAY_PORT, "127.0.0.1", () => {
         console.log(`💬 Overlay chat on http://127.0.0.1:${OVERLAY_PORT}`);
         // The desktop app loads the overlay on this line instead of polling.
-        console.log(`##ATLAS_READY## ${Math.round(process.uptime() * 1000)}`);
+        console.log(`##BHAI_READY## ${Math.round(process.uptime() * 1000)}`);
         // The overlay window is owned by the Electron desktop app on ALL platforms
         // (createOverlayWindow in desktop/main.js, toggled by the global hotkey).
         // The server just hosts the HTTP+WS endpoint it connects to.
@@ -1057,7 +1057,7 @@ function isScreenQuery(msg: string): boolean {
 async function captureScreen(): Promise<{ base64: string; mimeType: string } | null> {
     let tmpPath: string | null = null;
     try {
-        tmpPath = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
+        tmpPath = join(tmpdir(), `bhai_screen_${Date.now()}.png`);
         await captureScreenshot(tmpPath);
         const rawBuffer = readFileSync(tmpPath);
         try {
@@ -2100,7 +2100,7 @@ async function startVoiceCapture(ws: WebSocket): Promise<void> {
         activeRecording = null;
     }
 
-    recordingPath = join(tmpdir(), `atlas_voice_${Date.now()}.wav`);
+    recordingPath = join(tmpdir(), `bhai_voice_${Date.now()}.wav`);
     console.log("[OVERLAY] 🎤 Starting voice capture...");
 
     // Auto-install sox if missing before attempting capture

@@ -17,7 +17,7 @@ export function _resetConsumeRateLimitForTests(): void {
 
 export async function consumeOnePending(): Promise<SynthesisResult | null> {
     if (!isForgeReady()) return null;
-    if (process.env.ATLAS_NO_FORGE_VERIFIER === "true") return null;
+    if (process.env.BHAI_NO_FORGE_VERIFIER === "true") return null;
 
     const now = Date.now();
     if (now - _lastConsumedAt < CONSUME_RATE_MS) return null;

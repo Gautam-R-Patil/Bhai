@@ -13,7 +13,7 @@
 // scans, Site Skill snapshots and recorded traces. pointer-events:none on
 // every node, so a click at the cursor lands on the page element under it.
 //
-// ATLAS_NO_AGENT_CURSOR=true turns it all off; ATLAS_NO_AGENT_PRESENCE=true
+// BHAI_NO_AGENT_CURSOR=true turns it all off; BHAI_NO_AGENT_PRESENCE=true
 // keeps the cursor but drops the glow + pill.
 
 /** Host element id; the only node the page can see. */
@@ -127,8 +127,8 @@ let activeUntil = 0;
 const navHooked = new WeakSet<object>();
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
 
-const enabled = () => process.env.ATLAS_NO_AGENT_CURSOR !== "true";
-const presenceOn = () => process.env.ATLAS_NO_AGENT_PRESENCE !== "true";
+const enabled = () => process.env.BHAI_NO_AGENT_CURSOR !== "true";
+const presenceOn = () => process.env.BHAI_NO_AGENT_PRESENCE !== "true";
 const call = (arg: Record<string, unknown>) => `(${AGENT_UI_JS})(${JSON.stringify(arg)})`;
 
 /**

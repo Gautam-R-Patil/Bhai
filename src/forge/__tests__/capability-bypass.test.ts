@@ -23,16 +23,16 @@ import type { PersistedToolManifest } from "../types.js";
 const NATIVE = isNativeAvailable();
 
 let tmpHome: string;
-const ORIG_ATLAS_HOME = process.env.ATLAS_HOME;
+const ORIG_BHAI_HOME = process.env.BHAI_HOME;
 
 beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "atlas-bypass-test-"));
-    process.env.ATLAS_HOME = tmpHome;
+    tmpHome = mkdtempSync(join(tmpdir(), "bhai-bypass-test-"));
+    process.env.BHAI_HOME = tmpHome;
 });
 
 afterEach(async () => {
-    if (ORIG_ATLAS_HOME === undefined) delete process.env.ATLAS_HOME;
-    else process.env.ATLAS_HOME = ORIG_ATLAS_HOME;
+    if (ORIG_BHAI_HOME === undefined) delete process.env.BHAI_HOME;
+    else process.env.BHAI_HOME = ORIG_BHAI_HOME;
     try {
         rmSync(tmpHome, { recursive: true, force: true });
     } catch {

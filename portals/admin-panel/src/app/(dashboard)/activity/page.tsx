@@ -116,7 +116,7 @@ function downloadCsv(logs: ActivityLog[]) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `atlas-activity-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `bhai-activity-${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();

@@ -29,15 +29,15 @@ function head { param($n=10) $input | Select-Object -First $n }
 function tail { param($n=10) $input | Select-Object -Last $n }
 function wc { param([switch]$l) $lines = @($input); if ($l) { $lines.Count } else { $lines.Count } }
 Set-Alias -Name open -Value Invoke-Item -Force -ErrorAction SilentlyContinue
-$env:ATLAS_PS_SHIMS_LOADED = "1"
+$env:BHAI_PS_SHIMS_LOADED = "1"
 `.trim();
 
 /** Resolve the best available shell on Windows. Cached after first call. */
 export async function resolveWindowsShell(): Promise<ResolvedShell> {
     if (_cached) return _cached;
 
-    // 1. Check ATLAS_WIN_SHELL override
-    const override = process.env.ATLAS_WIN_SHELL;
+    // 1. Check BHAI_WIN_SHELL override
+    const override = process.env.BHAI_WIN_SHELL;
     if (override === "cmd") {
         _cached = { type: "cmd", path: "cmd.exe" };
         return _cached;

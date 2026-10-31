@@ -31,8 +31,8 @@ const INTERNAL_VARS: &[&str] = &[
     "__ytPlayerEvents",
     "__ytReady",
     "__ytStateChanges",
-    "__atlasCapture",
-    "__atlasClickPos",
+    "__bhaiCapture",
+    "__bhaiClickPos",
 ];
 
 /// JS patterns that indicate attempted exfiltration or introspection of
@@ -47,8 +47,8 @@ const BLOCKED_PATTERNS: &[&str] = &[
     // Bhai internal variable access
     "__hoverAddedNodes",
     "__hoverObserver",
-    "__atlasCapture",
-    "__atlasClickPos",
+    "__bhaiCapture",
+    "__bhaiClickPos",
     "__ytPlayerEvents",
     // Dynamic code evaluation (NOT setTimeout/setInterval — those are legitimate for waits)
     "eval(",
@@ -95,7 +95,7 @@ impl IpGuardState {
         // Module fingerprint — SHA-256 of compile-time sentinel constants.
         // This detects if the .node binary is replaced at runtime.
         let sentinel = format!(
-            "atlas-ip-guard:{}:{}:{}",
+            "bhai-ip-guard:{}:{}:{}",
             AUDIT_RING_SIZE,
             INTERNAL_VARS.len(),
             BLOCKED_PATTERNS.len(),

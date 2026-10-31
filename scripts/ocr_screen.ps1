@@ -13,7 +13,7 @@ Add-Type -AssemblyName System.Windows.Forms
 # ── Capture screenshot if no path provided ──────
 $tempCapture = $false
 if (-not $ImagePath -or $ImagePath -eq "") {
-    $ImagePath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "atlas_ocr_$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).png")
+    $ImagePath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "bhai_ocr_$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).png")
     $screens = [System.Windows.Forms.Screen]::AllScreens
     $bounds = [System.Drawing.Rectangle]::Empty
     foreach ($s in $screens) { $bounds = [System.Drawing.Rectangle]::Union($bounds, $s.Bounds) }

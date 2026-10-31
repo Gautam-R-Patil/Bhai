@@ -230,12 +230,12 @@ export const edit: ToolDefinition = {
         // anything. Surfaces type/parse errors in the tool response so
         // the next iteration sees them immediately — no need for the
         // agent to remember to call `lsp getDiagnostics` itself.
-        // Gated by ATLAS_NO_POST_EDIT_DIAGNOSTICS for users who don't
+        // Gated by BHAI_NO_POST_EDIT_DIAGNOSTICS for users who don't
         // want the extra latency.
         let diagnosticsSummary: string | undefined;
         let postEditErrorCount = 0;
         let lspWasReached = false;
-        if (process.env.ATLAS_NO_POST_EDIT_DIAGNOSTICS !== "true" && isLspWorthy(filePath)) {
+        if (process.env.BHAI_NO_POST_EDIT_DIAGNOSTICS !== "true" && isLspWorthy(filePath)) {
             try {
                 const { lsp } = await import("./lsp.js");
                 const raw = await lsp.handler({

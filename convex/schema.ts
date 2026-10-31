@@ -130,7 +130,8 @@ export default defineSchema({
 
     version: v.string(),                 // Semver: "1.0.0"
     changelog: v.optional(v.string()),
-    minAtlasVersion: v.optional(v.string()), // Minimum Bhai version required
+    minBhaiVersion: v.optional(v.string()), // Minimum Bhai version required
+    minAtlasVersion: v.optional(v.string()), // Old name, still written for clients from before the rename
 
     // File references (Convex storage)
     contentFileId: v.id("_storage"),     // Main content (skill.md, bundle.zip)
@@ -194,7 +195,8 @@ export default defineSchema({
     longDescription: v.optional(v.string()),
     version: v.string(),
     changelog: v.optional(v.string()),
-    minAtlasVersion: v.optional(v.string()),
+    minBhaiVersion: v.optional(v.string()),
+    minAtlasVersion: v.optional(v.string()), // Old name of minBhaiVersion
 
     // Uploaded files
     contentFileId: v.id("_storage"),

@@ -155,12 +155,12 @@
                 wakeWord: { enabled: sw.checked, phrase: phraseInput.value.trim() || "Hey Bhai" },
                 personality: { preset: personaPreset, notes: defaultPersonality.notes || "" },
             };
-            if (!window.atlas || typeof window.atlas.setupSavePersonalize !== "function") {
+            if (!window.bhai || typeof window.bhai.setupSavePersonalize !== "function") {
                 err.textContent = "Save unavailable (IPC not ready).";
                 return;
             }
             let res;
-            try { res = await window.atlas.setupSavePersonalize(payload); }
+            try { res = await window.bhai.setupSavePersonalize(payload); }
             catch (e) { err.textContent = "Save failed: " + (e.message || e); return; }
             if (!res || !res.success) {
                 err.textContent = (res && res.error) || "Save failed.";

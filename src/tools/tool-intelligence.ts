@@ -228,7 +228,7 @@ let auditLogSetup = false;
 
 function ensureAuditLog(): string {
     if (auditLogPath && auditLogSetup) return auditLogPath;
-    const dir = process.env.ATLAS_DATA_DIR || join(process.cwd(), "data");
+    const dir = process.env.BHAI_DATA_DIR || join(process.cwd(), "data");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     auditLogPath = join(dir, "audit.jsonl");
     auditLogSetup = true;

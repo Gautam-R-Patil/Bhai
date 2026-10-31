@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-core-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-core-"));
 
 it("keeps research out of the core list, however important", async () => {
     const sqlite = await import("../sqlite.js");

@@ -5,9 +5,9 @@
 import { noteFrontAfterStep } from "../screen/frontmost.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import { getBhaiHome } from "../config/paths.js";
 import {
     currentSwarmRun,
     currentSwarmStep,
@@ -21,6 +21,7 @@ import { firePostToolUse, firePreToolUse } from "../hooks/index.js";
 import { executeMCPTool, getMCPToolSchemas, isMCPTool } from "../mcp/client.js";
 import { checkConsent } from "../security/consent.js";
 import { drainTrace, tracing } from "../skills/site/mint/recorder.js";
+import { packageConfigPath } from "../store/installer.js";
 import { sideloadSkillTool } from "../store/sideload.js";
 import {
     contactLookupTool,
@@ -277,7 +278,7 @@ import {
 } from "./windows.js";
 
 // ── Store Tools Constants ────────────────────────
-const STORE_TOOLS_PATH = path.join(homedir(), ".atlas", "store", "tools");
+const STORE_TOOLS_PATH = path.join(getBhaiHome(), "store", "tools");
 
 export { setIngestLLM } from "../documents/ingest.js";
 export { setCampaignPlannerLLM } from "../marketing/campaign-planner.js";
@@ -330,7 +331,7 @@ registry.set(memorySearch.schema.function.name, memorySearch);
 registry.set(memoryList.schema.function.name, memoryList);
 registry.set(memoryForget.schema.function.name, memoryForget);
 registry.set(importMemory.schema.function.name, importMemory);
-if (process.env.ATLAS_NO_SESSION_SEARCH !== "true") {
+if (process.env.BHAI_NO_SESSION_SEARCH !== "true") {
     registry.set(sessionSearch.schema.function.name, sessionSearch);
 }
 
@@ -688,11 +689,11 @@ for (const n of SEND_TOOLS) {
  * burns an iteration on a guaranteed "WhatsApp is not connected" before the
  * agent reroutes to GUI automation — so hide it until connected. Re-evaluated
  * per message (getToolSchemas* is not boot-cached) so it reappears once linked.
- * Emergency rollback: ATLAS_NO_WHATSAPP_TOOL_GATING=true.
+ * Emergency rollback: BHAI_NO_WHATSAPP_TOOL_GATING=true.
  */
 function isToolOfferable(name: string): boolean {
-    if (name.startsWith("vault_")) return process.env.ATLAS_NO_VAULT !== "true";
-    if (process.env.ATLAS_NO_WHATSAPP_TOOL_GATING === "true") return true;
+    if (name.startsWith("vault_")) return process.env.BHAI_NO_VAULT !== "true";
+    if (process.env.BHAI_NO_WHATSAPP_TOOL_GATING === "true") return true;
     if (name === "whatsapp_send" || name === "whatsapp_sticker" || name === "whatsapp_group_info") {
         return getWhatsAppStatus() === "connected";
     }
@@ -732,7 +733,7 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     browser_scroll: 10_000,
     browser_scan: 20_000,
     browser_screenshot: 15_000,
-    // Covers the solver tiers plus the human hand-off wait (ATLAS_CAPTCHA_HANDOFF_MS, 5 min).
+    // Covers the solver tiers plus the human hand-off wait (BHAI_CAPTCHA_HANDOFF_MS, 5 min).
     // Shell/system tools - variable execution time
     shell: 60_000, // Shell commands can take a while
     run_code: 30_000,
@@ -1223,13 +1224,13 @@ export async function loadStoreTools(): Promise<void> {
  * Register a single store tool (for hot-reload)
  */
 export async function registerStoreTool(toolPath: string): Promise<void> {
-    const configPath = path.join(toolPath, "atlas.config.json");
+    const configPath = packageConfigPath(toolPath); // bhai.config.json, or a pre-rename atlas.config.json
     const handlerPath = path.join(toolPath, "dist", "handler.js");
     const handlerTsPath = path.join(toolPath, "handler.ts"); // For dev tools without build step
 
     // Validate structure
     if (!fs.existsSync(configPath)) {
-        throw new Error(`Missing atlas.config.json in ${toolPath}`);
+        throw new Error(`Missing bhai.config.json in ${toolPath}`);
     }
 
     // Check for handler - either compiled or source

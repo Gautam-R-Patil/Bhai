@@ -6,8 +6,8 @@
  * ── /doctor preflight diagnostics ────────────────────────────
  * Read-only health probes run concurrently and fail-open: a probe that throws
  * is reported as a failed check, never an exception out of runDoctor(). The
- * only authed network round-trip is gated behind ATLAS_DOCTOR_AUTHED_PROBE
- * (default off); set ATLAS_NO_DOCTOR_NETWORK=true to skip all network probes.
+ * only authed network round-trip is gated behind BHAI_DOCTOR_AUTHED_PROBE
+ * (default off); set BHAI_NO_DOCTOR_NETWORK=true to skip all network probes.
  */
 
 import { existsSync } from "node:fs";
@@ -25,7 +25,7 @@ export interface DoctorCheck {
 }
 
 function networkDisabled(): boolean {
-    return process.env.ATLAS_NO_DOCTOR_NETWORK === "true";
+    return process.env.BHAI_NO_DOCTOR_NETWORK === "true";
 }
 
 async function probeConvex(): Promise<DoctorCheck> {
@@ -61,11 +61,11 @@ function probeSession(): DoctorCheck {
 }
 
 async function probeAuthed(): Promise<DoctorCheck> {
-    if (process.env.ATLAS_DOCTOR_AUTHED_PROBE !== "true") {
+    if (process.env.BHAI_DOCTOR_AUTHED_PROBE !== "true") {
         return {
             check: "Authed Convex round-trip",
             status: "ok",
-            detail: "skipped (set ATLAS_DOCTOR_AUTHED_PROBE=true)",
+            detail: "skipped (set BHAI_DOCTOR_AUTHED_PROBE=true)",
         };
     }
     if (networkDisabled())
@@ -96,7 +96,7 @@ function probeNative(): DoctorCheck {
 }
 
 function probeEnvKeys(): DoctorCheck {
-    const required = ["ATLAS_OTPLESS_USER_ID", "TELEGRAM_BOT_TOKEN", "ALLOWED_USER_IDS"];
+    const required = ["BHAI_OTPLESS_USER_ID", "TELEGRAM_BOT_TOKEN", "ALLOWED_USER_IDS"];
     const missing = required.filter((k) => !process.env[k]);
     return missing.length === 0
         ? { check: "Required env keys", status: "ok" }
@@ -104,7 +104,7 @@ function probeEnvKeys(): DoctorCheck {
 }
 
 function probeMemoryDb(): DoctorCheck {
-    const dbPath = path.join(process.env.ATLAS_DATA_DIR || path.resolve("data"), "memory.db");
+    const dbPath = path.join(process.env.BHAI_DATA_DIR || path.resolve("data"), "memory.db");
     return existsSync(dbPath)
         ? { check: "Memory DB", status: "ok", detail: dbPath }
         : { check: "Memory DB", status: "warn", detail: "not yet created — created on first memory write" };

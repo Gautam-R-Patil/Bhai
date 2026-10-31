@@ -63,7 +63,7 @@ const P = {
             // runtime reads (src/memory/embeddings.ts), not the default HF cache —
             // otherwise the pre-warm is wasted and the bot re-downloads on first use.
             const modelsCacheDir = path.join(ctx.DATA_DIR, "models");
-            const script = path.join(ctx.BOT_DIR, "_atlas_warmup.mjs");
+            const script = path.join(ctx.BOT_DIR, "_bhai_warmup.mjs");
             const body =
                 'import("@xenova/transformers")' +
                 '.then(t=>{t.env.cacheDir=' + JSON.stringify(modelsCacheDir) + ';' +
@@ -212,7 +212,7 @@ const P = {
                 ctx.options.workspace = fb;
                 const env = ctx.loadEnvDecrypted && ctx.loadEnvDecrypted();
                 if (env) {
-                    const updated = env.split("\n").map((l) => l.startsWith("ATLAS_WORKSPACE=") ? "ATLAS_WORKSPACE=" + fb : l).join("\n");
+                    const updated = env.split("\n").map((l) => l.startsWith("BHAI_WORKSPACE=") ? "BHAI_WORKSPACE=" + fb : l).join("\n");
                     ctx.saveEnvEncrypted(updated);
                 }
             }

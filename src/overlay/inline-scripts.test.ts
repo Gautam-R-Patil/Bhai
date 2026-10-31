@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 // Before overlay-chat is imported: paths.ts caches the workspace on first use.
-process.env.ATLAS_WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "overlay-drop-"));
+process.env.BHAI_WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "overlay-drop-"));
 const PAGES = ["src/overlay/overlay.html", ...fs.readdirSync(path.join(ROOT, "desktop")).filter((f) => f.endsWith(".html")).map((f) => `desktop/${f}`)];
 
 describe("inline scripts parse", () => {
@@ -65,7 +65,7 @@ describe("a file dropped on the chat bar", () => {
         const pdf = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0xfe]);
         const ctx = droppedFileContext('../r"x.pdf', b64(pdf), "application/pdf", true);
         const saved = ctx.match(/saved at (.+)\. Read it/)?.[1] ?? "";
-        expect(path.dirname(saved)).toBe(path.join(process.env.ATLAS_WORKSPACE ?? "", "Downloads"));
+        expect(path.dirname(saved)).toBe(path.join(process.env.BHAI_WORKSPACE ?? "", "Downloads"));
         expect(path.basename(saved)).toMatch(/^[0-9a-f]{8}_r_x\.pdf$/);
         expect(fs.readFileSync(saved)).toEqual(pdf);
 

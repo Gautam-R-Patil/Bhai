@@ -60,7 +60,7 @@ let _spogoPath: string | null = null;
 async function findSpogo(): Promise<string | null> {
     if (_spogoChecked) return _spogoPath;
     _spogoChecked = true;
-    // Atlas-managed install location is checked first so it takes precedence
+    // Bhai-managed install location is checked first so it takes precedence
     // over any stale system installs the user might have.
     const candidates: string[] = [spogoBinaryPath(), "spogo"];
     // Common install locations

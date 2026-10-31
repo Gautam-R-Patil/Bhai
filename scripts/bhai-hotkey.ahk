@@ -1,13 +1,13 @@
 ; Bhai Overlay Chat — AutoHotkey v2
 ; Win+J = toggle, Escape = dismiss
-; Windows equivalent of atlas-hotkey.lua (Hammerspoon)
+; Windows equivalent of bhai-hotkey.lua (Hammerspoon)
 ;
 ; Requirements:
 ;   - AutoHotkey v2 installed
 ;   - WebView2 Runtime (included in Windows 11, installable on Windows 10)
 ;
 ; Usage: Run this script with AutoHotkey v2
-;   AutoHotkey.exe atlas-hotkey.ahk
+;   AutoHotkey.exe bhai-hotkey.ahk
 
 #Requires AutoHotkey v2.0
 #SingleInstance Force
@@ -24,7 +24,7 @@ isVisible := false
 
 ; ── Show Overlay ───────────────────────────────
 
-ShowAtlas() {
+ShowBhai() {
     global overlayGui, isVisible, OVERLAY_URL, MAX_WIDTH, MIN_HEIGHT
 
     ; Close existing overlay if any
@@ -63,7 +63,7 @@ ShowAtlas() {
 
 ; ── Hide Overlay ───────────────────────────────
 
-HideAtlas() {
+HideBhai() {
     global overlayGui, isVisible
 
     if (overlayGui = "" || !isVisible)
@@ -75,25 +75,25 @@ HideAtlas() {
 
 ; ── Toggle Overlay ─────────────────────────────
 
-ToggleAtlas() {
+ToggleBhai() {
     global isVisible
 
     if (isVisible)
-        HideAtlas()
+        HideBhai()
     else
-        ShowAtlas()
+        ShowBhai()
 }
 
 ; ── Hotkeys ────────────────────────────────────
 
 ; Alt+Space = Toggle overlay
-!Space::ToggleAtlas()
+!Space::ToggleBhai()
 
 ; Escape = Hide overlay (only when overlay is visible)
 ~Escape:: {
     global isVisible
     if (isVisible)
-        HideAtlas()
+        HideBhai()
 }
 
 ; ── Startup Message ────────────────────────────

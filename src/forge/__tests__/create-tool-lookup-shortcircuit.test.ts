@@ -26,10 +26,10 @@ describe("create_tool short-circuits on library hit", () => {
 
     beforeEach(async () => {
         tmpDir = mkdtempSync(join(tmpdir(), "forge-ct-"));
-        originalEnv = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpDir, ".atlas");
+        originalEnv = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpDir, ".bhai");
         // Lookup runs inside synthesizeTool; the stub LLM stands in for synthesis.
-        process.env.ATLAS_FORGE_STUB_LLM = "true";
+        process.env.BHAI_FORGE_STUB_LLM = "true";
         registry = new Map();
         setRegistryRef(registry);
         await initForge({ embedFn: async () => vector(0) });
@@ -38,9 +38,9 @@ describe("create_tool short-circuits on library hit", () => {
     afterEach(() => {
         shutdownForge();
         rmSync(tmpDir, { recursive: true, force: true });
-        delete process.env.ATLAS_FORGE_STUB_LLM;
-        if (originalEnv === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalEnv;
+        delete process.env.BHAI_FORGE_STUB_LLM;
+        if (originalEnv === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalEnv;
     });
 
     it("create_tool returns lookup_hit instead of creating new tool when match exists", async () => {
@@ -107,7 +107,7 @@ describe("create_tool short-circuits on library hit", () => {
         expect(result.synthesized).toBe(true);
     });
 
-    it("ATLAS_NO_FORGE_LOOKUP=true skips lookup, always creates", async () => {
+    it("BHAI_NO_FORGE_LOOKUP=true skips lookup, always creates", async () => {
         registry.set("extract_pdf", {} as ToolDefinition);
         insertTool({
             slug: "extract_pdf",
@@ -119,7 +119,7 @@ describe("create_tool short-circuits on library hit", () => {
             createdAt: Date.now(),
         });
 
-        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        process.env.BHAI_NO_FORGE_LOOKUP = "true";
         try {
             const resultJson = await createTool.handler({
                 name: "extract_pdf_v2",
@@ -131,7 +131,7 @@ describe("create_tool short-circuits on library hit", () => {
             expect(result.lookup_hit).toBeUndefined();
             expect(result.synthesized).toBe(true);
         } finally {
-            delete process.env.ATLAS_NO_FORGE_LOOKUP;
+            delete process.env.BHAI_NO_FORGE_LOOKUP;
         }
     });
 });

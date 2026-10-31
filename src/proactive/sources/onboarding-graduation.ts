@@ -212,16 +212,16 @@ async function getOnboardingEmbedding(): Promise<number[]> {
 
 function userDataDirGuess(): string | undefined {
     // The bot runs inside the packaged Electron app and is spawned with
-    // ATLAS_USER_DATA_DIR set. Falls back to undefined in pure-Node tests.
-    return process.env.ATLAS_USER_DATA_DIR;
+    // BHAI_USER_DATA_DIR set. Falls back to undefined in pure-Node tests.
+    return process.env.BHAI_USER_DATA_DIR;
 }
 
 export const onboardingGraduationSource: IntentSourceModule = {
     name: SOURCE_NAME,
     async collectIntents(ctx: SourceCtx): Promise<ProactiveIntent[]> {
         // W3 dedicated kill-switch (in addition to the existing
-        // ATLAS_PROACTIVE_DISABLE_SOURCES=onboarding_graduation path).
-        if (process.env.ATLAS_NO_ONBOARDING_NUDGES === "true") return [];
+        // BHAI_PROACTIVE_DISABLE_SOURCES=onboarding_graduation path).
+        if (process.env.BHAI_NO_ONBOARDING_NUDGES === "true") return [];
 
         const state = readState();
         const firstLaunchAt = resolveFirstLaunchAt(state, userDataDirGuess());

@@ -8,16 +8,18 @@
  * GIT_WORK_TREE / GIT_INDEX_FILE) before edit/write/append_file mutations, so
  * work is recoverable even in non-git dirs — and the user's own .git is never
  * touched. Fail-open: any git/fs error is swallowed so a snapshot failure can
- * never block a tool call. Default-ON; disable with ATLAS_NO_AUTO_CHECKPOINT.
+ * never block a tool call. Default-ON; disable with BHAI_NO_AUTO_CHECKPOINT.
  */
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { getWorkspaceSubdir } from "../../config/paths.js";
+import { getWorkspaceDir, getWorkspaceSubdir } from "../../config/paths.js";
 import { gitAvailable, repoHash, resolveRepoRoot } from "../../memory/codebase-merkle.js";
 
-const STORE_SUBDIR = ".atlas-checkpoints";
+const STORE_SUBDIR = ".bhai-checkpoints";
+// Name before the ATLAS → Bhai rename; a workspace that has only this one keeps using it.
+const OLD_STORE_SUBDIR = ".atlas-checkpoints";
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_STORE_BYTES = 500 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 15_000;
@@ -65,10 +67,14 @@ const EXCLUDE_GLOBS = [
 const lastSnap = new Map<string, number>();
 
 function disabled(): boolean {
-    return process.env.ATLAS_NO_AUTO_CHECKPOINT === "true";
+    return process.env.BHAI_NO_AUTO_CHECKPOINT === "true";
 }
 
 function storeRoot(): string {
+    const ws = getWorkspaceDir();
+    const old = path.join(ws, OLD_STORE_SUBDIR);
+    // A workspace with only the old store keeps using it (never moved: an older build reads it too).
+    if (!fs.existsSync(path.join(ws, STORE_SUBDIR)) && fs.existsSync(old)) return old;
     return getWorkspaceSubdir(STORE_SUBDIR);
 }
 
@@ -106,9 +112,9 @@ function runShadow(gitDir: string, workTree: string, args: string[], timeout = G
 
 function ensureStore(gitDir: string, workTree: string): boolean {
     if (!fs.existsSync(path.join(gitDir, "HEAD"))) {
-        const r = runShadow(gitDir, workTree, ["init", "-q", "--initial-branch=atlas"]);
+        const r = runShadow(gitDir, workTree, ["init", "-q", "--initial-branch=bhai"]);
         if (r.code !== 0) return false;
-        runShadow(gitDir, workTree, ["config", "user.email", "checkpoints@atlas.local"]);
+        runShadow(gitDir, workTree, ["config", "user.email", "checkpoints@bhai.local"]);
         runShadow(gitDir, workTree, ["config", "user.name", "Bhai Checkpoints"]);
         runShadow(gitDir, workTree, ["config", "gc.auto", "0"]);
         runShadow(gitDir, workTree, ["config", "commit.gpgsign", "false"]);

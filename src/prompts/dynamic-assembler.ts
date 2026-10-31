@@ -114,7 +114,7 @@ const MODULES: PromptModule[] = [
     {
         name: "persona_identity",
         condition: (ctx) => {
-            if (process.env.ATLAS_NO_PERSONA_BIAS === "true") return false;
+            if (process.env.BHAI_NO_PERSONA_BIAS === "true") return false;
             if (!ctx.persona) return false;
             return getPersonaIdentityLine(ctx.persona) != null;
         },

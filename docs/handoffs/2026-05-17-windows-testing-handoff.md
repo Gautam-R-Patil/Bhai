@@ -71,7 +71,7 @@ choco install tesseract -y
 ### Clone + branch
 
 ```powershell
-git clone https://github.com/dheeraj-codingdesk/ATLAS.git
+git clone https://github.com/XAGI-Lab/Bhai.git
 cd Bhai
 git checkout main
 git log --oneline -5  # head should be c2994f9 (this handoff) on top
@@ -81,7 +81,7 @@ git log --oneline -5  # head should be c2994f9 (this handoff) on top
 
 ```powershell
 npm install
-npm run build:native  # Rust → atlas-native.win32-x64-msvc.node
+npm run build:native  # Rust → bhai-native.win32-x64-msvc.node
 npm run build         # TS → dist/
 ```
 
@@ -108,7 +108,7 @@ Anything else that fails is platform-specific — write it down and we'll triage
 - `src/utils/win-shell.test.ts` — should pass; if it doesn't, real Windows shell-quoting bug
 - `src/utils/platform-capabilities.test.ts` — should pass; tells you which optional features are available
 - `src/screen/__tests__/capability-detector.test.ts` — should detect Windows correctly
-- Any test that hardcodes `/etc/` or `~/.atlas/` paths likely doesn't fail on Windows because `path.join` handles separators, but watch for hard-coded `\` vs `/` assertions
+- Any test that hardcodes `/etc/` or `~/.bhai/` paths likely doesn't fail on Windows because `path.join` handles separators, but watch for hard-coded `\` vs `/` assertions
 
 ### Rust unit tests
 
@@ -152,7 +152,7 @@ The installer comes out at `desktop/dist/Bhai Setup 0.2.1.exe`.
 
 2. **`build:win:protected`** runs `desktop/build/patch-nsis.js` first — it patches the NSIS installer script for code obfuscation. If it errors, run `npm run build:win` instead and report what broke.
 
-3. **Native binary**: electron-builder needs `native/atlas-native.win32-x64-msvc.node` to be present. Run `npm run build:native` first if it's missing.
+3. **Native binary**: electron-builder needs `native/bhai-native.win32-x64-msvc.node` to be present. Run `npm run build:native` first if it's missing.
 
 ### Signed build (production)
 
@@ -196,7 +196,7 @@ git grep -nE '"\\/' src/  # forward-slash-anchored regexes
 git grep -nE "process\.env\.HOME[^_]" src/  # HOME doesn't exist on Windows; use os.homedir() or USERPROFILE
 ```
 
-Known fixed: `src/config/paths.ts::getWorkspaceDir()` already prefers `os.homedir()` over `process.env.HOME`. But other files may still use `~/.atlas/` literally. Watch for `EACCES`-style errors at startup that mention a literal `~`.
+Known fixed: `src/config/paths.ts::getWorkspaceDir()` already prefers `os.homedir()` over `process.env.HOME`. But other files may still use `~/.bhai/` literally. Watch for `EACCES`-style errors at startup that mention a literal `~`.
 
 ---
 
@@ -257,7 +257,7 @@ All 15 patterns should defeat the sandbox the same way they do on macOS. If ANY 
 
 These layers are pure TS and should work unchanged on Windows. After the spawn issue is solved, the existing `approve_dynamic_tool` / `revoke_dynamic_tool` flow runs identically.
 
-**Critical:** Phase 4 added `~/.atlas/store/dynamic/` to `HARD_DENY_SUBSTRINGS`. On Windows the equivalent path is `C:\Users\<you>\.atlas\store\dynamic\` (forward slashes vs backslashes). `isPathHardDenied` does a case-insensitive `.includes()` on darwin+win32, so this should match either way — but verify with a unit test.
+**Critical:** Phase 4 added `~/.bhai/store/dynamic/` to `HARD_DENY_SUBSTRINGS`. On Windows the equivalent path is `C:\Users\<you>\.bhai\store\dynamic\` (forward slashes vs backslashes). `isPathHardDenied` does a case-insensitive `.includes()` on darwin+win32, so this should match either way — but verify with a unit test.
 
 ---
 
@@ -294,11 +294,11 @@ Three sub-modules: live-voice (real-time), transcribe (Whisper-style ASR), TTS (
 **Verify:**
 1. Microphone access works — Windows will pop up a permissions dialog the first time. Accept.
 2. PCM audio capture — uses `naudiodon` or `node-microphone`. If those don't build on Windows, you'll get a runtime error.
-3. VAD (voice activity detection) — `ATLAS_NATIVE_VAD=true` uses libfvad via the Rust native module. Falls back to RMS if libfvad isn't compiled. On Windows the native build doesn't include libfvad by default (needs `--features vad` cargo flag), so RMS is the default. That's fine.
+3. VAD (voice activity detection) — `BHAI_NATIVE_VAD=true` uses libfvad via the Rust native module. Falls back to RMS if libfvad isn't compiled. On Windows the native build doesn't include libfvad by default (needs `--features vad` cargo flag), so RMS is the default. That's fine.
 
 ### Transcribe / TTS
 
-Both use cloud APIs (Gemini, OpenAI, ElevenLabs). Cross-OS by definition. Verify env vars are set: `ATLAS_TTS_PROVIDER`, `ELEVENLABS_API_KEY` or `OPENAI_API_KEY`.
+Both use cloud APIs (Gemini, OpenAI, ElevenLabs). Cross-OS by definition. Verify env vars are set: `BHAI_TTS_PROVIDER`, `ELEVENLABS_API_KEY` or `OPENAI_API_KEY`.
 
 ### Quick test
 
@@ -333,12 +333,12 @@ The WhatsApp `data/whatsapp-users/*.json` paths use forward slashes in the code.
 
 ### Electron app
 
-`desktop/main.js` — Electron main process. Cross-OS. The custom protocol handler for OTPless auth (`atlas://` scheme) registers via `app.setAsDefaultProtocolClient('atlas')`.
+`desktop/main.js` — Electron main process. Cross-OS. The custom protocol handler for OTPless auth (`bhai://` scheme) registers via `app.setAsDefaultProtocolClient('bhai')`.
 
-**On Windows that registration writes to HKEY_CURRENT_USER\Software\Classes\atlas.** Verify:
+**On Windows that registration writes to HKEY_CURRENT_USER\Software\Classes\bhai.** Verify:
 
 ```powershell
-reg query "HKCU\Software\Classes\atlas"
+reg query "HKCU\Software\Classes\bhai"
 ```
 
 Should show URL handler pointing to the installed exe. If not, run the installer as admin OR call the registration manually from a packaged build.
@@ -356,17 +356,17 @@ Should show URL handler pointing to the installed exe. If not, run the installer
 The auth flow:
 1. User clicks "Sign in" → Electron opens `https://tryatlasagi.com/auth-login`
 2. User authenticates (OTPless via SMS/WhatsApp/email)
-3. tryatlasagi.com redirects to `atlas://auth-callback?token=...`
-4. Windows protocol handler launches the installed atlas.exe (or focuses existing instance) and passes the URL
-5. atlas.exe parses the token, stores it, signals the overlay
+3. tryatlasagi.com redirects to `bhai://auth-callback?token=...`
+4. Windows protocol handler launches the installed bhai.exe (or focuses existing instance) and passes the URL
+5. bhai.exe parses the token, stores it, signals the overlay
 
 **If step 4 doesn't fire**, the protocol handler isn't registered. Manual fix:
 
 ```powershell
 # Run as admin
-reg add "HKCU\Software\Classes\atlas" /ve /d "URL:Bhai Protocol" /f
-reg add "HKCU\Software\Classes\atlas" /v "URL Protocol" /d "" /f
-reg add "HKCU\Software\Classes\atlas\shell\open\command" /ve /d "\"C:\Program Files\Bhai\Bhai.exe\" \"%1\"" /f
+reg add "HKCU\Software\Classes\bhai" /ve /d "URL:Bhai Protocol" /f
+reg add "HKCU\Software\Classes\bhai" /v "URL Protocol" /d "" /f
+reg add "HKCU\Software\Classes\bhai\shell\open\command" /ve /d "\"C:\Program Files\Bhai\Bhai.exe\" \"%1\"" /f
 ```
 
 ### Permissions on Windows
@@ -385,7 +385,7 @@ Bhai may want:
 
 `skills/` directory contains 12 role MD files + 5 Convex skills. Pure markdown; cross-OS.
 
-Side-loaded skills live in `~/.atlas/store/skills/` — on Windows that's `C:\Users\<you>\.atlas\store\skills\`. Verify the directory is created on first boot.
+Side-loaded skills live in `~/.bhai/store/skills/` — on Windows that's `C:\Users\<you>\.bhai\store\skills\`. Verify the directory is created on first boot.
 
 ### Store
 
@@ -518,7 +518,7 @@ For the Phase 4 sandbox specifically, see `docs/superpowers/specs/2026-05-16-for
 # Required
 $env:TELEGRAM_BOT_TOKEN = "..."        # if using Telegram
 $env:ALLOWED_USER_IDS = "12345,67890"
-$env:ATLAS_OTPLESS_USER_ID = "..."
+$env:BHAI_OTPLESS_USER_ID = "..."
 
 # Recommended
 $env:EMAIL_USER = "..."
@@ -528,18 +528,18 @@ $env:EMAIL_WHITELIST = "you@example.com"
 # Voice (pick a backend)
 $env:LIVE_VOICE_BACKEND = "gemini-live"  # or openai-realtime or hybrid
 $env:LIVE_VOICE_NAME = "Aoede"
-$env:ATLAS_TTS_PROVIDER = "elevenlabs"   # or openai
+$env:BHAI_TTS_PROVIDER = "elevenlabs"   # or openai
 $env:ELEVENLABS_API_KEY = "..."
 
 # Forge sandbox kill switches (only if testing the sandbox)
-$env:ATLAS_FORGE_POOL_SIZE = "10"
-$env:ATLAS_FORGE_STRICT = "true"         # refuse to spawn without full sandbox
-$env:ATLAS_FORGE_WINDOWS_STRICT = "true" # refuse install on Windows when caps.net non-empty (per-host not yet enforced)
+$env:BHAI_FORGE_POOL_SIZE = "10"
+$env:BHAI_FORGE_STRICT = "true"         # refuse to spawn without full sandbox
+$env:BHAI_FORGE_WINDOWS_STRICT = "true" # refuse install on Windows when caps.net non-empty (per-host not yet enforced)
 
 # Debug (verbose logging)
 $env:MEMORY_DEBUG = "true"
-$env:ATLAS_TOOL_DEBUG = "verbose"
-$env:ATLAS_FORGE_SANDBOX_DEBUG = "true"
+$env:BHAI_TOOL_DEBUG = "verbose"
+$env:BHAI_FORGE_SANDBOX_DEBUG = "true"
 ```
 
 ---

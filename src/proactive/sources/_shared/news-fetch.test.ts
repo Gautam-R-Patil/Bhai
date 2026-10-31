@@ -126,8 +126,8 @@ describe("news-fetch", () => {
         );
     });
 
-    it("ATLAS_PROACTIVE_NEWS_QUERY overrides interest-derived query", async () => {
-        process.env.ATLAS_PROACTIVE_NEWS_QUERY = "AI funding news";
+    it("BHAI_PROACTIVE_NEWS_QUERY overrides interest-derived query", async () => {
+        process.env.BHAI_PROACTIVE_NEWS_QUERY = "AI funding news";
         try {
             const webSearch = vi.fn(async () => "search results");
             const deps: NewsFetchDeps = {
@@ -140,7 +140,7 @@ describe("news-fetch", () => {
             expect(calls[0]).not.toContain("typescript");
             expect(calls[0]).not.toContain("machine-learning");
         } finally {
-            delete process.env.ATLAS_PROACTIVE_NEWS_QUERY;
+            delete process.env.BHAI_PROACTIVE_NEWS_QUERY;
         }
     });
 });

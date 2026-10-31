@@ -66,8 +66,8 @@ function isSafeScreenshotPath(p: string): boolean {
         resolve(process.env.HOME || "", "Desktop", "Bhai Files"),
         resolve(process.env.HOME || "", "Documents", "Bhai Files"),
         resolve(process.env.HOME || "", "Bhai Files"),
-        resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
-        process.env.ATLAS_WORKSPACE ? resolve(process.env.ATLAS_WORKSPACE) : "",
+        resolve(process.env.HOME || "", "Library", "Caches", "bhai"),
+        process.env.BHAI_WORKSPACE ? resolve(process.env.BHAI_WORKSPACE) : "",
     ].filter(isMeaningfulDir);
     return allowedDirs.some((d) => abs === d || abs.startsWith(`${d}/`) || abs.startsWith(`${d}\\`));
 }
@@ -86,7 +86,7 @@ export async function cloudGroundClick(
     opts: { llm: LLMClient; timeoutMs?: number; model?: string },
 ): Promise<CloudGroundingResult> {
     const start = Date.now();
-    if (process.env.ATLAS_NO_CLOUD_GROUNDING === "true") {
+    if (process.env.BHAI_NO_CLOUD_GROUNDING === "true") {
         return errorResult("disabled", start, "cloud_grounding_disabled");
     }
     if (!opts.llm) return errorResult("none", start, "no_llm_client");

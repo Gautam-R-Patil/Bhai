@@ -162,7 +162,7 @@ const mimeForPath = (p: string) =>
 
 /** macOS decodes what this sharp build can't (HEIC/HEVC): sips converts it to a JPEG. */
 async function sipsToJpeg(buf: Buffer): Promise<Buffer> {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-sips-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-sips-"));
     try {
         const src = path.join(dir, "in");
         const out = path.join(dir, "out.jpg");
@@ -258,7 +258,8 @@ function allowedSourcePath(p: string): string | { error: string } {
     if (!PATH_EXTS.has(path.extname(real).toLowerCase()))
         return { error: "I can only edit image files (PNG, JPG, WEBP, HEIC, GIF, TIFF, AVIF)." };
     if (stat.size > MAX_PATH_SOURCE_BYTES) return { error: "That image is over 50MB. Use a smaller one." };
-    const roots = [getWorkspaceDir(), getImagesDir(), path.join(os.tmpdir(), "atlas_media")].flatMap((r) => {
+    // atlas_media: media received before the rename to bhai_media.
+    const roots = [getWorkspaceDir(), getImagesDir(), ...["bhai_media", "atlas_media"].map((d) => path.join(os.tmpdir(), d))].flatMap((r) => {
         try {
             return [fs.realpathSync(r)];
         } catch {
@@ -346,7 +347,7 @@ function save(buf: Buffer, mimeType: string, slug: string, stamp: number, i?: nu
         return writeNew(getImagesDir(), name, extFor(mimeType), buf);
     } catch (e) {
         console.log(`  🎨 generate_image: can't save to Images (${(e as Error).message}), using tmp`);
-        const tmp = path.join(os.tmpdir(), "atlas_media");
+        const tmp = path.join(os.tmpdir(), "bhai_media");
         fs.mkdirSync(tmp, { recursive: true, mode: 0o700 });
         return writeNew(tmp, name, extFor(mimeType), buf);
     }

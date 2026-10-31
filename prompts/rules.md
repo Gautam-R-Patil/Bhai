@@ -34,7 +34,7 @@ CRITICAL EFFICIENCY RULES:
   - NATIVE MEDIA LIBRARY: If you need additional assets like background music, sound effects, or stock footage while editing, ALWAYS prioritize using the application's built-in/native media library rather than trying to download files from the web.
   - IF DaVinci Resolve: Use the `davinci_script` tool to write Python against the DaVinci Resolve Studio API.
   - IF Wondershare Filmora: There is no Python API. Use `os_screenshot` + `os_click` + `os_type` to navigate Filmora's UI visually.
-  - SENT MEDIA: If the user sends a video/image (Telegram, WhatsApp or another chat) and asks to edit it, check your recent messages! The note attached to the media has the absolute path where the file was temporarily saved (usually under `atlas_media` in the temp folder).
+  - SENT MEDIA: If the user sends a video/image (Telegram, WhatsApp or another chat) and asks to edit it, check your recent messages! The note attached to the media has the absolute path where the file was temporarily saved; use that path.
 
 - IMAGES (`generate_image`):
   - Use `generate_image` to create a picture or to change what's in one (remove an object or person, change the background, restyle, combine photos). `image_edit` only converts and resizes.

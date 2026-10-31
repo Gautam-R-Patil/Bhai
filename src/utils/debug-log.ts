@@ -12,9 +12,9 @@
 //   logToolAction({ tool: "edit", filePath: "src/foo.ts", line: 42, action: "replace identifier 'bar' with 'baz'" });
 //   → [12:34:56] [edit] src/foo.ts:42 — replace identifier 'bar' with 'baz'
 //
-// Falls silent when ATLAS_TOOL_DEBUG=false — still emits the bare
+// Falls silent when BHAI_TOOL_DEBUG=false — still emits the bare
 // "[tool]" prefix when debug is off so the existing trace remains
-// readable. ATLAS_TOOL_DEBUG=verbose also attaches session / role
+// readable. BHAI_TOOL_DEBUG=verbose also attaches session / role
 // breadcrumbs when the caller supplies them.
 
 import path from "node:path";
@@ -33,7 +33,7 @@ export interface ToolActionLog {
 }
 
 const DEBUG_MODE = (): "off" | "on" | "verbose" => {
-    const v = (process.env.ATLAS_TOOL_DEBUG || "").toLowerCase();
+    const v = (process.env.BHAI_TOOL_DEBUG || "").toLowerCase();
     if (v === "false" || v === "off" || v === "0") return "off";
     if (v === "verbose" || v === "2") return "verbose";
     return "on";
@@ -50,7 +50,7 @@ function prettyPath(p?: string): string | undefined {
 /**
  * Emit a single structured log line for a tool action. Safe to call
  * liberally — the formatting is cheap and the output respects the
- * ATLAS_TOOL_DEBUG env.
+ * BHAI_TOOL_DEBUG env.
  *
  * Format: `🔧 [tool] sub_agent=id role=r | path:line — action`
  * The outer Bhai process logger prepends the ISO timestamp, so we

@@ -75,7 +75,7 @@ export function extractText(data: Buffer): Promise<string> {
     // rescued a PDF the modern parser rejected, so it was dropped.
     const script = resolveScript("pdf-text.cjs");
     if (!script) return Promise.reject(new Error("The PDF reader (scripts/pdf-text.cjs) is missing."));
-    const envMs = Number(process.env.ATLAS_PDF_PARSE_DEADLINE_MS); // tests only; "" or "60s" must not mean 0
+    const envMs = Number(process.env.BHAI_PDF_PARSE_DEADLINE_MS); // tests only; "" or "60s" must not mean 0
     const ms = Number.isFinite(envMs) && envMs > 0 ? envMs : PARSE_DEADLINE_MS;
     const child = fork(script, [], {
         execPath: process.execPath,

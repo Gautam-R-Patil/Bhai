@@ -3,7 +3,7 @@
 // See LICENSE.md for details.
 //
 // Parity helpers for dump_ax_bin's per-attribute walk (default) vs its batched walk
-// (the default; ATLAS_NO_AX_BATCH=true turns it off). Shared by scripts/ax-parity.ts and ax-batch.parity.test.ts.
+// (the default; BHAI_NO_AX_BATCH=true turns it off). Shared by scripts/ax-parity.ts and ax-batch.parity.test.ts.
 // Not used at runtime.
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -26,13 +26,13 @@ export interface TimedDump {
     rows: NodeRow[];
 }
 
-/** Runs the helper once, batched (default) or per-attribute (ATLAS_NO_AX_BATCH=true). Throws on `error|…`. */
+/** Runs the helper once, batched (default) or per-attribute (BHAI_NO_AX_BATCH=true). Throws on `error|…`. */
 export function runDump(bin: string, pid: number, batch: boolean, extraEnv: Record<string, string> = {}): TimedDump {
     // The helper's 3 s walk budget would cut both trees on a loaded machine; parity
     // compares whole trees, so lift it (callers can still set their own).
-    const env: NodeJS.ProcessEnv = { ...process.env, ATLAS_AX_BUDGET_MS: "15000", ...extraEnv };
-    delete env.ATLAS_NO_AX_BATCH;
-    if (!batch) env.ATLAS_NO_AX_BATCH = "true";
+    const env: NodeJS.ProcessEnv = { ...process.env, BHAI_AX_BUDGET_MS: "15000", ...extraEnv };
+    delete env.BHAI_NO_AX_BATCH;
+    if (!batch) env.BHAI_NO_AX_BATCH = "true";
     const t0 = performance.now();
     const r = spawnSync(bin, ["--pid", String(pid)], {
         env,

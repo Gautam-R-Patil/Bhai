@@ -15,7 +15,7 @@ let localToken: string;
 let closeCanvas: () => void;
 
 beforeAll(async () => {
-    scratch = mkdtempSync(join(tmpdir(), "atlas-canvas-"));
+    scratch = mkdtempSync(join(tmpdir(), "bhai-canvas-"));
     process.env.HOME = scratch;
 
     // Force the overlay-chat module to lazily generate a local token file under

@@ -74,7 +74,7 @@ beforeEach(() => {
     scriptOverride = null;
 });
 afterEach(() => {
-    delete process.env.ATLAS_PDF_PARSE_DEADLINE_MS;
+    delete process.env.BHAI_PDF_PARSE_DEADLINE_MS;
     for (const c of children) c.kill("SIGKILL");
     fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -121,7 +121,7 @@ describe("ingestPdfToDocument limits", { retry: 2 }, () => {
     it("kills a parse that never ends at the deadline, and the next PDF still parses", async () => {
         scriptOverride = path.join(dir, "hang.cjs");
         fs.writeFileSync(scriptOverride, `process.once("message", () => { for (;;) {} });`);
-        process.env.ATLAS_PDF_PARSE_DEADLINE_MS = "500";
+        process.env.BHAI_PDF_PARSE_DEADLINE_MS = "500";
         const file = path.join(dir, "slow.pdf");
         fs.writeFileSync(file, "%PDF-1.4\n");
         await expect(ingestPdfToDocument(file, "resume")).rejects.toThrow(/longer than 0.5s/);
@@ -130,13 +130,13 @@ describe("ingestPdfToDocument limits", { retry: 2 }, () => {
         expect(children[0].signalCode === "SIGKILL" || children[0].killed).toBe(true);
 
         scriptOverride = null;
-        delete process.env.ATLAS_PDF_PARSE_DEADLINE_MS;
+        delete process.env.BHAI_PDF_PARSE_DEADLINE_MS;
         expect(await ingestHello()).toContain("Hello Ingest");
     });
 
-    it("an empty or non-numeric ATLAS_PDF_PARSE_DEADLINE_MS falls back to the default deadline", async () => {
+    it("an empty or non-numeric BHAI_PDF_PARSE_DEADLINE_MS falls back to the default deadline", async () => {
         for (const v of ["", "abc", "60s", "0", "-5"]) {
-            process.env.ATLAS_PDF_PARSE_DEADLINE_MS = v;
+            process.env.BHAI_PDF_PARSE_DEADLINE_MS = v;
             expect(await ingestHello()).toContain("Hello Ingest");
         }
     });
@@ -189,12 +189,12 @@ describe("ingestPdfToDocument limits", { retry: 2 }, () => {
         const file = path.join(dir, "bomb.pdf");
         fs.writeFileSync(file, bomb);
 
-        process.env.ATLAS_PDF_PARSE_DEADLINE_MS = "1000";
+        process.env.BHAI_PDF_PARSE_DEADLINE_MS = "1000";
         await expect(ingestPdfToDocument(file, "resume")).rejects.toThrow(/longer than 1s/);
         await exited(children[0]);
         // Windows has no POSIX signals: kill() sets .killed but signalCode stays null.
         expect(children[0].signalCode === "SIGKILL" || children[0].killed).toBe(true);
-        delete process.env.ATLAS_PDF_PARSE_DEADLINE_MS;
+        delete process.env.BHAI_PDF_PARSE_DEADLINE_MS;
 
         // The child's own watchdog (here capped at 250MB) kills it with no deadline at all,
         // while a normal PDF stays well under the same cap.

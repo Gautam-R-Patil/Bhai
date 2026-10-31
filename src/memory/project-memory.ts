@@ -3,22 +3,35 @@
 // See LICENSE.md for details.
 
 // ── Project Memory (walk-up loader) ────────────
-// Walks from CWD up to $HOME, collecting AGENTS.md + .atlas/agents/*.md
-// + ATLAS.md files. Selective by task type. Section markers let callers
+// Walks from CWD up to $HOME, collecting AGENTS.md + .bhai/agents/*.md
+// + BHAI.md files. Selective by task type. Section markers let callers
 // pull specific sub-zones out of sub-docs.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { getBhaiHome } from "../config/paths.js";
 
 const MAX_TOTAL_BYTES = 16 * 1024;
 const MAX_FILE_BYTES = 8 * 1024;
 const MAX_DEPTH = 20;
 
 // Root-level candidates (most-specific first — same-directory precedence).
-const FILE_CANDIDATES = ["ATLAS.md", ".atlas/ATLAS.md", "ATLAS.local.md", "AGENTS.md"];
+// Each entry lists the current name, then the pre-rename ATLAS one, read only
+// when the BHAI file is absent (users' repos are theirs; we never migrate them).
+const FILE_CANDIDATES = [
+    ["BHAI.md", "ATLAS.md"],
+    [".bhai/BHAI.md", ".atlas/ATLAS.md"],
+    ["BHAI.local.md", "ATLAS.local.md"],
+    ["AGENTS.md"],
+];
+const AGENT_DIRS = [".bhai", ".atlas"];
 
-// Sub-docs under .atlas/agents/ that are candidates for injection.
+function firstExisting(dir: string, names: string[]): string | undefined {
+    return names.map((n) => path.join(dir, n)).find((p) => existsSync(p));
+}
+
+// Sub-docs under .bhai/agents/ that are candidates for injection.
 const SUBDOC_BASENAMES = [
     "architecture.md",
     "conventions.md",
@@ -85,20 +98,23 @@ function applySectionFilter(content: string, sections: string[] | undefined): st
     if (!sections || sections.length === 0) return content;
     const out: string[] = [];
     for (const name of sections) {
-        const startMarker = `<!-- @atlas:section:${name} -->`;
-        const endMarker = `<!-- @atlas:section:${name}:end -->`;
-        const si = content.indexOf(startMarker);
-        if (si === -1) continue;
-        const ei = content.indexOf(endMarker, si);
-        if (ei === -1) continue;
-        out.push(content.slice(si + startMarker.length, ei).trim());
+        for (const brand of ["bhai", "atlas"]) {
+            const startMarker = `<!-- @${brand}:section:${name} -->`;
+            const endMarker = `<!-- @${brand}:section:${name}:end -->`;
+            const si = content.indexOf(startMarker);
+            if (si === -1) continue;
+            const ei = content.indexOf(endMarker, si);
+            if (ei === -1) continue;
+            out.push(content.slice(si + startMarker.length, ei).trim());
+            break;
+        }
     }
     return out.join("\n\n");
 }
 
 /**
- * Walk up from startDir collecting AGENTS.md + ATLAS.md + the task-type-relevant
- * sub-docs under .atlas/agents/. Stops at home or root. Caps total bytes at 16K.
+ * Walk up from startDir collecting AGENTS.md + BHAI.md + the task-type-relevant
+ * sub-docs under .bhai/agents/. Stops at home or root. Caps total bytes at 16K.
  */
 export function loadProjectMemoryFiles(startDir?: string, options: LoadOptions = {}): LoadedMemoryFile[] {
     const taskType: TaskType = options.taskType ?? "other";
@@ -116,16 +132,18 @@ export function loadProjectMemoryFiles(startDir?: string, options: LoadOptions =
     let dir = path.resolve(startDir ?? process.cwd());
     for (let depth = 0; depth < MAX_DEPTH; depth++) {
         // Root-level candidates
-        for (const name of FILE_CANDIDATES) {
-            const p = path.join(dir, name);
-            if (!existsSync(p)) continue;
+        for (const names of FILE_CANDIDATES) {
+            const p = firstExisting(dir, names);
+            if (!p) continue;
             const content = readCapped(p);
             if (!content) continue;
             pushIfRoom({ path: p, depth, source: "project", content, subdoc: null });
         }
-        // .atlas/agents/*.md sub-docs
-        const subdir = path.join(dir, ".atlas", "agents");
-        if (existsSync(subdir)) {
+        // .bhai/agents/*.md sub-docs (then .atlas/agents/, same basename once)
+        const seen = new Set<string>();
+        for (const agentDir of AGENT_DIRS) {
+            const subdir = path.join(dir, agentDir, "agents");
+            if (!existsSync(subdir)) continue;
             let entries: string[] = [];
             try {
                 entries = readdirSync(subdir);
@@ -135,6 +153,8 @@ export function loadProjectMemoryFiles(startDir?: string, options: LoadOptions =
             for (const name of entries) {
                 if (!SUBDOC_BASENAMES.includes(name)) continue;
                 if (!wanted.has(name)) continue;
+                if (seen.has(name)) continue;
+                seen.add(name);
                 const p = path.join(subdir, name);
                 const raw = readCapped(p);
                 if (!raw) continue;
@@ -151,8 +171,8 @@ export function loadProjectMemoryFiles(startDir?: string, options: LoadOptions =
 
     // Global user memory
     try {
-        const userPath = path.join(homedir(), ".atlas", "ATLAS.md");
-        if (existsSync(userPath)) {
+        const userPath = firstExisting(getBhaiHome(), ["BHAI.md", "ATLAS.md"]);
+        if (userPath) {
             const content = readCapped(userPath);
             if (content) pushIfRoom({ path: userPath, depth: MAX_DEPTH, source: "user", content, subdoc: null });
         }

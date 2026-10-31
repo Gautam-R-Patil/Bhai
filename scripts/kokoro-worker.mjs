@@ -12,17 +12,17 @@
 //   worker → parent stderr: human-readable log lines. Never written to stdout.
 //
 // Env inputs:
-//   ATLAS_KOKORO_MODEL      HF model id (default onnx-community/Kokoro-82M-v1.0-ONNX)
-//   ATLAS_KOKORO_DTYPE      fp32 | fp16 | q8 | q4 | q4f16 (default q8)
-//   ATLAS_KOKORO_VOICE      default voice name (default af_heart)
-//   ATLAS_KOKORO_CACHE_DIR  transformers.js cache root
+//   BHAI_KOKORO_MODEL      HF model id (default onnx-community/Kokoro-82M-v1.0-ONNX)
+//   BHAI_KOKORO_DTYPE      fp32 | fp16 | q8 | q4 | q4f16 (default q8)
+//   BHAI_KOKORO_VOICE      default voice name (default af_heart)
+//   BHAI_KOKORO_CACHE_DIR  transformers.js cache root
 
 import readline from "node:readline";
 
-const MODEL_ID = process.env.ATLAS_KOKORO_MODEL || "onnx-community/Kokoro-82M-v1.0-ONNX";
-const DTYPE    = process.env.ATLAS_KOKORO_DTYPE || "q8";
-const VOICE    = process.env.ATLAS_KOKORO_VOICE || "af_heart";
-const CACHE    = process.env.ATLAS_KOKORO_CACHE_DIR;
+const MODEL_ID = process.env.BHAI_KOKORO_MODEL || "onnx-community/Kokoro-82M-v1.0-ONNX";
+const DTYPE    = process.env.BHAI_KOKORO_DTYPE || "q8";
+const VOICE    = process.env.BHAI_KOKORO_VOICE || "af_heart";
+const CACHE    = process.env.BHAI_KOKORO_CACHE_DIR;
 
 function log(msg) { process.stderr.write(`[KOKORO-WORKER] ${msg}\n`); }
 

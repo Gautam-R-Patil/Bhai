@@ -150,7 +150,7 @@ export const winOsScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "This Windows os_screenshot handler should not be called on non-Windows." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_screen_${Date.now()}.png`);
 
         try {
             // Get dims for the focused monitor (multi-monitor aware).
@@ -630,7 +630,7 @@ async function runWinOcr(screenshotPath: string | null): Promise<OcrResult | nul
     let imgPath = screenshotPath;
     let tempCapture = false;
     if (!imgPath) {
-        imgPath = join(tmpdir(), `atlas_ocr_${Date.now()}.png`);
+        imgPath = join(tmpdir(), `bhai_ocr_${Date.now()}.png`);
         await captureScreenshot(imgPath);
         tempCapture = true;
     }
@@ -1107,7 +1107,7 @@ export const winSendScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "Telegram context not available." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_sendscreen_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_sendscreen_${Date.now()}.png`);
 
         try {
             await captureScreenshot(tmpPng);

@@ -109,11 +109,11 @@ const assignedSecret = (sep: string, value: string) => {
     return true;
 };
 
-// ATLAS_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
+// BHAI_NATIVE_PROTECT=true: the linear-time Rust port (native/src/pii_protect.rs),
 // byte-identical (pii-protect.parity.test.ts). Opt-in until its bench clears the
 // bar. An error napi throws falls back to the TS below; a Rust panic aborts the
 // process (panic = "abort"), so the port must not panic.
-const NATIVE_PROTECT = process.env.ATLAS_NATIVE_PROTECT === "true";
+const NATIVE_PROTECT = process.env.BHAI_NATIVE_PROTECT === "true";
 
 export function maskCredentials(text: string): string {
     if (!text || text.length < 6) return text;

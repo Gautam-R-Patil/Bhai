@@ -4,7 +4,7 @@
 
 // ── Template Registry ───────────────────────────
 // Loads bundled templates from skills/templates/ and store-installed templates
-// from ~/.atlas/store/templates/. Each template is a directory with a meta.yml
+// from ~/.bhai/store/templates/. Each template is a directory with a meta.yml
 // (or meta.yaml/meta.json) plus its source files (template.html + styles.css
 // for HTML, template.md for Markdown, template.docx for DOCX).
 //
@@ -13,11 +13,11 @@
 // shipping new code.
 
 import fs from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 import type { DocumentType } from "./schema.js";
+import { getBhaiHome } from "../config/paths.js";
 
 export type TemplateFormat = "pdf" | "docx";
 export type TemplateRenderKind = "html" | "markdown" | "docx" | "resumed-theme";
@@ -67,7 +67,7 @@ function bundledDir(): string {
 }
 
 function storeDir(): string {
-    return path.join(homedir(), ".atlas", "store", "templates");
+    return path.join(getBhaiHome(), "store", "templates");
 }
 
 function readMetaFile(dir: string): Record<string, unknown> | null {

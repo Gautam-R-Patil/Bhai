@@ -66,7 +66,7 @@ async function detectGoogleTokens(fs, tokenDir) {
 
 function detectOtplessSession(prefs, sessionFromFile) {
     // Two sources of truth, prefer the file-based one. saveAccountSession writes
-    // to <DATA_DIR>/atlas-account.enc; nothing ever writes prefs.account in
+    // to <DATA_DIR>/bhai-account.enc; nothing ever writes prefs.account in
     // electron-store, so reading prefs.account alone makes signin
     // mis-skip-or-re-prompt depending on which way the bug fires. The caller
     // passes the decrypted file contents (or null) so this function stays pure.

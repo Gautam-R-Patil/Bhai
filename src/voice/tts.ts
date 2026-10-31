@@ -20,12 +20,12 @@ function getOpenAI(): OpenAI {
     return openaiClient;
 }
 
-// Choose provider in this order: explicit ATLAS_TTS_PROVIDER override →
+// Choose provider in this order: explicit BHAI_TTS_PROVIDER override →
 // ELEVENLABS_API_KEY → OPENAI_API_KEY → none. Keeping the order deterministic
 // lets users pin provider without touching code while still getting graceful
 // fallback when the preferred key is missing.
 function pickProvider(): TtsProvider {
-    const override = (process.env.ATLAS_TTS_PROVIDER || "").toLowerCase();
+    const override = (process.env.BHAI_TTS_PROVIDER || "").toLowerCase();
     if (override === "openai" || override === "elevenlabs") return override;
     if (process.env.ELEVENLABS_API_KEY) return "elevenlabs";
     if (process.env.OPENAI_API_KEY) return "openai";

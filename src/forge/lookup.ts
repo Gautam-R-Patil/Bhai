@@ -27,7 +27,7 @@ export interface LookupOpts {
 }
 
 export async function lookupTool(opts: LookupOpts): Promise<LookupHit | null> {
-    if (process.env.ATLAS_NO_FORGE_LOOKUP === "true") {
+    if (process.env.BHAI_NO_FORGE_LOOKUP === "true") {
         emitForgeEvent({
             event: "lookup_attempted",
             ts: Date.now(),

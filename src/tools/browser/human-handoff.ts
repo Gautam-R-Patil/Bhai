@@ -11,7 +11,7 @@ import type { ToolDefinition } from "../get-current-time.js";
 import { getCurrentMode } from "./browser-backend.js";
 import { CAPTCHA_SOLVED_JS, type CaptchaInfo, type CaptchaType, captchaSolved, detectCaptcha } from "./captcha.js";
 import { getActiveExtensionTab, isExtensionConnected, sendBridgeCommand } from "./chrome-bridge.js";
-import { ATLAS_HUD_JS, getActivePage, touchBrowserActivity } from "./core.js";
+import { BHAI_HUD_JS, getActivePage, touchBrowserActivity } from "./core.js";
 
 export type HandoffOutcome = "cleared" | "timeout" | "cancelled";
 
@@ -179,10 +179,10 @@ export const browserWaitForHuman: ToolDefinition = {
                         "No human check is waiting on the owner here (none, invisible, or already done). Continue the task.",
                 });
             }
-            const envMs = process.env.ATLAS_CAPTCHA_HANDOFF_MS;
+            const envMs = process.env.BHAI_CAPTCHA_HANDOFF_MS;
             if (envMs && !(Number(envMs) > 0)) {
                 return JSON.stringify({
-                    error: "Handing human checks to the owner is turned off (ATLAS_CAPTCHA_HANDOFF_MS=0).",
+                    error: "Handing human checks to the owner is turned off (BHAI_CAPTCHA_HANDOFF_MS=0).",
                     status: "disabled",
                     requires_user: true,
                     captcha_type: info.type,
@@ -207,7 +207,7 @@ export const browserWaitForHuman: ToolDefinition = {
             const ask = askFor(info.type, site, mode);
             const banner = (label: string, done: boolean) =>
                 Promise.resolve(
-                    probe.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`),
+                    probe.evaluate(`(${BHAI_HUD_JS})(${JSON.stringify({ label, done, maxWidth: 460 })})`),
                 ).catch(() => {});
             await banner("⏸ Bhai is waiting for you to complete this check", false);
             const channel = await tellOwner(ask);

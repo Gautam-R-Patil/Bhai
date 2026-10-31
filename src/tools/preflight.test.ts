@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { preflight } from "./preflight.js";
 
-const TMP = join(tmpdir(), `atlas-preflight-test-${Date.now()}`);
+const TMP = join(tmpdir(), `bhai-preflight-test-${Date.now()}`);
 const EXISTING_FILE = join(TMP, "exists.txt");
 const MISSING_FILE = join(TMP, "missing.txt");
 
@@ -112,7 +112,7 @@ describe("preflight — shell tools", () => {
     });
 
     it("shell_exec: 'rm -rf /tmp/something' does NOT trigger the catch-all", () => {
-        expect(preflight("shell_exec", { command: "rm -rf /tmp/atlas-cache" })).toBeNull();
+        expect(preflight("shell_exec", { command: "rm -rf /tmp/bhai-cache" })).toBeNull();
         expect(preflight("shell_exec", { command: "rm -rf /home/user/build" })).toBeNull();
     });
 

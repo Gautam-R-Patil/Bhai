@@ -2,7 +2,7 @@
 //
 // Finds the Site Skill for a URL. Skills live in folders with a skill.json
 // manifest ({ name, domains, version, status? }) next to skill.cjs: user/store skills in
-// ~/.atlas/store/site-skills, built-ins in <bot>/site-skills. The dirs are read
+// ~/.bhai/store/site-skills, built-ins in <bot>/site-skills. The dirs are read
 // on every lookup, so an added or edited skill is used by the next task without
 // a restart (the runtime also forks a fresh process per call).
 //
@@ -12,12 +12,11 @@
 // (e.g. _staging). A missing status means active, so built-ins need none.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
-import { getScriptsDir } from "../../config/paths.js";
+import { getBhaiHome, getScriptsDir } from "../../config/paths.js";
 
 export const defaultSkillDirs = () => [
-    path.join(homedir(), ".atlas", "store", "site-skills"),
+    path.join(getBhaiHome(), "store", "site-skills"),
     path.resolve(getScriptsDir(), "..", "site-skills"),
 ];
 

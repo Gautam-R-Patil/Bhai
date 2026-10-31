@@ -10,7 +10,7 @@
  *   - os_ground: UI-TARS-1.5-7B grounding model — takes (screenshot, instruction) and
  *     returns predicted click coords. ~400ms on M-series.
  *
- * Both tools accept EITHER a screenshot_path (file on disk under tmpdir/ATLAS Files) OR
+ * Both tools accept EITHER a screenshot_path (file on disk under tmpdir/Bhai Files) OR
  * a screenshot_base64 (encoded image data — written to a temp file internally then cleaned up).
  * This makes them reachable from the agent loop where os_screenshot returns base64 only.
  *
@@ -27,7 +27,7 @@ import type { ToolDefinition } from "./get-current-time.js";
 
 /** Write a base64-encoded image to a temp file. Returns the absolute path. Caller must unlink. */
 async function base64ToTempFile(base64: string, ext = "png"): Promise<string> {
-    const tmp = join(tmpdir(), `atlas_ground_${Date.now()}_${Math.floor(Math.random() * 1e6)}.${ext}`);
+    const tmp = join(tmpdir(), `bhai_ground_${Date.now()}_${Math.floor(Math.random() * 1e6)}.${ext}`);
     const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
     await fs.writeFile(tmp, buf, { mode: 0o600 });
     return tmp;
@@ -69,7 +69,7 @@ export const osVisualize: ToolDefinition = {
         function: {
             name: "os_visualize",
             description:
-                "Detect interactive UI elements in a screenshot using OmniParser-v2 (YOLOv8). Returns numbered bounding boxes — useful for Canvas apps (Figma, Photoshop) where AX is empty. Requires `pip install ultralytics` + OmniParser weights. Pass screenshot_base64 from os_screenshot, OR screenshot_path under tmpdir/ATLAS Files.",
+                "Detect interactive UI elements in a screenshot using OmniParser-v2 (YOLOv8). Returns numbered bounding boxes — useful for Canvas apps (Figma, Photoshop) where AX is empty. Requires `pip install ultralytics` + OmniParser weights. Pass screenshot_base64 from os_screenshot, OR screenshot_path under tmpdir/Bhai Files.",
             parameters: {
                 type: "object",
                 properties: {
@@ -149,7 +149,7 @@ export const osGround: ToolDefinition = {
         function: {
             name: "os_ground",
             description:
-                "Predict click coordinates from a screenshot + natural-language instruction using UI-TARS-1.5-7B (local). Returns (x, y, confidence). Requires Ollama + `ui-tars:7b` (~4.5GB). Pass screenshot_base64 from os_screenshot, OR screenshot_path under tmpdir/ATLAS Files.",
+                "Predict click coordinates from a screenshot + natural-language instruction using UI-TARS-1.5-7B (local). Returns (x, y, confidence). Requires Ollama + `ui-tars:7b` (~4.5GB). Pass screenshot_base64 from os_screenshot, OR screenshot_path under tmpdir/Bhai Files.",
             parameters: {
                 type: "object",
                 properties: {
@@ -166,7 +166,7 @@ export const osGround: ToolDefinition = {
                         description:
                             'Natural-language target description (e.g. "the Save button", "the X to close the dialog").',
                     },
-                    model: { type: "string", description: "Ollama model tag (defaults to the configured UI-TARS tag, ATLAS_UI_TARS_TAG)." },
+                    model: { type: "string", description: "Ollama model tag (defaults to the configured UI-TARS tag, BHAI_UI_TARS_TAG)." },
                 },
                 required: ["instruction"],
             },
@@ -175,11 +175,11 @@ export const osGround: ToolDefinition = {
 
     async handler(input) {
         const instruction = input.instruction as string;
-        // Use the SAME tag the cascade + groundClick use (ATLAS_UI_TARS_TAG, else
+        // Use the SAME tag the cascade + groundClick use (BHAI_UI_TARS_TAG, else
         // the verified-working DEFAULT_UI_TARS_TAG). The old hardcoded "ui-tars:7b"
         // never matched the pulled GGUF, so os_ground always reported
         // model_not_pulled and told the user to pull a tag the system never uses.
-        const model = (input.model as string) || process.env.ATLAS_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
+        const model = (input.model as string) || process.env.BHAI_UI_TARS_TAG || DEFAULT_UI_TARS_TAG;
         if (!instruction) return JSON.stringify({ success: false, error: "instruction required" });
 
         // Fast availability check (60s cached) BEFORE the image read + Ollama round-trip.

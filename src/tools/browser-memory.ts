@@ -46,7 +46,7 @@ interface StrategyStore {
 
 // ── Constants ─────────────────────────────────
 
-const STORE_PATH = path.join(process.env.ATLAS_DATA_DIR || path.resolve("data"), "browser-strategies.json");
+const STORE_PATH = path.join(process.env.BHAI_DATA_DIR || path.resolve("data"), "browser-strategies.json");
 const STALE_DAYS = 30; // warn after 30 days
 const EXPIRED_DAYS = 90; // auto-prune after 90 days (if low success)
 const TIP_STALE_DAYS = 60; // warn for tips

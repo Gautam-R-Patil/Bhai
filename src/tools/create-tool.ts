@@ -14,12 +14,13 @@ import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import * as vm from "node:vm";
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
+import { getBhaiHome } from "../config/paths.js";
 import { isPathAllowed } from "../security/allowlist.js";
 import { isSensitivePath } from "../security/sensitive-paths.js";
 import { type IsolatedRunOpts, runIsolated } from "../security/vm-isolate.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
-const DYNAMIC_TOOLS_DIR = path.join(homedir(), ".atlas", "dynamic-tools");
+const DYNAMIC_TOOLS_DIR = path.join(getBhaiHome(), "dynamic-tools");
 
 // ── Registry reference (set by index.ts at boot) ─────────
 let registryRef: Map<string, ToolDefinition> | null = null;
@@ -66,23 +67,23 @@ export function getDynamicToolSchemas(): ChatCompletionTool[] {
 // ── Persisted-handler integrity key (F8) ──────────────────
 //
 // Threat: a malicious actor (or another tool) that can write to
-// ~/.atlas/dynamic-tools/*.json could swap a tool's handler_code for an
+// ~/.bhai/dynamic-tools/*.json could swap a tool's handler_code for an
 // arbitrary payload that auto-loads on next Bhai boot. The verifier never
 // re-runs, the SAST never re-scans, and the user never re-approves — so
 // the only defense is a tamper-detection signature.
 //
 // Strategy: at first call, lazily generate (or load) a 32-byte key at
-// ~/.atlas/data/forge-persist-key (mode 0o600). At persist time, sign the
+// ~/.bhai/data/forge-persist-key (mode 0o600). At persist time, sign the
 // canonical JSON of {name, handler_code, parameters_schema}. At load time,
 // verify the signature; on mismatch or missing signature, move the file
-// to ~/.atlas/store/dynamic/_failed/ and skip loading.
+// to ~/.bhai/store/dynamic/_failed/ and skip loading.
 //
 // Failure mode: if the key file gets deleted, ALL existing persisted tools
 // are quarantined (correct — we cannot prove they're still safe). User has
 // to re-create them via the verifier path.
 
-const PERSIST_KEY_PATH = path.join(homedir(), ".atlas", "data", "forge-persist-key");
-const FAILED_DIR = path.join(homedir(), ".atlas", "store", "dynamic", "_failed");
+const PERSIST_KEY_PATH = path.join(getBhaiHome(), "data", "forge-persist-key");
+const FAILED_DIR = path.join(getBhaiHome(), "store", "dynamic", "_failed");
 
 let _persistKey: Buffer | null = null;
 function getPersistKey(): Buffer {
@@ -340,7 +341,7 @@ export const createTool: ToolDefinition = {
         }
 
         // ── FORGE Phase 3: route through verifier when ready ──
-        if (process.env.ATLAS_NO_FORGE_VERIFIER !== "true") {
+        if (process.env.BHAI_NO_FORGE_VERIFIER !== "true") {
             try {
                 const { synthesizeTool, isForgeReady } = await import("../forge/orchestrator.js");
                 if (isForgeReady()) {

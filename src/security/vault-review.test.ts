@@ -33,7 +33,7 @@ const ENTRIES = [
 ];
 
 beforeEach(() => {
-    delete process.env.ATLAS_NO_VAULT;
+    delete process.env.BHAI_NO_VAULT;
     _resetConsent();
     handleDesktopLine(`##BHAI_VAULT##${JSON.stringify(ENTRIES)}`);
 });

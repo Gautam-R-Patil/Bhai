@@ -6,13 +6,13 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 beforeEach(() => {
-    process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "sched-cron-"));
+    process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "sched-cron-"));
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 30, 10, 0, 30)); // Fri 30 Oct 2026, 10:00:30 local
 });
 afterEach(() => {
     vi.useRealTimers();
-    delete process.env.ATLAS_DATA_DIR;
+    delete process.env.BHAI_DATA_DIR;
 });
 
 async function load() {

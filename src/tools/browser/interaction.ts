@@ -12,7 +12,7 @@ import { checkAuthWall } from "./auth-wall.js";
 import { getCurrentMode } from "./browser-backend.js";
 import { quickCaptchaCheck } from "./captcha.js";
 import {
-    ATLAS_HUD_JS,
+    BHAI_HUD_JS,
     buildElementsText,
     getActivePage,
     getActivePageIndex,
@@ -143,7 +143,7 @@ export const browserClickAt: ToolDefinition = {
                     ? `🖱 Clicking "${(lastElementMap.find((e) => e.label === Number(input.label))?.text || "").substring(0, 30) || `#${input.label}`}"`
                     : `🖱 Clicking (${Math.round(x)}, ${Math.round(y)})`;
             await page
-                .evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: hudLabel, done: false })})`)
+                .evaluate(`(${BHAI_HUD_JS})(${JSON.stringify({ label: hudLabel, done: false })})`)
                 .catch(() => {});
 
             const modifiers: string[] = [];
@@ -284,7 +284,7 @@ export const browserClickAt: ToolDefinition = {
 
             // Record success for native loop/rate tracker
             recordBrowserAction("click", page.url(), String(input.label ?? `${x},${y}`), true);
-            await page.evaluate(`(${ATLAS_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
+            await page.evaluate(`(${BHAI_HUD_JS})(${JSON.stringify({ label: "", done: true })})`).catch(() => {});
 
             return JSON.stringify({
                 success: true,

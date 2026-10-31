@@ -22,7 +22,7 @@ import {
 let tmpRoot: string;
 
 beforeEach(() => {
-    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-atomic-io-"));
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-atomic-io-"));
 });
 
 afterEach(() => {
@@ -238,7 +238,7 @@ describe("isTruthy", () => {
 });
 
 describe("envInt", () => {
-    const key = "ATLAS_TEST_INT_DO_NOT_SET";
+    const key = "BHAI_TEST_INT_DO_NOT_SET";
     afterEach(() => {
         delete process.env[key];
     });
@@ -264,7 +264,7 @@ describe("envInt", () => {
 });
 
 describe("envBool", () => {
-    const key = "ATLAS_TEST_BOOL_DO_NOT_SET";
+    const key = "BHAI_TEST_BOOL_DO_NOT_SET";
     afterEach(() => {
         delete process.env[key];
     });

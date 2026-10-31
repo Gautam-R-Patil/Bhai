@@ -45,10 +45,12 @@ const HARD_DENY_SUBSTRINGS = [
     "/convex/",
     "/.env",
     "/data/google-credentials.json",
-    "/.atlas/store/dynamic/", // self-tamper: tools must not modify other tool dirs
-    "/.atlas/data/",
-    "/.atlas/dynamic-tools/",
+    "/.bhai/store/dynamic/", // self-tamper: tools must not modify other tool dirs
+    "/.bhai/data/",
+    "/.bhai/dynamic-tools/",
     "/data/google-tokens/",
+    // Same for the pre-rename root: a failed ~/.atlas → ~/.bhai copy, or an older build, keeps it live.
+    "/.atlas/store/dynamic/",
     "/.atlas/data/",
     "/.atlas/dynamic-tools/",
     "/.docker/config.json",

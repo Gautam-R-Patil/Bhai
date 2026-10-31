@@ -60,7 +60,7 @@ export interface LLMClient {
         lean?: boolean;
         /**
          * Deadline per model attempt, in ms, instead of the transport's default
-         * (ATLAS_LLM_ATTEMPT_TIMEOUT_MS, 25s). For long generations, e.g. a
+         * (BHAI_LLM_ATTEMPT_TIMEOUT_MS, 25s). For long generations, e.g. a
          * thinking model writing a few KB of code.
          */
         timeoutMs?: number;
@@ -70,7 +70,7 @@ export interface LLMClient {
          * Stream the answer: text/notes/tool starts as they arrive. A `reset`
          * means drop what this call showed so far (another attempt starts).
          * The resolved completion is still the answer. Off with
-         * ATLAS_NO_STREAMING=true. A throw from here fails the call (no fallback).
+         * BHAI_NO_STREAMING=true. A throw from here fails the call (no fallback).
          */
         onDelta?: (d: LLMDelta) => void;
     }): Promise<ChatCompletion>;
@@ -166,14 +166,14 @@ async function getModelFallback(model: string, exclude?: string[]): Promise<stri
 
 // Per-attempt deadline. Thinking turns legitimately run long (max allows ~65K
 // tokens), so a flat 25s aborted them and silently failed over to a cheaper
-// model. An explicit ATLAS_LLM_ATTEMPT_TIMEOUT_MS still wins.
+// model. An explicit BHAI_LLM_ATTEMPT_TIMEOUT_MS still wins.
 const ATTEMPT_TIMEOUT_BY_EFFORT: Partial<Record<ThinkingLevel, number>> = {
     medium: 60_000,
     high: 120_000,
     max: 180_000,
 };
 export function attemptTimeoutMs(effort?: ThinkingLevel): number {
-    const env = Number(process.env.ATLAS_LLM_ATTEMPT_TIMEOUT_MS);
+    const env = Number(process.env.BHAI_LLM_ATTEMPT_TIMEOUT_MS);
     if (env > 0) return env;
     return (effort && ATTEMPT_TIMEOUT_BY_EFFORT[effort]) || 25_000;
 }
@@ -323,7 +323,7 @@ export function createLLMClient(config: Config): LLMClient {
                 // Window-aware mode (opt-in): estimate the request's token size once
                 // and skip fallback candidates whose context window can't hold it,
                 // closing the silent 1M→200K hop on large-context turns. Zero LLM cost.
-                const windowAware = process.env.ATLAS_WINDOW_AWARE_PRUNE === "true";
+                const windowAware = process.env.BHAI_WINDOW_AWARE_PRUNE === "true";
                 let estTokens = 0;
                 if (windowAware) {
                     try {
@@ -365,7 +365,7 @@ export function createLLMClient(config: Config): LLMClient {
                 // A throwing onDelta is a caller bug, not a model failure: it is
                 // rethrown as is and no other model runs (each would be charged and
                 // would likely hit the same throw).
-                const stream = onDelta && process.env.ATLAS_NO_STREAMING !== "true" ? onDelta : undefined;
+                const stream = onDelta && process.env.BHAI_NO_STREAMING !== "true" ? onDelta : undefined;
                 let streamed = false;
                 let callerFault: { err: unknown } | undefined;
                 const deliver = (d: LLMDelta) => {

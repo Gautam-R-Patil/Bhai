@@ -7,8 +7,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const home = os.homedir();
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-outbound-data-"));
-process.env.ATLAS_DATA_DIR = dataDir;
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-outbound-data-"));
+process.env.BHAI_DATA_DIR = dataDir;
 fs.mkdirSync(path.join(home, ".ssh"), { recursive: true });
 fs.writeFileSync(path.join(home, ".ssh", "id_rsa"), "-----BEGIN KEY-----");
 fs.mkdirSync(path.join(home, "Documents"), { recursive: true });

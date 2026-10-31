@@ -109,7 +109,7 @@ export const linuxShellScript: ToolDefinition = {
             });
         }
 
-        const tmpFile = join(tmpdir(), `atlas_linux_${Date.now()}.sh`);
+        const tmpFile = join(tmpdir(), `bhai_linux_${Date.now()}.sh`);
         try {
             await fs.writeFile(tmpFile, script, { mode: 0o755 });
             const { stdout, stderr } = await execFileAsync("bash", [tmpFile], { timeout });
@@ -156,8 +156,8 @@ export const linuxOsScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "This Linux os_screenshot handler should not be called on non-Linux." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_screen_${Date.now()}.png`);
-        const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
+        const tmpPng = join(tmpdir(), `bhai_screen_${Date.now()}.png`);
+        const tmpJpg = join(tmpdir(), `bhai_screen_${Date.now()}.jpg`);
 
         try {
             // Get dims for the focused monitor (multi-monitor aware).
@@ -673,7 +673,7 @@ export const linuxSendScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "Telegram context not available." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_sendscreen_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_sendscreen_${Date.now()}.png`);
 
         try {
             await captureScreenshot(tmpPng);
@@ -740,7 +740,7 @@ export async function runLinuxOcr(imgPath: string | null): Promise<OcrResult | n
 
     let tempCapture = false;
     if (!imgPath) {
-        imgPath = join(tmpdir(), `atlas_ocr_${Date.now()}.png`);
+        imgPath = join(tmpdir(), `bhai_ocr_${Date.now()}.png`);
         await captureScreenshot(imgPath);
         tempCapture = true;
     }

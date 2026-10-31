@@ -154,8 +154,8 @@
         if (type === "slack") {
             const btn = el("button", { className: "sp-btn" }, "Install to workspace");
             btn.addEventListener("click", function () {
-                if (window.atlas && window.atlas.setupSlackOAuthStart) {
-                    Promise.resolve(window.atlas.setupSlackOAuthStart()).catch(function () {});
+                if (window.bhai && window.bhai.setupSlackOAuthStart) {
+                    Promise.resolve(window.bhai.setupSlackOAuthStart()).catch(function () {});
                 }
             });
             actions.appendChild(btn);
@@ -201,11 +201,11 @@
         const ok = VALIDATORS[type](creds);
         if (!ok) { this._setStatus("Credentials look invalid — check the format.", false); return; }
         this._setStatus("Testing…", true);
-        if (!window.atlas || !window.atlas.setupTestChannel) {
+        if (!window.bhai || !window.bhai.setupTestChannel) {
             this._setStatus("IPC unavailable", false); return;
         }
         let res;
-        try { res = await window.atlas.setupTestChannel(type, creds); }
+        try { res = await window.bhai.setupTestChannel(type, creds); }
         catch (err) { this._setStatus("Test failed: " + (err.message || err), false); return; }
         if (res && res.ok) {
             this._testId = res.testId;
@@ -214,17 +214,17 @@
             this._setStatus("Test passed — click Save.", true);
         } else {
             saveBtn.disabled = true;
-            this._setStatus((res && res.error) || ("Test failed — see docs: https://atlas.app/docs/" + type), false);
+            this._setStatus((res && res.error) || "Test failed — check the details and try again.", false);
         }
     };
 
     ChannelCard.prototype._onSave = async function (type) {
         if (!this._testId || !this._creds) { this._setStatus("Run Test first.", false); return; }
-        if (!window.atlas || !window.atlas.setupSaveChannel) {
+        if (!window.bhai || !window.bhai.setupSaveChannel) {
             this._setStatus("IPC unavailable", false); return;
         }
         let res;
-        try { res = await window.atlas.setupSaveChannel(type, this._creds, this._testId); }
+        try { res = await window.bhai.setupSaveChannel(type, this._creds, this._testId); }
         catch (err) { this._setStatus("Save failed: " + (err.message || err), false); return; }
         if (res && res.ok) {
             this._setStatus("Saved.", true);
@@ -324,8 +324,8 @@
             qrBox.appendChild(sub);
             renderRetry(qrBox);
             // Cancel the stalled socket so the next attempt gets a fresh one.
-            if (window.atlas && typeof window.atlas.setupWaPairCancel === "function") {
-                Promise.resolve(window.atlas.setupWaPairCancel()).catch(function () {});
+            if (window.bhai && typeof window.bhai.setupWaPairCancel === "function") {
+                Promise.resolve(window.bhai.setupWaPairCancel()).catch(function () {});
             }
         }
 
@@ -338,8 +338,8 @@
 
         // Subscribe exactly once per ChannelCard instance (preload attaches
         // with ipcRenderer.on, which accumulates — so guard here).
-        if (!self._waListenerAttached && window.atlas && typeof window.atlas.onWhatsAppQR === "function") {
-            window.atlas.onWhatsAppQR(function (payload) {
+        if (!self._waListenerAttached && window.bhai && typeof window.bhai.onWhatsAppQR === "function") {
+            window.bhai.onWhatsAppQR(function (payload) {
                 const r = self._waRenderers;
                 if (!r) return;
                 if (payload === "connected") { r.connected(); return; }
@@ -356,16 +356,16 @@
 
         // Ask main for a fresh pair session. If a prior one is still running,
         // cancel first so we don't re-use a stuck socket.
-        if (window.atlas && typeof window.atlas.setupWaPairCancel === "function") {
-            try { await window.atlas.setupWaPairCancel(); } catch { /* ignore */ }
+        if (window.bhai && typeof window.bhai.setupWaPairCancel === "function") {
+            try { await window.bhai.setupWaPairCancel(); } catch { /* ignore */ }
         }
-        if (window.atlas && typeof window.atlas.setupWaPairStart === "function") {
+        if (window.bhai && typeof window.bhai.setupWaPairStart === "function") {
             try {
-                const res = await window.atlas.setupWaPairStart();
+                const res = await window.bhai.setupWaPairStart();
                 if (res && res.ok === false) renderErr(res.error || "could not start");
             } catch (e) { renderErr(e.message || String(e)); }
-        } else if (window.atlas && typeof window.atlas.waGenerateOTP === "function") {
-            try { await window.atlas.waGenerateOTP(); }
+        } else if (window.bhai && typeof window.bhai.waGenerateOTP === "function") {
+            try { await window.bhai.waGenerateOTP(); }
             catch (e) { renderErr(e.message || String(e)); }
         } else {
             renderErr("WhatsApp pairing IPC unavailable.");
@@ -376,8 +376,8 @@
         if (this._waTimeout) { clearTimeout(this._waTimeout); this._waTimeout = null; }
         if (this._waAttempt) {
             this._waAttempt = 0;
-            if (window.atlas && typeof window.atlas.setupWaPairCancel === "function") {
-                Promise.resolve(window.atlas.setupWaPairCancel()).catch(function () {});
+            if (window.bhai && typeof window.bhai.setupWaPairCancel === "function") {
+                Promise.resolve(window.bhai.setupWaPairCancel()).catch(function () {});
             }
         }
         if (this._el && this._el.parentNode) this._el.parentNode.removeChild(this._el);

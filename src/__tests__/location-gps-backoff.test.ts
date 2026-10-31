@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "gps-backoff-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "gps-backoff-"));
 Object.defineProperty(process, "platform", { value: "darwin" });
 
 const { gps } = vi.hoisted(() => ({ gps: { calls: 0, status: "0" } }));

@@ -4,20 +4,81 @@
 
 // ── Centralized Path Configuration ───────────────────
 // Provides consistent file paths for bot-generated files.
-// Uses ATLAS_WORKSPACE (set by installer) as the primary output directory.
+// Uses BHAI_WORKSPACE (set by installer) as the primary output directory.
 
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
+// ── Bhai Home (~/.bhai) ─────────────────────────────
+// Internal state root (store/, data/, hooks.json…). Bhai was called ATLAS, so
+// an older install kept it in ~/.atlas; the first call copies that over once.
+
+/** The pre-rename state root. Only read as a fallback, never written to. */
+export const LEGACY_HOME = path.join(os.homedir(), ".atlas");
+
+let _bhaiHome: string | null = null;
+
+function resolveBhaiHome(): string {
+    const home = path.join(os.homedir(), ".bhai");
+    const legacy = LEGACY_HOME;
+    if (fs.existsSync(home) || !fs.existsSync(legacy)) return home;
+    // A copy that failed (full disk, unreadable file) is retried a day later, not on every start.
+    const failed = path.join(legacy, ".bhai-copy-failed");
+    if (fs.existsSync(failed) && Date.now() - fs.statSync(failed).mtimeMs < 86_400_000) return legacy;
+    // Leftovers of a copy that was killed midway (another pid's is still running if it's fresh).
+    for (const f of fs.readdirSync(os.homedir())) {
+        const p = path.join(os.homedir(), f);
+        if (f.startsWith(".bhai.tmp-") && Date.now() - fs.statSync(p).mtimeMs > 600_000) fs.rmSync(p, { recursive: true, force: true });
+    }
+    // Copy, never move: an older Bhai build (or its com.atlas.bridge host script) may still run
+    // from ~/.atlas. Copy into a private temp dir, then rename it into place atomically.
+    // models/ holds re-downloadable caches (hundreds of MB): moved after, not copied.
+    const tmp = `${home}.tmp-${process.pid}`;
+    const skip = new Set([path.join(legacy, "models"), failed]);
+    try {
+        fs.mkdirSync(tmp, { mode: 0o700 });
+        fs.cpSync(legacy, tmp, { recursive: true, verbatimSymlinks: true, filter: (src) => !skip.has(src) });
+        fs.renameSync(tmp, home);
+        try {
+            fs.renameSync(path.join(legacy, "models"), path.join(home, "models"));
+        } catch {
+            /* none, or another volume: re-downloaded on demand */
+        }
+        console.log(`📁 Copied ${legacy} → ${home}`);
+        return home;
+    } catch {
+        // Copy failed, or another process (the desktop does the same) got there first.
+        fs.rmSync(tmp, { recursive: true, force: true });
+        if (fs.existsSync(home)) return home;
+        try {
+            fs.writeFileSync(failed, "");
+        } catch {
+            /* read-only: retried next start */
+        }
+        return legacy;
+    }
+}
+
+/**
+ * Bhai's state root: $BHAI_HOME, else ~/.bhai (copied from ~/.atlas on first use;
+ * stays on ~/.atlas when that copy fails). Read BHAI_HOME on every call so tests
+ * can point it elsewhere; the default is resolved once.
+ */
+export function getBhaiHome(): string {
+    if (process.env.BHAI_HOME) return process.env.BHAI_HOME;
+    if (_bhaiHome === null) _bhaiHome = resolveBhaiHome();
+    return _bhaiHome;
+}
+
 // ── Bhai Workspace Directory ────────────────────────
 // This is where all bot-generated files should be saved.
 // Set by the desktop installer during setup.
 
-function getAtlasWorkspace(): string {
+function getBhaiWorkspace(): string {
     // Priority 1: Environment variable (set by desktop app)
-    const envWorkspace = process.env.ATLAS_WORKSPACE;
+    const envWorkspace = process.env.BHAI_WORKSPACE;
     if (envWorkspace && fs.existsSync(envWorkspace)) {
         return envWorkspace;
     }
@@ -27,7 +88,7 @@ function getAtlasWorkspace(): string {
     const defaultLocations = [
         path.join(homeDir, "Desktop", "Bhai Files"),
         path.join(homeDir, "Documents", "Bhai Files"),
-        path.join(homeDir, ".atlas", "files"),
+        path.join(getBhaiHome(), "files"),
     ];
 
     for (const loc of defaultLocations) {
@@ -57,7 +118,7 @@ let _workspacePath: string | null = null;
  */
 export function getWorkspaceDir(): string {
     if (!_workspacePath) {
-        _workspacePath = getAtlasWorkspace();
+        _workspacePath = getBhaiWorkspace();
     }
     return _workspacePath;
 }
@@ -232,5 +293,5 @@ export function isWorkspaceConfigured(): boolean {
  * This is separate from the workspace - used for databases, caches, etc.
  */
 export function getDataDir(): string {
-    return process.env.ATLAS_DATA_DIR || path.resolve("data");
+    return process.env.BHAI_DATA_DIR || path.resolve("data");
 }

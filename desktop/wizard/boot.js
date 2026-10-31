@@ -51,16 +51,16 @@
         const folioEl = document.getElementById("chrome-folio");
         if (!stepEl) return; // not the wizard page
 
-        const atlas  = window.atlas || {};
+        const bhai  = window.bhai || {};
         const router = window.WizardRouter;
         const Cin    = window.Cinematic || { scribeRule: function () {}, applyConfidence: function () {} };
-        if (!router || !atlas.setupDetect) {
+        if (!router || !bhai.setupDetect) {
             stepEl.textContent = "Setup shell failed to load (router or IPC missing).";
             return;
         }
 
         let state;
-        try { state = await atlas.setupDetect(); }
+        try { state = await bhai.setupDetect(); }
         catch (err) {
             stepEl.textContent = "Detection failed: " + (err.message || String(err));
             return;
@@ -84,7 +84,7 @@
         }
 
         async function refreshState() {
-            try { state = await atlas.setupDetect(); }
+            try { state = await bhai.setupDetect(); }
             catch { return; }
             const nxt = router.getSteps(state);
             steps = nxt.steps;
@@ -166,8 +166,8 @@
         // account:login succeeds. Signin now sits near the END of the flow
         // (after install), so the step that follows it is permissions (macOS) or
         // nothing (Windows → Ready Hub).
-        if (typeof atlas.onAccountStatusChange === "function") {
-            atlas.onAccountStatusChange(async function (data) {
+        if (typeof bhai.onAccountStatusChange === "function") {
+            bhai.onAccountStatusChange(async function (data) {
                 if (!data || data.signedIn !== true) return;
                 if (document.body.getAttribute("data-step") !== "signin") return;
                 // Capture the successor from the CURRENT (rendered) list BEFORE
@@ -194,8 +194,8 @@
         if (audioBtn) {
             audioBtn.addEventListener("click", function () {
                 const next = !((state.personalize && state.personalize.audio && state.personalize.audio.enabled) || false);
-                if (atlas.setupSavePersonalize) {
-                    atlas.setupSavePersonalize({
+                if (bhai.setupSavePersonalize) {
+                    bhai.setupSavePersonalize({
                         audio: { enabled: next },
                     }).catch(function () { /* best-effort */ });
                 }

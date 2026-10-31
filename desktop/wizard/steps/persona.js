@@ -1,7 +1,7 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 // Persona step — five cards in a 2×3 grid (explorer spans both columns
 // at the bottom). Selecting a card writes profile.persona via
-// atlas.saveProfile. Tone defaults to professional or friendly per
+// bhai.saveProfile. Tone defaults to professional or friendly per
 // persona, but only if the user hasn't explicitly set tone in
 // Personalize → Personality (preserved in profile.tone if present).
 (function () {
@@ -146,7 +146,7 @@
             const tone = existingTone || TONE_DEFAULTS[selected] || "friendly";
             const existingName = profile.name || "";
 
-            if (!window.atlas || typeof window.atlas.saveProfile !== "function") {
+            if (!window.bhai || typeof window.bhai.saveProfile !== "function") {
                 err.textContent = "Save unavailable (IPC not ready).";
                 cta.disabled = false;
                 return;
@@ -161,7 +161,7 @@
             };
 
             let res;
-            try { res = await window.atlas.saveProfile(payload); }
+            try { res = await window.bhai.saveProfile(payload); }
             catch (e) { err.textContent = "Save failed: " + (e.message || e); cta.disabled = false; return; }
             if (!res || !res.success) {
                 err.textContent = (res && res.error) || "Save failed.";

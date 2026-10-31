@@ -203,7 +203,7 @@ describe("stripTtsMarkup — strip text-mode markup before TTS", () => {
     });
 
     it("textToSpeech strips markup and labels ElevenLabs MP3 as audio/mpeg", async () => {
-        vi.stubEnv("ATLAS_TTS_PROVIDER", "elevenlabs");
+        vi.stubEnv("BHAI_TTS_PROVIDER", "elevenlabs");
         vi.stubEnv("ELEVENLABS_API_KEY", "test");
         const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(new Uint8Array([0xff, 0xfb])));
         vi.stubGlobal("fetch", fetchMock);

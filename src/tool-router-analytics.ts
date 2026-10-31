@@ -8,7 +8,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getBhaiHome } from "./config/paths.js";
 
 // ── Types ─────────────────────────────────────
 
@@ -67,7 +67,7 @@ export const COMMON_TASK_CHAINS: Record<string, string[]> = {
 
 // ── State ─────────────────────────────────────
 
-const DATA_DIR = join(homedir(), ".atlas", "data");
+const DATA_DIR = join(getBhaiHome(), "data");
 const ANALYTICS_FILE = join(DATA_DIR, "tool-analytics.json");
 const SAVE_DEBOUNCE_MS = 5000;
 

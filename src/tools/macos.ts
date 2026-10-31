@@ -151,7 +151,7 @@ export const appleScript: ToolDefinition = {
         const timeout = (input.timeout as number) || DEFAULT_TIMEOUT;
 
         // Create a temporary file to avoid bash escaping/quoting hell
-        const tmpFile = join(tmpdir(), `atlas_osascript_${Date.now()}.scpt`);
+        const tmpFile = join(tmpdir(), `bhai_osascript_${Date.now()}.scpt`);
 
         try {
             await fs.writeFile(tmpFile, script, "utf-8");
@@ -211,7 +211,7 @@ export const osScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "os_screenshot tool is only available on macOS." });
         }
 
-        const tmpJpg = join(tmpdir(), `atlas_screen_${Date.now()}.jpg`);
+        const tmpJpg = join(tmpdir(), `bhai_screen_${Date.now()}.jpg`);
 
         try {
             // The frontmost app is looked up alongside the capture, not after it.
@@ -459,7 +459,7 @@ $.CGEventPost($.kCGHIDEventTap, up);
                 break;
         }
 
-        const tmpFile = join(tmpdir(), `atlas_click_${Date.now()}.js`);
+        const tmpFile = join(tmpdir(), `bhai_click_${Date.now()}.js`);
         try {
             if (action === "move") await cursorMove(x, y);
             else
@@ -545,7 +545,7 @@ export const osType: ToolDefinition = {
                 const pid = await pidOfApp(bgApp);
                 const { axInsertText } = await import("../screen/ax-dump.js");
                 const r =
-                    pid && process.env.ATLAS_NO_BACKGROUND_TYPE !== "true"
+                    pid && process.env.BHAI_NO_BACKGROUND_TYPE !== "true"
                         ? await axInsertText(pid, input.text)
                         : { ok: false, error: pid ? "off" : "not_running" };
                 if (r.ok) {
@@ -711,7 +711,7 @@ export const osType: ToolDefinition = {
             return JSON.stringify({ error: "Provide 'text', 'key', or 'combo'" });
         }
 
-        const tmpFile = join(tmpdir(), `atlas_type_${Date.now()}.scpt`);
+        const tmpFile = join(tmpdir(), `bhai_type_${Date.now()}.scpt`);
         try {
             await fs.writeFile(tmpFile, script, "utf-8");
             const { stdout, stderr } = await execFileAsync("osascript", [tmpFile], { timeout: 10000 });
@@ -980,7 +980,7 @@ var up = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, point, $.kCGMous
 $.CGEventPost($.kCGHIDEventTap, up);
 "clicked"`;
 
-    const tmpFile = join(tmpdir(), `atlas_click_${Date.now()}.js`);
+    const tmpFile = join(tmpdir(), `bhai_click_${Date.now()}.js`);
     try {
         await cursorClick(x, y);
         await fs.writeFile(tmpFile, eventScript, "utf-8");
@@ -1289,7 +1289,7 @@ export const osOcrClick: ToolDefinition = {
             console.log(`  🔍 [OCR-CLICK] Attempt ${attempt + 1}/${maxAttempts} — looking for "${label}"`);
 
             // Step 1: Capture screenshot + run OCR
-            const tmpPng = join(tmpdir(), `atlas_ocr_cap_${Date.now()}.png`);
+            const tmpPng = join(tmpdir(), `bhai_ocr_cap_${Date.now()}.png`);
             let capBuffer: Buffer | undefined;
             let capDims: ScreenDimensions | undefined;
             try {
@@ -1486,7 +1486,7 @@ export const osOcrClick: ToolDefinition = {
             // Step 6: Visual verification
             let verificationOutcome = "not_checked";
             if (verifyAppears || verifyGone) {
-                const tmpVerify = join(tmpdir(), `atlas_verify_${Date.now()}.png`);
+                const tmpVerify = join(tmpdir(), `bhai_verify_${Date.now()}.png`);
                 try {
                     const verifyDims = await captureFocusedDisplay(tmpVerify);
                     const verifyBuf = await fs.readFile(tmpVerify);
@@ -1646,7 +1646,7 @@ export const osVisualVerify: ToolDefinition = {
         }
 
         // Capture screen + run fast OCR
-        const tmpPng = join(tmpdir(), `atlas_verify_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_verify_${Date.now()}.png`);
         let verifyBuffer: Buffer | undefined;
         let verifyDims: ScreenDimensions | undefined;
         try {
@@ -1817,7 +1817,7 @@ end tell
 
 return frontApp & "|" & frontAppId & "|" & winTitle`;
 
-        const tmpFile = join(tmpdir(), `atlas_ctx_${Date.now()}.scpt`);
+        const tmpFile = join(tmpdir(), `bhai_ctx_${Date.now()}.scpt`);
         try {
             await fs.writeFile(tmpFile, script, "utf-8");
             const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout: 3000 });
@@ -1904,7 +1904,7 @@ export const setBrightness: ToolDefinition = {
         key code 145
     end repeat
 end tell`;
-        const tmpFile = join(tmpdir(), `atlas_brightness_${Date.now()}.scpt`);
+        const tmpFile = join(tmpdir(), `bhai_brightness_${Date.now()}.scpt`);
         try {
             await fs.writeFile(tmpFile, keyScript, "utf-8");
             await execFileAsync("osascript", [tmpFile], { timeout: 15000 });
@@ -1958,7 +1958,7 @@ export const sendScreenshot: ToolDefinition = {
             return JSON.stringify({ error: "Telegram context not available. Cannot send screenshot." });
         }
 
-        const tmpPng = join(tmpdir(), `atlas_sendscreen_${Date.now()}.png`);
+        const tmpPng = join(tmpdir(), `bhai_sendscreen_${Date.now()}.png`);
 
         try {
             // Step 1: Capture screenshot
@@ -2125,8 +2125,8 @@ export const osScan: ToolDefinition = {
         }
 
         try {
-            const tmpPng = join(tmpdir(), `atlas-scan-${Date.now()}.png`);
-            const tmpJpg = join(tmpdir(), `atlas-scan-${Date.now()}.jpg`);
+            const tmpPng = join(tmpdir(), `bhai-scan-${Date.now()}.png`);
+            const tmpJpg = join(tmpdir(), `bhai-scan-${Date.now()}.jpg`);
 
             // 1. Get screen dimensions for the focused monitor (multi-monitor aware).
             const dims = await getScreenDimensions({ focusedWindow: true, force: true });
@@ -2207,7 +2207,7 @@ export const osScan: ToolDefinition = {
             }
 
             // 6. Generate SoM overlay
-            const elementsJson = join(tmpdir(), `atlas-scan-elements-${Date.now()}.json`);
+            const elementsJson = join(tmpdir(), `bhai-scan-elements-${Date.now()}.json`);
             // Convert screen coords to image coords for the overlay (image = this monitor)
             const imageElements = mergedElements.map((el) => ({
                 label: el.label,
@@ -2494,7 +2494,7 @@ $.CGEventPost($.kCGHIDEventTap, up);`
 }
 "done"`;
 
-            const tmpFile = join(tmpdir(), `atlas_click_elem_${Date.now()}.js`);
+            const tmpFile = join(tmpdir(), `bhai_click_elem_${Date.now()}.js`);
             await cursorClick(el.x, el.y, clickType === "right" ? "right" : "left", clickType === "double" ? 2 : 1);
             await fs.writeFile(tmpFile, jxa, "utf-8");
             await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout: 5000 });
@@ -2673,7 +2673,7 @@ export const osMultiAction: ToolDefinition = {
                     }
                     case "screenshot": {
                         // Quick screenshot capture, store buffer
-                        const tmp = join(tmpdir(), `atlas-multi-${Date.now()}.png`);
+                        const tmp = join(tmpdir(), `bhai-multi-${Date.now()}.png`);
                         await captureFocusedDisplay(tmp);
                         const buf = await fs.readFile(tmp);
                         _lastScreenshotBuffer = buf;
@@ -2683,7 +2683,7 @@ export const osMultiAction: ToolDefinition = {
                     }
                     case "verify": {
                         // Quick OCR verification
-                        const tmp = join(tmpdir(), `atlas-verify-${Date.now()}.png`);
+                        const tmp = join(tmpdir(), `bhai-verify-${Date.now()}.png`);
                         const vDims = await captureFocusedDisplay(tmp);
                         const ocrResult = await runOcr(tmp, "fast", undefined, vDims);
                         await fs.unlink(tmp).catch(() => {});

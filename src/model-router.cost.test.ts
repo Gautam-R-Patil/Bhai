@@ -7,7 +7,7 @@ import { isNativeRouterLoaded, selectModel } from "./model-router.js";
 
 // Cost-aware routing: the cheapest user-facing rungs route to GPT-5
 // nano/mini, plain single-turn chat never reaches Opus, and the
-// ATLAS_NO_COST_ROUTING env net caps Opus→Sonnet at the TS layer even
+// BHAI_NO_COST_ROUTING env net caps Opus→Sonnet at the TS layer even
 // against a stale native binary. These assume the native binary is built
 // (npm run build:native); they verify the wired contract, not the JS
 // fallback (which sends every turn to Haiku), so those skip without it.
@@ -36,16 +36,16 @@ describe("cost-aware routing tiers", () => {
         }
     });
 
-    it("ATLAS_NO_COST_ROUTING does not crash and yields a valid model", () => {
-        const prev = process.env.ATLAS_NO_COST_ROUTING;
-        process.env.ATLAS_NO_COST_ROUTING = "true";
+    it("BHAI_NO_COST_ROUTING does not crash and yields a valid model", () => {
+        const prev = process.env.BHAI_NO_COST_ROUTING;
+        process.env.BHAI_NO_COST_ROUTING = "true";
         try {
             const r = selectModel({ message: "hi there friend", iteration: 1 });
             expect(typeof r.modelId).toBe("string");
             expect(r.modelId.length).toBeGreaterThan(0);
         } finally {
-            if (prev === undefined) delete process.env.ATLAS_NO_COST_ROUTING;
-            else process.env.ATLAS_NO_COST_ROUTING = prev;
+            if (prev === undefined) delete process.env.BHAI_NO_COST_ROUTING;
+            else process.env.BHAI_NO_COST_ROUTING = prev;
         }
     });
 });

@@ -157,7 +157,7 @@ export const screenRecordTool: ToolDefinition = {
                 if (stderr.length > 16_000) stderr = stderr.slice(-16_000);
             });
             child.on("close", (code) => {
-                if (code !== 0 && process.env.ATLAS_TOOL_DEBUG !== "false") {
+                if (code !== 0 && process.env.BHAI_TOOL_DEBUG !== "false") {
                     const tail = stderr.split("\n").slice(-6).join("\n");
                     console.warn(`[screen_record] ffmpeg exit=${code}\n${tail}`);
                 }

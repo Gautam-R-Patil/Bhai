@@ -35,20 +35,20 @@ const ackLast = () => {
 beforeEach(() => {
     log.length = 0;
     cursor._resetAgentCursorForTest((l) => log.push(l.trimEnd()));
-    process.env.ATLAS_AGENT_CURSOR_IPC = "1";
-    delete process.env.ATLAS_NO_AGENT_CURSOR;
+    process.env.BHAI_AGENT_CURSOR_IPC = "1";
+    delete process.env.BHAI_NO_AGENT_CURSOR;
 });
 afterEach(() => {
     vi.useRealTimers();
-    delete process.env.ATLAS_AGENT_CURSOR_IPC;
+    delete process.env.BHAI_AGENT_CURSOR_IPC;
 });
 
 describe("agent cursor events", () => {
     it("is a no-op without the desktop app or with the kill switch", async () => {
-        delete process.env.ATLAS_AGENT_CURSOR_IPC;
+        delete process.env.BHAI_AGENT_CURSOR_IPC;
         await cursor.cursorClick(10, 10);
-        process.env.ATLAS_AGENT_CURSOR_IPC = "1";
-        process.env.ATLAS_NO_AGENT_CURSOR = "true";
+        process.env.BHAI_AGENT_CURSOR_IPC = "1";
+        process.env.BHAI_NO_AGENT_CURSOR = "true";
         await cursor.cursorMove(10, 10);
         expect(await cursor.withCursorHidden(async () => "shot")).toBe("shot");
         expect(log).toEqual([]);
@@ -61,7 +61,7 @@ describe("agent cursor events", () => {
         expect(lines()).toEqual([]);
         cursor.warmCursorForTools([tool("web_search"), tool("os_smart_click")]);
         expect(lines()).toEqual([{ t: "warm" }]);
-        delete process.env.ATLAS_AGENT_CURSOR_IPC;
+        delete process.env.BHAI_AGENT_CURSOR_IPC;
         cursor.warmCursorForTools([tool("os_click")]);
         expect(lines()).toHaveLength(1);
     });

@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { walkthroughTool } from "./walkthrough.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "bhai-walk-"));
-process.env.ATLAS_WORKSPACE = root;
+process.env.BHAI_WORKSPACE = root;
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
 describe("generate_walkthrough", () => {

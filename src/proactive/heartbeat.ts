@@ -53,7 +53,7 @@ export function maybeEmitMorningBoundary(params: {
     targetMinute: number;
 }): boolean {
     const { minutesNow, todayStr, inWindow, targetMinute } = params;
-    if (process.env.ATLAS_PROACTIVE_V3_SOURCES === "false") return false;
+    if (process.env.BHAI_PROACTIVE_V3_SOURCES === "false") return false;
     if (briefingSentDate === todayStr) return false;
 
     const primary = inWindow && targetMinute !== -1 && minutesNow >= targetMinute;
@@ -82,8 +82,8 @@ export function _resetBriefingStateForTests(): void {
 export function startHeartbeat(llm: LLMClient, cfg: HeartbeatConfig): void {
     config = cfg;
 
-    if (process.env.ATLAS_PROACTIVE_FORCE_MORNING === "true" && process.env.ATLAS_PROACTIVE_V3_SOURCES !== "false") {
-        console.log("💓 ATLAS_PROACTIVE_FORCE_MORNING — emitting morning_window boundary now");
+    if (process.env.BHAI_PROACTIVE_FORCE_MORNING === "true" && process.env.BHAI_PROACTIVE_V3_SOURCES !== "false") {
+        console.log("💓 BHAI_PROACTIVE_FORCE_MORNING — emitting morning_window boundary now");
         setTimeout(() => {
             globalBoundaryBus.emit({ kind: "morning_window", ts: Date.now() });
         }, 1000);

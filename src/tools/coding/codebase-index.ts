@@ -4,7 +4,7 @@
 
 // ── codebase_index Tool ────────────────────────
 // Build / refresh / stats / wipe the per-repo codebase index.
-// Kill-switch: ATLAS_NO_CODEBASE_INDEX=true disables build/refresh
+// Kill-switch: BHAI_NO_CODEBASE_INDEX=true disables build/refresh
 // (stats/wipe still work so the user can inspect/clean up).
 
 import { buildIndex, getIndexStats, refreshIndex, wipeIndex } from "../../memory/codebase-index.js";
@@ -12,7 +12,7 @@ import { auditLog } from "../../security/audit-log.js";
 import type { ToolDefinition } from "../get-current-time.js";
 
 function isDisabled(): boolean {
-    return (process.env.ATLAS_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true";
+    return (process.env.BHAI_NO_CODEBASE_INDEX ?? "").toLowerCase() === "true";
 }
 
 export const codebaseIndexTool: ToolDefinition = {
@@ -29,7 +29,7 @@ Commands:
 - wipe:    delete the sidecar DB for this repo (safe — just deletes index rows)
 
 Depth picker (if not overridden): ≤500 files → calls, ≤5000 → imports, else symbols.
-Env overrides: ATLAS_INDEX_DEPTH=symbols|imports|calls forces a tier; ATLAS_NO_CODEBASE_INDEX=true blocks build/refresh.`,
+Env overrides: BHAI_INDEX_DEPTH=symbols|imports|calls forces a tier; BHAI_NO_CODEBASE_INDEX=true blocks build/refresh.`,
             parameters: {
                 type: "object",
                 properties: {
@@ -65,7 +65,7 @@ Env overrides: ATLAS_INDEX_DEPTH=symbols|imports|calls forces a tier; ATLAS_NO_C
                 if (isDisabled()) {
                     return JSON.stringify({
                         success: false,
-                        error: "codebase_index disabled via ATLAS_NO_CODEBASE_INDEX",
+                        error: "codebase_index disabled via BHAI_NO_CODEBASE_INDEX",
                     });
                 }
                 const r = await buildIndex(root, depth ? { depth } : {});
@@ -89,7 +89,7 @@ Env overrides: ATLAS_INDEX_DEPTH=symbols|imports|calls forces a tier; ATLAS_NO_C
                 if (isDisabled()) {
                     return JSON.stringify({
                         success: false,
-                        error: "codebase_index disabled via ATLAS_NO_CODEBASE_INDEX",
+                        error: "codebase_index disabled via BHAI_NO_CODEBASE_INDEX",
                     });
                 }
                 const r = await refreshIndex(root, depth ? { depth } : {});

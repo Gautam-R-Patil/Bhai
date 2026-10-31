@@ -65,7 +65,7 @@ Cloudflare Dashboard → R2 → Create bucket → "atlas-releases"
 Then either:
 
 - Attach a custom domain (recommended). Bucket → Settings → Custom
-  Domains → add `dl.atlas.<your-domain>`. DNS propagates in minutes.
+  Domains → add `dl.bhai.<your-domain>`. DNS propagates in minutes.
 - Or enable the `r2.dev` subdomain for testing (lower throughput; public
   URL looks like `https://pub-<hash>.r2.dev`).
 
@@ -75,7 +75,7 @@ R2 objects are private by default. The cleanest path is:
 
 1. Bucket → Settings → Public access → enable on your custom domain.
 2. Bucket → Settings → CORS → add a rule allowing `GET` from
-   `https://atlas.xagilabs.com` (or `*` if you don't mind).
+   `https://bhai.xagilabs.com` (or `*` if you don't mind).
 
 Blockmap requests do `Range` reads, so make sure your CORS response
 includes `Access-Control-Expose-Headers: Content-Range, Content-Length`.
@@ -224,7 +224,7 @@ before falling back to the next 4 h tick. 404 responses are treated as
 "no release yet" rather than a retryable error.
 
 Users can opt in to a non-stable channel (`beta`, `alpha`, `canary`) from
-Settings → Advanced, which calls `update:setChannel` (`atlas.setUpdateChannel` in the
+Settings → Advanced, which calls `update:setChannel` (`bhai.setUpdateChannel` in the
 renderer), saves the choice to `electron-store`, and re-checks the feed immediately.
 
 ## Why not…

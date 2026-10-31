@@ -272,13 +272,13 @@ export const browserScrollToElement: ToolDefinition = {
         function: {
             name: "browser_scroll_to_element",
             description:
-                "Scroll a specific element into view using its data-atlas-id or CSS selector. Uses instant scrollIntoView with block:center positioning. More reliable than coordinate-based scrolling for elements that are off-screen. Use before clicking elements that aren't visible in the current viewport.",
+                "Scroll a specific element into view using its data-bhai-id or CSS selector. Uses instant scrollIntoView with block:center positioning. More reliable than coordinate-based scrolling for elements that are off-screen. Use before clicking elements that aren't visible in the current viewport.",
             parameters: {
                 type: "object",
                 properties: {
                     selector: {
                         type: "string",
-                        description: "Element's data-atlas-id value (from browser_scan) or CSS selector",
+                        description: "Element's data-bhai-id value (from browser_scan) or CSS selector",
                     },
                 },
                 required: ["selector"],
@@ -303,9 +303,9 @@ export const browserScrollToElement: ToolDefinition = {
 
 const INTERCEPTOR_JS = `
 (function(pattern) {
-    if (window.__atlasInterceptorActive) return 'already_active';
-    window.__atlasInterceptorActive = true;
-    window.__atlasIntercepted = [];
+    if (window.__bhaiInterceptorActive) return 'already_active';
+    window.__bhaiInterceptorActive = true;
+    window.__bhaiIntercepted = [];
 
     const _tryParse = (text) => { try { return JSON.parse(text); } catch { return text; } };
     const _matches = (url) => !pattern || url.includes(pattern);
@@ -317,7 +317,7 @@ const INTERCEPTOR_JS = `
         if (_matches(url)) {
             return _origFetch.apply(this, args).then(resp => {
                 resp.clone().text().then(body => {
-                    window.__atlasIntercepted.push({
+                    window.__bhaiIntercepted.push({
                         url, method: args[1]?.method || 'GET',
                         status: resp.status, type: 'fetch',
                         body: _tryParse(body), ts: Date.now()
@@ -332,7 +332,7 @@ const INTERCEPTOR_JS = `
     // Patch XHR
     const _origOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-        this.__atlasUrl = url; this.__atlasMethod = method;
+        this.__bhaiUrl = url; this.__bhaiMethod = method;
         return _origOpen.apply(this, [method, url, ...rest]);
     };
     const _origSend = XMLHttpRequest.prototype.send;
@@ -340,9 +340,9 @@ const INTERCEPTOR_JS = `
         const xhr = this;
         const _origOSC = this.onreadystatechange;
         this.onreadystatechange = function(...a) {
-            if (xhr.readyState === 4 && _matches(xhr.__atlasUrl || '')) {
-                window.__atlasIntercepted.push({
-                    url: xhr.__atlasUrl, method: xhr.__atlasMethod || 'GET',
+            if (xhr.readyState === 4 && _matches(xhr.__bhaiUrl || '')) {
+                window.__bhaiIntercepted.push({
+                    url: xhr.__bhaiUrl, method: xhr.__bhaiMethod || 'GET',
                     status: xhr.status, type: 'xhr',
                     body: _tryParse(xhr.responseText), ts: Date.now()
                 });
@@ -416,8 +416,8 @@ export const browserInterceptRead: ToolDefinition = {
             if (waitMs > 0) await page.waitForTimeout(waitMs);
 
             const captured = await page.evaluate(`(function() {
-                const items = window.__atlasIntercepted || [];
-                ${clear ? "window.__atlasIntercepted = [];" : ""}
+                const items = window.__bhaiIntercepted || [];
+                ${clear ? "window.__bhaiIntercepted = [];" : ""}
                 return items;
             })()`);
 

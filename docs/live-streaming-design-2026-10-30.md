@@ -144,7 +144,7 @@ Every `answer` and `thought` delta passes through one streaming filter **in the 
 
 ### 4.8 Kill switches and rollout
 
-- `ATLAS_NO_STREAMING=true` (bot): never request streaming; surfaces get today's behaviour plus the improved live line/steps.
+- `BHAI_NO_STREAMING=true` (bot): never request streaming; surfaces get today's behaviour plus the improved live line/steps.
 - A server-side switch in Convex env (e.g. `LLM_STREAMING_DISABLED=true`) answers stream requests with one encrypted `done` frame, so streaming can be turned off for everyone without a release.
 - Server honours `stream` only when asked, so old bots are unaffected. A new bot talking to an old server gets today's single encrypted JSON body: when the response isn't framed but *is* a valid encrypted envelope, take today's path.
 - Ship order: server streaming behind the flag → client transport → agent events + filter → overlay → side panel → widget. Each step leaves the product working.

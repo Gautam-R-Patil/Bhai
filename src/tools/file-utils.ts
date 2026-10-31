@@ -22,7 +22,7 @@ const execFileAsync = promisify(execFile);
 // ── Helper ────────────────────────────────────
 
 async function runAS(script: string, timeout = 10000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_util_${Date.now()}.scpt`);
+    const tmpFile = join(tmpdir(), `bhai_util_${Date.now()}.scpt`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", [tmpFile], { timeout });
@@ -89,7 +89,7 @@ export const screenRecord: ToolDefinition = {
 
                     if (IS_WIN) {
                         // Windows: use FFmpeg if available
-                        const outputPath = join(tmpdir(), `atlas_recording_${Date.now()}.mp4`);
+                        const outputPath = join(tmpdir(), `bhai_recording_${Date.now()}.mp4`);
                         try {
                             const args = ["-f", "gdigrab", "-framerate", "15", "-i", "desktop", "-y"];
                             if (durationSec) args.push("-t", String(Math.min(durationSec, 300)));
@@ -126,7 +126,7 @@ export const screenRecord: ToolDefinition = {
                     }
 
                     // macOS: use screencapture
-                    const outputPath = join(tmpdir(), `atlas_recording_${Date.now()}.mov`);
+                    const outputPath = join(tmpdir(), `bhai_recording_${Date.now()}.mov`);
                     const args = ["-x", outputPath];
                     if (durationSec) {
                         args.push("-V", String(Math.min(durationSec, 300)));

@@ -12,8 +12,8 @@ const runAgent = vi.hoisted(() => vi.fn(async () => ({ text: "[NO_REPLY]", toolC
 vi.mock("./agent.js", async (orig) => ({ ...(await orig<object>()), runAgent }));
 
 const dir = mkdtempSync(join(tmpdir(), "tg-images-"));
-process.env.ATLAS_DATA_DIR = dir;
-process.env.ATLAS_WORKSPACE = dir;
+process.env.BHAI_DATA_DIR = dir;
+process.env.BHAI_WORKSPACE = dir;
 const {
     bufferMediaGroup,
     chatActionFor,

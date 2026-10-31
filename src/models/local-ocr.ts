@@ -77,7 +77,7 @@ export async function runOCR(imagePath: string): Promise<OCRResult> {
  * Run OCR on a screenshot (takes screenshot first if no path provided).
  */
 export async function ocrScreen(region?: { x: number; y: number; w: number; h: number }): Promise<OCRResult> {
-    const tmpPath = path.join(tmpdir(), "atlas-ocr-screenshot.png");
+    const tmpPath = path.join(tmpdir(), "bhai-ocr-screenshot.png");
 
     try {
         if (region) {

@@ -39,6 +39,7 @@ import {
     isStopCommand,
     markdownToPlainText,
     markdownToTelegramHtml,
+    sanitizeIncomingChannelText,
     stuckCallbackMessage,
     stuckKeyboard,
     withStuckReplyLine,
@@ -74,19 +75,6 @@ import {
 import { setTelegramContext } from "./tools/send-file.js";
 
 // ── Markdown → Telegram HTML ──────────────────
-
-// Sanitize attacker-controlled inbound text before wrapping in delimiters.
-function sanitizeIncomingChannelText(text: string): string {
-    if (!text) return text;
-    return text
-        .replace(/\[SYSTEM NOTE:/gi, "[user-quoted-text:")
-        .replace(/\[ATLAS-INTERNAL\b/gi, "[user-quoted-text")
-        .replace(/<system_log>/gi, "&lt;system_log&gt;")
-        .replace(/<\/system_log>/gi, "&lt;/system_log&gt;")
-        .replace(/<tool_log/gi, "&lt;tool_log")
-        .replace(/<\/tool_log>/gi, "&lt;/tool_log&gt;")
-        .replace(/\[Tool Result/gi, "[user-quoted-text Tool Result");
-}
 
 // ── Strip internal debug blocks before sending ──
 // Cleans out any <system_log>...</system_log> blocks that may leak from
@@ -637,7 +625,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     }
 
     // Export for heartbeat to check before generating proactive messages
-    (globalThis as Record<string, unknown>).__atlasProactiveLog = proactiveMessageLog;
+    (globalThis as Record<string, unknown>).__bhaiProactiveLog = proactiveMessageLog;
 
     // ── Message batching (debounce rapid messages) ──
     const messageBuffer = new Map<
@@ -1556,7 +1544,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
             const caption = sanitizeIncomingChannelText(ctx.message.caption || `User sent a document: ${safeName}`);
             const safeMime = mime.replace(/[^\w.+/-]/g, "") || "unknown type";
-            const agentMessage = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: Document "${safeName}" (${safeMime}) saved at ${savedPath}. Use file tools to read it if needed.]`;
+            const agentMessage = `<channel_message_content>\n${caption}\n</channel_message_content>\n\n[BHAI-INTERNAL — not from user: Document "${safeName}" (${safeMime}) saved at ${savedPath}. Use file tools to read it if needed.]`;
             processBuffered(ctx.chat.id, ctx.message.message_id, agentMessage, ctx);
         } catch (err) {
             console.error("❌ Document download failed:", (err as Error).message);
@@ -1965,7 +1953,7 @@ async function fetchMedia(
     // where a malicious side-process plants a file at a known name).
     // Safe extension allowlist — never trust attacker-supplied MIME for
     // the on-disk extension; we cap to mp3/wav/ogg/m4a/jpg/png/mp4.
-    const mediaDir = join(tmpdir(), "atlas_media");
+    const mediaDir = join(tmpdir(), "bhai_media");
     await fs.mkdir(mediaDir, { recursive: true, mode: 0o700 });
     const safeExt = (() => {
         const claimed = (mimeType.split("/")[1] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1990,7 +1978,7 @@ async function fetchMedia(
     const { randomUUID } = await import("node:crypto");
     const tmpFilePath = join(mediaDir, `telegram_${randomUUID()}.${safeExt}`);
     await fs.writeFile(tmpFilePath, downloadedBuffer, { mode: 0o600 });
-    console.log(`  💾 Saved media to atlas_media/...`);
+    console.log(`  💾 Saved media to bhai_media/...`);
 
     return { base64, mimeType, path: tmpFilePath, mediaType };
 }
@@ -2068,11 +2056,11 @@ export async function runMediaTurn(
         }
 
         // Wrap attacker-controlled caption in delimiters and strip framing tokens.
-        // The tmp file paths are ATLAS-internal hints, separately marked.
+        // The tmp file paths are Bhai-internal hints, separately marked.
         const notes = saved.map((m) =>
             m.mediaType === "image"
-                ? `[ATLAS-INTERNAL — not from user: this image is saved at ${m.path}. To change what's in it use generate_image with source "attached"; use the path only for desktop apps like DaVinci Resolve.]`
-                : `[ATLAS-INTERNAL — not from user: This video is saved at ${m.path}. Use this absolute path for DaVinci Resolve or Filmora edits.]`,
+                ? `[BHAI-INTERNAL — not from user: this image is saved at ${m.path}. To change what's in it use generate_image with source "attached"; use the path only for desktop apps like DaVinci Resolve.]`
+                : `[BHAI-INTERNAL — not from user: This video is saved at ${m.path}. Use this absolute path for DaVinci Resolve or Filmora edits.]`,
         );
         caption = `<channel_message_content>\n${sanitizeIncomingChannelText(caption)}\n</channel_message_content>\n\n${notes.join("\n")}`;
 
@@ -2616,7 +2604,7 @@ export async function sendProactiveMessage(
     }
 
     // Track proactive message for read receipt awareness
-    const log = (globalThis as Record<string, unknown>).__atlasProactiveLog as
+    const log = (globalThis as Record<string, unknown>).__bhaiProactiveLog as
         | Array<{ sentAt: number; topic: string; responded: boolean }>
         | undefined;
     if (log) {
@@ -2690,7 +2678,7 @@ export async function sendProactiveMessage(
 // ── Read Receipt Helpers ──────────────────────
 
 export function getUnrespondedProactiveTopics(): string[] {
-    const log = (globalThis as Record<string, unknown>).__atlasProactiveLog as
+    const log = (globalThis as Record<string, unknown>).__bhaiProactiveLog as
         | Array<{ sentAt: number; topic: string; responded: boolean }>
         | undefined;
     if (!log) return [];

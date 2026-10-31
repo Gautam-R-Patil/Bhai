@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
-process.env.ATLAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "late-nudge-"));
+process.env.BHAI_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "late-nudge-"));
 const { ALREADY_NUDGED_NOTE, _resetLateNightNudge, isLateHourRemark, lateNightNote, noteOwnerReply } = await import(
     "./late-night-nudge.js"
 );
@@ -105,7 +105,7 @@ describe("curly apostrophes", () => {
 
 describe("late-night nudge tracker", () => {
     beforeEach(() => {
-        fs.rmSync(path.join(process.env.ATLAS_DATA_DIR as string, "late-night-nudge.json"), { force: true });
+        fs.rmSync(path.join(process.env.BHAI_DATA_DIR as string, "late-night-nudge.json"), { force: true });
         _resetLateNightNudge();
     });
 
@@ -119,7 +119,7 @@ describe("late-night nudge tracker", () => {
             "done. now go sleep.",
         ]) {
             _resetLateNightNudge();
-            fs.rmSync(path.join(process.env.ATLAS_DATA_DIR as string, "late-night-nudge.json"), { force: true });
+            fs.rmSync(path.join(process.env.BHAI_DATA_DIR as string, "late-night-nudge.json"), { force: true });
             noteOwnerReply(reply, "", T1, TZ);
             expect(lateNightNote(T2, TZ), reply).toBe(ALREADY_NUDGED_NOTE);
         }

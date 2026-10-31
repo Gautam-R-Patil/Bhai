@@ -9,8 +9,8 @@ import { expect, it } from "vitest";
 import type { AgentResponse } from "../agent.js";
 
 // Before overlay-chat is imported: paths.ts caches the workspace on first use.
-process.env.ATLAS_WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "overlay-images-"));
-process.env.ATLAS_DATA_DIR = process.env.ATLAS_WORKSPACE;
+process.env.BHAI_WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "overlay-images-"));
+process.env.BHAI_DATA_DIR = process.env.BHAI_WORKSPACE;
 const {
     _handleFileAttachmentForTest: handleFileAttachment,
     _isScreenQueryForTest: isScreenQuery,

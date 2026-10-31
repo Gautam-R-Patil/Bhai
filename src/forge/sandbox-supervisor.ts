@@ -145,7 +145,7 @@ export async function invokePersistedTool(
     const dir = manifestDir(slug);
     // Verify on-disk handler.js matches the manifest's handlerHash. Defeats
     // post-approval handler swap: agent's `edit`/`write` tools could
-    // theoretically rewrite handler.js under ~/.atlas/store/dynamic/<slug>/.
+    // theoretically rewrite handler.js under ~/.bhai/store/dynamic/<slug>/.
     try {
         const handlerPath = path.join(dir, "handler.js");
         if (!existsSync(handlerPath)) {
@@ -227,7 +227,7 @@ export async function installPersistedTool(
     const dir = manifestDir(slug);
     if (existsSync(dir)) {
         // Refuse to follow symlinks at the slug-dir level. An attacker who
-        // can drop a symlink at ~/.atlas/store/dynamic/<slug>/ before install
+        // can drop a symlink at ~/.bhai/store/dynamic/<slug>/ before install
         // could otherwise divert handler.js writes anywhere user-writable.
         const stat = lstatSync(dir);
         if (stat.isSymbolicLink()) {

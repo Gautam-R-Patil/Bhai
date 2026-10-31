@@ -1,21 +1,17 @@
 // Copyright © 2024-2026 XAGI Labs Private Limited. All rights reserved.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
 import type { Capabilities } from "./capabilities.js";
 import { parseCapabilities, validateCapabilities } from "./capabilities.js";
 import type { PersistedToolManifest } from "./types.js";
+import { getBhaiHome } from "../config/paths.js";
 
 const SLUG_REGEX = /^[a-z][a-z0-9_]*$/;
 
-function atlasHome(): string {
-    return process.env.ATLAS_HOME ?? join(homedir(), ".atlas");
-}
-
 export function getDynamicStoreDir(): string {
-    return join(atlasHome(), "store", "dynamic");
+    return join(getBhaiHome(), "store", "dynamic");
 }
 
 export function manifestDir(slug: string): string {

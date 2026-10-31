@@ -15,8 +15,8 @@ import { fileURLToPath } from "url";
 import type { HarnessDimension, HarnessConfig } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ATLAS_DATA_DIR = process.env.ATLAS_DATA_DIR || join(__dirname, "../../data");
-const ACTIVE_CONFIG_PATH = join(ATLAS_DATA_DIR, "harness/active/harness-config.json");
+const BHAI_DATA_DIR = process.env.BHAI_DATA_DIR || join(__dirname, "../../data");
+const ACTIVE_CONFIG_PATH = join(BHAI_DATA_DIR, "harness/active/harness-config.json");
 
 // ── Internal state ──────────────────────────────────────────────────────────
 

@@ -35,13 +35,13 @@ let localToken: string;
 let closeOverlay: () => void;
 
 beforeAll(async () => {
-    scratch = mkdtempSync(join(tmpdir(), "atlas-overlay-http-"));
+    scratch = mkdtempSync(join(tmpdir(), "bhai-overlay-http-"));
     workspaceDir = join(scratch, "workspace");
     mkdirSync(workspaceDir, { recursive: true });
-    process.env.ATLAS_WORKSPACE = workspaceDir;
+    process.env.BHAI_WORKSPACE = workspaceDir;
     process.env.WIDGET_TOKEN = VALID_TOKEN;
     process.env.HOME = scratch;
-    process.env.ATLAS_OVERLAY_PORT = String(PORT);
+    process.env.BHAI_OVERLAY_PORT = String(PORT);
 
     writeFileSync(join(workspaceDir, "foo.txt"), "hello");
     writeFileSync(join(workspaceDir, ".env"), "SECRET=1");
@@ -57,7 +57,7 @@ afterAll(async () => {
     try { closeOverlay?.(); } catch { /* */ }
     await new Promise(r => setTimeout(r, 100));
     rmSync(scratch, { recursive: true, force: true });
-    delete process.env.ATLAS_WORKSPACE;
+    delete process.env.BHAI_WORKSPACE;
     delete process.env.WIDGET_TOKEN;
 });
 

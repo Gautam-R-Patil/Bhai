@@ -54,7 +54,7 @@ let busy = false;
  */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Page
 async function recordSession(page: any, fresh = false): Promise<boolean> {
-    if (process.env.ATLAS_NO_SITE_MINT === "true" || process.env.ATLAS_NO_SITE_TRACE === "true") return false;
+    if (process.env.BHAI_NO_SITE_MINT === "true" || process.env.BHAI_NO_SITE_TRACE === "true") return false;
     if (typeof page?.context !== "function") return false;
     let domain = "";
     try {

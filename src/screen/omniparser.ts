@@ -53,7 +53,7 @@ const execFileAsync = promisify(execFile);
 function isSafeScreenshotPath(p: string): boolean {
     const abs = resolve(p);
     const cwd = resolve("");
-    // Reject filesystem-root and tiny paths — ATLAS_WORKSPACE="/" would otherwise let any
+    // Reject filesystem-root and tiny paths — BHAI_WORKSPACE="/" would otherwise let any
     // absolute path pass startsWith. Found via DEEP R2 review.
     const isMeaningfulDir = (d: string): boolean => {
         if (!d || d === cwd) return false;
@@ -68,8 +68,8 @@ function isSafeScreenshotPath(p: string): boolean {
         resolve(process.env.HOME || "", "Desktop", "Bhai Files"),
         resolve(process.env.HOME || "", "Documents", "Bhai Files"),
         resolve(process.env.HOME || "", "Bhai Files"),
-        resolve(process.env.HOME || "", "Library", "Caches", "atlas"),
-        process.env.ATLAS_WORKSPACE ? resolve(process.env.ATLAS_WORKSPACE) : "",
+        resolve(process.env.HOME || "", "Library", "Caches", "bhai"),
+        process.env.BHAI_WORKSPACE ? resolve(process.env.BHAI_WORKSPACE) : "",
     ].filter(isMeaningfulDir);
     return allowedDirs.some((d) => abs === d || abs.startsWith(`${d}/`) || abs.startsWith(`${d}\\`));
 }

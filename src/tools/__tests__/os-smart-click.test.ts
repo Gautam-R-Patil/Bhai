@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The background press looks up real running apps (lsappinfo): off here, so these tests
 // don't depend on what's open on the machine.
-process.env.ATLAS_NO_BACKGROUND_PRESS = "true";
+process.env.BHAI_NO_BACKGROUND_PRESS = "true";
 
 const findClickTarget = vi.fn();
 const click = vi.fn();

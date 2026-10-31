@@ -8,18 +8,18 @@
     async function mountSetupTab() {
         const root = document.getElementById("panel-hub-root");
         if (!root || root.getAttribute("data-sp-mounted") === "1") return;
-        const atlas = (typeof window !== "undefined" && window.atlas) ? window.atlas : {};
+        const bhai = (typeof window !== "undefined" && window.bhai) ? window.bhai : {};
         const RHB = (typeof window !== "undefined") ? window.ReadyHubBody : null;
         if (!RHB || typeof RHB.mountHub !== "function") {
             root.textContent = "Ready Hub unavailable in panel (components not loaded).";
             return;
         }
         let state = {};
-        if (typeof atlas.setupDetect === "function") {
-            try { state = await atlas.setupDetect(); }
+        if (typeof bhai.setupDetect === "function") {
+            try { state = await bhai.setupDetect(); }
             catch (err) { state = { __detectError: (err && err.message) ? err.message : String(err) }; }
         }
-        RHB.mountHub(root, state, atlas);
+        RHB.mountHub(root, state, bhai);
         root.setAttribute("data-sp-mounted", "1");
     }
 

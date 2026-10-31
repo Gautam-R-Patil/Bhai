@@ -37,12 +37,12 @@ describe("F1: create_tool registration is execution-free", () => {
     // that rely on those constants pointing at the real home directory.
     // We use unique slug suffixes to keep this test idempotent.
     beforeEach(() => {
-        process.env.ATLAS_NO_FORGE_VERIFIER = "true";
-        process.env.ATLAS_NO_FORGE_LOOKUP = "true";
+        process.env.BHAI_NO_FORGE_VERIFIER = "true";
+        process.env.BHAI_NO_FORGE_LOOKUP = "true";
     });
     afterEach(() => {
-        delete process.env.ATLAS_NO_FORGE_VERIFIER;
-        delete process.env.ATLAS_NO_FORGE_LOOKUP;
+        delete process.env.BHAI_NO_FORGE_VERIFIER;
+        delete process.env.BHAI_NO_FORGE_LOOKUP;
     });
 
     it("registers a malicious handler but does NOT execute it at registration time", async () => {
@@ -295,20 +295,20 @@ describe("F4: expanded SAST coverage", () => {
 
 describe("F5: slug rejection at synthesizeTool entry", () => {
     let tmpHome: string;
-    let originalAtlas: string | undefined;
+    let originalBhai: string | undefined;
     beforeEach(async () => {
         tmpHome = mkdtempSync(join(tmpdir(), "forge-f5-"));
-        originalAtlas = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpHome, ".atlas");
-        process.env.ATLAS_FORGE_STUB_LLM = "true";
+        originalBhai = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpHome, ".bhai");
+        process.env.BHAI_FORGE_STUB_LLM = "true";
         await initForge({ embedFn: async () => vector(0) });
     });
     afterEach(() => {
         shutdownForge();
         rmSync(tmpHome, { recursive: true, force: true });
-        if (originalAtlas === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalAtlas;
-        delete process.env.ATLAS_FORGE_STUB_LLM;
+        if (originalBhai === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalBhai;
+        delete process.env.BHAI_FORGE_STUB_LLM;
     });
 
     it("rejects path-traversal slug ../../../tmp/x", async () => {
@@ -363,21 +363,21 @@ describe("F5: slug rejection at synthesizeTool entry", () => {
 
 describe("F6: pending-queue integrity and rate limiting", () => {
     let tmpHome: string;
-    let originalAtlas: string | undefined;
+    let originalBhai: string | undefined;
     beforeEach(async () => {
         tmpHome = mkdtempSync(join(tmpdir(), "forge-f6-"));
-        originalAtlas = process.env.ATLAS_HOME;
-        process.env.ATLAS_HOME = join(tmpHome, ".atlas");
-        process.env.ATLAS_FORGE_STUB_LLM = "true";
+        originalBhai = process.env.BHAI_HOME;
+        process.env.BHAI_HOME = join(tmpHome, ".bhai");
+        process.env.BHAI_FORGE_STUB_LLM = "true";
         _resetConsumeRateLimitForTests();
         await initForge({ embedFn: async () => vector(0) });
     });
     afterEach(() => {
         shutdownForge();
         rmSync(tmpHome, { recursive: true, force: true });
-        if (originalAtlas === undefined) delete process.env.ATLAS_HOME;
-        else process.env.ATLAS_HOME = originalAtlas;
-        delete process.env.ATLAS_FORGE_STUB_LLM;
+        if (originalBhai === undefined) delete process.env.BHAI_HOME;
+        else process.env.BHAI_HOME = originalBhai;
+        delete process.env.BHAI_FORGE_STUB_LLM;
         _resetConsumeRateLimitForTests();
     });
 
@@ -389,7 +389,7 @@ describe("F6: pending-queue integrity and rate limiting", () => {
             persistent: false,
             source: "synchronous",
         });
-        const pendingPath = join(process.env.ATLAS_HOME!, "data", "forge-pending.json");
+        const pendingPath = join(process.env.BHAI_HOME!, "data", "forge-pending.json");
         const raw = JSON.parse(readFileSync(pendingPath, "utf-8"));
         expect(raw.candidates).toHaveLength(1);
         expect(raw.candidates[0].hmac).toMatch(/^[0-9a-f]{64}$/);
@@ -435,7 +435,7 @@ describe("F6: pending-queue integrity and rate limiting", () => {
             persistent: false,
             source: "synchronous",
         });
-        const pendingPath = join(process.env.ATLAS_HOME!, "data", "forge-pending.json");
+        const pendingPath = join(process.env.BHAI_HOME!, "data", "forge-pending.json");
         const raw = JSON.parse(readFileSync(pendingPath, "utf-8"));
         delete raw.candidates[0].hmac;
         writeFileSync(pendingPath, JSON.stringify(raw));
@@ -541,7 +541,7 @@ describe("F7: test-self-bait detection", () => {
 describe("F8: persisted handler integrity check on reload", () => {
     // Note: create-tool.ts captures `homedir()` at module-load time into constants.
     // We can't redirect that via process.env.HOME after the module has loaded, so
-    // this test writes into the actual ~/.atlas/dynamic-tools/ path the module uses
+    // this test writes into the actual ~/.bhai/dynamic-tools/ path the module uses
     // and cleans up after itself. The test uses a uniquely-named slug to avoid
     // colliding with any real tools on the developer's machine.
     const PROBE_SLUG = `f8_tampered_probe_${process.pid}`;
@@ -551,8 +551,8 @@ describe("F8: persisted handler integrity check on reload", () => {
 
     beforeEach(async () => {
         const { homedir } = await import("node:os");
-        dynamicDir = join(homedir(), ".atlas", "dynamic-tools");
-        failedDir = join(homedir(), ".atlas", "store", "dynamic", "_failed");
+        dynamicDir = join(homedir(), ".bhai", "dynamic-tools");
+        failedDir = join(homedir(), ".bhai", "store", "dynamic", "_failed");
         mkdirSync(dynamicDir, { recursive: true });
         toolPath = join(dynamicDir, `${PROBE_SLUG}.json`);
     });
@@ -672,10 +672,10 @@ describe("F9: private/loopback/link-local IP rejection", () => {
         expect(isPathHardDenied("/Users/x/.git-credentials")).toBe(true);
         expect(isPathHardDenied("/Users/x/.docker/config.json")).toBe(true);
         expect(isPathHardDenied("/Users/x/.kube/config")).toBe(true);
-        expect(isPathHardDenied("/Users/x/.atlas/data/forge-pending.json")).toBe(true);
+        expect(isPathHardDenied("/Users/x/.bhai/data/forge-pending.json")).toBe(true);
         // Phase 4 security review: dynamic-store paths are now hard-denied —
         // tools must NOT declare fs_write to any tool dir (their own or others').
-        expect(isPathHardDenied("/Users/x/.atlas/store/dynamic/foo/handler.js")).toBe(true);
+        expect(isPathHardDenied("/Users/x/.bhai/store/dynamic/foo/handler.js")).toBe(true);
     });
 });
 

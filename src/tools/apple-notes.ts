@@ -16,7 +16,7 @@ import type { ToolDefinition } from "./get-current-time.js";
 const execFileAsync = promisify(execFile);
 
 async function runJXA(script: string, timeout = 15000): Promise<string> {
-    const tmpFile = join(tmpdir(), `atlas_notes_${Date.now()}.js`);
+    const tmpFile = join(tmpdir(), `bhai_notes_${Date.now()}.js`);
     try {
         await fs.writeFile(tmpFile, script, "utf-8");
         const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", tmpFile], { timeout });
