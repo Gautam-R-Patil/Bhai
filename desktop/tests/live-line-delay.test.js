@@ -220,6 +220,15 @@ describe("in-app Chats (panel.html)", () => {
         emit({ type: "response", turn: "t1", text: "Booked.", worked: { secs: 18, steps: 1 } });
         expect(view().querySelector(".turn-now").textContent).toBe("Worked for 18s · 1 step");
     });
+
+    it("a silent reply (a file reply that cleaned down to nothing) ends the turn", async () => {
+        const { t, emit, view } = chats();
+        t.sendChat("what's in this?", "c1");
+        emit({ type: "thinking", turn: "t1" });
+        emit({ type: "silent" });
+        expect(view()).toBeNull();
+        expect(await t.sendChat("hello?", "c1")).toBe(true);
+    });
 });
 
 describe("Chrome side panel (sidepanel.js)", () => {

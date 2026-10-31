@@ -2222,6 +2222,7 @@
                 if (!lc.frame) lc.frame = requestAnimationFrame(renderLiveChat);
                 return;
             }
+            if (msg.type === 'silent') return finishLiveChat('', false); // the reply cleaned down to nothing
             if (msg.type !== 'response' && msg.type !== 'error') return;
             if (lc.turn && turnRoute(lc.turn, true, msg) === 'ignore') return; // another surface's turn
             if (msg.type === 'response') finishLiveChat(msg.text || (msg.stopped ? 'Stopped.' : ''), false, msg.worked, msg.images, msg.quickActions);
