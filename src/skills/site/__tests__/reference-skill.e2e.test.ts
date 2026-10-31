@@ -119,7 +119,7 @@ describe("reference skill on the synthetic shop", { retry: 2 }, () => {
             const b = await flow();
             const token = mintConsent(b.c.task);
             // A delivery fee appears in the page after the owner's yes.
-            await b.page.evaluate("document.querySelector('p').textContent = 'Paneer Tikka ₹289'");
+            await b.page.evaluate("document.querySelector('[data-testid=total]').textContent = '₹289'");
             const r = await runSiteTask({ task: b.c.task, phase: "confirm", consentToken: token, driver: b.driver });
             expect([r.reason, r.confirm?.amount, shop.orders()]).toEqual(["total_changed", 289, 1]);
             await b.context.close();
