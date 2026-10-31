@@ -143,6 +143,15 @@ describe("selectTools with the classifier timing out", () => {
         expect(sel.categories).not.toContain("chat_only");
     });
 
+    it("doesn't narrow a Finder request to one simple step without a classifier answer", async () => {
+        const sel = await selectTools({
+            message: "Open Finder, find the latest invoice PDF in Downloads and send it to mom on whatsapp",
+            iteration: 1,
+        });
+        expect(sel.categories).not.toEqual(["os_control"]);
+        expect(sel.classification?.tier).not.toBe("simple");
+    });
+
     it("still scores with the message embedding after the classifier used the budget", async () => {
         h.embedded.length = 0;
         h.embedDelayMs = 50;

@@ -1959,7 +1959,8 @@ export async function selectTools(opts: {
         CATEGORIES[overrideCategory] &&
         !opts.requestedCategories &&
         activeRequestedCategories.categories.length === 0 &&
-        (!llmResult || llmResult.tier === "chat" || llmResult.categories.length === 0)
+        llmResult &&
+        (llmResult.tier === "chat" || llmResult.categories.length === 0)
     ) {
         const names = assembleToolNames(
             [overrideCategory],
