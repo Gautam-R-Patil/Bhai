@@ -90,10 +90,9 @@ async function searchBrave(query: string): Promise<SearchResult[]> {
             signal: AbortSignal.timeout(15000),
         });
         if (response.status !== 200) { markFailure("brave"); return []; }
-        const html = await response.text();
-        if (html.includes("captcha") || html.includes("rate limit")) { markFailure("brave"); return []; }
-
-        const results = parseBraveResults(html);
+        // No "page mentions captcha" check: Brave's normal results page says "Switch to
+        // traditional captcha". A real challenge page has no result links and parses to nothing.
+        const results = parseBraveResults(await response.text());
 
         if (results.length > 0) markSuccess("brave");
         else markFailure("brave");

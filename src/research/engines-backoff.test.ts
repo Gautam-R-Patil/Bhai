@@ -57,3 +57,16 @@ describe("parallel (primary engine)", () => {
         expect(__isEngineAvailable("parallel")).toBe(false);
     });
 });
+
+describe("brave (scraper tier)", () => {
+    it("keeps results from a normal page that mentions captcha in its toggle", async () => {
+        const html = `<button>Switch to traditional captcha</button>
+            <div class="snippet"><a href="https://real.example/article">A Real Result Title Here</a>
+                <p>Snippet describing the real result in some detail.</p></div>`;
+        vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+            String(url).startsWith("https://search.brave.com/") ? new Response(html, { status: 200 }) : Promise.reject(new Error("fetch failed"))));
+        const { results } = await multiEngineSearch("q");
+        expect(results.map((r) => r.url)).toContain("https://real.example/article");
+        expect(__isEngineAvailable("brave")).toBe(true);
+    });
+});
