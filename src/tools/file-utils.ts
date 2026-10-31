@@ -15,6 +15,7 @@ import { isPathAllowed, isProtectedPath } from "../security/allowlist.js";
 import { isSensitivePath, outboundFileRefusal } from "../security/sensitive-paths.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { IS_MAC, IS_WIN, nativeOpen, runPowerShell, runPowerShellInline } from "./platform.js";
+import { manageRefusal } from "./files.js";
 import { getTelegramContext } from "./send-file.js";
 
 const execFileAsync = promisify(execFile);
@@ -607,6 +608,9 @@ export const trashManager: ToolDefinition = {
                     const filePath = input.path as string;
                     if (!filePath) return JSON.stringify({ error: "Provide 'path' to move to Trash." });
                     if (!existsSync(filePath)) return JSON.stringify({ error: `Path not found: ${filePath}` });
+                    // The same guards as delete_file and file_manage: Bhai's data dir, its code, ~/.ssh.
+                    const refused = manageRefusal(resolve(filePath), true);
+                    if (refused) return JSON.stringify({ error: refused });
 
                     if (IS_WIN) {
                         // Windows: use Shell.Application COM to recycle
