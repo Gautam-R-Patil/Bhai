@@ -17,7 +17,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -45,7 +45,7 @@ import {
 } from "../screen/screen-dimensions.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { executeStructuredAction } from "./os-computer-action.js";
-import { takeScreenshot } from "./platform-bridge.js";
+import { getActiveWindow, takeScreenshot } from "./platform-bridge.js";
 
 // LLM client for the cloud_grounding cascade tier (Lite/Standard + degraded
 // Full). Injected at boot via setSmartClickLLM(); null = cloud tier skipped.
@@ -96,11 +96,13 @@ export const SLOW_UI_MS = 1200;
  * Raise an app to the foreground before grounding, so the AX dump and the
  * screenshot see the intended window and not whatever stole focus.
  *   "already" — it was frontmost; "raised" — it is now (callers re-read the
- *   focused-window rect); "failed" — it never came to the front (macOS only:
- *   a click now would land in another app).
+ *   focused-window rect); "failed" — it never came to the front (a click now
+ *   would land in another app).
  *   macOS: `open -a` (safe — `tell…activate` can resolve the wrong binary), then
  *   poll until it is frontmost (fast on a warm app, patient on a cold launch).
- *   Windows: PowerShell AppActivate by process/window title. Linux: wmctrl if available.
+ *   Windows: PowerShell AppActivate by window title, then by process. Linux: wmctrl by
+ *   title, then by WM_CLASS. Off macOS only a definite "no such window" fails; whatever
+ *   can't see windows (Wayland, no wmctrl/xdotool, a timeout) stays best-effort.
  */
 const TEXT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXSecureTextField"]);
 
@@ -126,6 +128,121 @@ async function pressInBackground(appName: string, instruction: string): Promise<
     };
 }
 
+// Process / window-class names an app goes by when its name isn't one ("File Explorer" is explorer.exe).
+const APP_ALIASES: Record<string, string[]> = {
+    "file explorer": ["explorer"],
+    "windows explorer": ["explorer"],
+    "control panel": ["explorer"],
+    files: ["explorer", "nautilus", "dolphin", "thunar", "nemo", "org.gnome.nautilus"],
+    terminal: ["windowsterminal", "gnome-terminal", "konsole", "xfce4-terminal", "kgx", "ptyxis", "xterm"],
+    "windows terminal": ["windowsterminal"],
+    "google chrome": ["chrome"],
+    "microsoft edge": ["msedge"],
+    "visual studio code": ["code"],
+    "microsoft word": ["winword"],
+    "microsoft excel": ["excel"],
+};
+const appKey = (s: string) =>
+    s
+        .trim()
+        .toLowerCase()
+        .replace(/\.(exe|desktop)$/, "");
+
+/**
+ * Linux: what installed apps called `app` (Name/GenericName in any locale, desktop id or binary)
+ * go by: desktop id, Exec binary and StartupWMClass. "Text Editor" → org.gnome.texteditor,
+ * gnome-text-editor (and xed, gedit… where installed).
+ */
+async function desktopEntryNames(app: string): Promise<string[]> {
+    const want = appKey(app);
+    const dataDirs = [
+        process.env.XDG_DATA_HOME || join(homedir(), ".local/share"),
+        ...(process.env.XDG_DATA_DIRS || "/usr/local/share:/usr/share").split(":"),
+    ];
+    const out = new Set<string>();
+    for (const d of dataDirs) {
+        const dir = join(d, "applications");
+        for (const f of await fs.readdir(dir).catch(() => [] as string[])) {
+            if (!f.endsWith(".desktop")) continue;
+            // The [Desktop Entry] group only: its actions have Names of their own.
+            const entry = (await fs.readFile(join(dir, f), "utf8").catch(() => "")).split(/^\[Desktop Action/m)[0];
+            const field = (k: string) => entry.match(new RegExp(`^${k}\\s*=\\s*(.*)$`, "m"))?.[1].trim() ?? "";
+            const id = appKey(f);
+            const bin = field("Exec")
+                .split(/\s+/)
+                .map((t) => t.replace(/["']/g, ""))
+                .find((t) => t && t !== "env" && !t.includes("="))
+                ?.split("/")
+                .pop()
+                ?.toLowerCase();
+            const names = [...entry.matchAll(/^(?:Generic)?Name(?:\[[^\]]*\])?\s*=\s*(.*)$/gm)].map((m) =>
+                appKey(m[1]),
+            );
+            if (![...names, id, id.split(".").pop(), bin].includes(want)) continue;
+            // A launcher (flatpak run …, sh -c …) says nothing about the window.
+            const exe = bin && !/^(flatpak|snap|sh|bash)$/.test(bin) ? bin : "";
+            for (const n of [id, exe, field("StartupWMClass").toLowerCase()]) if (n.length > 2) out.add(n);
+        }
+    }
+    return [...out];
+}
+
+/**
+ * Linux: is the front app a kind of the asked name? Its own .desktop entry (Exec binary = the
+ * front process, comm cut at 15) says so in Name/GenericName/Categories/Keywords: kitty is a
+ * "Terminal emulator", xed is a TextEditor. "Terminal" with kitty in front, while GNOME's
+ * Terminal is the one installed under that name, means kitty.
+ */
+async function frontIsKindOf(app: string, w: { app: string }): Promise<boolean> {
+    const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const want = squash(app);
+    const proc = appKey(w.app);
+    if (want.length < 3 || !proc) return false;
+    const dataDirs = [
+        process.env.XDG_DATA_HOME || join(homedir(), ".local/share"),
+        ...(process.env.XDG_DATA_DIRS || "/usr/local/share:/usr/share").split(":"),
+    ];
+    for (const d of dataDirs) {
+        const dir = join(d, "applications");
+        for (const f of await fs.readdir(dir).catch(() => [] as string[])) {
+            if (!f.endsWith(".desktop")) continue;
+            const entry = (await fs.readFile(join(dir, f), "utf8").catch(() => "")).split(/^\[Desktop Action/m)[0];
+            const bin = (entry.match(/^Exec\s*=\s*(.*)$/m)?.[1] ?? "")
+                .split(/\s+/)
+                .map((t) => t.replace(/["']/g, ""))
+                .find((t) => t && t !== "env" && !t.includes("="))
+                ?.split("/")
+                .pop()
+                ?.toLowerCase();
+            if (!bin || !(bin === proc || (proc.length >= 15 && bin.startsWith(proc)))) continue;
+            const kinds = [...entry.matchAll(/^(?:Generic)?Name(?:\[[^\]]*\])?\s*=\s*(.*)$|^(?:Categories|Keywords)(?:\[[^\]]*\])?\s*=\s*(.*)$/gm)]
+                .flatMap((m) => (m[1] ?? m[2] ?? "").split(/[;,]/))
+                .map(squash);
+            if (kinds.some((k) => k.includes(want))) return true;
+        }
+    }
+    return false;
+}
+
+/** Is the active window (process name + title, off macOS) one of these app names? */
+export function activeWindowIsApp(names: string[], w: { app: string; title: string }): boolean {
+    const proc = appKey(w.app);
+    const title = w.title.trim().toLowerCase();
+    // ps cuts comm to 15 chars ("gnome-text-edit"); "gnome-terminal-" is gnome-terminal-server.
+    return names.some(
+        (n) =>
+            !!n &&
+            ((!!proc && proc !== "unknown" && (proc === n || proc === n.slice(0, 15) || proc.startsWith(`${n}-`))) ||
+                title === n ||
+                title.endsWith(` - ${n}`) ||
+                title.endsWith(` — ${n}`)),
+    );
+}
+
+// What the active-window helper says when it can't tell which app is in front: no xdotool (unknown),
+// its own PowerShell, or the frame host every UWP app (Calculator, Settings) shares.
+const frontUnknown = (w: { app: string }) => /^(unknown|powershell|applicationframehost)$/i.test(w.app.trim());
+
 async function activateApp(appName: string): Promise<"already" | "raised" | "failed"> {
     if (!appName || appName === "unknown") return "already";
     try {
@@ -143,19 +260,85 @@ async function activateApp(appName: string): Promise<"already" | "raised" | "fai
             }
             return (await waitForFrontmost(appName, 5000)) ? "raised" : "failed";
         }
+        // Off macOS, activating by the name alone (as before) and a miss proves little: the app may be
+        // in front under a title or process that doesn't name it ("Downloads" is File Explorer,
+        // "Untitled Document 1" is Text Editor). On a miss: what the window system can't tell stays
+        // best-effort, the app in front is clicked without raising another of its windows, and only
+        // an app we can name that has no window anywhere fails (a click would land in another app).
+        const aliases = APP_ALIASES[appKey(appName)] ?? [];
         if (process.platform === "win32") {
-            // VBScript-free: use the WScript.Shell AppActivate via PowerShell.
-            await execFileAsync(
-                "powershell",
-                [
-                    "-NoProfile",
-                    "-Command",
-                    `$ws = New-Object -ComObject WScript.Shell; $ws.AppActivate('${appName.replace(/'/g, "''")}')`,
-                ],
-                { timeout: 5000 },
-            );
+            const ps = (s: string) => `'${s.replace(/'/g, "''")}'`;
+            const run = async (script: string) =>
+                (
+                    await execFileAsync(
+                        "powershell",
+                        ["-NoProfile", "-Command", `$ws = New-Object -ComObject WScript.Shell; ${script}`],
+                        { timeout: 5000 },
+                    )
+                ).stdout.trim();
+            // VBScript-free: WScript.Shell AppActivate via PowerShell; False = no window has that title.
+            if ((await run(`$ws.AppActivate(${ps(appName)})`)) === "False") {
+                const w = await getActiveWindow();
+                const names = [appKey(appName), ...aliases];
+                if (frontUnknown(w) || activeWindowIsApp(names, w)) return "already";
+                // The exe the name launches (PATH, App Paths, a Start Menu shortcut: "Adobe Acrobat" →
+                // Acrobat, "OBS Studio" → obs64) joins the process names; the script prints each name
+                // that is a real app, then True once one of its windows is activated. (No double quotes:
+                // they don't survive the command line intact.)
+                const sm = (env: string) => `(Join-Path $env:${env} 'Microsoft\\Windows\\Start Menu\\Programs')`;
+                const out = await run(
+                    `$app = ${ps(appName.trim())}; $names = @(${names.map(ps).join(",")}); $exes = @(); ` +
+                        `if (-not [WildcardPattern]::ContainsWildcardCharacters($app)) { ` +
+                        `$c = Get-Command ($app + '.exe') -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $exes += $c.Source }; ` +
+                        `foreach ($k in 'HKCU:','HKLM:') { $v = (Get-ItemProperty -LiteralPath ($k + '\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\' + $app + '.exe') -ErrorAction SilentlyContinue).'(default)'; if ($v) { $exes += $v } } }; ` +
+                        `Get-ChildItem ${sm("ProgramData")},${sm("APPDATA")} -Recurse -Filter *.lnk -ErrorAction SilentlyContinue | ` +
+                        `Where-Object { $_.BaseName -eq $app } | ForEach-Object { $t = $ws.CreateShortcut($_.FullName).TargetPath; if ($t) { $exes += $t } }; ` +
+                        `$en = @($exes | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Trim([char]34)) }); $en; $names += $en; ` +
+                        `$procs = Get-Process; foreach ($n in ($names | Select-Object -Unique)) { ` +
+                        `$all = @($procs | Where-Object { $_.ProcessName -eq $n }); if ($all.Count) { $n }; ` +
+                        `$p = $all | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; ` +
+                        `if ($p -and $ws.AppActivate($p.Id)) { 'True'; exit } }`,
+                );
+                const lines = out
+                    .split(/\r?\n/)
+                    .map((l) => l.trim())
+                    .filter(Boolean);
+                if (!lines.includes("True")) {
+                    // A name nothing on this PC answers to ("VS Code" for Code) may still mean the
+                    // front app: best-effort, as before. Only a real app that isn't in front fails.
+                    // Aliases count only when the script found them (a cmd console in front, "Terminal"
+                    // asked, no Windows Terminal running, is clicked).
+                    const known = lines.map(appKey);
+                    return !known.length || activeWindowIsApp(known, w) ? "already" : "failed";
+                }
+            }
         } else {
-            await execFileAsync("wmctrl", ["-a", appName], { timeout: 4000 }).catch(() => {});
+            // found / none (exit 1: no such window) / unknown (no wmctrl, a timeout).
+            const wmctrl = (args: string[]) =>
+                execFileAsync("wmctrl", args, { timeout: 4000 }).then(
+                    () => "found",
+                    (err) => ((err as { code?: unknown }).code === 1 ? "none" : "unknown"),
+                );
+            // wmctrl can't see native Wayland windows: a miss there proves nothing.
+            const wayland = !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
+            if ((await wmctrl(["-a", appName])) === "none" && !wayland) {
+                const w = await getActiveWindow();
+                if (frontUnknown(w)) return "already";
+                // Aliases help match and look up windows but don't make the name an installed app:
+                // kitty in front with "Terminal" asked, and no app named Terminal, is clicked.
+                const known = await desktopEntryNames(appName);
+                const names = [...new Set([appKey(appName), ...aliases, ...known])];
+                if (activeWindowIsApp(names, w)) return "already";
+                let r = "none";
+                for (const n of names) {
+                    r = await wmctrl(["-x", "-a", n]); // by WM_CLASS
+                    if (r !== "none") break;
+                }
+                if (r === "unknown") return "already";
+                // A name no installed app answers to ("Notepad" here) may still mean the front app.
+                // A kind of app ("Terminal") with another of its kind in front (kitty) means that one.
+                if (r === "none") return known.length && !(await frontIsKindOf(appName, w)) ? "failed" : "already";
+            }
         }
         await sleep(350); // no frontmost probe here: let the window raise
         return "raised";
