@@ -382,7 +382,7 @@ describe("same-site fence and declared questions", () => {
         expect([r.reason, d2.calls.length]).toEqual(["off_site", 1]);
     });
 
-    it("only questions declared in the manifest reach the owner, and late answers expire", async () => {
+    it("only questions declared in the manifest reach the owner, and a late answer is never typed", async () => {
         const undeclared = withManifest(`exports.step = () => ({ needsUser: { question: "pin" } });`, manifest);
         const u = await runSiteTask({ skillPath: undeclared, phase: "search", driver: pageDriver() });
         expect([u.reason, u.task.userPrompts]).toEqual(["undeclared_question", 0]);
@@ -396,7 +396,17 @@ describe("same-site fence and declared questions", () => {
         q.task.waitingUntil = Date.now() - 1; // the owner came back 11 minutes later
         const d = pageDriver();
         const late = await runSiteTask({ task: q.task, phase: "resume", answer: "482913", driver: d });
-        expect([late.reason, d.calls.length]).toEqual(["no_response", 0]);
+        // The page still asks: the owner is asked for a fresh code, the task stays parked.
+        expect([late.status, late.reason, late.needsUser?.retry, d.calls.length]).toEqual([
+            "needs_user",
+            "answer_expired",
+            "That took a while, so I didn't use that code. Send the latest one.",
+            0,
+        ]);
+        expect(late.task.waitingUntil).toBeGreaterThan(Date.now());
+        const fresh = await runSiteTask({ task: late.task, phase: "resume", answer: "551177", driver: d });
+        expect(d.calls.map((a) => a.value)).toEqual(["551177"]);
+        expect(fresh.reason).not.toBe("answer_expired");
     });
 });
 

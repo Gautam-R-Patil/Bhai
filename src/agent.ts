@@ -2124,6 +2124,15 @@ async function _runAgentBody(
         turnStream?.status(status, toolStep, elapsedSec());
         return sendProgress(formatStepStatus(toolStep, status, Date.now() - turnStartedAt));
     };
+    const askOwner = (result: string) => {
+        try {
+            // The result is fenced as untrusted: the JSON is the site_task output inside the fence.
+            const json = result.slice(result.indexOf("{"), result.lastIndexOf("}") + 1);
+            const r = JSON.parse(json) as { status?: string; needsUser?: { prompt?: string; retry?: string } };
+            if (r.status === "needs_user" && r.needsUser?.prompt)
+                turnStream?.ask([r.needsUser.retry, r.needsUser.prompt].filter(Boolean).join(" "));
+        } catch {}
+    };
     const runToolBatch = async (
         calls: Array<{ id: string; function: { name: string; arguments: string } }>,
         ctx: Omit<Parameters<typeof executeToolCallsBatch>[1], "sendProgress" | "sendStatus">,
@@ -2150,6 +2159,9 @@ async function _runAgentBody(
         try {
             const results = await executeToolCallsBatch(calls, { ...ctx, sendProgress, sendStatus });
             failed = results.some(toolFailed);
+            // A site task waiting on the owner (a code, a payment): its manifest prompt (fixed
+            // text, never the page's or the code) reaches the surfaces now, not after a model call.
+            for (const r of results) if (r.fnName === "site_task") askOwner(r.result);
             return results;
         } finally {
             stop();

@@ -29,6 +29,8 @@
 //     except a redirect to one of its paymentDomains after the consented
 //     submit, which hands the page to the owner (needs_user: finish payment);
 //   • questions to the owner come from the skill's manifest, never page text;
+//     an answer after QUESTION_TTL_MS is never typed: the page is read again and,
+//     if it still asks, the owner is asked for a fresh one (answer_expired);
 //   • a skill that throws/hangs/crashes/returns garbage ends the task as failed;
 //   • the owner's Stop (signal) ends the task at once as aborted/stopped: no
 //     driver call or skill call starts after it, and a wait in progress is left
@@ -359,9 +361,6 @@ export async function runSiteTask(opts: {
 
     if (task.commit?.state === "sent" && opts.phase === "confirm")
         return end("failed", { reason: "commit_unresolved" });
-    if (opts.phase === "resume" && task.waitingUntil && Date.now() > task.waitingUntil) {
-        return end("failed", { reason: "no_response" }); // a late code is never typed
-    }
 
     const host = new SkillHost(skillPath);
     const signal = opts.signal;
@@ -510,7 +509,10 @@ export async function runSiteTask(opts: {
             return snap;
         };
 
-        let answer = opts.answer;
+        // An answer after the question's TTL is never typed (a code that old is stale):
+        // the page is read again and, if it still asks, the owner is asked for a fresh one.
+        const late = opts.phase === "resume" && !!task.waitingUntil && Date.now() > task.waitingUntil;
+        let answer = late ? undefined : opts.answer;
         task.waitingUntil = undefined;
         // A fresh answer is new input: the 3rd OTP attempt the prompt cap allows
         // mustn't trip the identical-action killer. MAX_STEPS still bounds it.
@@ -645,10 +647,15 @@ export async function runSiteTask(opts: {
                 if (++task.userPrompts > MAX_USER_PROMPTS) return end("failed", { reason: "too_many_prompts" });
                 task.waitingUntil = Date.now() + QUESTION_TTL_MS;
                 return end("needs_user", {
+                    ...(late && { reason: "answer_expired" }),
                     needsUser: {
                         kind: q.kind,
                         prompt: q.prompt,
-                        retry: r.needsUser.retry ? "That didn't work. Please check it and send it again." : undefined,
+                        retry: late
+                            ? "That took a while, so I didn't use that code. Send the latest one."
+                            : r.needsUser.retry
+                              ? "That didn't work. Please check it and send it again."
+                              : undefined,
                     },
                 });
             }

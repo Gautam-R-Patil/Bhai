@@ -167,6 +167,15 @@ export function createTurnStream(unsafeSink: TurnEventSink, opts: { channel: str
             status.flush();
         },
         status: pushStatus,
+        /**
+         * A fixed question for the owner (a site task's manifest prompt) shown at once, before
+         * the next model call. It isn't the model's text, so live() leaves it: the reply streams on under it.
+         */
+        ask(text: string) {
+            const f = new AnswerStreamFilter({ channel: opts.channel });
+            const out = f.push(`${text}\n\n`) + f.flush();
+            if (out.trim()) sink({ type: "answer", attempt, text: out });
+        },
         /** The filtered answer streamed so far (the turn was stopped). */
         partial(): string {
             return shown + answer.flush();

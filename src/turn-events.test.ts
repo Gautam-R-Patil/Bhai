@@ -72,6 +72,20 @@ describe("createTurnStream", () => {
         expect(t.partial()).toBe("");
     });
 
+    it("an ask shows at once and the next model call's reply streams on under it", () => {
+        const seen: TurnEvent[] = [];
+        const t = createTurnStream((e) => seen.push(e), { channel: "overlay", notes: true });
+        t.ask("Enter the code the shop sent to your phone");
+        const onDelta = t.live();
+        onDelta({ kind: "text", text: "Send me the code." });
+        expect(seen.some((e) => e.type === "answer_reset")).toBe(false);
+        const answers = seen.flatMap((e) => (e.type === "answer" ? [e] : []));
+        expect(answers.map((e) => e.attempt)).toEqual([0, 0]);
+        expect(answers.map((e) => e.text).join("")).toBe(
+            "Enter the code the shop sent to your phone\n\nSend me the code.",
+        );
+    });
+
     it("a finished step moves the live line on to its results; the next step's status still wins", () => {
         vi.useFakeTimers();
         try {
