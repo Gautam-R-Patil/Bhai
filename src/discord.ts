@@ -271,13 +271,17 @@ async function runAndReply(
         }
     };
 
-    setSwarmProgress(progressCallback);
-    setDeepResearchProgress(progressCallback);
-    setLongTaskProgress(progressCallback);
+    // The progress hooks are process-wide and only owner tools use them: only an owner turn
+    // registers (and clears) them, or the owner's task progress lands in this chat.
+    const ctx = discordChannelContext(interaction.user, isBotDmInteraction(interaction));
+    const senderIsOwner = ctx.isOwner;
+    if (senderIsOwner) {
+        setSwarmProgress(progressCallback);
+        setDeepResearchProgress(progressCallback);
+        setLongTaskProgress(progressCallback);
+    }
 
     try {
-        const ctx = discordChannelContext(interaction.user, isBotDmInteraction(interaction));
-        const senderIsOwner = ctx.isOwner;
         const result = await runAgent(llm, message, progressCallback, media, undefined, undefined, modelHint, undefined, ctx);
 
         if (result.text.trim() === "[NO_REPLY]") {
@@ -292,9 +296,11 @@ async function runAndReply(
         await sendFollowUps(interaction, replyText, contractShown);
         await sendImages(result.images, (msg) => interaction.followUp(msg), senderIsOwner);
     } finally {
-        clearSwarmProgress();
-        clearDeepResearchProgress();
-        clearLongTaskProgress();
+        if (senderIsOwner) {
+            clearSwarmProgress();
+            clearDeepResearchProgress();
+            clearLongTaskProgress();
+        }
     }
 }
 
@@ -371,13 +377,15 @@ async function runInThread(
         } catch { /* thread may have been archived */ }
     };
 
-    setSwarmProgress(progressCallback);
-    setDeepResearchProgress(progressCallback);
-    setLongTaskProgress(progressCallback);
+    const ctx = discordChannelContext(interaction.user, isBotDmInteraction(interaction));
+    const senderIsOwner = ctx.isOwner;
+    if (senderIsOwner) {
+        setSwarmProgress(progressCallback);
+        setDeepResearchProgress(progressCallback);
+        setLongTaskProgress(progressCallback);
+    }
 
     try {
-        const ctx = discordChannelContext(interaction.user, isBotDmInteraction(interaction));
-        const senderIsOwner = ctx.isOwner;
         const result = await runAgent(llm, message, progressCallback, undefined, undefined, undefined, modelHint, undefined, ctx);
 
         if (result.text.trim() === "[NO_REPLY]") {
@@ -421,9 +429,11 @@ async function runInThread(
             await thread.send(getErrorMessage(errorType));
         } catch { /* */ }
     } finally {
-        clearSwarmProgress();
-        clearDeepResearchProgress();
-        clearLongTaskProgress();
+        if (senderIsOwner) {
+            clearSwarmProgress();
+            clearDeepResearchProgress();
+            clearLongTaskProgress();
+        }
     }
 }
 

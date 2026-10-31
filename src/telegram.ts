@@ -1324,10 +1324,14 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     !!ctx.from?.id && telegramOwners.has(ctx.from.id) && ctx.chat?.type === "private";
                 const historyFork = concurrentHistoryFork(shouldFork, senderIsOwner);
 
-                // Wire progress so sub-agent/research updates flow through our live-status
-                setSwarmProgress(progressCallback);
-                setDeepResearchProgress(progressCallback);
-                setLongTaskProgress(progressCallback);
+                // Wire progress so sub-agent/research updates flow through our live-status. The
+                // hooks are process-wide and only owner tools use them, so only an owner turn
+                // registers (and clears) them: otherwise the owner's task progress lands here.
+                if (senderIsOwner) {
+                    setSwarmProgress(progressCallback);
+                    setDeepResearchProgress(progressCallback);
+                    setLongTaskProgress(progressCallback);
+                }
                 // The answer to "What should I do with it?" (a button or typed) is about that photo:
                 // the model sees it (already remembered, so `capture` keeps it from being added twice).
                 const photo = senderIsOwner
@@ -1352,9 +1356,11 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         isPrivate: ctx.chat?.type === "private",
                     },
                 );
-                clearSwarmProgress();
-                clearDeepResearchProgress();
-                clearLongTaskProgress();
+                if (senderIsOwner) {
+                    clearSwarmProgress();
+                    clearDeepResearchProgress();
+                    clearLongTaskProgress();
+                }
 
                 clearTimeout(thinkingFallback);
                 // Aborted, or the agent decided no reply is needed: stay silent.
