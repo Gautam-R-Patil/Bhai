@@ -113,3 +113,21 @@ describe("hearing a recording (audio model)", () => {
         });
     });
 });
+
+describe("transcription URL", () => {
+    it("Azure goes to the deployment; anyone else to /audio/transcriptions", async () => {
+        const { transcriptionUrl } = await import("./stt");
+        expect(
+            transcriptionUrl({
+                apiKey: "k",
+                baseUrl: "https://bhai-speech-eastus2.openai.azure.com/openai/v1",
+                model: "gpt-transcribe",
+            }),
+        ).toBe(
+            "https://bhai-speech-eastus2.openai.azure.com/openai/deployments/gpt-transcribe/audio/transcriptions?api-version=2025-04-01-preview",
+        );
+        expect(transcriptionUrl({ apiKey: "k", baseUrl: "https://api.groq.com/openai/v1", model: "w" })).toBe(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+        );
+    });
+});

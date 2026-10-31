@@ -38,6 +38,17 @@ export function sttConfigFromEnv(env: Record<string, string | undefined>): SttCo
     };
 }
 
+/**
+ * Azure serves its newer transcribe models only on the per-deployment URL, not on
+ * /openai/v1 (DeploymentNotFound there), so an Azure base goes to the deployment.
+ */
+export function transcriptionUrl(cfg: SttConfig): string {
+    const azure = cfg.baseUrl.match(/^(https:\/\/[^/]+\.(?:openai|cognitiveservices)\.azure\.com)\/openai\/v1$/);
+    return azure
+        ? `${azure[1]}/openai/deployments/${encodeURIComponent(cfg.model)}/audio/transcriptions?api-version=2025-04-01-preview`
+        : `${cfg.baseUrl}/audio/transcriptions`;
+}
+
 export async function transcribeWithProvider(
     cfg: SttConfig,
     audio: Uint8Array<ArrayBuffer>,
@@ -49,7 +60,7 @@ export async function transcribeWithProvider(
     form.append("file", new Blob([audio], { type: mimeType }), filename);
     form.append("model", cfg.model);
     form.append("response_format", "json");
-    const res = await fetchFn(`${cfg.baseUrl}/audio/transcriptions`, {
+    const res = await fetchFn(transcriptionUrl(cfg), {
         method: "POST",
         // Bearer for OpenAI/Groq, api-key for Azure; each ignores the other.
         headers: { Authorization: `Bearer ${cfg.apiKey}`, "api-key": cfg.apiKey },
