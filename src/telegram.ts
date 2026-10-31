@@ -11,6 +11,7 @@ import {
     type AgentResponse,
     type ChannelContext,
     clearConversation,
+    type GeneratedImage,
     getConversationCount,
     getConversationHistory,
     type MediaAttachment,
@@ -209,11 +210,101 @@ async function sendReceipt(
     );
 }
 
+/** "sending a photo…" while generate_image runs (its milestone, or a step line quoting it), else "typing". */
+export function chatActionFor(progress: string): "typing" | "upload_photo" {
+    return /Editing your photo|Painting the image/.test(progress) ? "upload_photo" : "typing";
+}
+
+/** The one-tap follow-ups under a generated image; the callback data maps to IMAGE_ACTIONS. */
+export function imageKeyboard(images: GeneratedImage[]): InlineKeyboard {
+    const kb = new InlineKeyboard().text("🔁 Another version", "img:again").text("✨ HD", "img:hq");
+    // Undo only when there is a before file to go back to (a combine of photos has none).
+    return images.some((img) => img.kind !== "generated" && img.sourcePath) ? kb.text("↩️ Undo", "img:undo") : kb;
+}
+
+/** An image button's tap becomes the owner's next message, like the stuck-report buttons. */
+const IMAGE_ACTIONS = new Map([
+    ["img:again", "Make one more version of that image"],
+    ["img:hq", "Make that image again, one copy, in high quality"],
+    ["img:undo", "Undo that last image edit"],
+]);
+
+/** sendPhoto re-encodes to a ≤1280px JPEG: past that, the full file goes too. */
+const PHOTO_MAX_EDGE = 1280;
+
+/**
+ * The turn's generated or edited images right after the reply, uncaptioned (the reply says what
+ * they are): photos (one, or an album for 2-4), and as documents a PNG (instead of the photo, which
+ * would flatten its transparency) or an image over 1280px (after the photo). The owner's private
+ * chat gets the follow-up buttons. A photo Telegram refuses goes out as a document. Never throws.
+ */
+export async function sendImages(
+    api: Bot["api"],
+    chatId: number,
+    images: GeneratedImage[] | undefined,
+    withButtons: boolean,
+    opts: { reply_parameters?: { message_id: number } } = {},
+): Promise<void> {
+    if (!images?.length) return;
+    const reply_markup = withButtons ? imageKeyboard(images) : undefined;
+    try {
+        const sharp = (await import("sharp")).default;
+        const files = await Promise.all(
+            images.map(async (img) => {
+                const buf = await fs.readFile(img.path);
+                const meta = await sharp(buf)
+                    .metadata()
+                    .catch(() => ({ width: 0, height: 0 }));
+                const png = img.mimeType === "image/png";
+                const large = Math.max(meta.width ?? 0, meta.height ?? 0) > PHOTO_MAX_EDGE;
+                return { buf, name: nodeBasename(img.path), png, large };
+            }),
+        );
+        type File = (typeof files)[number];
+        const input = (f: File) => new InputFile(f.buf, f.name);
+        // One file carries the buttons when it is the only image; returns whether it did.
+        const send = async (type: "photo" | "document", list: File[], markup?: InlineKeyboard) => {
+            if (!list.length) return false;
+            const doc = (f: File) =>
+                withTelegramRetry(() => api.sendDocument(chatId, input(f), { reply_markup: markup, ...opts }));
+            if (list.length === 1) {
+                if (type === "document") await doc(list[0]);
+                else
+                    await withTelegramRetry(() =>
+                        api.sendPhoto(chatId, input(list[0]), { reply_markup: markup, ...opts }),
+                    ).catch(() => doc(list[0]));
+                return !!markup;
+            }
+            const album = (t: "photo" | "document") => list.map((f) => ({ type: t, media: input(f) }));
+            await withTelegramRetry(() => api.sendMediaGroup(chatId, album(type), opts)).catch((err) => {
+                if (type === "document") throw err;
+                return withTelegramRetry(() => api.sendMediaGroup(chatId, album("document"), opts));
+            });
+            return false;
+        };
+        const single = files.length === 1 ? reply_markup : undefined;
+        const onPhoto = await send(
+            "photo",
+            files.filter((f) => !f.png),
+            single,
+        );
+        const onDoc = await send(
+            "document",
+            files.filter((f) => f.png || f.large),
+            onPhoto ? undefined : single,
+        );
+        if (reply_markup && !onPhoto && !onDoc)
+            await withTelegramRetry(() => api.sendMessage(chatId, "Want another go?", { reply_markup, ...opts }));
+    } catch (err) {
+        console.warn("[TELEGRAM] Failed to send images:", (err as Error).message);
+    }
+}
+
 /** Send a media or voice turn's reply as bubbles; a stuck report gets the handoff buttons or the reply line. */
 async function replyInBubbles(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctx: any,
-    result: Pick<AgentResponse, "text" | "stuck" | "receipt" | "memoryUndo">,
+    result: Pick<AgentResponse, "text" | "stuck" | "receipt" | "memoryUndo" | "images">,
     senderIsOwner: boolean,
 ): Promise<void> {
     const buttons = wantsStuckButtons(result, senderIsOwner, ctx.chat?.type);
@@ -232,6 +323,7 @@ async function replyInBubbles(
     const keyboard = replyKeyboard(result, senderIsOwner, ctx.chat?.type);
     await attachReplyKeyboard(ctx.api, ctx.chat.id, lastId, keyboard, result.stuck);
     await sendReceipt(ctx.api, ctx.chat.id, result.receipt);
+    await sendImages(ctx.api, ctx.chat.id, result.images, senderIsOwner && ctx.chat?.type === "private");
 }
 
 // ── Inline Keyboards ─────────────────────────
@@ -853,9 +945,10 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         // Fire-and-forget async processing
         (async () => {
             await ctx.replyWithChatAction("typing");
+            let chatAction = chatActionFor("");
             const typingInterval = setInterval(async () => {
                 try {
-                    await ctx.replyWithChatAction("typing");
+                    await ctx.replyWithChatAction(chatAction);
                 } catch {
                     /* ignore */
                 }
@@ -989,6 +1082,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 };
 
                 const progressCallback = async (msg: string) => {
+                    chatAction = chatActionFor(msg);
                     // ── Human-in-the-loop interrupt handling ──
                     // Detect approval requests and send as inline keyboard messages
                     const interruptMatch = msg.match(/\[id:([a-f0-9]+)\]/);
@@ -1303,6 +1397,13 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                 const keyboard = replyKeyboard(response, senderIsOwner, ctx.chat?.type);
                 await attachReplyKeyboard(ctx.api, chatId, lastSentId, keyboard, response.stuck, lastEditAt);
                 await sendReceipt(ctx.api, chatId, response.receipt, replyOpts);
+                await sendImages(
+                    ctx.api,
+                    chatId,
+                    response.images,
+                    senderIsOwner && ctx.chat?.type === "private",
+                    replyOpts,
+                );
             } catch (err) {
                 if (!controller.signal.aborted) {
                     console.error("❌ Agent error:", err);
@@ -1451,6 +1552,17 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
             // Buttons under the "What next?" fallback reply to the report: carry that instead.
             const reportText = stuckMsg?.reply_to_message?.text ?? stuckMsg?.text;
             if (message && chatId && stuckMsg) bufferMessage(ctx, chatId, stuckMsg.message_id, message, reportText);
+            return;
+        }
+
+        // ── Image follow-ups under a generated photo: img:again|hq|undo → the owner's next message ──
+        if (data.startsWith("img:")) {
+            await ctx.answerCallbackQuery().catch(() => {});
+            await ctx.editMessageReplyMarkup().catch(() => {});
+            const message = IMAGE_ACTIONS.get(data);
+            const imgMsg = ctx.callbackQuery.message;
+            if (message && chatId && imgMsg)
+                bufferMessage(ctx, chatId, imgMsg.message_id, message, imgMsg.caption ?? imgMsg.reply_to_message?.text);
             return;
         }
 
@@ -1651,32 +1763,185 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
 
 // ── Media Message Handler ─────────────────────
 
+type MediaMessage = {
+    caption?: string;
+    media_group_id?: string;
+    photo?: Array<{ file_id: string }>;
+    video?: { file_id: string; mime_type?: string };
+    document?: { file_id: string; mime_type?: string };
+};
+type MediaItem = { message: MediaMessage; mediaType: "image" | "video" };
+type MediaCtx = {
+    message: MediaMessage;
+    from: { id?: number; first_name?: string };
+    chat: { id: number };
+    reply: Function;
+    replyWithChatAction: Function;
+};
+type TextBuffer = Map<string, { messages: string[]; timer: ReturnType<typeof setTimeout>; ctx: never }>;
+
+const mediaGroups = new Map<
+    string,
+    { items: unknown[]; run: (items: never[]) => void; timer?: ReturnType<typeof setTimeout> }
+>();
+
+/**
+ * An album arrives as one update per photo: buffer them by media_group_id and call the first
+ * part's `run` once with all of them, `delayMs` after the last part.
+ */
+export function bufferMediaGroup<T>(key: string, item: T, run: (items: T[]) => void, delayMs = 1500): void {
+    const group = mediaGroups.get(key) ?? { items: [], run: run as (items: never[]) => void };
+    group.items.push(item);
+    clearTimeout(group.timer);
+    group.timer = setTimeout(() => {
+        mediaGroups.delete(key);
+        group.run(group.items as never[]);
+    }, delayMs);
+    mediaGroups.set(key, group);
+}
+
 async function handleMediaMessage(
-    ctx: {
-        message: {
-            caption?: string;
-            photo?: Array<{ file_id: string }>;
-            video?: { file_id: string; mime_type?: string };
-            document?: { file_id: string; mime_type?: string };
-        };
-        from: { id?: number; first_name?: string };
-        chat: { id: number };
-        reply: Function;
-        replyWithChatAction: Function;
-    },
+    ctx: MediaCtx,
     bot: Bot,
     config: Config,
     llm: LLMClient,
     mediaType: "image" | "video",
-    messageBuffer?: Map<string, { messages: string[]; timer: ReturnType<typeof setTimeout>; ctx: never }>,
+    messageBuffer?: TextBuffer,
+) {
+    const item: MediaItem = { message: ctx.message, mediaType };
+    const groupId = ctx.message.media_group_id;
+    if (!groupId) return runMediaTurn(ctx, bot, config, llm, [item], messageBuffer, true);
+    // Return at once (grammY polls one update at a time, so the other parts must get in): one turn
+    // for the whole album runs from the first part's handler.
+    bufferMediaGroup(`${ctx.chat.id}:${groupId}`, item, (items: MediaItem[]) => {
+        runMediaTurn(ctx, bot, config, llm, items, messageBuffer, false).catch((err) =>
+            console.error("❌ Media album error:", err),
+        );
+    });
+}
+
+/** Downloads one media part and saves it to a temp file; replies and returns null when it can't. */
+async function fetchMedia(
+    ctx: MediaCtx,
+    bot: Bot,
+    config: Config,
+    { message, mediaType }: MediaItem,
+): Promise<{ base64: string; mimeType: string; path: string; mediaType: "image" | "video" } | null> {
+    // Get file ID
+    let fileId: string;
+    let mimeType: string;
+    if (mediaType === "image" && message.photo) {
+        // Photos come as array of sizes — take the largest
+        fileId = message.photo[message.photo.length - 1].file_id;
+        mimeType = "image/jpeg";
+    } else if (mediaType === "video" && message.video) {
+        fileId = message.video.file_id;
+        mimeType = message.video.mime_type || "video/mp4";
+    } else if (message.document) {
+        fileId = message.document.file_id;
+        mimeType = message.document.mime_type || (mediaType === "image" ? "image/jpeg" : "video/mp4");
+    } else {
+        await ctx.reply("Couldn't process this media.");
+        return null;
+    }
+
+    // Download file from Telegram (with retry + timeout for flaky networks).
+    // Reject anything bigger than MAX_MEDIA_BYTES at the Telegram metadata
+    // step — without this, an in-memory `arrayBuffer()` of a 1GB document
+    // OOMs the bot process, and Telegram does deliver up to ~2GB to bots
+    // in some configurations.
+    const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
+    const file = await bot.api.getFile(fileId);
+    if (typeof file.file_size === "number" && file.file_size > MAX_MEDIA_BYTES) {
+        await ctx.reply(
+            `That file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_MEDIA_BYTES / 1024 / 1024} MB.`,
+        );
+        return null;
+    }
+    const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
+
+    let buffer: Buffer | null = null;
+    const MAX_RETRIES = 3;
+    const FETCH_TIMEOUT_MS = 30_000; // 30s per attempt
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const response = await fetch(fileUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            // Defence in depth: cap the body even if Telegram reported a small size.
+            const contentLengthHeader = response.headers.get("content-length");
+            if (contentLengthHeader && Number(contentLengthHeader) > MAX_MEDIA_BYTES) {
+                throw new Error(`Media body too large: ${contentLengthHeader} bytes`);
+            }
+            buffer = Buffer.from(await response.arrayBuffer());
+            if (buffer.length > MAX_MEDIA_BYTES) throw new Error(`Media body too large: ${buffer.length} bytes`);
+            break; // success
+        } catch (fetchErr) {
+            console.warn(`  ⚠️ Media download attempt ${attempt}/${MAX_RETRIES} failed:`, (fetchErr as Error).message);
+            if (attempt === MAX_RETRIES) throw fetchErr;
+            await new Promise((r) => setTimeout(r, 2000 * attempt)); // backoff: 2s, 4s
+        }
+    }
+    const downloadedBuffer = buffer!; // guaranteed non-null: loop either sets buffer or throws
+    const base64 = downloadedBuffer.toString("base64");
+
+    console.log(`  📥 Downloaded ${mediaType}: ${Math.round(downloadedBuffer.length / 1024)}KB`);
+
+    // Save to temporary file so DaVinci/Filmora can use it if requested.
+    // Use crypto.randomUUID() so the filename can't be predicted by an
+    // attacker who can also write to the same tmpdir (closes a race
+    // where a malicious side-process plants a file at a known name).
+    // Safe extension allowlist — never trust attacker-supplied MIME for
+    // the on-disk extension; we cap to mp3/wav/ogg/m4a/jpg/png/mp4.
+    const mediaDir = join(tmpdir(), "atlas_media");
+    await fs.mkdir(mediaDir, { recursive: true, mode: 0o700 });
+    const safeExt = (() => {
+        const claimed = (mimeType.split("/")[1] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const allowed = new Set([
+            "mp3",
+            "wav",
+            "ogg",
+            "m4a",
+            "aac",
+            "jpg",
+            "jpeg",
+            "png",
+            "gif",
+            "webp",
+            "mp4",
+            "mov",
+            "webm",
+        ]);
+        if (allowed.has(claimed)) return claimed;
+        return mediaType === "image" ? "jpg" : "mp4";
+    })();
+    const { randomUUID } = await import("node:crypto");
+    const tmpFilePath = join(mediaDir, `telegram_${randomUUID()}.${safeExt}`);
+    await fs.writeFile(tmpFilePath, downloadedBuffer, { mode: 0o600 });
+    console.log(`  💾 Saved media to atlas_media/...`);
+
+    return { base64, mimeType, path: tmpFilePath, mediaType };
+}
+
+/** One media turn for a photo/video, or for an album's parts together. */
+async function runMediaTurn(
+    ctx: MediaCtx,
+    bot: Bot,
+    config: Config,
+    llm: LLMClient,
+    items: MediaItem[],
+    messageBuffer: TextBuffer | undefined,
+    waitForText: boolean,
 ) {
     const userName = ctx.from.first_name || "User";
-    let caption = ctx.message.caption || (mediaType === "image" ? "What's in this image?" : "What's in this video?");
+    const { mediaType } = items[0];
+    let caption =
+        items.map((i) => i.message.caption).find(Boolean) ||
+        (items.length > 1 ? "What's in these?" : `What's in this ${mediaType}?`);
 
-    console.log(`\n📎 ${userName} sent a ${mediaType}${caption ? `: ${caption}` : ""}`);
+    console.log(`\n📎 ${userName} sent ${items.length > 1 ? `${items.length} files` : `a ${mediaType}`}: ${caption}`);
 
-    // Wait briefly so follow-up text messages (like 👍 or a comment) can arrive
-    await new Promise((r) => setTimeout(r, 1500));
+    // Wait briefly so follow-up text messages (like 👍 or a comment) can arrive (an album already did)
+    if (waitForText) await sleep(1500);
 
     // Absorb any buffered text messages sent right after the image
     if (messageBuffer) {
@@ -1694,116 +1959,40 @@ async function handleMediaMessage(
     }
 
     await ctx.replyWithChatAction("typing");
+    let chatAction = chatActionFor("");
     const typingInterval = setInterval(async () => {
         try {
-            await ctx.replyWithChatAction("typing");
+            await ctx.replyWithChatAction(chatAction);
         } catch {
             /* ignore */
         }
     }, 4000);
 
     try {
-        // Get file ID
-        let fileId: string;
-        let mimeType: string;
-        if (mediaType === "image" && ctx.message.photo) {
-            // Photos come as array of sizes — take the largest
-            fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-            mimeType = "image/jpeg";
-        } else if (mediaType === "video" && ctx.message.video) {
-            fileId = ctx.message.video.file_id;
-            mimeType = ctx.message.video.mime_type || "video/mp4";
-        } else if (ctx.message.document) {
-            fileId = ctx.message.document.file_id;
-            mimeType = ctx.message.document.mime_type || (mediaType === "image" ? "image/jpeg" : "video/mp4");
-        } else {
-            await ctx.reply("Couldn't process this media.");
-            return;
+        // An album keeps the parts that came through; it fails only when none did.
+        const fetched = await Promise.allSettled(items.map((item) => fetchMedia(ctx, bot, config, item)));
+        const saved = fetched.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+        if (!saved.length) {
+            const failed = fetched.find((r) => r.status === "rejected");
+            if (failed) throw failed.reason;
+            return; // already told the user
         }
-
-        // Download file from Telegram (with retry + timeout for flaky networks).
-        // Reject anything bigger than MAX_MEDIA_BYTES at the Telegram metadata
-        // step — without this, an in-memory `arrayBuffer()` of a 1GB document
-        // OOMs the bot process, and Telegram does deliver up to ~2GB to bots
-        // in some configurations.
-        const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
-        const file = await bot.api.getFile(fileId);
-        if (typeof file.file_size === "number" && file.file_size > MAX_MEDIA_BYTES) {
-            await ctx.reply(
-                `That file is too large to process (${Math.round(file.file_size / 1024 / 1024)} MB). Limit is ${MAX_MEDIA_BYTES / 1024 / 1024} MB.`,
-            );
-            return;
-        }
-        const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
-
-        let buffer: Buffer | null = null;
-        const MAX_RETRIES = 3;
-        const FETCH_TIMEOUT_MS = 30_000; // 30s per attempt
-        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                const response = await fetch(fileUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                // Defence in depth: cap the body even if Telegram reported a small size.
-                const contentLengthHeader = response.headers.get("content-length");
-                if (contentLengthHeader && Number(contentLengthHeader) > MAX_MEDIA_BYTES) {
-                    throw new Error(`Media body too large: ${contentLengthHeader} bytes`);
-                }
-                buffer = Buffer.from(await response.arrayBuffer());
-                if (buffer.length > MAX_MEDIA_BYTES) throw new Error(`Media body too large: ${buffer.length} bytes`);
-                break; // success
-            } catch (fetchErr) {
-                console.warn(
-                    `  ⚠️ Media download attempt ${attempt}/${MAX_RETRIES} failed:`,
-                    (fetchErr as Error).message,
-                );
-                if (attempt === MAX_RETRIES) throw fetchErr;
-                await new Promise((r) => setTimeout(r, 2000 * attempt)); // backoff: 2s, 4s
-            }
-        }
-        const downloadedBuffer = buffer!; // guaranteed non-null: loop either sets buffer or throws
-        const base64 = downloadedBuffer.toString("base64");
-
-        console.log(`  📥 Downloaded ${mediaType}: ${Math.round(downloadedBuffer.length / 1024)}KB`);
-
-        // Save to temporary file so DaVinci/Filmora can use it if requested.
-        // Use crypto.randomUUID() so the filename can't be predicted by an
-        // attacker who can also write to the same tmpdir (closes a race
-        // where a malicious side-process plants a file at a known name).
-        // Safe extension allowlist — never trust attacker-supplied MIME for
-        // the on-disk extension; we cap to mp3/wav/ogg/m4a/jpg/png/mp4.
-        const mediaDir = join(tmpdir(), "atlas_media");
-        await fs.mkdir(mediaDir, { recursive: true, mode: 0o700 });
-        const safeExt = (() => {
-            const claimed = (mimeType.split("/")[1] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-            const allowed = new Set([
-                "mp3",
-                "wav",
-                "ogg",
-                "m4a",
-                "aac",
-                "jpg",
-                "jpeg",
-                "png",
-                "gif",
-                "webp",
-                "mp4",
-                "mov",
-                "webm",
-            ]);
-            if (allowed.has(claimed)) return claimed;
-            return mediaType === "image" ? "jpg" : "mp4";
-        })();
-        const { randomUUID } = await import("node:crypto");
-        const tmpFilePath = join(mediaDir, `telegram_${randomUUID()}.${safeExt}`);
-        await fs.writeFile(tmpFilePath, downloadedBuffer, { mode: 0o600 });
-        console.log(`  💾 Saved media to atlas_media/...`);
 
         // Wrap attacker-controlled caption in delimiters and strip framing tokens.
-        // The tmp file path is ATLAS-internal hint, separately marked.
-        caption = `<channel_message_content>\n${sanitizeIncomingChannelText(caption)}\n</channel_message_content>\n\n[ATLAS-INTERNAL — not from user: This ${mediaType} is saved at ${tmpFilePath}. Use this absolute path for DaVinci Resolve or Filmora edits.]`;
+        // The tmp file paths are ATLAS-internal hints, separately marked.
+        const notes = saved.map((m) =>
+            m.mediaType === "image"
+                ? `[ATLAS-INTERNAL — not from user: this image is saved at ${m.path}. To change what's in it use generate_image with source "attached"; use the path only for desktop apps like DaVinci Resolve.]`
+                : `[ATLAS-INTERNAL — not from user: This video is saved at ${m.path}. Use this absolute path for DaVinci Resolve or Filmora edits.]`,
+        );
+        caption = `<channel_message_content>\n${sanitizeIncomingChannelText(caption)}\n</channel_message_content>\n\n${notes.join("\n")}`;
 
-        // Build media attachment
-        const media: MediaAttachment[] = [{ type: mediaType, base64, mimeType }];
+        // Build media attachments
+        const media: MediaAttachment[] = saved.map((m) => ({
+            type: m.mediaType,
+            base64: m.base64,
+            mimeType: m.mimeType,
+        }));
 
         if ((ctx.chat as { type?: string })?.type === "private" && ctx.from?.id && isPlatformOwner("telegram", ctx.from.id, config)) {
             setTelegramContext(bot, ctx.chat.id); // owner's private chat only (see the text path)
@@ -1816,6 +2005,7 @@ async function handleMediaMessage(
         // Progress is silent on Telegram — only logged to console — except the
         // turn's contract line, which replaces the quick ack.
         const progressCallback = async (msg: string) => {
+            chatAction = chatActionFor(msg);
             console.log(`  📊 [progress] ${msg}`);
             if (msg.startsWith("[ACK] ")) await sendContractLine(bot.api, ctx.chat.id, mediaAckId, msg.slice(6));
         };

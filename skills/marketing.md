@@ -89,7 +89,7 @@ When the user replies "approve [ID]" or "reject [ID]: feedback" — resolve the 
 - `cold_outreach` — for email and LinkedIn outreach
 - `marketing_schedule` — for scheduling and viewing the content calendar
 - `video_create_project`, `video_plan_edit`, `video_render` — for Reel/TikTok production
-- `generate_image` — for static post visuals
+- `generate_image` — for static post visuals; it can also edit an existing photo (`source`) and make variations (`count`)
 - `deep_research` — for trend research, competitor deep-dives
 - `web_search` — quick trend and hashtag lookups
 

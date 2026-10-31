@@ -27,7 +27,8 @@ const MODEL_COSTS: Record<string, { credits: number; costPer1kInput: number; cos
     "google/gemini-3.1-pro-preview-customtools": { credits: 1, costPer1kInput: 0.00125, costPer1kOutput: 0.005, tier: "pro" },
     // Heavy tier (3 credits)
     "anthropic/claude-opus-4.6":            { credits: 3,  costPer1kInput: 0.015, costPer1kOutput: 0.075, tier: "heavy" },
-    "openai/gpt-5-image":                   { credits: 3,  costPer1kInput: 0.005, costPer1kOutput: 0.015, tier: "heavy" },
+    // Per image at medium quality (low 1, high 4; convex/image.ts IMAGE_CREDIT_COST)
+    "image:gpt-image-2.5-sunburst":         { credits: 2,  costPer1kInput: 0.005, costPer1kOutput: 0.04,  tier: "heavy" },
 };
 
 // ── System overview (one-shot fetch for the admin dashboard) ──────────────

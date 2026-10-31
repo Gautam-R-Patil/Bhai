@@ -125,6 +125,9 @@ contextBridge.exposeInMainWorld("atlas", {
     chatStop: () => ipcRenderer.send("chat:stop"),
     onChatEvent: (callback) => { ipcRenderer.on("chat:event", (_, data) => callback(data)); },
     getChat: (id) => ipcRenderer.invoke("chats:get", id),
+    revealImage: (path) => ipcRenderer.invoke("chats:revealImage", path),
+    saveImage: (path) => ipcRenderer.invoke("chats:saveImage", path),
+    copyImage: (path) => ipcRenderer.invoke("chats:copyImage", path),
     clearChats: () => ipcRenderer.invoke("chats:clear"),
     onGoogleOAuthSuccess: (callback) => {
         ipcRenderer.on("google-oauth-success", (_, email) => callback(email));

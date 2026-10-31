@@ -31,18 +31,40 @@ let lastAtlasResponse = "";
 
 // The side panel's conversation, kept in this Chrome profile so it survives the
 // worker sleeping, the panel closing and Chrome restarting. Text only: the
-// screenshots and pasted images are never stored.
+// screenshots and pasted images are never stored, and images Bhai made stay in
+// this worker's memory (gone when it sleeps).
 const MAX_CHAT = 60;
 let _chat = [];
 const chatReady = chrome.storage.local.get("chat")
   .then((r) => { if (Array.isArray(r.chat)) _chat = r.chat; })
   .catch(() => {});
-function addChat(role, text, meta = null) {
-  if (!text) return;
-  _chat.push({ role, text: String(text).slice(0, 20000), ts: Date.now(), ...(meta ? { meta } : {}) });
+function addChat(role, text, meta = null, images = null) {
+  if (!text && !images?.length) return;
+  _chat.push({ role, text: String(text || "").slice(0, 20000), ts: Date.now(), ...(meta ? { meta } : {}), ...(images?.length ? { images } : {}) });
   if (_chat.length > MAX_CHAT) _chat = _chat.slice(-MAX_CHAT);
-  chrome.storage.local.set({ chat: _chat }).catch(() => {});
+  // Only the last few image replies keep their thumbnails (each can be ~1 MB, and every update
+  // re-sends the chat); a panel that already shows an older one keeps it on screen.
+  let withImages = 0;
+  for (let i = _chat.length - 1; i >= 0; i--) {
+    if (_chat[i].images && ++withImages > 3) { const { images: _, ...m } = _chat[i]; _chat[i] = m; }
+  }
+  // An image-only reply isn't stored: without its image it would come back as an empty bubble.
+  chrome.storage.local.set({ chat: _chat.filter((m) => m.text).map(({ images: _, ...m }) => m) }).catch(() => {});
   chrome.runtime.sendMessage({ type: "chat_update", chat: _chat }).catch(() => { /* panel closed */ });
+}
+// A reply's images as the panel shows them: data:image thumbnails only, never a file path.
+const isDataImage = (u) => typeof u === "string" && u.startsWith("data:image/");
+function replyImages(images) {
+  return (Array.isArray(images) ? images : [])
+    .filter((im) => im && isDataImage(im.url))
+    .slice(0, 4)
+    .map((im) => ({
+      url: im.url,
+      name: typeof im.name === "string" ? im.name.slice(0, 120) : "",
+      kind: typeof im.kind === "string" ? im.kind : "generated",
+      ...(typeof im.prompt === "string" ? { prompt: im.prompt.slice(0, 300) } : {}),
+      ...(isDataImage(im.before) ? { before: im.before } : {}),
+    }));
 }
 
 // The side panel's running turn. Only a turn this extension started shows here: after a send,
@@ -604,7 +626,7 @@ function handleOverlayMessage(msg) {
       .slice(0, 8)
       .map((a) => ({ label: a.label.slice(0, 80), action: a.action.slice(0, 300) }));
     const links = (Array.isArray(msg.links) ? msg.links : []).filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 6);
-    addChat("bhai", lastAtlasResponse, actions.length || links.length ? { actions, links } : null);
+    addChat("bhai", lastAtlasResponse, actions.length || links.length ? { actions, links } : null, replyImages(msg.images));
     if (!panelsOpen) {
       unread++;
       if (!_badgeActivityTimer) updateBadge(authenticated);
@@ -613,6 +635,16 @@ function handleOverlayMessage(msg) {
       type: "atlas_response",
       text: lastAtlasResponse,
     }).catch(() => { /* popup not open */ });
+    return;
+  }
+
+  // An image sent outside a turn (send_file, a scheduled task): it lands as a Bhai reply.
+  if (msg.type === "image") {
+    addChat("bhai", msg.text || "", null, replyImages(msg.images));
+    if (!panelsOpen) {
+      unread++;
+      if (!_badgeActivityTimer) updateBadge(authenticated);
+    }
     return;
   }
 

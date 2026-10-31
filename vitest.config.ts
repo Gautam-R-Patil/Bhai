@@ -10,6 +10,7 @@ export default defineConfig({
             "src/*.test.ts",
             "src/video-studio/**/*.test.ts",
             "src/tools/**/*.test.ts",
+            "src/media/**/*.test.ts",
             "src/setup/**/*.test.ts",
             "src/proactive/**/*.test.ts",
             "src/memory/**/*.test.ts",

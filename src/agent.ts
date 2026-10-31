@@ -55,6 +55,7 @@ import {
     recordToolCall as recordGuardrailCall,
 } from "./agents/tool-call-guardrail.js";
 import { OFFLOAD_THRESHOLD_BYTES, keepRestReadable, offloadIfLarge } from "./agents/tool-output-offload.js";
+import { conversationKey, rememberInboundImages, toReadableImage } from "./media/image-memory.js";
 import { trackCursorTurn } from "./screen/agent-cursor.js";
 import { withoutGrid } from "./screen/grid-overlay.js";
 import { anySecretTyped, hasVaultToken, resetVaultTask, resolveVaultArgs, runVaultCall, secretTypedIn, type VaultCall } from "./security/vault.js";
@@ -657,6 +658,14 @@ const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => 
     grep: (a) => `🔎 Searching for: ${String(a.pattern || "").substring(0, 40)}`,
     glob: (a) => `📂 Finding files: "${a.pattern || ""}"`,
     memory_store: (a) => `🧠 Remembering: "${((a.content as string) || "").substring(0, 40)}"`,
+    generate_image: (a) =>
+        a.undo
+            ? "↩️ Going back a version…"
+            : a.source === "last"
+              ? "🎨 Tweaking the image…"
+              : a.source
+                ? "🖼️ Editing your photo…"
+                : "🎨 Painting the image…",
     browser_parallel_tabs: (a) =>
         `🔀 Processing ${Array.isArray(a.tab_actions) ? a.tab_actions.length : 0} tabs in parallel...`,
 };
@@ -778,6 +787,17 @@ export interface AgentResponse {
     partialText?: string;
     /** The owner's Stop ended this turn (a Stop that lands after the answer leaves it unset). */
     stopped?: boolean;
+    /** Images generate_image made this turn, for the channel to show (unset on stuck turns). */
+    images?: GeneratedImage[];
+}
+
+export interface GeneratedImage {
+    path: string;
+    mimeType: string;
+    prompt: string;
+    kind: "generated" | "edited" | "undo";
+    /** The before image for edits/undo, when it is a file. */
+    sourcePath?: string;
 }
 
 export interface ChannelContext {
@@ -1432,7 +1452,9 @@ async function executeToolCallsBatch(
     // Each call already has its own timeout in executeTool, so the in-order
     // lane gets room for every step. Once the batch is given up on, no further
     // screen step may START (a late "send" click after a reported failure).
-    const batchTimeoutMs = TOOL_BATCH_TIMEOUT_MS + 35_000 * screenCalls.length;
+    // An image edit can take ~3 min (its own tool timeout is 200s).
+    const imageCall = nonBrowserCalls.some((tc) => tc.function.name === "generate_image");
+    const batchTimeoutMs = TOOL_BATCH_TIMEOUT_MS + 35_000 * screenCalls.length + (imageCall ? 90_000 : 0);
     let gaveUp = false;
     const nonBrowserPromise =
         nonBrowserCalls.length > 0
@@ -1539,6 +1561,8 @@ export interface MediaAttachment {
     type: "image" | "video" | "audio";
     base64: string;
     mimeType: string;
+    /** A screenshot Bhai took (screen, browser tab): context for this turn, never a photo to edit. */
+    capture?: true;
 }
 
 export async function runAgent(
@@ -1579,12 +1603,25 @@ export async function runAgent(
         const mod = await import("./tools/cron-tool.js");
         let res: AgentResponse;
         const nudges = new Set<object>();
+        // HEIC and the like: JPEG before the model or generate_image sees them (in place, so both do).
+        for (const m of media ?? []) if (m.type === "image") Object.assign(m, await toReadableImage(m));
+        const turnImages = (media ?? [])
+            .filter((m) => m.type === "image" && !m.capture)
+            .map((m) => ({ base64: m.base64, mimeType: m.mimeType }));
+        // A guest's photos never become the owner's "attached" photo (overlay sockets all share userId "local").
+        const convKey = channelContext
+            ? conversationKey(channelContext.channel, callerIsOwner ? channelContext.userId : `guest:${channelContext.userId}`)
+            : "default";
+        // Only someone who can edit photos needs theirs kept.
+        if (callerIsOwner || toolAllowlist?.includes("generate_image")) rememberInboundImages(convKey, turnImages);
         const caller: import("./tools/cron-tool.js").CronCallerContext = {
             isOwner: callerIsOwner,
             autonomous: channelContext?.autonomous === true,
             noOutward: channelContext?.noOutward === true,
             isPrivate: channelContext?.isPrivate === true,
             message: stripChannelTags(userMessage),
+            turnImages,
+            conversationKey: convKey,
         };
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).
@@ -1634,6 +1671,8 @@ export async function runAgent(
         }
         // Only the owner's own chat gets "Forget that"; caller.storedMemory is set on owner turns only.
         if (caller.storedMemory && channelContext?.isPrivate === true && res) res.memoryUndo = caller.storedMemory;
+        // The requester's own images, any chat; a stuck turn shows its report instead.
+        if (res && !res.stuck && caller.generatedImages?.length) res.images = caller.generatedImages;
         return res;
     };
     if (!isForked) {
@@ -3143,6 +3182,17 @@ Do NOT process URLs one-by-one — that wastes iterations. Parallel first, then 
             pushNudge(
                 messages,
                 "If this asks about something in the world that may have changed (a release, news, a price, a score), check it with web_search now; earlier answers in this conversation may be out of date. A question about this computer or the owner's own things doesn't need a search.",
+            );
+        // Same failure with images: after one outage the model said "the image model isn't set up"
+        // from history on every later ask, and a weaker model said undo didn't exist.
+        if (
+            iterations === 1 &&
+            toolSelection.categories[0] === "image" &&
+            tools.some((t) => t.function.name === "generate_image")
+        )
+            pushNudge(
+                messages,
+                "If this asks to make, edit, undo or redo an image, call generate_image now (undo true goes back to the previous version); earlier failures in this conversation don't mean it fails now. A question about a picture needs no new image.",
             );
 
         // ── Task-context routing (iteration 1) ──

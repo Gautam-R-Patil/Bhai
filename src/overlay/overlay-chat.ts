@@ -15,7 +15,7 @@ import { tmpdir, homedir } from "node:os";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { getDownloadsDir, getWorkspaceDir } from "../config/paths.js";
+import { getDownloadsDir, getImagesDir, getWorkspaceDir } from "../config/paths.js";
 import { isStuckReplyPhrase, stuckActionButtons, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
 import {
@@ -25,6 +25,7 @@ import {
     type MediaAttachment,
     type ChannelContext,
     type AgentResponse,
+    type GeneratedImage,
 } from "../agent.js";
 import { isForeignExtensionOrigin } from "../security/extension-origin.js";
 import { isLoopbackHost as isLoopbackHostFor, isWebOrigin } from "../security/loopback.js";
@@ -762,6 +763,23 @@ export function initOverlayChat(llm: LLMClient): void {
                     return;
                 }
 
+                if (msg.type === "reveal_file") {
+                    // An image's "Show in Finder": the owner's own files under the workspace only.
+                    const p = wsIsOwner(ws) ? revealablePath(msg.path) : null;
+                    if (!p) return;
+                    const [cmd, args] =
+                        process.platform === "darwin"
+                            ? ["open", ["-R", p]]
+                            : process.platform === "win32"
+                              ? ["explorer", [`/select,"${p}"`]]
+                              : ["xdg-open", [dirname(p)]];
+                    // explorer misreads Node's quoting of a path with spaces; Windows paths can't hold `"`.
+                    execFile(cmd, args, { windowsVerbatimArguments: true }, () => {
+                        /* explorer exits 1 even on success */
+                    });
+                    return;
+                }
+
                 if (msg.type === "chat" && msg.text) {
                     const messageSource = msg.meta?.source || (isWidget ? "web-widget" : "overlay");
                     console.log(`💬 [${messageSource}] message received`);
@@ -785,7 +803,13 @@ export function initOverlayChat(llm: LLMClient): void {
                         typeof image.base64 === "string" &&
                         image.base64.length < 8_000_000 &&
                         /^image\/(jpeg|png|webp)$/.test(image.mimeType)
-                            ? ({ type: "image", base64: image.base64, mimeType: image.mimeType } as MediaAttachment)
+                            ? ({
+                                  type: "image",
+                                  base64: image.base64,
+                                  mimeType: image.mimeType,
+                                  // A tab screenshot is context, not a photo to edit; a pasted image is the user's.
+                                  ...(msg.meta?.imageKind === "pasted" ? {} : { capture: true }),
+                              } as MediaAttachment)
                             : undefined;
                     await handleOverlayMessage(
                         ws,
@@ -963,6 +987,8 @@ function isScreenQuery(msg: string): boolean {
 
     // A stuck report's handoff reply ("retry it", "skip it") is about the task, not the screen.
     if (isStuckReplyPhrase(msg)) return false;
+    // An image reply's follow-up chips ("Undo that edit") are about that image.
+    if (IMAGE_FOLLOWUPS.some((t) => t.toLowerCase() === lower)) return false;
     // "how much battery do i have" is a quick command, answered without a screenshot or a model.
     if (parseQuickCommand(msg)) return false;
 
@@ -1242,7 +1268,7 @@ ${
 
         const screenshot = await captureScreen();
         if (screenshot) {
-            media = [{ type: "image", base64: screenshot.base64, mimeType: screenshot.mimeType }];
+            media = [{ type: "image", base64: screenshot.base64, mimeType: screenshot.mimeType, capture: true }];
             taggedMessage = `${userMessage}
 
 [SOURCE: Desktop overlay chat — respond here, NOT on Telegram.
@@ -1303,8 +1329,9 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
         // Parse interactive elements from response
         const interactive = parseInteractiveElements(cleanText);
         console.log(`📝 [Overlay] Clean text length: ${cleanText.length}, interactive text length: ${interactive.text.length}`);
+        const images = await overlayImages(result, wsIsOwner(ws));
 
-        if (!interactive.text && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
+        if (!interactive.text && !images.length && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
             // LLM returned only internal tags (e.g. [NO_REPLY]) — don't leave user hanging
             console.warn(`⚠️ [Overlay] Response stripped to empty — sending fallback`);
             sendToClient(ws, { type: "response", text: "hmm", toolCalls: 0, quickActions: [], files: [], links: [], widgets: [], turn: live.turn, worked: live.worked() });
@@ -1317,6 +1344,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             { label: "👍", action: "feedback:good" },
             { label: "👎", action: "feedback:bad" },
         ] : (interactive.quickActions || []);
+        feedbackActions.unshift(...imageQuickActions(images));
         // Bhai just noted something: one tap takes it back (memoryUndo is set only for the owner's turn).
         if (result.memoryUndo) {
             const action = memoryUndoAction(result.memoryUndo);
@@ -1324,7 +1352,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             feedbackActions.push({ label: "Forget that", action });
         }
 
-        logChatMessage(chat, "assistant", interactive.text, source);
+        logChatMessage(chat, "assistant", interactive.text, source, imagePaths(result));
         sendToClient(ws, {
             type: "response",
             text: interactive.text,
@@ -1333,6 +1361,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
             files: interactive.files,
             links: interactive.links,
             widgets: interactive.widgets,
+            images: images.length ? images : undefined,
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
             turn: live.turn,
@@ -1452,21 +1481,23 @@ async function handleFileAttachment(
             .replace(/\[no_reply\]/gi, '')
             .trim();
         const interactive = parseInteractiveElements(cleanText);
+        const images = await overlayImages(result, wsIsOwner(ws));
 
-        if (!interactive.text && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
+        if (!interactive.text && !images.length && interactive.widgets.length === 0 && interactive.files.length === 0 && interactive.links.length === 0 && interactive.quickActions.length === 0) {
             sendToClient(ws, { type: "silent" });
             return;
         }
 
-        logChatMessage(chat, "assistant", interactive.text);
+        logChatMessage(chat, "assistant", interactive.text, "overlay", imagePaths(result));
         sendToClient(ws, {
             type: "response",
             text: interactive.text,
             toolCalls: result.toolCalls,
-            quickActions: interactive.quickActions,
+            quickActions: [...imageQuickActions(images), ...interactive.quickActions],
             files: interactive.files,
             links: interactive.links,
             widgets: interactive.widgets,
+            images: images.length ? images : undefined,
             // The done-receipt rides with the reply so it shows under the text, never instead of it.
             receipt: result.receipt ? `data:${result.receipt.mimeType};base64,${result.receipt.imageBase64}` : undefined,
             turn: live.turn,
@@ -1739,18 +1770,20 @@ function humanizeForOverlay(msg: string): string {
  * False when Smart DND held it or no owner overlay is connected, so a proactive sender can retry.
  * `requested`: the owner asked for this (a reminder, a scheduled task), so DND doesn't hold it.
  */
+async function dndSuppresses(message: string): Promise<boolean> {
+    try {
+        const { shouldSuppressMessage } = await import("../proactive/dnd.js");
+        if (await shouldSuppressMessage(message)) {
+            console.log("🔕 Proactive overlay notification suppressed by DND");
+            return true;
+        }
+    } catch { /* DND check failed — deliver anyway */ }
+    return false;
+}
+
 export async function sendOverlayNotification(message: string, opts: { requested?: boolean } = {}): Promise<boolean> {
     // Gate proactive overlay notifications through Smart DND
-    if (!opts.requested) {
-        try {
-            const { shouldSuppressMessage } = await import("../proactive/dnd.js");
-            const suppress = await shouldSuppressMessage(message);
-            if (suppress) {
-                console.log("🔕 Proactive overlay notification suppressed by DND");
-                return false;
-            }
-        } catch { /* DND check failed — deliver anyway */ }
-    }
+    if (!opts.requested && (await dndSuppresses(message))) return false;
 
     const clients = ownerClients();
     // Something the owner asked for (a reminder, a scheduled task) shows even with no chat window open.
@@ -1770,13 +1803,90 @@ export async function sendOverlayNotification(message: string, opts: { requested
     return true;
 }
 
-// ── Send image to overlay ─────────────────────
+// ── Images in a reply ─────────────────────────
 
-export function sendOverlayImage(base64: string, mimeType: string, caption?: string): void {
-    const dataUrl = `data:${mimeType};base64,${base64}`;
-    for (const client of ownerClients()) {
-        sendToClient(client, { type: "image", url: dataUrl, caption: caption || "" });
+const imagePaths = (result: AgentResponse) => result.images?.map((i) => i.path);
+
+/** A ≤1600px data-URL thumbnail of an image file; a PNG with alpha stays PNG so transparency shows. */
+export async function imageThumb(file: string): Promise<string | undefined> {
+    try {
+        const sharp = (await import("sharp")).default;
+        const { hasAlpha } = await sharp(file).metadata();
+        const img = sharp(file).rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true });
+        const buf = hasAlpha ? await img.png().toBuffer() : await img.jpeg({ quality: 85 }).toBuffer();
+        return `data:image/${hasAlpha ? "png" : "jpeg"};base64,${buf.toString("base64")}`;
+    } catch {
+        return undefined; // gone or unreadable: the reply goes without it
     }
+}
+
+export type OverlayImage = {
+    url: string;
+    name: string;
+    path?: string;
+    before?: string;
+    kind: GeneratedImage["kind"];
+    prompt?: string;
+};
+
+/** The reply's images as the surfaces show them. The file path only goes to the owner's sockets. */
+export async function overlayImages(result: AgentResponse, owner: boolean): Promise<OverlayImage[]> {
+    const thumbs = new Map<string, Promise<string | undefined>>(); // variations share one "before"
+    const thumb = (f: string) => {
+        const t = thumbs.get(f) ?? imageThumb(f);
+        thumbs.set(f, t);
+        return t;
+    };
+    const out: OverlayImage[] = [];
+    for (const im of result.images ?? []) {
+        const url = await thumb(im.path);
+        if (!url) continue;
+        const before = im.sourcePath && im.kind !== "generated" ? await thumb(im.sourcePath) : undefined;
+        out.push({
+            url,
+            name: basename(im.path),
+            kind: im.kind,
+            ...(im.prompt ? { prompt: im.prompt.slice(0, 300) } : {}),
+            ...(owner ? { path: im.path } : {}),
+            ...(before ? { before } : {}),
+        });
+    }
+    return out;
+}
+
+const IMAGE_FOLLOWUPS = ["Make another version", "Make it higher quality", "Undo that edit"];
+
+/**
+ * Follow-ups under an image reply; sent back as plain chat text. Undo only when there is a
+ * version to go back to (`before`): a photo combine has none.
+ */
+export function imageQuickActions(images: Array<{ kind: string; before?: string }>): string[] {
+    if (!images.length) return [];
+    return IMAGE_FOLLOWUPS.slice(0, images.some((i) => i.kind !== "generated" && i.before) ? 3 : 2);
+}
+
+/** A path the owner's "Show in Finder" may open: an existing file under the images or workspace dir. */
+export function revealablePath(p: unknown): string | null {
+    if (typeof p !== "string" || !p) return null;
+    try {
+        const real = realpathSync(p);
+        const roots = [getImagesDir(), getWorkspaceDir()].map((root) => realpathSync(root) + pathSep);
+        return roots.some((root) => real.startsWith(root)) ? real : null;
+    } catch {
+        return null;
+    }
+}
+
+/** An image file sent to the overlay channel (send_file, a scheduled task): it shows as a reply. */
+export async function sendOverlayImage(filePath: string, caption: string): Promise<boolean> {
+    const clients = ownerClients();
+    if (clients.length === 0 || (await dndSuppresses(caption))) return false;
+    const url = await imageThumb(filePath);
+    if (!url) return false;
+    const images: OverlayImage[] = [{ url, name: basename(filePath), path: filePath, kind: "generated" }];
+    for (const client of clients) sendToClient(client, { type: "image", text: caption, images });
+    logChatMessage(chatOf(clients[0]), "assistant", caption, "overlay", [filePath]);
+    return true;
 }
 
 // ── Context-Aware Placeholder ─────────────────

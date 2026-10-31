@@ -7,9 +7,9 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename as pathBasename } from "node:path";
 import type { Boom } from "@hapi/boom";
-import type { BaileysEventMap, WAMessage, WASocket } from "@whiskeysockets/baileys";
+import type { AnyMessageContent, BaileysEventMap, WAMessage, WASocket } from "@whiskeysockets/baileys";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { type MediaAttachment, runAgent } from "./agent.js";
+import { type GeneratedImage, type MediaAttachment, runAgent } from "./agent.js";
 import { categorizeError, getErrorMessage, smartChunkMessage } from "./alive-ux.js";
 import { isStopCommand, STUCK_REPLY_LINE, takeReaction, withStuckReplyLine } from "./channel-text.js";
 import type { ChatActions } from "./whatsapp-media.js";
@@ -818,6 +818,37 @@ async function sendTypingThenMessage(jid: string, text: string | undefined, quot
 }
 
 // ── Voice Reply Helper ──────────────────────
+
+/**
+ * The turn's generated or edited images. No prompt caption, only "1/3" when there are several.
+ * A PNG goes as a document: as a photo WhatsApp re-compresses it and flattens its transparency.
+ * When a send fails in the owner's chat, one line says where the files were saved. Never throws.
+ */
+export async function sendImages(
+    jid: string,
+    images: GeneratedImage[] | undefined,
+    ownerChat: boolean,
+    send: (content: AnyMessageContent) => Promise<unknown> = async (c) => socket?.sendMessage(jid, c),
+): Promise<void> {
+    const n = images?.length ?? 0;
+    const failed: string[] = [];
+    for (const [i, img] of (images ?? []).entries()) {
+        const caption = n > 1 ? `${i + 1}/${n}` : undefined;
+        try {
+            const buf = await fs.readFile(img.path);
+            await send(
+                img.mimeType === "image/png"
+                    ? { document: buf, mimetype: "image/png", fileName: pathBasename(img.path), caption }
+                    : { image: buf, mimetype: img.mimeType, caption },
+            );
+        } catch (err) {
+            console.warn("[WA] Failed to send image:", (err as Error).message);
+            failed.push(img.path);
+        }
+    }
+    if (failed.length && ownerChat)
+        await send({ text: `Couldn't send the image here; it's saved at ${failed.join(", ")}` }).catch(() => {});
+}
 
 async function sendVoiceReply(jid: string, text: string, quotedMsg?: WAMessage): Promise<void> {
     try {
@@ -1640,6 +1671,7 @@ async function handleOwnerMessage(
 
         if (responseText.trim() === "[NO_REPLY]" || !responseText.trim()) {
             console.log("  [WA] No reply needed");
+            await sendImages(jid, result.images, true);
             return;
         }
 
@@ -1678,6 +1710,7 @@ async function handleOwnerMessage(
                 ?.sendMessage(jid, { image: Buffer.from(imageBase64, "base64"), mimetype: mimeType })
                 .catch((err: Error) => console.warn("[WA] Failed to send receipt:", err.message));
         }
+        await sendImages(jid, result.images, true);
 
         // Response sent — stop typing indicator
         await socket?.sendPresenceUpdate("paused", jid).catch(() => {});
@@ -1900,6 +1933,7 @@ ${persona.systemPrompt}`.trimEnd() +
             const contactWasReplying = message?.message?.extendedTextMessage?.contextInfo?.quotedMessage != null;
             await sendTypingThenMessage(jid, replyText, contactWasReplying && message ? message : undefined);
         }
+        await sendImages(jid, result.images, false);
 
         // Response sent — stop typing indicator
         await socket?.sendPresenceUpdate("paused", jid).catch(() => {});

@@ -47,7 +47,12 @@ import {
     stopNetworkMonitor,
 } from "./network-health.js";
 import { getSubscriptionCount, sendPushNotification } from "./notifications/push.js";
-import { closeOverlayChat, initOverlayChat, sendOverlayNotification } from "./overlay/overlay-chat.js";
+import {
+    closeOverlayChat,
+    initOverlayChat,
+    sendOverlayImage,
+    sendOverlayNotification,
+} from "./overlay/overlay-chat.js";
 import { startHeartbeat, stopHeartbeat } from "./proactive/heartbeat.js";
 import { initCredibilityModel } from "./research/credibility-model.js";
 import { initSandbox } from "./security/sandbox.js";
@@ -576,7 +581,12 @@ async function boot() {
     );
     registerChannelSender("slack", (message) => sendSlackProactiveMessage(message));
     registerChannelSender("matrix", (message) => sendMatrixProactiveMessage(message));
-    registerChannelSender("overlay", (message) => sendOverlayNotification(message));
+    registerChannelSender("overlay", async (message, filePath) => {
+        // An image file shows in the chat bar; anything else is only the message.
+        if (filePath && /\.(png|jpe?g|webp|gif)$/i.test(filePath) && (await sendOverlayImage(filePath, message)))
+            return true;
+        return sendOverlayNotification(message);
+    });
 
     // Wire deep research proactive notifier (background research sends progress here)
     setDeepResearchNotifier(async (msg: string) => {

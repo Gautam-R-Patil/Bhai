@@ -41,7 +41,7 @@ export const COMMON_TASK_CHAINS: Record<string, string[]> = {
     "fix_bug": ["shell", "file_system"],
 
     // Media flows
-    "create_content": ["browser", "media", "file_system"],
+    "create_content": ["image", "browser", "media", "file_system"],
     "music_session": ["media", "web_search"],
     "audio_analysis": ["media", "file_system"],
     "smart_home_audio": ["media", "web_search"],

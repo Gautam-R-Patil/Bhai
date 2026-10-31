@@ -3,6 +3,7 @@
 // See LICENSE.md for details.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { GeneratedImage } from "../agent.js";
 import { addJob, cancelJob, getJobs } from "../cron/store.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { toolError, toolSuccess } from "./tool-result.js";
@@ -32,6 +33,12 @@ export interface CronCallerContext {
     commitmentDone?: boolean;
     /** storedMemory is a supersede's new row: its undo is the only way back to the old one. */
     undoPinned?: boolean;
+    /** The images the user sent with this turn's message (generate_image source "attached"). */
+    turnImages?: Array<{ base64: string; mimeType: string }>;
+    /** The conversation's key in media/image-memory.ts (channel + user). */
+    conversationKey?: string;
+    /** What generate_image made this turn (sub-agents included), for AgentResponse.images. */
+    generatedImages?: GeneratedImage[];
 }
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
 // The tool the owner's main loop (agent.ts) is running; a sub-agent or swarm that tool
@@ -125,6 +132,27 @@ export function canPinMemory(id?: number): boolean {
     const ctx = _callerStorage.getStore();
     if (!ctx || !isOwnerCaller() || !isMainLoopCall("memory_store")) return false;
     return id === undefined || ctx.shownMemories?.has(id) === true;
+}
+
+/** The images the user sent with this turn's message. */
+export const turnImages = (): Array<{ base64: string; mimeType: string }> | undefined =>
+    _callerStorage.getStore()?.turnImages;
+
+/** This turn's conversation key (media/image-memory.ts), or undefined outside a turn. */
+export const turnConversationKey = (): string | undefined => _callerStorage.getStore()?.conversationKey;
+
+/** This turn's reply shows its images by itself (cron, Matrix, email and mail turns only send text). */
+export const turnShowsImages = (): boolean => {
+    const c = _callerStorage.getStore();
+    return !!c && !c.autonomous && /^(telegram|whatsapp|discord|slack|overlay):/.test(c.conversationKey ?? "");
+};
+
+/** generate_image made these this turn (deduped by path); the turn's reply carries them. */
+export function noteGeneratedImages(images: GeneratedImage[]): void {
+    const ctx = _callerStorage.getStore();
+    if (!ctx) return;
+    ctx.generatedImages ??= [];
+    for (const img of images) if (!ctx.generatedImages.some((g) => g.path === img.path)) ctx.generatedImages.push(img);
 }
 
 /** The current turn's caller: true owner, false guest/contact, undefined outside any turn (background work). */

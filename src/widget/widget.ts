@@ -308,6 +308,24 @@ export function getWidgetScript(wsUrl: string): string {
     return div;
   }
 
+  // Images Bhai made this turn (generate_image): data:image thumbnails only, never a URL to load.
+  function addImages(images) {
+    if (!images || !images.length) return;
+    var div = document.createElement("div");
+    div.className = "atlas-msg agent";
+    images.forEach(function(im) {
+      if (!im || typeof im.url !== "string" || im.url.indexOf("data:image/") !== 0) return;
+      var img = document.createElement("img");
+      img.src = im.url;
+      img.alt = typeof im.prompt === "string" && im.prompt ? im.prompt : "Image from Bhai";
+      img.style.cssText = "display:block;max-width:100%;border-radius:8px;margin:2px 0";
+      div.appendChild(img);
+    });
+    if (!div.firstChild) return;
+    msgContainer.appendChild(div);
+    msgContainer.scrollTop = msgContainer.scrollHeight;
+  }
+
   // -- Live turn (turn_* from the bot) --
   // Same contract as the overlay's turnView/turnRoute: a message whose seq isn't newer changes
   // nothing, another turn's events don't take over a running one, the final response replaces
@@ -518,12 +536,14 @@ export function getWidgetScript(wsUrl: string): string {
           } else {
             addMessage(msg.text, "agent");
           }
+          addImages(msg.images);
         } else if (msg.type === "response" && liveRunning() && (!msg.turn || msg.turn === live.state.turn)) {
           // an empty reply: nothing to show, but the turn is over
           statusEl.textContent = "Online";
           liveEnd(null);
           if (!live.state.answer && live.bubble.parentNode) live.bubble.parentNode.removeChild(live.bubble);
           currentAgentMsg = null;
+          addImages(msg.images);
         } else if (msg.type === "error" && msg.text) {
           statusEl.textContent = "Online";
           if (liveRunning()) {

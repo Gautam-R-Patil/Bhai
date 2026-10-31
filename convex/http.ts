@@ -19,6 +19,7 @@ import {
   transcribeWithProvider,
 } from "./stt";
 import { encodeBase64, speakWithProvider, TTS_CREDIT_COST, TTS_MAX_CHARS, ttsConfigFromEnv } from "./tts";
+import { callAzureImage, imageConfigFromEnv, imageCreditCost, imageErrorResponse, validateImageRequest } from "./image";
 import {
   generateServerKeyPair,
   deriveSharedKey,
@@ -992,6 +993,85 @@ http.route({
         .catch((e: unknown) => console.error("[STT] refund failed:", e));
       await log("failed", message);
       return reply({ error: "transcription failed" }, 502);
+    }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/image — image generation/editing on Azure (convex/image.ts). Body
+// (E2E): { prompt, images?, size?, quality?, n?, background? }; images = edit.
+// Credits are taken before the call and refunded on any failure; when not every
+// image fits in the response, only the delivered ones are charged. 200 =
+// { images, credits, dropped? }; 429 = { error: "image_busy", retryAfter }.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/image",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    const cfg = imageConfigFromEnv(process.env);
+    if (!cfg) return buildResponse({ error: "image_not_configured" }, 503, false, null);
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    const req = validateImageRequest(body);
+    if ("error" in req) return reply({ error: req.error }, req.status);
+
+    const cost = imageCreditCost(req.quality, req.n);
+    const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+      otplessUserId: account.otplessUserId,
+      amount: cost,
+    });
+    if (!deducted?.success) return reply({ error: "insufficient_credits" }, 402);
+
+    const startedAt = Date.now();
+    const log = (status: "success" | "failed", credits: number, errorMessage?: string) =>
+      ctx
+        .runMutation(internal.llmCallLog.record, {
+          accountId: account.accountId,
+          otplessUserId: account.otplessUserId,
+          model: `image:${cfg.deployment}`,
+          status,
+          credits,
+          latencyMs: Date.now() - startedAt,
+          errorMessage,
+          hasMedia: true,
+        })
+        .catch(() => {});
+    try {
+      const { images, dropped } = await callAzureImage(cfg, req);
+      const charged = imageCreditCost(req.quality, images.length);
+      // await: buildResponse is async, so a failed encrypt must land in the (full) refund path.
+      const res = await reply({ images, credits: charged, ...(dropped ? { dropped } : {}) }, 200);
+      if (charged < cost) {
+        await ctx
+          .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost - charged })
+          .catch((e: unknown) => console.error("[Image] partial refund failed:", e));
+      }
+      await log("success", charged);
+      return res;
+    } catch (err) {
+      await ctx
+        .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost })
+        .catch((e: unknown) => console.error("[Image] refund failed:", e));
+      const { status, body: errBody } = imageErrorResponse(err);
+      console.error(`[Image] ${errBody.error}:`, (err as Error)?.message);
+      await log("failed", 0, (err as Error)?.message);
+      return reply(errBody, status);
     }
   }),
 });
