@@ -97,6 +97,17 @@ describe("os_type with text and key together", () => {
         expect(r).toMatchObject({ success: true, pressed: "command+c" });
     });
 
+    // "fn+a" pressed a bare "a", typing it into the document, and reported success.
+    it("refuses a combo with a modifier it doesn't know", async () => {
+        events.length = 0;
+        const r = JSON.parse(await osType.handler({ combo: "fn+a", delay_ms: 1 }));
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/Unknown modifier "fn"/);
+        expect(events).toEqual([]);
+        expect(JSON.parse(await osType.handler({ combo: "⌘+v", delay_ms: 1 })).success).toBe(true);
+        expect(events).toEqual(["osascript:key"]);
+    });
+
     it("won't type a document's text into an Open file panel", async () => {
         events.length = 0;
         front.window = "Open";

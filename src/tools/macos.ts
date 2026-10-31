@@ -666,28 +666,12 @@ export const osType: ToolDefinition = {
         }
 
         if (input.combo) {
-            // Parse combo like "command+shift+s"
-            const parts = (input.combo as string)
-                .toLowerCase()
-                .split("+")
-                .map((s) => s.trim());
-            const key = parts.pop() || "";
-            const modifiers: string[] = [];
-            for (const mod of parts) {
-                if (mod === "command" || mod === "cmd") modifiers.push("command down");
-                else if (mod === "shift") modifiers.push("shift down");
-                else if (mod === "option" || mod === "alt") modifiers.push("option down");
-                else if (mod === "control" || mod === "ctrl") modifiers.push("control down");
-            }
-            const modStr = modifiers.length > 0 ? ` using {${modifiers.join(", ")}}` : "";
-
-            const code = keyCode(key);
-            if (code !== undefined) {
-                script = `tell application "System Events"\n  key code ${code}${modStr}\nend tell\ndelay ${delaySec}`;
-            } else if (key.length === 1) {
-                script = `tell application "System Events"\n  keystroke "${key.replace(/[\\"]/g, "\\$&")}"${modStr}\nend tell\ndelay ${delaySec}`;
-            } else {
-                return JSON.stringify({ success: false, error: unknownKey(key) });
+            // The shared parser refuses a modifier it doesn't know ("fn", "opt") instead of
+            // dropping it and typing the bare letter.
+            try {
+                script = `${macKeyScript(input.combo as string)}\ndelay ${delaySec}`;
+            } catch (err) {
+                return JSON.stringify({ success: false, error: (err as Error).message });
             }
         } else if (input.key) {
             const key = (input.key as string).toLowerCase().trim();
