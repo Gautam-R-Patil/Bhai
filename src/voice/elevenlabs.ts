@@ -12,12 +12,12 @@ const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 export async function elevenLabsTTS(
     text: string,
     voiceId?: string,
-    modelId = "eleven_multilingual_v2"
+    modelId = "eleven_multilingual_v2",
 ): Promise<Buffer> {
     const apiKey = process.env.ELEVENLABS_API_KEY;
     if (!apiKey) throw new Error("ELEVENLABS_API_KEY not configured");
 
-    const voice = voiceId || process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Rachel default
+    const voice = voiceId || process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // Adam: male, Bhai is a "he"
 
     const response = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voice}?output_format=mp3_44100_128`, {
         method: "POST",

@@ -71,7 +71,7 @@ export function stripTtsMarkup(text: string): string {
 /** Speech for `text`, markup stripped. `mimetype` is what the bytes really are. */
 export async function textToSpeech(
     text: string,
-    voice: OpenAIVoice = "nova",
+    voice: OpenAIVoice = "onyx", // male: Bhai is a "he"
     speed = 1.0,
 ): Promise<{ audio: Buffer; mimetype: string }> {
     text = stripTtsMarkup(text);
@@ -135,7 +135,10 @@ async function macSay(text: string): Promise<Buffer> {
     try {
         const aiff = path.join(dir, "say.aiff");
         const ogg = path.join(dir, "say.ogg");
-        await run("/usr/bin/say", ["-o", aiff, "--", text], { timeout: 60_000 });
+        // Rishi: the Mac's Indian-English male voice; the system voice if it isn't installed.
+        await run("/usr/bin/say", ["-v", "Rishi", "-o", aiff, "--", text], { timeout: 60_000 }).catch(() =>
+            run("/usr/bin/say", ["-o", aiff, "--", text], { timeout: 60_000 }),
+        );
         const { ffmpegPath } = await import("../video-studio/util/ffmpeg-bin.js");
         await run(ffmpegPath(), ["-y", "-i", aiff, "-ac", "1", "-c:a", "libopus", "-b:a", "32k", ogg], { timeout: 60_000 });
         return await fsp.readFile(ogg);

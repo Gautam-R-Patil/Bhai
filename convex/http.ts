@@ -957,12 +957,12 @@ http.route({
     if (!deducted?.success) return reply({ error: "Insufficient credits" }, 402);
 
     const startedAt = Date.now();
-    const log = (status: "success" | "failed", errorMessage?: string) =>
+    const log = (status: "success" | "failed", errorMessage?: string, model = `stt:${cfg.model}`) =>
       ctx
         .runMutation(internal.llmCallLog.record, {
           accountId: account.accountId,
           otplessUserId: account.otplessUserId,
-          model: `stt:${cfg.model}`,
+          model,
           status,
           credits: status === "success" ? STT_CREDIT_COST : 0,
           latencyMs: Date.now() - startedAt,
@@ -975,7 +975,7 @@ http.route({
     if (body.analyze === true && cfg.audioModel && format) {
       try {
         const heard = await analyzeWithProvider(cfg, audio, format);
-        await log("success");
+        await log("success", undefined, `audio:${cfg.audioModel}`);
         return reply(heard, 200);
       } catch (err) {
         console.warn("[STT] audio model failed, transcribing instead:", (err as Error).message);

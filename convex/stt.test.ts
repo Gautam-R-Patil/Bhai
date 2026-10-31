@@ -47,13 +47,18 @@ describe("server text-to-speech", () => {
                 TTS_BASE_URL: "https://r.openai.azure.com/openai/v1/",
                 TTS_MODEL: "my-tts",
             }),
-        ).toEqual({ apiKey: "k", baseUrl: "https://r.openai.azure.com/openai/v1", model: "my-tts", voice: "nova" });
+        ).toMatchObject({
+            apiKey: "k",
+            baseUrl: "https://r.openai.azure.com/openai/v1",
+            model: "my-tts",
+            voice: "cedar",
+        });
     });
 
     it("asks /audio/speech for Opus and returns the bytes, base64 round-trips", async () => {
         const { encodeBase64, speakWithProvider } = await import("./tts");
         const fetchFn = vi.fn(async () => new Response(new Uint8Array([79, 103, 103, 83]), { status: 200 }));
-        const cfg = { apiKey: "k", baseUrl: "https://tts.example/v1", model: "m", voice: "nova" };
+        const cfg = { apiKey: "k", baseUrl: "https://tts.example/v1", model: "m", voice: "nova", instructions: "warm" };
         const audio = await speakWithProvider(cfg, "hello", "alloy", fetchFn);
         const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
         expect(url).toBe("https://tts.example/v1/audio/speech");
@@ -71,7 +76,7 @@ describe("server text-to-speech", () => {
     it("throws with the provider's status on failure", async () => {
         const { speakWithProvider } = await import("./tts");
         const fetchFn = vi.fn(async () => new Response("no deployment", { status: 404 }));
-        const cfg = { apiKey: "k", baseUrl: "https://tts.example/v1", model: "m", voice: "nova" };
+        const cfg = { apiKey: "k", baseUrl: "https://tts.example/v1", model: "m", voice: "nova", instructions: "warm" };
         await expect(speakWithProvider(cfg, "hi", undefined, fetchFn)).rejects.toThrow(
             "TTS provider 404: no deployment",
         );
@@ -129,5 +134,25 @@ describe("transcription URL", () => {
         expect(transcriptionUrl({ apiKey: "k", baseUrl: "https://api.groq.com/openai/v1", model: "w" })).toBe(
             "https://api.groq.com/openai/v1/audio/transcriptions",
         );
+    });
+});
+
+describe("Bhai's voice", () => {
+    it("is male by default, and only gpt-* speech models get the delivery instructions", async () => {
+        const { DEFAULT_TTS_INSTRUCTIONS, speakWithProvider, ttsConfigFromEnv } = await import("./tts");
+        const cfg = ttsConfigFromEnv({ TTS_API_KEY: "k", TTS_MODEL: "gpt-4o-mini-tts" })!;
+        expect(cfg.voice).toBe("cedar");
+        expect(cfg.instructions).toBe(DEFAULT_TTS_INSTRUCTIONS);
+        const ok = () => vi.fn(async () => new Response(new Uint8Array([1]), { status: 200 }));
+        const gpt = ok();
+        await speakWithProvider(cfg, "hi", undefined, gpt);
+        expect(JSON.parse((gpt.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).instructions).toBe(
+            DEFAULT_TTS_INSTRUCTIONS,
+        );
+        const legacy = ok();
+        await speakWithProvider({ ...cfg, model: "tts-1" }, "hi", undefined, legacy);
+        expect(
+            JSON.parse((legacy.mock.calls[0] as unknown as [string, RequestInit])[1].body as string),
+        ).not.toHaveProperty("instructions");
     });
 });

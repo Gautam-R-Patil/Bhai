@@ -492,7 +492,7 @@ const TEAM_CHAT = "team chat: short; markdown lists and code blocks are fine";
 const CHANNEL_REGISTER: Record<string, string> = {
     telegram: PHONE_CHAT,
     // Reply markers WhatsApp acts on, then strips (whatsapp.ts actOnReply, whatsapp-media.ts takeChatActions).
-    whatsapp: `${PHONE_CHAT}; markers act in this chat and never show: [[react:👍]] reacts to their message like tap-and-hold (reply with only it when a reaction says it all); [[voice]] sends your reply as a voice note (when asked, or when a voice note fits better, e.g. a warm wish or a story); [[poll:Question|A|B]] starts a poll; [[location:lat,lng|Name]] sends a pin; [[event:Name|YYYY-MM-DD HH:MM|Place]] creates an event`,
+    whatsapp: `${PHONE_CHAT}; markers act in this chat and never show: [[react:👍]] reacts to their message like tap-and-hold (reply with only it when a reaction says it all); [[voice]] sends your reply as a voice note, only when they ask for one or the reply truly needs to be heard (their sending a voice note is not a reason); [[poll:Question|A|B]] starts a poll; [[location:lat,lng|Name]] sends a pin; [[event:Name|YYYY-MM-DD HH:MM|Place]] creates an event`,
     discord: TEAM_CHAT,
     slack: TEAM_CHAT,
     matrix: TEAM_CHAT,

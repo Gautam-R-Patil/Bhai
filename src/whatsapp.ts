@@ -1653,10 +1653,10 @@ async function handleOwnerMessage(
         const hasMultipleTasks = (activeTasks.get(jid)?.length || 0) > 1;
         const shouldQuote = message && (userWasReplying || hasMultipleTasks);
 
-        // Voice note: when they sent one and the answer is short, or when Bhai chose [[voice]].
-        const wasVoiceNote = message?.message?.audioMessage?.ptt === true;
+        // A voice note only when Bhai chose [[voice]] (asked for, or truly needed): their sending
+        // one is not a reason to answer with one.
         const spoken = acted.text;
-        if (spoken && ((wasVoiceNote && spoken.length < 300) || (acted.voice && spoken.length <= VOICE_MAX_CHARS))) {
+        if (spoken && acted.voice && spoken.length <= VOICE_MAX_CHARS) {
             await sendVoiceReply(jid, spoken);
             // The handoff line is for reading, not hearing: send it as text.
             if (result.stuck) await sendMessage(jid, STUCK_REPLY_LINE);
@@ -1890,10 +1890,9 @@ ${persona.systemPrompt}`.trimEnd() +
             pushName: pushName || undefined,
         });
 
-        // Voice note response: if incoming was a voice note and response is short, reply with audio
-        const wasVoiceNote = message?.message?.audioMessage?.ptt === true;
+        // A voice note only when Bhai chose [[voice]] (asked for, or truly needed).
         // ([NO_REPLY] falls through to sendTypingThenMessage, which stays silent.)
-        const speak = (wasVoiceNote && replyText.length < 300) || (acted.voice && replyText.length <= VOICE_MAX_CHARS);
+        const speak = acted.voice && replyText.length <= VOICE_MAX_CHARS;
         if (speak && replyText && replyText !== "[NO_REPLY]") {
             await sendVoiceReply(jid, replyText);
         } else {
