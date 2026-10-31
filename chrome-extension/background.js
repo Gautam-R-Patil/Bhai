@@ -149,6 +149,31 @@ async function agentTab() {
   pinAgentTab(tab?.id);
   return tab;
 }
+// A new_tab for a new task reuses the last tab Bhai opened itself instead of adding
+// another: every new_tab used to stay open for good. Only when it's still on the site
+// Bhai left it on (the owner may have taken it over), and never within one task (two
+// tabs side by side are what a second new_tab in a task asks for).
+const bhaiTabs = new Map(); // tab id → origin Bhai last sent it to
+const originOf = (u) => { try { return new URL(u).origin; } catch { return ""; } };
+async function openPageInNewTab(url) {
+  const sameTask = agentTabId !== null && Date.now() - agentTabAt < AGENT_TAB_IDLE_MS;
+  if (!sameTask) {
+    for (const [id, origin] of [...bhaiTabs].reverse()) {
+      const t = await chrome.tabs.get(id).catch(() => null);
+      if (!t?.id) { bhaiTabs.delete(id); continue; }
+      if (originOf(t.url) !== origin) continue; // the owner took it elsewhere: theirs now
+      await chrome.tabs.update(t.id, { url, active: true });
+      bhaiTabs.delete(id);
+      bhaiTabs.set(id, originOf(url));
+      pinAgentTab(t.id);
+      return t;
+    }
+  }
+  const created = await chrome.tabs.create({ url, active: true });
+  if (created?.id) bhaiTabs.set(created.id, originOf(url));
+  pinAgentTab(created?.id);
+  return created;
+}
 // (agent-tab:end)
 
 async function withActiveTab(fn) {
@@ -1939,12 +1964,12 @@ async function navigate(payload) {
     throw new Error(`unsafe URL scheme — only http(s) is allowed`);
   }
   if (payload.newTab) {
-    const created = await chrome.tabs.create({ url: payload.url, active: true });
-    pinAgentTab(created?.id);
+    await openPageInNewTab(payload.url);
   } else {
     const tab = await agentTab();
     if (!tab || !tab.id) throw new Error("No active tab");
     await chrome.tabs.update(tab.id, { url: payload.url });
+    if (bhaiTabs.has(tab.id)) bhaiTabs.set(tab.id, originOf(payload.url));
   }
   return { success: true };
 }
