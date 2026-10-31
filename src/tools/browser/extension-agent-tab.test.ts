@@ -53,6 +53,29 @@ describe("extension: Bhai's tab", () => {
         pinAgentTab(99); // Bhai's tab was closed
         expect((await agentTab())?.id).toBe(2);
     });
+
+    it("follows a page Bhai's click opened in front, not a background tab", async () => {
+        const tabs = [{ id: 1, active: true, focused: true }];
+        const clock = { now: 0 };
+        const chrome = {
+            tabs: {
+                get: async (id: number) => tabs.find((x) => x.id === id),
+                query: async () => tabs.filter((t) => t.active && t.focused),
+            },
+        };
+        const { agentTab, followOpenedTab } = new Function("chrome", "Date", `${block}; return { agentTab, followOpenedTab };`)(
+            chrome,
+            { now: () => clock.now },
+        );
+        expect((await agentTab())?.id).toBe(1);
+        tabs.push({ id: 3, active: false, focused: true });
+        followOpenedTab({ id: 3, active: false, openerTabId: 1 }); // ctrl-click: stays behind
+        expect((await agentTab())?.id).toBe(1);
+        tabs[0].active = false;
+        tabs.push({ id: 4, active: true, focused: true });
+        followOpenedTab({ id: 4, active: true, openerTabId: 1 }); // target=_blank
+        expect((await agentTab())?.id).toBe(4);
+    });
 });
 
 describe("extension: Bhai's own new tabs", () => {

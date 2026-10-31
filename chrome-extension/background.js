@@ -177,6 +177,12 @@ async function openPageInNewTab(url) {
   pinAgentTab(created?.id);
   return created;
 }
+// A click in Bhai's tab that opens a page in front (target=_blank, an OAuth popup) moves Bhai
+// there: otherwise it kept reading the old tab, saw nothing happen and clicked again.
+// Background tabs (ctrl/cmd-click) stay where they are.
+function followOpenedTab(t) {
+  if (t?.active && agentTabId !== null && t.openerTabId === agentTabId && Date.now() - agentTabAt < 10000) pinAgentTab(t.id);
+}
 // (agent-tab:end)
 
 async function withActiveTab(fn) {
@@ -2281,6 +2287,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     },
   }));
 });
+
+chrome.tabs.onCreated.addListener(followOpenedTab);
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
