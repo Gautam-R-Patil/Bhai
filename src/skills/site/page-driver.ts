@@ -161,9 +161,11 @@ export async function pickTarget(page: any, a: SiteAction, visible: (loc: any) =
     if (!labels?.length) throw new Error(`not_found: ${JSON.stringify(a.target)}`);
     const choices = labels.map((label, i) => ({ label, i }));
     const { best, ambiguous } = lib.rank(choices, a.value);
-    if (!best) throw new Error(`refused: ${JSON.stringify((ambiguous.length ? ambiguous : choices).map((c) => c.label))}`);
+    if (!best)
+        throw new Error(`refused: ${JSON.stringify((ambiguous.length ? ambiguous : choices).map((c) => c.label))}`);
     const token = randomBytes(6).toString("hex");
-    if (!(await page.evaluate(PICK_JS(sel, { ...best, token })))) throw new Error("pick: the list changed while choosing");
+    if (!(await page.evaluate(PICK_JS(sel, { ...best, token }))))
+        throw new Error("pick: the list changed while choosing");
     return locateTarget(page, { sel: `[data-bhai-pick="${token}"]` }, visible);
 }
 
@@ -244,8 +246,10 @@ const expectCapMs = () => Number(process.env.BHAI_SITE_EXPECT_CAP_MS ?? 30_000);
 // ── The submit's verdict ──────────────────────
 const UNCLEAR: CommitVerdict = { verdict: "unclear" };
 const FAILED = /^(error|errored|fail|failed|failure|declined|rejected|denied|invalid|cancell?ed|unavailable)$/i;
-const SUCCEEDED = /^(ok|success|succeeded|successful|confirmed|placed|created|accepted|paid|booked|complete|completed)$/i;
-const ORDER_ID = /^(order_?id|order_?no|order_?number|booking_?id|booking_?ref(erence)?|pnr|confirmation_?(id|no|number|code))$/i;
+const SUCCEEDED =
+    /^(ok|success|succeeded|successful|confirmed|placed|created|accepted|paid|booked|complete|completed)$/i;
+const ORDER_ID =
+    /^(order_?id|order_?no|order_?number|booking_?id|booking_?ref(erence)?|pnr|confirmation_?(id|no|number|code))$/i;
 // A key that holds an order (order, orderDetails, booking, reservation, …).
 const ORDERISH = /order|booking|reservation|pnr|confirmation/i;
 // "already placed" is not a refusal: an order exists.
@@ -262,7 +266,13 @@ const filled = (v: unknown): boolean =>
     !(typeof v === "object" && !Array.isArray(v) && !Object.values(v as object).some(filled));
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const message = (v: unknown): string =>
-    typeof v === "string" ? v : Array.isArray(v) ? message(v[0]) : v && typeof v === "object" ? message((v as Record<string, unknown>).message ?? (v as Record<string, unknown>).error) : "";
+    typeof v === "string"
+        ? v
+        : Array.isArray(v)
+          ? message(v[0])
+          : v && typeof v === "object"
+            ? message((v as Record<string, unknown>).message ?? (v as Record<string, unknown>).error)
+            : "";
 
 /**
  * What the site answered to the submit's write request (POST/PUT/… of the
@@ -294,11 +304,20 @@ export function judgeCommit(status: number, contentType: string, body: string): 
     let order = false; // any sign an order exists, even beside an error
     for (const l of levels) {
         const state = [l.status, l.state, l.result].find((v) => typeof v === "string") as string | undefined;
-        failed ||= l.ok === false || l.success === false || FAILED.test(state ?? "") || filled(l.error) || filled(l.errors);
-        worked ||= l.ok === true || l.success === true || SUCCEEDED.test(state ?? "") || Object.keys(l).some((k) => ORDER_ID.test(k) && filled(l[k]));
+        failed ||=
+            l.ok === false || l.success === false || FAILED.test(state ?? "") || filled(l.error) || filled(l.errors);
+        worked ||=
+            l.ok === true ||
+            l.success === true ||
+            SUCCEEDED.test(state ?? "") ||
+            Object.keys(l).some((k) => ORDER_ID.test(k) && filled(l[k]));
         order ||= Object.entries(l).some(([k, v]) => ORDERISH.test(k) && filled(v));
     }
-    const detail = message(o.message ?? o.error ?? o.errors ?? levels.map((l) => l.message ?? l.error).find(Boolean)).slice(0, 100) || undefined;
+    const detail =
+        message(o.message ?? o.error ?? o.errors ?? levels.map((l) => l.message ?? l.error).find(Boolean)).slice(
+            0,
+            100,
+        ) || undefined;
     if (failed && !worked && !order && !EXISTS.test(JSON.stringify(o))) return { verdict: "not_done", detail };
     if (worked && !failed && status < 300) return { verdict: "done" };
     return UNCLEAR;
@@ -330,7 +349,9 @@ const describeControls = /* javascript-obfuscator:disable */ (el: Element | null
     return list.map((c) => {
         const h = c.getAttribute("href");
         return {
-            labels: [(c as HTMLElement).innerText, (c as HTMLInputElement).value, c.getAttribute("aria-label")].filter((x): x is string => !!x),
+            labels: [(c as HTMLElement).innerText, (c as HTMLInputElement).value, c.getAttribute("aria-label")].filter(
+                (x): x is string => !!x,
+            ),
             submitLike: c.tagName !== "A" || !h || h === "#" || /^javascript:/i.test(h),
         };
     });
@@ -379,11 +400,32 @@ export async function locateTarget(page: any, target: SiteAction["target"], visi
 
 /**
  * `reopen` (optional) gives a fresh page when the user closed the tab: the
- * driver opens the last URL there and carries on.
+ * driver opens the last URL there and carries on. `signal` (the owner's Stop)
+ * ends the driver's own waits, and no click, key or typing outside the
+ * consented submit is dispatched after it.
  */
 // biome-ignore lint/suspicious/noExplicitAny: Playwright Page or ChromePageProxy
-export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<any>): PageDriver {
+export function pageDriver(
+    initial: any,
+    timeout = 5000,
+    reopen?: () => Promise<any>,
+    signal?: AbortSignal,
+): PageDriver {
     let page = initial;
+    // A wait Stop cuts short (throws "stopped").
+    const nap = (ms: number) =>
+        new Promise<void>((res, rej) => {
+            if (signal?.aborted) return rej(new Error("stopped"));
+            const stop = () => {
+                clearTimeout(t);
+                rej(new Error("stopped"));
+            };
+            const t = setTimeout(() => {
+                signal?.removeEventListener("abort", stop);
+                res();
+            }, ms);
+            signal?.addEventListener("abort", stop, { once: true });
+        });
     let lastUrl = "";
     let lastWasSubmit = false;
     // One dialog handler per page, for its whole life (shared by every driver
@@ -401,7 +443,10 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
         });
     };
     watchDialogs(page);
-    const closed = (e: unknown) => /Target (page, context or browser )?(has been )?closed|Target closed|page has been closed/i.test(String((e as Error)?.message ?? e));
+    const closed = (e: unknown) =>
+        /Target (page, context or browser )?(has been )?closed|Target closed|page has been closed/i.test(
+            String((e as Error)?.message ?? e),
+        );
     const revive = async () => {
         if (!reopen) return false;
         page = await reopen();
@@ -439,7 +484,8 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
     // its selector or its label only (and checkout itself is refused upstream).
     // biome-ignore lint/suspicious/noExplicitAny: ChromeLocatorProxy
     const guardByLabel = async (loc: any, a: SiteAction, commits: SiteAction[]) => {
-        if (a.target?.sel && commits.some((c) => c.target?.sel === a.target?.sel)) throw refuse(JSON.stringify(a.target));
+        if (a.target?.sel && commits.some((c) => c.target?.sel === a.target?.sel))
+            throw refuse(JSON.stringify(a.target));
         const text: string = await loc.innerText?.().catch(() => "");
         const why = judge([{ labels: [text ?? "", a.target?.text ?? ""], submitLike: true }], commits);
         if (why) throw refuse(why);
@@ -455,7 +501,8 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
         const h = await page.evaluateHandle("document.activeElement");
         try {
             const none = await h.evaluate(
-                /* javascript-obfuscator:disable */ (e: Element | null) => !e || e === document.body || e === document.documentElement,
+                /* javascript-obfuscator:disable */ (e: Element | null) =>
+                    !e || e === document.body || e === document.documentElement,
                 /* javascript-obfuscator:enable */ undefined,
             );
             if (!none) await guardCommit(h, commits, form);
@@ -481,7 +528,7 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
             // and reload — except right after a submit, where a reload could post
             // the order again; the runtime reports that one as a network error.
             for (let i = 0; i < 5 && !lastWasSubmit && snap.url.startsWith("chrome-error://"); i++) {
-                await new Promise((r) => setTimeout(r, 1000 * 2 ** i));
+                await nap(1000 * 2 ** i);
                 await page.reload?.({ waitUntil: "domcontentloaded" }).catch(() => {});
                 snap = await read();
             }
@@ -489,7 +536,10 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
             return snap;
         },
         html: () => page.evaluate(CAPTURE_JS) as Promise<string>,
-        async act(a: SiteAction, opts?: { submit?: boolean; commits?: SiteAction[]; domains?: string[] }): Promise<ActResult> {
+        async act(
+            a: SiteAction,
+            opts?: { submit?: boolean; commits?: SiteAction[]; domains?: string[] },
+        ): Promise<ActResult> {
             if (page.isClosed?.()) await revive();
             lastWasSubmit = !!opts?.submit;
             const p = page;
@@ -552,7 +602,7 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
                 if (now - quiet >= expectIdleMs() || now - start >= expectCapMs()) {
                     throw new Error(`no_outcome: none of ${Object.keys(spec).join(", ")} after ${now - start}ms`);
                 }
-                await sleep(100); // poll
+                await nap(100); // poll
             }
         } finally {
             if (net) {
@@ -578,7 +628,11 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
         let last = Date.now();
         // biome-ignore lint/suspicious/noExplicitAny: Playwright Request / Response
         const onRequest = (req: any) => {
-            if (/^(GET|HEAD|OPTIONS)$/i.test(req.method()) || !["document", "fetch", "xhr"].includes(req.resourceType())) return;
+            if (
+                /^(GET|HEAD|OPTIONS)$/i.test(req.method()) ||
+                !["document", "fetch", "xhr"].includes(req.resourceType())
+            )
+                return;
             if (!onSite(req.url(), domains)) return; // analytics, a payment SDK: not the site's answer
             last = Date.now();
             const a: { v?: CommitVerdict } = {};
@@ -607,7 +661,7 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
                     const now = Date.now();
                     if (got.length === answers.length && now - Math.max(last, from) >= WRITE_QUIET_MS) break;
                     if (now - from >= 10_000) break;
-                    await sleep(50); // poll
+                    await nap(50); // poll
                 }
                 stop();
                 if (!answers.length || answers.some((a) => !a.v)) return UNCLEAR;
@@ -615,8 +669,14 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
             },
         };
     }
-    /** `commits` null = this is the consented submit, so no guard. */
+    /** `commits` null = this is the consented submit, so no guard (and Stop doesn't hold it back). */
     async function doAct(a: SiteAction, commits: SiteAction[] | null): Promise<void> {
+        // Up front (not even a trial click) and right before each dispatch, after
+        // every wait: Stop keeps it from going out.
+        const go = () => {
+            if (commits && signal?.aborted) throw new Error("stopped");
+        };
+        go();
         {
             if (a.op === "click" || a.op === "pick") {
                 const loc = a.op === "pick" ? await pickTarget(page, a, shown, timeout) : await locate(a);
@@ -624,6 +684,7 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
                 if (!commits) await loc.click({ timeout });
                 else if (typeof loc.elementHandle !== "function") {
                     await guardByLabel(loc, a, commits);
+                    go();
                     await loc.click({ timeout });
                 } else {
                     // Wait until it's clickable first (a disabled "Continue" may become
@@ -634,32 +695,40 @@ export function pageDriver(initial: any, timeout = 5000, reopen?: () => Promise<
                     const h = await loc.elementHandle({ timeout });
                     try {
                         await guardCommit(h, commits);
+                        go();
                         await h.click({ timeout });
                     } finally {
                         await h.dispose().catch(() => {});
                     }
                 }
-            }
-            else if (a.op === "type") {
+            } else if (a.op === "type") {
                 const loc = await locate(a);
                 await agentCursor(page, loc, "type");
+                go();
                 await loc.fill(a.value ?? "", { timeout });
-            }
-            else if (a.op === "typeCode") {
+            } else if (a.op === "typeCode") {
+                go();
                 const r = await page.evaluate(TYPE_CODE_JS(a.target?.sel ?? "", a.value ?? ""));
-                if (r === "single") await (await locate(a)).fill(a.value ?? "", { timeout });
-                else if (r !== "ok") throw new Error(`typeCode: ${r}`);
-            }
-            else if (a.op === "press") {
+                if (r === "single") {
+                    const loc = await locate(a);
+                    go();
+                    await loc.fill(a.value ?? "", { timeout });
+                } else if (r !== "ok") throw new Error(`typeCode: ${r}`);
+            } else if (a.op === "press") {
                 const key = a.value ?? "Enter";
-                if (commits && PRESSES.test(key.split("+").pop() ?? "")) await guardKey(key.split("+").pop() as string, commits);
+                if (commits && PRESSES.test(key.split("+").pop() ?? ""))
+                    await guardKey(key.split("+").pop() as string, commits);
+                go();
                 await page.keyboard.press(key);
-            }
-            else if (a.op === "waitFor") {
-                const loc = a.target?.sel ? page.locator(a.target.sel) : page.getByText(a.target?.text ?? "", { exact: false });
+            } else if (a.op === "waitFor") {
+                const loc = a.target?.sel
+                    ? page.locator(a.target.sel)
+                    : page.getByText(a.target?.text ?? "", { exact: false });
                 await shown(loc).first().waitFor({ timeout });
+            } else if (a.op === "navigate") {
+                go();
+                await page.goto(a.value, { waitUntil: "domcontentloaded" });
             }
-            else if (a.op === "navigate") await page.goto(a.value, { waitUntil: "domcontentloaded" });
             await page.waitForLoadState?.("domcontentloaded").catch(() => {});
         }
     }
