@@ -165,6 +165,8 @@ export const grep: ToolDefinition = {
             if (Number.isFinite(ctxB) && ctxB > 0) args.push("-B", String(ctxB));
         }
 
+        // The path ends at a NUL: a ':' can't mark it (C:\ on Windows, a folder named "a:b").
+        if (mode !== "files_with_matches") args.push("--null");
         args.push(pattern, searchPath);
 
         const run = await runCommand("rg", args);
@@ -178,9 +180,11 @@ export const grep: ToolDefinition = {
 
         // Every hit's file is checked too (symlinks, names the globs don't cover): a path
         // read would refuse never comes back from grep either.
-        const fileOf = (l: string) => (mode === "files_with_matches" ? l : l.slice(0, l.indexOf(":") > 0 ? l.indexOf(":") : l.length));
         const lines = stdout
-            ? stdout.split("\n").filter((l) => l.length > 0 && !isSensitivePath(fileOf(l)).denied)
+            ? stdout
+                  .split("\n")
+                  .filter((l) => l.length > 0 && !isSensitivePath(l.split("\0")[0]).denied)
+                  .map((l) => l.replace("\0", ":"))
             : [];
         const sliced = lines.slice(offset, offset + headLimit);
         const truncated = lines.length > offset + headLimit;

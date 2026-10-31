@@ -46,4 +46,27 @@ describe("files that never leave", () => {
         const saved = await grep.handler({ pattern: "zzz-findme", path: path.join(dataDir, "tool-outputs"), output_mode: "files_with_matches" });
         expect(saved).toContain("notes.txt");
     });
+
+    // The hit's file was the text before the first ':', so "C:\..." on Windows (or a folder
+    // named "x:y") was checked as "C" and every line passed.
+    it("grep drops hits from a sensitive folder whose path holds a colon", async () => {
+        const root = fs.mkdtempSync(path.join(home, "grep-colon-"));
+        const state = path.join(root, "x:y");
+        fs.mkdirSync(state);
+        fs.writeFileSync(path.join(state, "session.json"), "zzz-colon owner token");
+        fs.writeFileSync(path.join(root, "ok.txt"), "zzz-colon fine");
+        process.env.BHAI_USER_DATA_DIR = state;
+        try {
+            for (const output_mode of ["content", "count"]) {
+                const out = await grep.handler({ pattern: "zzz-colon", path: root, output_mode });
+                expect(out).not.toContain("session.json");
+                expect(out).toContain("ok.txt");
+            }
+            expect(JSON.parse(await grep.handler({ pattern: "zzz-colon", path: root, output_mode: "content" })).content).toBe(
+                `${path.join(root, "ok.txt")}:1:zzz-colon fine`,
+            );
+        } finally {
+            delete process.env.BHAI_USER_DATA_DIR;
+        }
+    });
 });
