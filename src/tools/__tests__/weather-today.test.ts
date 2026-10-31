@@ -19,6 +19,21 @@ it("current weather includes today's high, low and rain chance", async () => {
     expect(r.today).toMatchObject({ max_temp: "30°C", min_temp: "19°C", precipitation_chance: "15%" });
 });
 
+it("the Open-Meteo fallback answers for the city asked about, not the owner's location", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        urls.push(url);
+        if (url.includes("wttr.in")) return new Response("busy", { status: 503 });
+        if (url.includes("geocoding-api")) {
+            return new Response(JSON.stringify({ results: [{ latitude: 51.5, longitude: -0.12, name: "London", country: "United Kingdom" }] }));
+        }
+        return new Response(JSON.stringify({ current_weather: { temperature: 11, windspeed: 9, winddirection: 200, weathercode: 3 } }));
+    }));
+    const r = JSON.parse(String(await weatherTool.handler({ action: "current", location: "London" })));
+    expect(urls.at(-1)).toContain("latitude=51.5&longitude=-0.12");
+    expect(r).toMatchObject({ success: true, location: "London, United Kingdom", temperature_c: 11 });
+});
+
 it("forecast days say today, tomorrow or the weekday", () => {
     expect(dayLabel("2026-10-31", "2026-10-31")).toBe("today");
     expect(dayLabel("2026-11-01", "2026-10-31")).toBe("tomorrow");
