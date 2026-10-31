@@ -92,7 +92,13 @@ export function getIdentityProfile(userId = DEFAULT_USER_ID): UserProfile {
     }
 
     try {
-        return JSON.parse(results[0].values[0][0] as string) as UserProfile;
+        const profile = JSON.parse(results[0].values[0][0] as string) as UserProfile;
+        // Reflection once saved these as plain strings, and every reader that joins them threw.
+        for (const k of ["projects", "important_goals"] as const) {
+            const v: unknown = profile[k];
+            if (v !== undefined && !Array.isArray(v)) profile[k] = typeof v === "string" && v ? [v] : undefined;
+        }
+        return profile;
     } catch {
         return { user_id: userId };
     }
@@ -289,6 +295,20 @@ export function fieldNamesBhaiDirectly(value: string): boolean {
 export function statedField(field: string, value: string): string | VerifiedField {
     const plain = field === "name" || field === "email" || field === "location";
     return plain && !fieldEmbedsOwnershipClaim(value) ? { value, verified: true } : value;
+}
+
+/**
+ * Saves a fact reflection heard the owner state about themselves. The field name comes from the
+ * model, so only known fields are taken: projects and goals join their lists, and anything else
+ * is refused (false) rather than written over the profile's shape.
+ */
+export function applyStatedField(field: string, value: string, userId = DEFAULT_USER_ID): boolean {
+    if (field === "projects") addProject(value, userId);
+    else if (field === "important_goals") addGoal(value, userId);
+    else if ((VERIFIABLE_FIELDS as readonly string[]).includes(field))
+        updateIdentityProfile({ [field]: statedField(field, value) }, userId);
+    else return false;
+    return true;
 }
 
 // ── Prompt Snippet ────────────────────────────

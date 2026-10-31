@@ -27,7 +27,7 @@ import { generateUUID } from "../utils/uuid.js";
 import { consolidateMemories } from "./consolidation.js";
 import { decayEmotions, recordEmotion } from "./emotional.js";
 import { recordEpisode } from "./episodic.js";
-import { getFieldValue, getIdentityProfile, statedField, updateIdentityProfile } from "./identity.js";
+import { applyStatedField, getFieldValue, getIdentityProfile } from "./identity.js";
 import { getKnowledgeGraphDB } from "./knowledge-graph.js";
 import { updateRelationshipAfterSession } from "./relationship.js";
 import { findDuplicates, mergeDuplicates, reorganizeMemories, synapticPrune } from "./self-evolving.js";
@@ -405,8 +405,9 @@ export async function runReflection(
                     const currentValue = getFieldValue(
                         (currentProfile as unknown as Record<string, string | undefined>)[update.field],
                     );
+                    if (!applyStatedField(update.field, update.value)) continue;
 
-                    if (currentValue && currentValue !== update.value) {
+                    if (typeof currentValue === "string" && currentValue && currentValue !== update.value) {
                         signedAuditLog("identity_conflict_detected", {
                             field: update.field,
                             old_value: String(currentValue),
@@ -415,7 +416,6 @@ export async function runReflection(
                         });
                     }
 
-                    updateIdentityProfile({ [update.field]: statedField(update.field, update.value) });
                     signedAuditLog("identity_updated", { field: update.field, value: update.value, explicit: true });
                     console.log(`[MEMORY][REFLECTION] Identity: ${update.field} = ${update.value} (explicit)`);
                 } else {
