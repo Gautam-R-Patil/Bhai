@@ -8,7 +8,7 @@ vi.mock("../../screen/frontmost.js", async (orig) => ({
     ...(await orig<object>()),
     pidOfApp: async (name: string) => (name === "Finder" ? 4242 : 0),
 }));
-const { elementsInside, osInspect, windowTitles } = await import("../os-inspect.js");
+const { elementsInside, osInspect, pidOfAppAnyOs, windowTitles } = await import("../os-inspect.js");
 
 describe.skipIf(process.platform !== "darwin")("os_inspect app", () => {
     it("inspects a running app by name, without a pid", async () => {
@@ -59,5 +59,18 @@ describe("os_inspect area queries", () => {
             { label: "Back", path: [0, 1] },
         ];
         expect(elementsInside(root as never, all, "sidebar").map((e) => e.label)).toEqual(["Recents", "Applications"]);
+    });
+});
+
+describe.skipIf(process.platform === "win32")("os_inspect app off macOS", () => {
+    it("finds a running process by name with pgrep (the Linux path), 0 when there's none", async () => {
+        const real = process.platform;
+        Object.defineProperty(process, "platform", { value: "linux" });
+        try {
+            expect(await pidOfAppAnyOs("node")).toBeGreaterThan(0);
+            expect(await pidOfAppAnyOs("no-such-app-xyz")).toBe(0);
+        } finally {
+            Object.defineProperty(process, "platform", { value: real });
+        }
     });
 });

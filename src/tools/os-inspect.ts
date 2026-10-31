@@ -21,6 +21,8 @@ import {
     isAxPermissionError,
     matchElementByLabel,
 } from "../screen/ax-dump.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { getFrontmostApp, pidOfApp } from "../screen/frontmost.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
@@ -93,6 +95,28 @@ export function elementsInside<T extends { path: number[] }>(root: AxNode | unde
     });
 }
 
+/** A running app's pid by name on any OS (0 when it isn't running); the UIA and AT-SPI dumps take a pid too. */
+export async function pidOfAppAnyOs(app: string): Promise<number> {
+    if (process.platform === "darwin") return pidOfApp(app);
+    const run = promisify(execFile);
+    try {
+        if (process.platform === "win32") {
+            // Single-quoted literal: no $() or backtick expansion; ' is doubled.
+            const name = `'${app.replace(/\.exe$/i, "").replace(/['\u2018\u2019]/g, "''")}'`;
+            const { stdout } = await run(
+                "powershell",
+                ["-NoProfile", "-Command", `(Get-Process -Name ${name} -ErrorAction SilentlyContinue | Where-Object MainWindowHandle -ne 0 | Select-Object -First 1).Id`],
+                { timeout: 4000 },
+            );
+            return Number(stdout.trim()) || 0;
+        }
+        const { stdout } = await run("pgrep", ["-n", "-i", "-x", app], { timeout: 2000 });
+        return Number(stdout.trim().split("\n")[0]) || 0;
+    } catch {
+        return 0; // pgrep exits 1 when nothing matches
+    }
+}
+
 const WINDOW_ROLE = /^(AXWindow|Window|window|frame|dialog)$/;
 /** Titles of the app's windows (top two levels of the tree), front first as AX lists them. */
 export function windowTitles(root: AxNode | undefined): string[] {
@@ -114,7 +138,7 @@ export const osInspect: ToolDefinition = {
                 properties: {
                     app: {
                         type: "string",
-                        description: "Name of a running app to inspect without switching to it (e.g. 'Finder'). macOS. Default: frontmost app.",
+                        description: "Name of a running app to inspect without switching to it (e.g. 'Finder', 'notepad'). Default: frontmost app.",
                     },
                     pid: {
                         type: "number",
@@ -145,8 +169,8 @@ export const osInspect: ToolDefinition = {
         // Asked to read Finder's sidebar in the background, the model had no pid and fell back to
         // AppleScript 'entire contents' (slow, came back empty). A name is what it has.
         const app = typeof input.app === "string" ? input.app.trim() : "";
-        if (!pid && app && process.platform === "darwin") {
-            pid = await pidOfApp(app);
+        if (!pid && app) {
+            pid = await pidOfAppAnyOs(app);
             if (!pid) return JSON.stringify({ success: false, error: `${app} isn't running.`, hint: "Open it with app_manager first." });
         }
         const depth = typeof input.depth === "number" ? Math.max(1, Math.min(30, input.depth)) : DEFAULT_INSPECT_DEPTH;

@@ -610,6 +610,10 @@ const OUT_OF_CREDITS_REPLY =
 
 // ── Milestone tool descriptions ───────────────
 
+/** "Answer in two sentences", "one line", "briefly": the owner asked for a short answer. */
+export const askedToBeBrief = (text: string): boolean =>
+    /\b(one|two|three|1|2|3) (line|lines|sentence|sentences|words?)\b|\b(briefly|in short|tl;?dr|short answer|quick answer)\b/i.test(text);
+
 const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => string> = {
     browser_navigate: (a) => `🌐 Opening ${((a.url as string) || "").substring(0, 60)}...`,
     web_search: (a) => `🔍 Searching: "${a.query || ""}"`,
@@ -619,6 +623,26 @@ const MILESTONE_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => 
     app_manager: (a) => (a.action === "list" ? "🪟 Checking which apps are open" : `🪟 ${a.action || "Managing"} ${a.app || "an app"}`),
     system_info: () => "💻 Checking the Mac's status",
     os_inspect: (a) => `🔎 Reading ${a.app ? `${a.app}'s` : "the"} window`,
+    // Labels for what the screen tools do. Never the typed text or a message body: a progress
+    // line shows on every surface and os_type may be typing a password.
+    os_smart_click: (a) => `🖱️ Clicking ${String(a.instruction || a.target || "it").substring(0, 40)}`,
+    os_click_id: () => "🖱️ Clicking it",
+    browser_click_at: () => "🖱️ Clicking on the page",
+    browser_click: () => "🖱️ Clicking on the page",
+    os_type: (a) => (a.app ? `⌨️ Typing in ${a.app}` : "⌨️ Typing"),
+    browser_type: () => "⌨️ Typing on the page",
+    os_screenshot: () => "📸 Looking at the screen",
+    os_visual_verify: () => "👀 Checking it worked",
+    os_context: () => "👀 Checking what's on screen",
+    browser_extract: () => "📊 Reading the page",
+    browser_form_state: () => "📋 Checking the form",
+    browser_switch_tab: () => "🗂️ Switching tabs",
+    check_deep_research: () => "🔬 Checking on the research",
+    set_reminder: () => "⏰ Setting the reminder",
+    weather: (a) => `🌤️ Checking the weather${a.location ? ` in ${String(a.location).substring(0, 30)}` : ""}`,
+    contact_lookup: () => "📇 Looking up the contact",
+    whatsapp_send: () => "💬 Sending on WhatsApp",
+    apple_script: () => "⚙️ Running an AppleScript",
     web_read: (a) => `📖 Reading ${String(a.url || "").replace(/^https?:\/\/(www\.)?/, "").substring(0, 60)}`,
     shell_exec: (a) => `⚙️ Running command: ${((a.command as string) || "").substring(0, 50)}`,
     browser_scan: () => `🔍 Scanning the active browser page DOM...`,
@@ -3936,7 +3960,15 @@ PLAN:`,
                 STOP_WORDS.some((w) => lastUserText.includes(w)) && lastUserText.split(" ").length <= 10;
 
             // 6. Is the user's message simple enough that it probably doesn't need tool use?
-            const isSimpleUserMessage = lastUserText.split(" ").length <= 6;
+            // A one-step ask (the classifier said simple, not multi-step) or one that asked to be
+            // short ("two sentences", "one line"): a short answer after one search is the job done.
+            // The nudge re-sent the whole context to a Pro model to say so (20 times in a day).
+            const cls = toolSelection.classification;
+            const isSimpleUserMessage =
+                lastUserText.split(" ").length <= 6 ||
+                (cls?.tier === "simple" && !cls.multi_step) ||
+                cls?.tier === "chat" ||
+                askedToBeBrief(lastUserText);
 
             // ── Smart Delegation Detection ─────────────────────────────
             // Instead of brittle regex, analyze the CONTEXT to determine if the
