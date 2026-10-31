@@ -68,6 +68,7 @@ describe("extension: Bhai's own new tabs", () => {
                 },
                 query: async () => tabs.filter((t) => t.active && t.focused),
                 create: async ({ url }: { url: string }) => {
+                    for (const x of tabs) x.active = false;
                     const t = { id: next++, url, active: true, focused: true };
                     tabs.push(t);
                     return t;
@@ -94,7 +95,7 @@ describe("extension: Bhai's own new tabs", () => {
         expect(second.id).not.toBe(first.id);
         clock.now += 300_000; // a later task
         const third = await openPageInNewTab("https://nodejs.org/");
-        expect(third.id).toBe(second.id);
+        expect(third.id).toBe(first.id); // the one in front (second) may still be being read
         expect(tabs).toHaveLength(3); // the owner's tab + Bhai's two, not four
     });
 

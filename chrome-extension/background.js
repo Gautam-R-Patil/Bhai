@@ -162,6 +162,7 @@ async function openPageInNewTab(url) {
       const t = await chrome.tabs.get(id).catch(() => null);
       if (!t?.id) { bhaiTabs.delete(id); continue; }
       if (originOf(t.url) !== origin) continue; // the owner took it elsewhere: theirs now
+      if (t.active) continue; // in front: the owner may still be reading what Bhai opened
       await chrome.tabs.update(t.id, { url, active: true });
       bhaiTabs.delete(id);
       bhaiTabs.set(id, originOf(url));
