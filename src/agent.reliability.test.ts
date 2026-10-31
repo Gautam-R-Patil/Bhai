@@ -4,6 +4,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { describe, expect, it } from "vitest";
 import {
     antiGivingUpFailures,
+    leaveToLookNote,
     ackWithoutAction,
     asksLeaveToLook,
     finalReplyText,
@@ -169,5 +170,16 @@ describe("ackWithoutAction", () => {
         expect(ackWithoutAction(ack, 2)).toBe(false);
         expect(ackWithoutAction("Playing Levitating by Dua Lipa now.", 0)).toBe(false);
         expect(ackWithoutAction(`${ack}\nSpotify needs you to sign in.\n[[STUCK]]`, 0)).toBe(false);
+    });
+});
+
+describe("leaveToLookNote", () => {
+    it("names the owner's message, and mentions the screen only when screen tools are on hand", () => {
+        const q = "Earlier tonight I asked you to read some keyboard layout articles on Wikipedia. Which ones?";
+        const note = leaveToLookNote(q, false);
+        expect(note).toContain(q);
+        expect(note).toMatch(/not an earlier request/);
+        expect(note).not.toMatch(/System Settings|screenshot/);
+        expect(leaveToLookNote("what's the Wi-Fi called?", true)).toMatch(/os_inspect or a screenshot/);
     });
 });

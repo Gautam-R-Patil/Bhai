@@ -598,6 +598,19 @@ export function antiGivingUpFailures(
  * of the task the owner already gave; asking first just stalls it. A step with effects
  * outside (send, pay, delete…) still gets asked.
  */
+/**
+ * The push after a reply that asked leave to look. It names the owner's message: told only to
+ * "finish the task", a recall question ("which articles did I ask about earlier?") went back to
+ * an older unfinished Spotify request in the history and answered about that instead.
+ */
+export function leaveToLookNote(ownerMessage: string, canSeeScreen: boolean): string {
+    const asked = ownerMessage.trim().replace(/\s+/g, " ").slice(0, 200);
+    return (
+        `Don't ask leave to look: do the look-only step yourself${canSeeScreen ? " (open what shows it, e.g. the right System Settings pane, and read it with os_inspect or a screenshot)" : " (open or read it with your tools)"}, ` +
+        `then answer the owner's message: "${asked}". Answer that message only, not an earlier request.`
+    );
+}
+
 export function asksLeaveToLook(responseText: string, canSeeScreen = false): boolean {
     if (takeStuckMarker(responseText).stuck) return false;
     const l = responseText.toLowerCase().replace(/[’‘]/g, "'");
@@ -4083,21 +4096,12 @@ PLAN:`,
                 continue;
             }
 
-            if (
-                !lookNudged &&
-                asksLeaveToLook(
-                    responseText,
-                    toolSelection.categories.some((c) => c === "os_control" || c === "system_controls"),
-                )
-            ) {
+            const canSeeScreen = toolSelection.categories.some((c) => c === "os_control" || c === "system_controls");
+            if (!lookNudged && asksLeaveToLook(responseText, canSeeScreen)) {
                 lookNudged = true;
                 console.log("  🔄 Asked leave to look before finishing — continuing instead");
                 turnStream?.sendBack("Taking another pass");
-                pushRetry(
-                    messages,
-                    responseText,
-                    "You can see the owner's screen yourself: don't ask them to look or ask leave to look. Open what shows it (e.g. the right System Settings pane), read it with os_inspect or a screenshot, finish the task, and give them the actual answer.",
-                );
+                pushRetry(messages, responseText, leaveToLookNote(rawUserMessage, canSeeScreen));
                 lastToolCalls = undefined;
                 continue;
             }
