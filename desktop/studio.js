@@ -1621,9 +1621,12 @@
         }
     }
 
+    // Keeps the drawing the size of its box: the box changes with the window and
+    // whenever the detail column opens or closes.
     function _onResize() {
-        if (!state.svg || state.view !== "graph") return;
+        if (!state.svg) return;
         const rect = $("studioGraph").getBoundingClientRect();
+        if (rect.width < 10) return; // hidden
         state.svg.attr(
             "viewBox",
             `${-Math.max(rect.width, 320) / 2} ${-Math.max(rect.height, 320) / 2} ${Math.max(rect.width, 320)} ${Math.max(rect.height, 320)}`,
@@ -1635,7 +1638,8 @@
             state.mounted = true;
             _wire();
             _watchTheme();
-            window.addEventListener("resize", _onResize);
+            state.resizeObserver = new ResizeObserver(_onResize);
+            state.resizeObserver.observe($("studioGraph"));
             document.addEventListener("keydown", _onKeydown);
             window.addEventListener("beforeunload", _flushPending);
         } else if (state.view === "graph") _startGraph();
@@ -1652,7 +1656,8 @@
         pause();
         state.themeObserver?.disconnect();
         state.themeObserver = null;
-        window.removeEventListener("resize", _onResize);
+        state.resizeObserver?.disconnect();
+        state.resizeObserver = null;
         document.removeEventListener("keydown", _onKeydown);
         window.removeEventListener("beforeunload", _flushPending);
         Object.assign(state, {
