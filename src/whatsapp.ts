@@ -2881,6 +2881,11 @@ function resolveContactJid(to: string): string | null {
     // Already a JID (contains @)
     if (to.includes("@")) return to;
 
+    // The owner's own WhatsApp ("send me a voice note"): they're an owner, not a contact.
+    const q = to.trim().toLowerCase();
+    const owners = getOwners();
+    if (/^(me|myself|owner|my (own )?(number|whatsapp|chat))$/.test(q) && owners[0]) return owners[0].jid;
+
     // Search groups by name first (owner might say "send to the work group")
     const groupMatches = searchGroups(to);
     if (groupMatches.length > 0) return groupMatches[0].jid;
@@ -2890,9 +2895,12 @@ function resolveContactJid(to: string): string | null {
     if (matches.length > 0) return matches[0].jid;
 
     // Someone still waiting for approval has no contact profile yet, only their WhatsApp name.
-    const q = to.trim().toLowerCase();
     const waiting = getPendingRequests().find((r) => r.pushName?.toLowerCase().includes(q));
     if (waiting) return waiting.jid;
+
+    // The owner by name, when no contact has it.
+    const owner = owners.find((o) => [o.displayName, o.pushName].some((n) => n?.toLowerCase().includes(q)));
+    if (owner && q.length >= 3) return owner.jid;
 
     // Try as phone number — append @s.whatsapp.net
     const digits = to.replace(/[^0-9]/g, "");
@@ -2921,7 +2929,7 @@ export const whatsappSendTool: ToolDefinition = {
                     to: {
                         type: "string",
                         description:
-                            "Recipient identifier: a contact name, phone number (with country code, e.g. +919876543210), or WhatsApp JID (e.g. 919876543210@s.whatsapp.net).",
+                            "Recipient: \"me\" for the owner's own WhatsApp, a contact or group name, a phone number with country code (e.g. +919876543210), or a WhatsApp JID.",
                     },
                     message: {
                         type: "string",
