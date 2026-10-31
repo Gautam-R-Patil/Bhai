@@ -40,7 +40,12 @@ export function saveOutline(outline: PresentationOutline): void {
 // Only slides with an archetype that benefits visually AND carry an imagePrompt
 // get an image. Keeps decks from becoming image-soup.
 
-async function resolveSlideImages(outline: PresentationOutline): Promise<void> {
+// AI images are waited for until this long after create_presentation starts (its timeout is 6 min,
+// src/tools/index.ts): render and delivery still fit after it. A slide whose image isn't back by
+// then gets a stock photo or none.
+const IMAGE_WAIT_MS = 240_000;
+
+async function resolveSlideImages(outline: PresentationOutline, deadline: number): Promise<void> {
     const imageArchetypes = new Set<Slide["archetype"]>(["image-full-bleed", "content", "section-divider"]);
 
     const requests = outline.slides
@@ -55,6 +60,7 @@ async function resolveSlideImages(outline: PresentationOutline): Promise<void> {
                 prompt: slide.imagePrompt ?? "",
                 slideTitle: slide.title,
                 aspectRatio: slide.archetype === "image-full-bleed" ? ("16:9" as const) : ("4:3" as const),
+                deadline,
             },
         }));
 
@@ -138,6 +144,7 @@ export const createPresentation: ToolDefinition = {
             });
         }
 
+        const started = Date.now();
         try {
             const prompt = input.prompt as string;
             if (!prompt || prompt.trim().length === 0) {
@@ -180,7 +187,7 @@ export const createPresentation: ToolDefinition = {
             // Step 2: resolve images in parallel for slides that request them
             const skipImages = input.skip_images === true;
             if (!skipImages) {
-                await resolveSlideImages(outline);
+                await resolveSlideImages(outline, started + IMAGE_WAIT_MS);
             }
 
             // Step 3: render

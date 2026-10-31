@@ -848,6 +848,8 @@ export interface ChannelContext {
     noOutward?: boolean;
     /** The reply carries the turn's generated images (unset: the channel decides, see turnShowsImages). */
     showsImages?: boolean;
+    /** Where a result that arrives after the turn goes: chat id, jid, room, channel[:thread]; "owner" = the owner's chats (a scheduled run). */
+    replyTo?: string;
     /**
      * Live chat surfaces: structured turn events (status, steps, streamed answer, owner notes).
      * Set = main-loop model calls stream (and take the turn's abort signal); unset = no change.
@@ -1651,6 +1653,7 @@ export async function runAgent(
             message: stripChannelTags(userMessage),
             turnImages,
             conversationKey: convKey,
+            replyTo: mod.lateReplyTarget(channelContext),
         };
         try {
             // Outermost turn ending = Bhai lets go of the screen (glow fades).

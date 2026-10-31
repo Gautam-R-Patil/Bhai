@@ -3,7 +3,7 @@
 // These run server-side and are called via ConvexHttpClient from Electron main + bot process.
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation } from "./_generated/server";
+import { internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
 
 // ── Internal credit deduction (called by HTTP proxy, not by clients) ──
 // Returns { success, remaining, error? } or { success: false } on failure.
@@ -14,31 +14,38 @@ export const deductCreditsInternal = internalMutation({
     otplessUserId: v.string(),
     amount: v.number(),
   },
-  handler: async (ctx, { otplessUserId, amount }) => {
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_otpless_id", (q) => q.eq("otplessUserId", otplessUserId))
-      .unique();
-
-    if (!account) return { success: false, remaining: -1, error: "account_not_found" };
-
-    // Block deductions for non-active accounts
-    if (account.status !== "active") {
-      return { success: false, remaining: account.ai_credits, error: `account_${account.status}` };
-    }
-
-    const deductAmount = Math.max(0, amount);
-
-    // Reject if insufficient credits
-    if (account.ai_credits < deductAmount) {
-      return { success: false, remaining: account.ai_credits, error: "insufficient_credits" };
-    }
-
-    const newCredits = account.ai_credits - deductAmount;
-    await ctx.db.patch(account._id, { ai_credits: newCredits });
-    return { success: true, remaining: newCredits };
-  },
+  handler: (ctx, { otplessUserId, amount }) => deductCredits(ctx, otplessUserId, amount),
 });
+
+/** deductCreditsInternal's rules, for a mutation that charges inside its own transaction. */
+export async function deductCredits(
+  ctx: MutationCtx,
+  otplessUserId: string,
+  amount: number,
+): Promise<{ success: boolean; remaining: number; error?: string }> {
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_otpless_id", (q) => q.eq("otplessUserId", otplessUserId))
+    .unique();
+
+  if (!account) return { success: false, remaining: -1, error: "account_not_found" };
+
+  // Block deductions for non-active accounts
+  if (account.status !== "active") {
+    return { success: false, remaining: account.ai_credits, error: `account_${account.status}` };
+  }
+
+  const deductAmount = Math.max(0, amount);
+
+  // Reject if insufficient credits
+  if (account.ai_credits < deductAmount) {
+    return { success: false, remaining: account.ai_credits, error: "insufficient_credits" };
+  }
+
+  const newCredits = account.ai_credits - deductAmount;
+  await ctx.db.patch(account._id, { ai_credits: newCredits });
+  return { success: true, remaining: newCredits };
+}
 
 // ══════════════════════════════════════════════════
 // ADMIN FUNCTIONS — used by the admin dashboard

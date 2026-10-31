@@ -16,6 +16,7 @@ import { getFieldValue, getIdentityProfile } from "./memory/identity.js";
 import type { ChatActions } from "./whatsapp-media.js";
 import { getDataDir } from "./config/paths.js";
 import type { LLMClient } from "./llm.js";
+import { registerImageDelivery } from "./media/image-jobs.js";
 import {
     getPendingQueriesForOwner,
     registerOwnerRelaySender,
@@ -1871,6 +1872,7 @@ async function handleOwnerMessage(
             {
                 channel: "whatsapp",
                 userId: jid,
+                replyTo: jid,
                 userName: pushName || undefined,
                 isOwner: true,
                 isPrivate: !jid.endsWith("@g.us"),
@@ -2124,6 +2126,7 @@ ${persona.systemPrompt}`.trimEnd() +
             {
                 channel: "whatsapp",
                 userId: jid,
+                replyTo: jid,
                 userName: pushName || profile?.displayName,
                 isOwner: false,
                 contactProfile: profile,
@@ -2730,6 +2733,19 @@ export async function initWhatsApp(llm: LLMClient): Promise<void> {
 
     // Register the relay sender so ask_owner tool can forward questions to owners
     registerOwnerRelaySender((jid, text) => sendOwnerNotice(jid, text));
+    registerImageDelivery("whatsapp", async (to, images, text, ownerDm) => {
+        // Not linked yet (just after a restart): the next tick tries again.
+        if (getWhatsAppStatus() !== "connected") return false;
+        // A scheduled task's: the owners, as proactive messages go.
+        if (to === "owner") {
+            if (!(await sendWhatsAppProactiveMessage(text))) return false;
+            for (const owner of getOwners()) await sendImages(owner.jid, images, true);
+            return true;
+        }
+        await socket?.sendMessage(to, { text });
+        await sendImages(to, images, ownerDm);
+        return true;
+    });
 
     // Parse allowed JIDs from environment
     const jidsRaw = process.env.WHATSAPP_ALLOWED_JIDS;

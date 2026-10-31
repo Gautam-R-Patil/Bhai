@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
+import { registerImageDelivery } from "./media/image-jobs.js";
 import { runAgent, type MediaAttachment, type ChannelContext, type GeneratedImage } from "./agent.js";
 import { smartChunkMessage } from "./alive-ux.js";
 
@@ -328,7 +329,7 @@ async function handleMessage(roomId: string, sender: string, body: string): Prom
     try {
         await setTyping(roomId, true);
 
-        const ctx = matrixChannelContext(sender, await roomMembers(roomId), botUserId);
+        const ctx = { ...matrixChannelContext(sender, await roomMembers(roomId), botUserId), replyTo: roomId };
         const senderIsOwner = ctx.isOwner;
         const result = await runAgent(llmClient, body, async (progress) => {
             // Send progress updates as typing indicators
@@ -495,6 +496,13 @@ export async function initMatrix(llm: LLMClient): Promise<void> {
     // Normalize homeserver URL (remove trailing slash)
     homeserverUrl = server.replace(/\/$/, "");
     llmClient = llm;
+    registerImageDelivery("matrix", async (to, images, text, ownerDm) => {
+        // A scheduled task's: the owner's rooms, as its own result goes.
+        if (to === "owner") return sendMatrixProactiveMessage(text, images);
+        await sendReply(to, text);
+        await sendImages(to, images, ownerDm);
+        return true;
+    });
 
     // Parse allowed rooms (optional)
     const roomsEnv = process.env.MATRIX_ALLOWED_ROOMS;

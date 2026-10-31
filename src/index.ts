@@ -1195,6 +1195,8 @@ async function boot() {
                         autonomous: true,
                         // deliver() below sends the run's images after its text on these channels.
                         showsImages: /^(telegram|slack|discord|matrix|overlay)$/.test(channel),
+                        // An image still in the server's queue when the run ends: the same owner chats, later.
+                        ...(ctx.deliverTo ? { replyTo: "owner" } : {}),
                     },
                 );
             },
@@ -1258,6 +1260,9 @@ async function boot() {
     } catch (cronErr) {
         console.warn("[CRON] Ticker failed to start (non-fatal):", (cronErr as Error).message);
     }
+
+    // Images still in the server's queue when the bot stopped: the channels have registered their senders by now.
+    (await import("./media/image-jobs.js")).startImageJobs();
 
     // ── Webhook Server (opt-in via BHAI_WEBHOOK_PORT=<n>) ──────
     // register_webhook / list_webhooks tools hand out URLs referring to this

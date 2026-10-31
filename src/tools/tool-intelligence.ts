@@ -349,7 +349,6 @@ const RATE_LIMITS: Record<string, number> = {
     os_zoom_region: 20,
     send_screenshot: 10,
     web_search: 15,
-    generate_image: 8, // each call is a paid image-model request
     // Default for everything else
     _default: 30,
 };

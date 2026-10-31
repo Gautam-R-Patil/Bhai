@@ -29,9 +29,15 @@ function hashKey(input: string): string {
 
 // ── Tier 2: AI Image Generation (Convex /api/image, the generate_image tool's client) ──
 
-async function generateAIImage(prompt: string): Promise<string | null> {
+// Less time than this left: an image (~20-35s even with no queue) wouldn't make it, so none is ordered.
+const MIN_IMAGE_WAIT_MS = 30_000;
+
+async function generateAIImage(prompt: string, deadline: number): Promise<string | null> {
+    const left = deadline - Date.now();
+    if (left < MIN_IMAGE_WAIT_MS) return null;
     try {
-        const [img] = await requestImages({ prompt, size: "1536x1024", quality: "medium" });
+        // Past the deadline (a long queue) this throws and the slide falls back to stock or no image.
+        const [img] = await requestImages({ prompt, size: "1536x1024", quality: "medium" }, left);
         const ext = img.mimeType.includes("png") ? "png" : "jpg";
         const outPath = path.join(assetsDir(), `ai_${hashKey(prompt)}_${Date.now()}.${ext}`);
         fs.writeFileSync(outPath, img.buffer);
@@ -114,6 +120,8 @@ export interface ResolveOpts {
     slideTitle: string;
     aspectRatio?: "16:9" | "4:3" | "1:1" | "free";
     preferStock?: boolean; // skip AI gen (faster, cheaper)
+    /** When AI images stop being waited for (before the deck tool's timeout). */
+    deadline: number;
 }
 
 /**
@@ -139,7 +147,7 @@ export async function resolveAsset(opts: ResolveOpts): Promise<Asset | null> {
     let attribution: string | undefined;
 
     if (!opts.preferStock) {
-        sourcePath = await generateAIImage(opts.prompt);
+        sourcePath = await generateAIImage(opts.prompt, opts.deadline);
     }
 
     // Tier 3: Pexels fallback

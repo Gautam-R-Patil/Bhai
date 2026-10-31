@@ -11,8 +11,11 @@
 // No images = POST /images/generations (JSON); images = POST /images/edits
 // (multipart, each as "image[]").
 
-import { v } from "convex/values";
-import { internalMutation, type MutationCtx } from "./_generated/server";
+import { type Infer, v } from "convex/values";
+import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
+import { internalAction, internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { deductCredits } from "./accounts";
 import { decodeBase64 } from "./stt";
 
 export const IMAGE_MAX_INPUTS = 4;
@@ -33,60 +36,6 @@ export const IMAGE_CREDIT_COST: Record<ImageQuality, number> = { low: 1, medium:
 
 export function imageCreditCost(quality: ImageQuality, n: number): number {
     return IMAGE_CREDIT_COST[quality] * n;
-}
-
-// ── Per-account limits: the deployment's ~2 requests a minute are shared by every install ──
-/** Requests a minute per account (sessions.checkRequestRateLimit). */
-export const IMAGE_MAX_PER_MINUTE = 6;
-/**
- * Images in flight per account. Counted by images, not requests, so one count-4 ask fits whether it
- * goes as one n=4 call or as the client's four parallel n=1 calls (transparent or high quality).
- */
-export const IMAGE_MAX_IN_FLIGHT = 4;
-/** Past CALL_BUDGET_MS plus the route's own work: a slot whose action died stops counting. */
-const IN_FLIGHT_STALE_MS = 5 * 60_000;
-
-// One request_rate_limits row per account: requestCount = images in flight, windowStart = the last take.
-const inFlightKey = (accountId: string) => `image_inflight|${accountId}`;
-const inFlightRow = (ctx: MutationCtx, accountId: string) =>
-    ctx.db
-        .query("request_rate_limits")
-        .withIndex("by_key", (q) => q.eq("key", inFlightKey(accountId)))
-        .unique();
-
-/** Takes `n` in-flight images for the account; false = at the cap. Every true needs a releaseImageSlot. */
-export const acquireImageSlot = internalMutation({
-    args: { accountId: v.string(), n: v.number() },
-    handler: async (ctx, { accountId, n }): Promise<boolean> => {
-        const row = await inFlightRow(ctx, accountId);
-        const now = Date.now();
-        // ponytail: a leaked slot clears only after a quiet IN_FLIGHT_STALE_MS; per-request lease rows if that bites.
-        const held = row && now - row.windowStart < IN_FLIGHT_STALE_MS ? row.requestCount : 0;
-        if (held + n > IMAGE_MAX_IN_FLIGHT) return false;
-        if (row) await ctx.db.patch(row._id, { windowStart: now, requestCount: held + n });
-        else
-            await ctx.db.insert("request_rate_limits", {
-                key: inFlightKey(accountId),
-                windowStart: now,
-                requestCount: n,
-            });
-        return true;
-    },
-});
-
-export const releaseImageSlot = internalMutation({
-    args: { accountId: v.string(), n: v.number() },
-    handler: async (ctx, { accountId, n }) => {
-        const row = await inFlightRow(ctx, accountId);
-        if (row) await ctx.db.patch(row._id, { requestCount: Math.max(0, row.requestCount - n) });
-    },
-});
-
-/** The route's release, tried twice: one lost release would hold the slot until IN_FLIGHT_STALE_MS of quiet. */
-export async function releaseImageSlotRetrying(release: () => Promise<unknown>): Promise<void> {
-    await release()
-        .catch(release)
-        .catch((e: unknown) => console.error("[Image] slot release failed:", e));
 }
 
 export interface ImageConfig {
@@ -175,8 +124,10 @@ export class ImageError extends Error {
     constructor(
         readonly code: ImageErrorCode,
         message: string,
-        /** Seconds to wait, for "busy". */
+        /** Seconds to wait, for "busy"; undefined = Azure didn't say. */
         readonly retryAfter?: number,
+        /** Azure's HTTP status, when it answered with an error. */
+        readonly status?: number,
     ) {
         super(message);
     }
@@ -208,10 +159,14 @@ function waitSeconds(res: Response, text: string): number | undefined {
     return m ? Number(m[1]) : undefined;
 }
 
-/** Connection-level failures (the deployment drops sockets under load): busy, not broken. */
+/** Connection-level failures (the deployment drops sockets under load) and timeouts: busy, not broken. */
 function isNetworkError(e: any): boolean {
+    if (e?.name === "TimeoutError" || e?.name === "AbortError") return true;
     return e instanceof TypeError || [e?.code, e?.cause?.code, e?.message].some((v) => /ECONNRESET/.test(String(v)));
 }
+
+/** An outage or overload, not this request's fault: 429, 408, any 5xx. */
+const isBusyStatus = (status: number) => status === 429 || status === 408 || status >= 500;
 
 const SAFETY_CODES = new Set(["content_filter", "contentFilter", "content_policy_violation", "moderation_blocked"]);
 
@@ -231,7 +186,7 @@ function classifyFailure(status: number, data: any, text: string): ImageError {
     ) {
         return new ImageError("blocked_by_safety", "The request was blocked by the image safety filter.");
     }
-    return new ImageError("image_failed", `Azure ${status}: ${message.slice(0, 300) || "no detail"}`);
+    return new ImageError("image_failed", `Azure ${status}: ${message.slice(0, 300) || "no detail"}`, undefined, status);
 }
 
 /** One short in-route retry on a 429 that asks for at most this long. */
@@ -244,6 +199,8 @@ export async function callAzureImage(
     cfg: ImageConfig,
     req: ImageRequest,
     fetchFn: typeof fetch = fetch,
+    /** The route's one short in-call retry on a 429; the queue (false) waits outside instead. */
+    retry429 = true,
 ): Promise<{ images: ImageOutput[]; dropped: number }> {
     const outputFormat = req.background === "transparent" ? "png" : "jpeg";
     const fields: Record<string, string> = {
@@ -285,12 +242,14 @@ export async function callAzureImage(
             // Inside the try: the socket can also reset while the body is still arriving.
             text = await res.text();
         } catch (e) {
-            if (isNetworkError(e)) throw new ImageError("busy", `network: ${(e as Error)?.message}`, 60);
+            if (isNetworkError(e)) throw new ImageError("busy", `network: ${(e as Error)?.message}`);
             throw e;
         }
-        if (res.status !== 429) break;
+        if (!isBusyStatus(res.status)) break;
         const wait = waitSeconds(res, text);
         if (
+            retry429 &&
+            res.status === 429 &&
             attempt === 0 &&
             wait !== undefined &&
             wait <= MAX_RETRY_WAIT_S &&
@@ -299,7 +258,12 @@ export async function callAzureImage(
             await new Promise((r) => setTimeout(r, wait * 1000));
             continue;
         }
-        throw new ImageError("busy", `Azure 429: ${text.slice(0, 300)}`, Math.max(1, wait ?? 60));
+        throw new ImageError(
+            "busy",
+            `Azure ${res.status}: ${text.slice(0, 300)}`,
+            wait === undefined ? undefined : Math.max(1, wait),
+            res.status,
+        );
     }
     let data: any = null;
     try {
@@ -324,3 +288,333 @@ export async function callAzureImage(
     if (!images.length) throw new ImageError("image_failed", "The image came out too large to send.");
     return { images, dropped: all.length - images.length };
 }
+
+// ── The queue (/api/image/jobs) ─────────────────────────────────
+// The deployment's ~2 requests a minute are shared by every install, so jobs wait here and
+// one worker sends them to Azure strictly one at a time, oldest first. A busy Azure (429,
+// 408, 5xx, timeout, dropped socket) pauses the queue and the job keeps its place: it never
+// fails for that (the day-long expiry still bounds the wait).
+// image_queue_state (one row) holds the worker's lease, the pause and the busy backoff.
+
+/** Rough seconds per job, for etaSeconds. */
+const SECONDS_PER_JOB = 25;
+/** A job "running" longer than this lost its worker and goes back in line. Also the worker's lease. */
+const RUNNING_STALE_MS = 5 * 60_000;
+/** Pause after a busy answer that names no wait; doubles while Azure stays busy, back to this on a success. */
+const DEFAULT_BUSY_WAIT_S = 30;
+const MAX_BUSY_WAIT_S = 5 * 60;
+/** Hard (non-busy) attempts per job, lost workers included. */
+const MAX_ATTEMPTS = 3;
+/** Pause before retrying a job that failed for an unknown reason. */
+const RETRY_PAUSE_S = 10;
+/** Timeouts/5xx a job may hit while Azure made other images in the last 30 min (~15 min of backoff). */
+const MAX_BUSY_STRIKES = 4;
+const STRIKE_WINDOW_MS = 30 * 60_000;
+const QUEUE_EXPIRY_MS = 24 * 60 * 60_000;
+/** Finished jobs (and their files) are kept this long, so a client can fetch again. */
+const KEEP_FINISHED_MS = 2 * 60 * 60_000;
+
+type Job = Doc<"image_jobs">;
+export type ImageJobErrorCode = "blocked_by_safety" | "image_failed" | "not_configured";
+
+const storedImage = v.object({ storageId: v.id("_storage"), mimeType: v.string() });
+const jobErrorCode = v.union(v.literal("blocked_by_safety"), v.literal("image_failed"), v.literal("not_configured"));
+const jobOutcome = v.union(
+    v.object({ kind: v.literal("done"), outputs: v.array(storedImage), dropped: v.number() }),
+    /** retryAfter: Azure's wait in seconds; absent = back off. strike: not Azure's 429 (a timeout, a 5xx). */
+    v.object({ kind: v.literal("busy"), retryAfter: v.optional(v.number()), strike: v.optional(v.boolean()) }),
+    /** final: retrying can't help (Azure refused this request with a 4xx). */
+    v.object({ kind: v.literal("failed"), code: jobErrorCode, message: v.string(), final: v.optional(v.boolean()) }),
+);
+
+const queueState = (ctx: QueryCtx) => ctx.db.query("image_queue_state").first();
+
+async function setQueueState(
+    ctx: MutationCtx,
+    fields: { leaseUntil?: number; pausedUntil?: number; backoffS?: number; lastSuccessAt?: number },
+): Promise<void> {
+    const state = await queueState(ctx);
+    if (state) await ctx.db.patch(state._id, fields);
+    else await ctx.db.insert("image_queue_state", { leaseUntil: 0, pausedUntil: 0, ...fields });
+}
+
+/** Schedules the worker unless it is running or paused (a paused queue already has its run scheduled). */
+async function kickWorker(ctx: MutationCtx): Promise<void> {
+    const state = await queueState(ctx);
+    const now = Date.now();
+    if (state && (state.leaseUntil > now || state.pausedUntil > now)) return;
+    await ctx.scheduler.runAfter(0, internal.image.processImageQueue, {});
+}
+
+/** Gives credits back once per job, whichever path gets there first. */
+async function refundJob(ctx: MutationCtx, job: Job, amount: number): Promise<void> {
+    if (job.refunded) return;
+    await ctx.db.patch(job._id, { refunded: true });
+    const account = await ctx.db.get(job.accountId);
+    if (account && amount > 0) await ctx.db.patch(account._id, { ai_credits: Math.max(0, account.ai_credits + amount) });
+}
+
+async function failJob(ctx: MutationCtx, job: Job, code: ImageJobErrorCode, message: string): Promise<void> {
+    await refundJob(ctx, job, job.creditsCharged);
+    await ctx.db.patch(job._id, { status: "failed", error: { code, message }, creditsCharged: 0, finishedAt: Date.now() });
+}
+
+// ponytail: counts by reading the queue (capped at 1000); a counter row if it ever grows that long.
+async function queuedAhead(ctx: QueryCtx, createdAt: number): Promise<number> {
+    const ahead = await ctx.db
+        .query("image_jobs")
+        .withIndex("by_status_and_createdAt", (q) => q.eq("status", "queued").lt("createdAt", createdAt))
+        .take(1000);
+    return ahead.length;
+}
+
+/**
+ * POST /api/image/jobs, after the inputs are stored: takes the full cost and queues the job in
+ * one transaction, so credits never go without a job. shortfall = not charged, nothing queued.
+ */
+export const enqueueImageJob = internalMutation({
+    args: {
+        accountId: v.id("accounts"),
+        otplessUserId: v.string(),
+        prompt: v.string(),
+        size: v.string(),
+        quality: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+        n: v.number(),
+        background: v.optional(v.union(v.literal("transparent"), v.literal("opaque"), v.literal("auto"))),
+        inputs: v.array(storedImage),
+    },
+    handler: async (
+        ctx,
+        args,
+    ): Promise<{ shortfall: true } | { shortfall: false; jobId: Id<"image_jobs">; position: number; credits: number }> => {
+        const creditsCharged = imageCreditCost(args.quality, args.n);
+        const deducted = await deductCredits(ctx, args.otplessUserId, creditsCharged);
+        if (!deducted.success) return { shortfall: true };
+        const createdAt = Date.now();
+        const jobId = await ctx.db.insert("image_jobs", {
+            ...args,
+            creditsCharged,
+            status: "queued",
+            refunded: false,
+            attempts: 0,
+            createdAt,
+        });
+        await kickWorker(ctx);
+        return { shortfall: false, jobId, position: await queuedAhead(ctx, createdAt), credits: deducted.remaining };
+    },
+});
+
+/** A job still running past RUNNING_STALE_MS (the lease ran out with it): its worker died. */
+async function requeueStaleJobs(ctx: MutationCtx, now: number): Promise<void> {
+    const running = await ctx.db
+        .query("image_jobs")
+        .withIndex("by_status_and_createdAt", (q) => q.eq("status", "running"))
+        .take(10);
+    for (const job of running) {
+        if (now - (job.startedAt ?? 0) < RUNNING_STALE_MS) continue;
+        if (job.attempts >= MAX_ATTEMPTS) await failJob(ctx, job, "image_failed", "The image worker kept stopping.");
+        else await ctx.db.patch(job._id, { status: "queued" });
+    }
+}
+
+/** The oldest queued job, now running under the worker's lease; null = paused, leased or nothing queued. */
+export const claimImageJob = internalMutation({
+    args: {},
+    handler: async (ctx): Promise<Job | null> => {
+        const now = Date.now();
+        const state = await queueState(ctx);
+        if (state && (state.leaseUntil > now || state.pausedUntil > now)) return null;
+        await requeueStaleJobs(ctx, now);
+        const job = await ctx.db
+            .query("image_jobs")
+            .withIndex("by_status_and_createdAt", (q) => q.eq("status", "queued"))
+            .first();
+        if (!job) return null;
+        const claimed = { status: "running" as const, startedAt: now, attempts: job.attempts + 1 };
+        await ctx.db.patch(job._id, claimed);
+        await setQueueState(ctx, { leaseUntil: now + RUNNING_STALE_MS });
+        return { ...job, ...claimed };
+    },
+});
+
+/**
+ * Ends the worker's turn on a job and frees the lease. Returns the ms until the worker's next
+ * run (the pause, if any). `startedAt` is the claim's token: a worker whose job was already
+ * requeued as stale changes nothing (returns null).
+ */
+export const settleImageJob = internalMutation({
+    args: { jobId: v.id("image_jobs"), startedAt: v.number(), outcome: jobOutcome },
+    handler: async (ctx, { jobId, startedAt, outcome }): Promise<number | null> => {
+        const job = await ctx.db.get(jobId);
+        if (job?.status !== "running" || job.startedAt !== startedAt) return null;
+        const now = Date.now();
+        let pauseS = 0;
+        const state = await queueState(ctx);
+        let backoffS = state?.backoffS ?? 0;
+        if (outcome.kind === "busy") {
+            if (outcome.retryAfter !== undefined) pauseS = outcome.retryAfter;
+            else pauseS = backoffS = backoffS ? Math.min(backoffS * 2, MAX_BUSY_WAIT_S) : DEFAULT_BUSY_WAIT_S;
+        } else if (outcome.kind === "done") backoffS = 0;
+        const retry = outcome.kind === "failed" && outcome.code === "image_failed" && !outcome.final && job.attempts < MAX_ATTEMPTS;
+        if (retry) pauseS = RETRY_PAUSE_S;
+        await setQueueState(ctx, {
+            leaseUntil: 0,
+            pausedUntil: now + pauseS * 1000,
+            backoffS,
+            ...(outcome.kind === "done" ? { lastSuccessAt: now } : {}),
+        });
+        // A job that keeps timing out or getting a 5xx while Azure made images for others lately is
+        // this job's problem, not an outage: after a few strikes it fails, so it can't hold the line.
+        // In an outage nothing has succeeded for a while and the strikes don't count: everyone waits.
+        const strikes =
+            outcome.kind === "busy" && outcome.strike && now - (state?.lastSuccessAt ?? 0) < STRIKE_WINDOW_MS
+                ? (job.busyStrikes ?? 0) + 1
+                : (job.busyStrikes ?? 0);
+        if (outcome.kind === "done") {
+            const charged = imageCreditCost(job.quality, outcome.outputs.length);
+            if (charged < job.creditsCharged) await refundJob(ctx, job, job.creditsCharged - charged);
+            await ctx.db.patch(job._id, {
+                status: "done",
+                outputs: outcome.outputs,
+                dropped: outcome.dropped,
+                creditsCharged: charged,
+                finishedAt: now,
+            });
+        } else if (outcome.kind === "busy" && strikes >= MAX_BUSY_STRIKES) {
+            await failJob(ctx, job, "image_failed", "Azure kept timing out or failing on this image");
+        } else if (outcome.kind === "busy") {
+            // Not the job's fault: the attempt is given back, and createdAt keeps its place in line.
+            await ctx.db.patch(job._id, { status: "queued", attempts: job.attempts - 1, busyStrikes: strikes });
+        } else if (retry) {
+            await ctx.db.patch(job._id, { status: "queued" });
+        } else {
+            await failJob(ctx, job, outcome.code, outcome.message);
+        }
+        return pauseS * 1000;
+    },
+});
+
+/** The worker: one job per run, then it schedules itself again until nothing is queued. */
+export const processImageQueue = internalAction({
+    args: {},
+    handler: async (ctx) => {
+        const job: Job | null = await ctx.runMutation(internal.image.claimImageJob, {});
+        if (!job) return null;
+        const cfg = imageConfigFromEnv(process.env);
+        const startedAt = Date.now();
+        const settle = (outcome: Infer<typeof jobOutcome>): Promise<number | null> =>
+            ctx.runMutation(internal.image.settleImageJob, { jobId: job._id, startedAt: job.startedAt ?? 0, outcome });
+        const log = (status: "success" | "failed", credits: number, errorMessage?: string) =>
+            ctx
+                .runMutation(internal.llmCallLog.record, {
+                    accountId: job.accountId,
+                    otplessUserId: job.otplessUserId,
+                    model: `image:${cfg?.deployment ?? "none"}`,
+                    status,
+                    credits,
+                    latencyMs: Date.now() - startedAt,
+                    errorMessage,
+                    hasMedia: true,
+                })
+                .catch(() => {});
+        let nextRunMs = 0;
+        try {
+            if (!cfg) throw new ImageError("not_configured", "image model not configured");
+            const images: ImageRequest["images"] = [];
+            for (const input of job.inputs) {
+                const blob = await ctx.storage.get(input.storageId);
+                if (!blob) throw new ImageError("image_failed", "input image missing from storage");
+                images.push({ bytes: new Uint8Array(await blob.arrayBuffer()), mimeType: input.mimeType });
+            }
+            const { prompt, size, quality, n, background } = job;
+            const out = await callAzureImage(cfg, { prompt, size, quality, n, background, images }, fetch, false);
+            // Kept as base64 text: the status route sends it back as is.
+            const outputs = await Promise.all(
+                out.images.map(async (img) => ({
+                    storageId: await ctx.storage.store(new Blob([img.data], { type: "text/plain" })),
+                    mimeType: img.mimeType,
+                })),
+            );
+            const settled = await settle({ kind: "done", outputs, dropped: out.dropped });
+            if (settled !== null) await log("success", imageCreditCost(quality, outputs.length));
+            else for (const o of outputs) await ctx.storage.delete(o.storageId);
+        } catch (err) {
+            const e = err instanceof ImageError ? err : new ImageError("image_failed", (err as Error)?.message || "failed");
+            if (e.code === "busy") {
+                nextRunMs = (await settle({ kind: "busy", retryAfter: e.retryAfter, strike: e.status !== 429 })) ?? 0;
+                console.warn(`[Image] Azure busy, queue paused ${nextRunMs / 1000}s: ${e.message}`);
+            } else {
+                console.error(`[Image] job ${job._id} ${e.code}:`, e.message);
+                // Azure refused this very request (4xx): sending it again can't help.
+                const final = e.status !== undefined && e.status >= 400 && e.status < 500;
+                nextRunMs = (await settle({ kind: "failed", code: e.code, message: e.message, final })) ?? 0;
+                await log("failed", 0, e.message);
+            }
+        }
+        await ctx.scheduler.runAfter(nextRunMs, internal.image.processImageQueue, {});
+        return null;
+    },
+});
+
+export type ImageJobStatus =
+    | { status: "queued"; position: number; etaSeconds: number }
+    | { status: "running"; etaSeconds: number }
+    | { status: "done"; outputs: Array<Infer<typeof storedImage>>; dropped?: number; credits: number }
+    | { status: "failed"; error: { code: ImageJobErrorCode; message: string }; credits: number };
+
+/** A job as its owner sees it (credits = the balance now); null = no such job, or not theirs. */
+export const getImageJobStatus = internalQuery({
+    args: { jobId: v.string(), accountId: v.id("accounts") },
+    handler: async (ctx, { jobId, accountId }): Promise<ImageJobStatus | null> => {
+        const id = ctx.db.normalizeId("image_jobs", jobId);
+        const job = id && (await ctx.db.get(id));
+        if (!job || job.accountId !== accountId) return null;
+        const now = Date.now();
+        if (job.status === "queued") {
+            const pausedUntil = (await queueState(ctx))?.pausedUntil ?? 0;
+            const position = await queuedAhead(ctx, job.createdAt);
+            const pauseS = Math.max(0, Math.ceil((pausedUntil - now) / 1000));
+            return { status: "queued", position, etaSeconds: (position + 1) * SECONDS_PER_JOB + pauseS };
+        }
+        if (job.status === "running") {
+            const elapsedS = Math.floor((now - (job.startedAt ?? now)) / 1000);
+            return { status: "running", etaSeconds: Math.max(5, SECONDS_PER_JOB - elapsedS) };
+        }
+        const credits = (await ctx.db.get(accountId))?.ai_credits ?? 0;
+        if (job.status === "done")
+            return { status: "done", outputs: job.outputs ?? [], ...(job.dropped ? { dropped: job.dropped } : {}), credits };
+        return { status: "failed", error: job.error ?? { code: "image_failed", message: "failed" }, credits };
+    },
+});
+
+/**
+ * Every minute: requeue jobs whose worker died, expire day-old queued jobs, delete finished ones
+ * past KEEP_FINISHED_MS, and kick the worker if anything is queued.
+ */
+export const tickImageQueue = internalMutation({
+    args: {},
+    handler: async (ctx) => {
+        const now = Date.now();
+        await requeueStaleJobs(ctx, now);
+        const expired = await ctx.db
+            .query("image_jobs")
+            .withIndex("by_status_and_createdAt", (q) => q.eq("status", "queued").lt("createdAt", now - QUEUE_EXPIRY_MS))
+            .take(50);
+        for (const job of expired) await failJob(ctx, job, "image_failed", "The image model stayed busy for a day.");
+        for (const status of ["done", "failed"] as const) {
+            const old = await ctx.db
+                .query("image_jobs")
+                .withIndex("by_status_and_finishedAt", (q) => q.eq("status", status).lt("finishedAt", now - KEEP_FINISHED_MS))
+                .take(50);
+            for (const job of old) {
+                for (const f of [...job.inputs, ...(job.outputs ?? [])]) await ctx.storage.delete(f.storageId);
+                await ctx.db.delete(job._id);
+            }
+        }
+        const queued = await ctx.db
+            .query("image_jobs")
+            .withIndex("by_status_and_createdAt", (q) => q.eq("status", "queued"))
+            .first();
+        if (queued) await kickWorker(ctx);
+    },
+});

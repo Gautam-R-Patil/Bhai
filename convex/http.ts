@@ -5,6 +5,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import Anthropic from "@anthropic-ai/sdk";
 import { toClaudeRequest, toOpenAIResponse } from "./claude";
 import { pipeClaudeStream, streamCompletion } from "./llmStream";
@@ -21,12 +22,9 @@ import {
 import { encodeBase64, speakWithProvider, TTS_CREDIT_COST, TTS_MAX_CHARS, ttsConfigFromEnv } from "./tts";
 import {
   callAzureImage,
-  IMAGE_MAX_PER_MINUTE,
-  ImageError,
   imageConfigFromEnv,
   imageCreditCost,
   imageErrorResponse,
-  releaseImageSlotRetrying,
   validateImageRequest,
 } from "./image";
 import {
@@ -1013,7 +1011,7 @@ http.route({
 // Credits are taken before the call and refunded on any failure; when not every
 // image fits in the response, only the delivered ones are charged. 200 =
 // { images, credits, dropped? }; 429 = { error: "image_busy", retryAfter } (the
-// deployment is busy, or this account is over its share; see image.ts limits).
+// deployment is busy). Kept for older installs; new ones use /api/image/jobs.
 // ══════════════════════════════════════════════════════════════════════════
 
 http.route({
@@ -1042,67 +1040,154 @@ http.route({
     const req = validateImageRequest(body);
     if ("error" in req) return reply({ error: req.error }, req.status);
 
-    // Per account, before any credits move: requests a minute, then images in flight (convex/image.ts).
-    const busy = (retryAfter: number) => {
-      const { status, body: errBody } = imageErrorResponse(new ImageError("busy", "account limit", retryAfter));
-      return reply(errBody, status);
-    };
-    const minute = await ctx.runMutation(internal.sessions.checkRequestRateLimit, {
-      key: `image|${account.accountId}`,
-      windowMs: 60_000,
-      maxRequests: IMAGE_MAX_PER_MINUTE,
+    const cost = imageCreditCost(req.quality, req.n);
+    const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
+      otplessUserId: account.otplessUserId,
+      amount: cost,
     });
-    if (minute.limited) return busy(Math.max(1, Math.ceil((minute.retryAfterMs ?? 60_000) / 1000)));
-    const slot = { accountId: account.accountId, n: req.n };
-    // The slot frees as calls finish (~30-120s); 30s is a fair guess.
-    if (!(await ctx.runMutation(internal.image.acquireImageSlot, slot))) return busy(30);
+    if (!deducted?.success) return reply({ error: "insufficient_credits" }, 402);
 
+    const startedAt = Date.now();
+    const log = (status: "success" | "failed", credits: number, errorMessage?: string) =>
+      ctx
+        .runMutation(internal.llmCallLog.record, {
+          accountId: account.accountId,
+          otplessUserId: account.otplessUserId,
+          model: `image:${cfg.deployment}`,
+          status,
+          credits,
+          latencyMs: Date.now() - startedAt,
+          errorMessage,
+          hasMedia: true,
+        })
+        .catch(() => {});
     try {
-      const cost = imageCreditCost(req.quality, req.n);
-      const deducted = await ctx.runMutation(internal.accounts.deductCreditsInternal, {
-        otplessUserId: account.otplessUserId,
-        amount: cost,
-      });
-      if (!deducted?.success) return reply({ error: "insufficient_credits" }, 402);
-
-      const startedAt = Date.now();
-      const log = (status: "success" | "failed", credits: number, errorMessage?: string) =>
-        ctx
-          .runMutation(internal.llmCallLog.record, {
-            accountId: account.accountId,
-            otplessUserId: account.otplessUserId,
-            model: `image:${cfg.deployment}`,
-            status,
-            credits,
-            latencyMs: Date.now() - startedAt,
-            errorMessage,
-            hasMedia: true,
-          })
-          .catch(() => {});
-      try {
-        const { images, dropped } = await callAzureImage(cfg, req);
-        const charged = imageCreditCost(req.quality, images.length);
-        // await: buildResponse is async, so a failed encrypt must land in the (full) refund path.
-        const res = await reply({ images, credits: charged, ...(dropped ? { dropped } : {}) }, 200);
-        if (charged < cost) {
-          await ctx
-            .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost - charged })
-            .catch((e: unknown) => console.error("[Image] partial refund failed:", e));
-        }
-        await log("success", charged);
-        return res;
-      } catch (err) {
+      const { images, dropped } = await callAzureImage(cfg, req);
+      const charged = imageCreditCost(req.quality, images.length);
+      // await: buildResponse is async, so a failed encrypt must land in the (full) refund path.
+      const res = await reply({ images, credits: charged, ...(dropped ? { dropped } : {}) }, 200);
+      if (charged < cost) {
         await ctx
-          .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost })
-          .catch((e: unknown) => console.error("[Image] refund failed:", e));
-        const { status, body: errBody } = imageErrorResponse(err);
-        console.error(`[Image] ${errBody.error}:`, (err as Error)?.message);
-        await log("failed", 0, (err as Error)?.message);
-        return reply(errBody, status);
+          .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost - charged })
+          .catch((e: unknown) => console.error("[Image] partial refund failed:", e));
       }
-    } finally {
-      await releaseImageSlotRetrying(() => ctx.runMutation(internal.image.releaseImageSlot, slot));
+      await log("success", charged);
+      return res;
+    } catch (err) {
+      await ctx
+        .runMutation(internal.accounts.addCreditsInternal, { id: account.accountId, amount: cost })
+        .catch((e: unknown) => console.error("[Image] refund failed:", e));
+      const { status, body: errBody } = imageErrorResponse(err);
+      console.error(`[Image] ${errBody.error}:`, (err as Error)?.message);
+      await log("failed", 0, (err as Error)?.message);
+      return reply(errBody, status);
     }
+  }),
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/image/jobs — the queued image API (new clients; convex/image.ts).
+// Same body and errors as /api/image. The full cost is taken now; the job waits
+// for Azure and the client polls /api/image/jobs/status. 200 =
+// { jobId, position (jobs ahead, 0 = next), credits (balance after the charge) }.
+// ══════════════════════════════════════════════════════════════════════════
+
+http.route({
+  path: "/api/image/jobs",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    if (!imageConfigFromEnv(process.env)) return buildResponse({ error: "image_not_configured" }, 503, false, null);
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    const req = validateImageRequest(body);
+    if ("error" in req) return reply({ error: req.error }, req.status);
+
+    // Inputs first; then the charge and the job in one mutation, so credits never go without a job.
+    const inputs: Array<{ storageId: Id<"_storage">; mimeType: string }> = [];
+    const dropInputs = async () => {
+      for (const i of inputs) await ctx.storage.delete(i.storageId).catch(() => {});
+    };
+    let queued;
+    try {
+      for (const img of req.images)
+        inputs.push({ storageId: await ctx.storage.store(new Blob([img.bytes], { type: img.mimeType })), mimeType: img.mimeType });
+      queued = await ctx.runMutation(internal.image.enqueueImageJob, {
+        accountId: account.accountId,
+        otplessUserId: account.otplessUserId,
+        prompt: req.prompt,
+        size: req.size,
+        quality: req.quality,
+        n: req.n,
+        background: req.background,
+        inputs,
+      });
+    } catch (err) {
+      // The mutation rolled back: nothing was charged.
+      console.error("[Image] enqueue failed:", (err as Error)?.message);
+      await dropInputs();
+      return reply({ error: "image_failed", message: "Could not queue the image." }, 502);
+    }
+    if (queued.shortfall) {
+      await dropInputs();
+      return reply({ error: "insufficient_credits" }, 402);
+    }
+    return reply({ jobId: queued.jobId, position: queued.position, credits: queued.credits }, 200);
+  }),
+});
+
+// POST /api/image/jobs/status — body { jobId }; only the account that made the job
+// may read it (404 otherwise). 200 = { status: "queued", position, etaSeconds } |
+// { status: "running", etaSeconds } | { status: "done", images, dropped?, credits } |
+// { status: "failed", error: { code, message }, credits }; credits = the balance now.
+// A done job's images can be fetched again until it is cleaned up (2h after finishing).
+http.route({
+  path: "/api/image/jobs/status",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const validation = await validateRequest(ctx, request);
+    if (validation instanceof Response) return validation;
+    const { account } = validation;
+
+    let body: any;
+    let isEncrypted = false;
+    try {
+      const parsed = await parseRequestBody(request, account.sharedKey);
+      body = parsed.body;
+      isEncrypted = parsed.encrypted;
+    } catch (err: any) {
+      return buildResponse({ error: err?.message || "Invalid request body" }, 400, false, null);
+    }
+    const reply = (data: unknown, status: number) =>
+      buildResponse(data, status, isEncrypted, account.sharedKey, request);
+
+    if (typeof body?.jobId !== "string" || !body.jobId) return reply({ error: "jobId required" }, 400);
+    const job = await ctx.runQuery(internal.image.getImageJobStatus, {
+      jobId: body.jobId,
+      accountId: account.accountId,
+    });
+    if (!job) return reply({ error: "not_found" }, 404);
+    if (job.status !== "done") return reply(job, 200);
+    const images: Array<{ base64: string; mimeType: string }> = [];
+    for (const o of job.outputs) {
+      const blob = await ctx.storage.get(o.storageId);
+      if (blob) images.push({ base64: await blob.text(), mimeType: o.mimeType });
+    }
+    return reply({ status: "done", images, ...(job.dropped ? { dropped: job.dropped } : {}), credits: job.credits }, 200);
   }),
 });
 

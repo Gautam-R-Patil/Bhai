@@ -12,6 +12,7 @@ import { basename } from "node:path";
 import type { App, SayFn } from "@slack/bolt";
 import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
+import { registerImageDelivery } from "./media/image-jobs.js";
 import { runAgent, type GeneratedImage, type MediaAttachment, type ChannelContext } from "./agent.js";
 import { classifyQuery } from "./memory/classifier.js";
 import { mapStepStatus, parseStepLine } from "./step-status.js";
@@ -98,6 +99,17 @@ export async function initSlack(llm: LLMClient): Promise<void> {
         token: botToken,
         appToken: appToken,
         socketMode: true,
+    });
+    registerImageDelivery("slack", async (to, images, text, ownerDm) => {
+        // A scheduled task's: the owner's DM, as its own result goes.
+        if (to === "owner") return sendSlackProactiveMessage(text, images);
+        if (!slackApp) return false;
+        const [channel, thread_ts] = to.split(":");
+        const say = ((m: { text: string }) =>
+            slackApp?.client.chat.postMessage({ channel, thread_ts, text: m.text })) as unknown as SayFn;
+        await say({ text });
+        await sendImages(images, say, channel, thread_ts, ownerDm);
+        return true;
     });
 
     // -- Handle @mentions in channels --
@@ -231,7 +243,7 @@ async function handleSlackMessage(
             }
         };
 
-        const ctx = slackChannelContext(channel, slackUserId || "");
+        const ctx = { ...slackChannelContext(channel, slackUserId || ""), replyTo: `${channel}:${threadTs}` };
         const senderIsOwner = ctx.isOwner;
         const result = await runAgent(llm, taggedMessage, onProgress, media, undefined, undefined, modelHint, undefined, ctx);
 

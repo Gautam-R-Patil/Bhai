@@ -17,6 +17,7 @@ import type {
 } from "discord.js";
 import { STUCK_REPLY_LINE, withStuckReplyLine } from "./channel-text.js";
 import type { LLMClient } from "./llm.js";
+import { registerImageDelivery } from "./media/image-jobs.js";
 import {
     runAgent,
     type GeneratedImage,
@@ -273,7 +274,7 @@ async function runAndReply(
 
     // The progress hooks are process-wide and only owner tools use them: only an owner turn
     // registers (and clears) them, or the owner's task progress lands in this chat.
-    const ctx = discordChannelContext(interaction.user, isBotDmInteraction(interaction));
+    const ctx = { ...discordChannelContext(interaction.user, isBotDmInteraction(interaction)), replyTo: interaction.channelId };
     const senderIsOwner = ctx.isOwner;
     if (senderIsOwner) {
         setSwarmProgress(progressCallback);
@@ -377,7 +378,7 @@ async function runInThread(
         } catch { /* thread may have been archived */ }
     };
 
-    const ctx = discordChannelContext(interaction.user, isBotDmInteraction(interaction));
+    const ctx = { ...discordChannelContext(interaction.user, isBotDmInteraction(interaction)), replyTo: thread.id };
     const senderIsOwner = ctx.isOwner;
     if (senderIsOwner) {
         setSwarmProgress(progressCallback);
@@ -813,7 +814,7 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
             // Owner powers (tools, memory, history) only in a DM: a channel reply is read by
             // everyone in it. The progress hooks are process-wide and only owner tools use
             // them, so only an owner turn registers them (and always clears them).
-            const ctx = discordChannelContext(message.author, isDM);
+            const ctx = { ...discordChannelContext(message.author, isDM), replyTo: message.channelId };
             const senderIsOwner = ctx.isOwner;
             if (senderIsOwner) {
                 setSwarmProgress(progressCallback);
@@ -872,6 +873,16 @@ export async function initDiscord(llm: LLMClient): Promise<void> {
     try {
         await client.login(token);
         discordClient = client;
+        registerImageDelivery("discord", async (to, images, text, ownerDm) => {
+            // A scheduled task's: the owner's DM, as its own result goes.
+            if (to === "owner") return sendDiscordProactiveMessage(text, undefined, undefined, images);
+            const channel = await client.channels.fetch(to);
+            if (!channel || !("send" in channel)) return false;
+            const send = (msg: string | { files: AttachmentBuilder[] }) => (channel as TextChannel).send(msg);
+            await send(text);
+            await sendImages(images, send, ownerDm);
+            return true;
+        });
     } catch (err) {
         console.error("[DISCORD] Login failed:", (err as Error).message);
         throw err;

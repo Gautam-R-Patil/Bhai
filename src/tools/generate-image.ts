@@ -3,8 +3,10 @@
 // See LICENSE.md for details.
 
 // generate_image: create, edit, combine, vary and undo images with the Azure
-// image model behind Convex /api/image (the key stays on the server). The
-// result reaches the user through AgentResponse.images, not from here.
+// image model behind Convex /api/image/jobs (the key stays on the server, which
+// queues every install's requests until Azure has room). The result reaches the
+// user through AgentResponse.images, or, when the queue outlasts the call, from
+// media/image-jobs.ts.
 
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -14,6 +16,7 @@ import { promisify } from "node:util";
 import { getConvexSiteUrl } from "../config/keys.js";
 import { getImagesDir, getWorkspaceDir } from "../config/paths.js";
 import { encryptedFetch } from "../crypto-transport.js";
+import { canDeliverImages, trackImageJob } from "../media/image-jobs.js";
 import {
     currentGenerated,
     type InboundImage,
@@ -27,15 +30,17 @@ import { getSessionToken, handleAuthError } from "../session.js";
 import {
     callerIsOwner,
     isOwnerCaller,
+    isPrivateOwnerCaller,
     noteGeneratedImages,
     ownerTurnMessage,
     turnConversationKey,
     turnImages,
+    turnReplyTarget,
     turnShowsImages,
 } from "./cron-tool.js";
 import type { ToolDefinition } from "./get-current-time.js";
 
-// ── Server client (/api/image) ───────────────
+// ── Server client (/api/image/jobs) ───────────────
 
 export interface ImageRequest {
     prompt: string;
@@ -59,91 +64,155 @@ export class ImageError extends Error {
 }
 
 const NOT_SET_UP = "The image model isn't set up on the server yet, so I can't make or edit images right now.";
+const NOT_SIGNED_IN = "I'm not signed in right now, so I can't reach the image model.";
+const SAFETY =
+    "The image model's safety filter blocked this request. Rephrase it more neutrally (or leave out the part that tripped it) and try again.";
 
 const NAMED_SIZES = new Set(["1024x1024", "1024x1536", "1536x1024", "auto"]);
 
-async function callImageApi(
-    req: ImageRequest,
-): Promise<{ images: Array<{ buffer: Buffer; mimeType: string }>; credits?: number; dropped?: number }> {
+type Images = Array<{ buffer: Buffer; mimeType: string }>;
+export type ImageResult = { images: Images; credits?: number; dropped?: number };
+type Reply = {
+    jobId?: string;
+    status?: "queued" | "running" | "done" | "failed";
+    position?: number;
+    images?: Array<{ base64?: string; data?: string; mimeType: string }>;
+    credits?: number;
+    dropped?: number;
+    error?: string | { code?: string; message?: string };
+    message?: string;
+};
+
+/** A sealed POST to Bhai's server; an expired session re-authenticates once. */
+async function post(route: string, body: unknown, timeoutMs: number): Promise<{ res: Response; data: Reply }> {
     const token = await getSessionToken();
     const site = getConvexSiteUrl();
-    if (!token || !site) throw new ImageError("I'm not signed in right now, so I can't reach the image model.");
+    if (!token || !site) throw new ImageError(NOT_SIGNED_IN);
     // Fresh options per attempt: encryptedFetch seals the body in place.
-    const post = (bearer: string) =>
-        encryptedFetch(`${site}/api/image`, {
+    const send = (bearer: string) =>
+        encryptedFetch(`${site}${route}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
-            body: JSON.stringify(req),
-            // Azure takes up to ~2 min for a high-quality edit.
-            signal: AbortSignal.timeout(190_000),
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(timeoutMs),
         });
-    let res = await post(token);
+    let res = await send(token);
     if (res.status === 401) {
         const fresh = await handleAuthError();
-        if (fresh) res = await post(fresh);
+        if (fresh) res = await send(fresh);
     }
-    const data = (await res.json().catch(() => ({}))) as {
-        images?: Array<{ data: string; mimeType: string }>;
-        credits?: number;
-        dropped?: number;
-        retryAfter?: number;
-        error?: string;
-        message?: string;
-    };
-    if (!res.ok) {
-        const s = res.status;
-        // A server without custom sizes yet: validation runs before billing, so this retry is free.
-        if (s === 400 && data.error === "invalid size" && req.size && !NAMED_SIZES.has(req.size)) {
-            const [w, h] = req.size.split("x").map(Number);
-            return callImageApi({ ...req, size: req.images?.length ? "auto" : w > h ? "1536x1024" : "1024x1536" });
-        }
-        if (s === 402) throw new ImageError("You're out of AI credits, so I can't make images right now.", s);
-        if (s === 429)
-            throw new ImageError(
-                `The image model is busy right now; try again in about ${data.retryAfter ?? 60}s. Don't retry in this turn.`,
-                s,
-            );
-        if (s === 401) throw new ImageError("I'm not signed in right now, so I can't reach the image model.", s);
-        if (s === 422)
-            throw new ImageError(
-                "The image model's safety filter blocked this request. Rephrase it more neutrally (or leave out the part that tripped it) and try again.",
-                s,
-            );
-        if (s === 503 || s === 404) throw new ImageError(NOT_SET_UP, s);
-        if (s === 413) throw new ImageError("That photo is too large for the image model. Send a smaller one.", s);
-        if (s === 400)
-            throw new ImageError(
-                `The image model refused the request: ${data.message ?? data.error ?? "bad input"}.`,
-                s,
-            );
-        // Not data.message: the provider's text (deployment, region, tier) isn't for the user.
-        throw new ImageError(`The image model failed (error ${s}). Try again in a moment.`, s);
+    return { res, data: (await res.json().catch(() => ({}))) as Reply };
+}
+
+/** Puts one request in the server's queue (Azure takes a few a minute, for everyone); the credits go now. */
+async function submitJob(req: ImageRequest): Promise<string> {
+    // Up to ~18MB of photos to upload.
+    const { res, data } = await post("/api/image/jobs", req, 120_000);
+    if (res.ok && data.jobId) return data.jobId;
+    const s = res.status;
+    const error = typeof data.error === "string" ? data.error : undefined;
+    // A server without custom sizes yet: validation runs before billing, so this retry is free.
+    if (s === 400 && error === "invalid size" && req.size && !NAMED_SIZES.has(req.size)) {
+        const [w, h] = req.size.split("x").map(Number);
+        return submitJob({ ...req, size: req.images?.length ? "auto" : w > h ? "1536x1024" : "1024x1536" });
     }
-    const images = (data.images ?? []).map((i) => ({ buffer: Buffer.from(i.data, "base64"), mimeType: i.mimeType }));
-    if (!images.length) throw new ImageError("The image model returned no image. Try again in a moment.");
-    return { images, credits: data.credits, ...(data.dropped ? { dropped: data.dropped } : {}) };
+    if (s === 402) throw new ImageError("You're out of AI credits, so I can't make images right now.", s);
+    if (s === 401) throw new ImageError(NOT_SIGNED_IN, s);
+    if (s === 422) throw new ImageError(SAFETY, s);
+    if (s === 503 || s === 404) throw new ImageError(NOT_SET_UP, s);
+    if (s === 413) throw new ImageError("That photo is too large for the image model. Send a smaller one.", s);
+    if (s === 400)
+        throw new ImageError(`The image model refused the request: ${data.message ?? error ?? "bad input"}.`, s);
+    // Not data.message: the provider's text (deployment, region, tier) isn't for the user.
+    throw new ImageError(`The image model failed (error ${s}). Try again in a moment.`, s);
 }
 
 /**
- * Several transparent PNGs (~5.5M base64 chars each at high) or high-quality images overflow
- * one response, so those go as parallel n=1 requests; the ones that fail count as dropped.
+ * Queues the request. Several transparent PNGs (~5.5M base64 chars each at high) or high-quality
+ * images overflow one response, so those go as n=1 jobs; one that can't be queued counts as dropped.
  */
-async function callImageApiSplit(req: ImageRequest): Promise<Awaited<ReturnType<typeof callImageApi>>> {
+async function submitImageJobs(req: ImageRequest): Promise<{ jobIds: string[]; dropped: number }> {
     const n = req.n ?? 1;
-    if (!(n > 1 && (req.background === "transparent" || (req.quality === "high" && n > 2)))) return callImageApi(req);
-    const settled = await Promise.allSettled(Array.from({ length: n }, () => callImageApi({ ...req, n: 1 })));
-    const ok = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
-    if (!ok.length) throw (settled[0] as PromiseRejectedResult).reason;
-    const images = ok.flatMap((r) => r.images);
-    const credits = ok.some((r) => r.credits !== undefined)
-        ? ok.reduce((sum, r) => sum + (r.credits ?? 0), 0)
-        : undefined;
-    return { images, credits, ...(images.length < n ? { dropped: n - images.length } : {}) };
+    const split = n > 1 && (req.background === "transparent" || (req.quality === "high" && n > 2));
+    const settled = await Promise.allSettled(
+        split ? Array.from({ length: n }, () => submitJob({ ...req, n: 1 })) : [submitJob(req)],
+    );
+    const jobIds = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    if (!jobIds.length) throw (settled[0] as PromiseRejectedResult).reason;
+    return { jobIds, dropped: settled.length - jobIds.length };
 }
 
-/** Generate (no `images`) or edit images via the server. Throws ImageError with a user-facing message. */
-export async function requestImages(req: ImageRequest): Promise<Array<{ buffer: Buffer; mimeType: string }>> {
-    return (await callImageApi(req)).images;
+export type JobState = { done?: ImageResult; error?: ImageError; position?: number };
+
+/** One look at a job; undefined when the server couldn't be asked (the next look tries again). */
+async function jobStatus(jobId: string, timeoutMs: number): Promise<JobState | undefined> {
+    try {
+        const { res, data } = await post("/api/image/jobs/status", { jobId }, timeoutMs);
+        if (res.status === 404)
+            return { error: new ImageError("The image request got lost on the server. Try again.", 404) };
+        if (!res.ok) return undefined;
+        if (data.status === "failed") {
+            const code = typeof data.error === "object" ? data.error.code : undefined;
+            return {
+                error:
+                    code === "blocked_by_safety"
+                        ? new ImageError(SAFETY, 422)
+                        : code === "not_configured"
+                          ? new ImageError(NOT_SET_UP, 503)
+                          : new ImageError("The image model failed. Try again in a moment.", 502),
+            };
+        }
+        if (data.status !== "done") return { position: data.position ?? 0 };
+        const images = (data.images ?? []).map((i) => ({
+            buffer: Buffer.from(i.base64 ?? i.data ?? "", "base64"),
+            mimeType: i.mimeType,
+        }));
+        if (!images.length)
+            return { error: new ImageError("The image model returned no image. Try again in a moment.") };
+        return { done: { images, credits: data.credits, ...(data.dropped ? { dropped: data.dropped } : {}) } };
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Polls the jobs until each is done or failed, or until `deadline` ({ ahead }: jobs in front of
+ * them; 0 = one look). No status call runs past the deadline. `finished` keeps what earlier looks
+ * settled. Failed parts of a split count as dropped; all failed throws the first failure.
+ */
+export async function awaitImageJobs(
+    jobIds: string[],
+    deadline: number,
+    finished = new Map<string, JobState>(),
+): Promise<ImageResult | { ahead: number }> {
+    for (;;) {
+        let ahead = 0;
+        for (const id of jobIds) {
+            if (finished.has(id)) continue;
+            const left = deadline ? deadline - Date.now() : 30_000;
+            if (left <= 0) break;
+            const s = await jobStatus(id, Math.min(30_000, left));
+            if (s?.done || s?.error) finished.set(id, s);
+            else ahead = Math.max(ahead, s?.position ?? 0);
+        }
+        if (jobIds.every((id) => finished.has(id))) break;
+        const wait = ahead > 2 ? 5_000 : 2_000;
+        if (Date.now() + wait > deadline) return { ahead };
+        await new Promise((r) => setTimeout(r, wait));
+    }
+    const states = jobIds.map((id) => finished.get(id) as JobState);
+    const ok = states.flatMap((s) => (s.done ? [s.done] : []));
+    if (!ok.length) throw states[0].error;
+    const dropped = ok.reduce((sum, r) => sum + (r.dropped ?? 0), states.length - ok.length);
+    // The balance after the last one's refund.
+    return { images: ok.flatMap((r) => r.images), credits: ok.at(-1)?.credits, ...(dropped ? { dropped } : {}) };
+}
+
+/** Generate (no `images`) or edit images via the server's queue. Throws ImageError with a user-facing message. */
+export async function requestImages(req: ImageRequest, waitMs = 10 * 60_000): Promise<Images> {
+    const r = await awaitImageJobs((await submitImageJobs(req)).jobIds, Date.now() + waitMs);
+    if ("ahead" in r) throw new ImageError("The image model's queue is too long right now. Try again later.");
+    return r.images;
 }
 
 // ── Sources ──────────────────────────────────
@@ -365,6 +434,41 @@ async function compact(img: { buffer: Buffer; mimeType: string }): Promise<Buffe
     }
 }
 
+/**
+ * Saves a finished request into Images (a local edit blended onto `localSource` first) and records
+ * it in `history`, after its "before" (`sourcePath`).
+ */
+export async function saveImages(
+    images: Images,
+    o: { slug: string; stamp: number; history: string; sourcePath?: string; localSource?: Buffer },
+): Promise<Array<{ file_path: string; mime_type: string }>> {
+    if (o.localSource && images.length === 1 && images[0].mimeType === "image/jpeg") {
+        const blended = await blendLocal(o.localSource, images[0].buffer).catch((e) => {
+            console.log(`  🎨 generate_image: local blend failed: ${(e as Error).message}`);
+            return null;
+        });
+        if (blended) images[0] = { buffer: blended, mimeType: "image/jpeg" };
+    }
+    if (o.sourcePath && currentGenerated(o.history) !== o.sourcePath) pushGenerated(o.history, o.sourcePath);
+    const files: Array<{ file_path: string; mime_type: string }> = [];
+    for (const [i, img] of images.entries())
+        files.push({
+            file_path: save(await compact(img), img.mimeType, o.slug, o.stamp, images.length > 1 ? i + 1 : undefined),
+            mime_type: img.mimeType,
+        });
+    // One history entry per call: undo after variations goes back past all of them, "last" = the last one.
+    pushGenerated(
+        o.history,
+        files.map((f) => f.file_path),
+    );
+    return files;
+}
+
+// The tool's own wait for the queue (its timeout is 200s); past it the watcher takes over. A result
+// that only comes in after HANDOFF_MS goes to the watcher too: the turn may be over by the time it's saved.
+const TOOL_WAIT_MS = 150_000;
+const HANDOFF_MS = 185_000;
+
 const SIZES = {
     square: "1024x1024",
     portrait: "1024x1536",
@@ -548,7 +652,7 @@ export const generateImage: ToolDefinition = {
                   : isEdit
                     ? "auto"
                     : SIZES.square;
-            const { images, credits, dropped } = await callImageApiSplit({
+            const { jobIds, dropped: unqueued } = await submitImageJobs({
                 prompt,
                 ...(isEdit ? { images: prepared.map(({ data, mimeType }) => ({ data, mimeType })) } : {}),
                 size,
@@ -556,45 +660,61 @@ export const generateImage: ToolDefinition = {
                 n: count,
                 ...(transparent ? { background: "transparent" as const } : {}),
             });
-
-            if (
-                input.local === true &&
-                raw.length === 1 &&
-                images.length === 1 &&
-                images[0].mimeType === "image/jpeg"
-            ) {
-                const blended = await blendLocal(prepared[0].buffer, images[0].buffer).catch((e) => {
-                    console.log(`  🎨 generate_image: local blend failed: ${(e as Error).message}`);
-                    return null;
-                });
-                if (blended) images[0] = { buffer: blended, mimeType: "image/jpeg" };
-            }
+            const result = await awaitImageJobs(jobIds, started + TOOL_WAIT_MS);
 
             // The "before" of a one-photo edit, as a file: undo goes back to it. Combined photos
             // have no single "before", so no undo target.
             let sourcePath = raw.length === 1 ? raw[0].file : undefined;
             if (raw.length === 1 && !sourcePath)
                 sourcePath = save(prepared[0].buffer, prepared[0].mimeType, `${slug}_original`, stamp);
-            if (sourcePath && currentGenerated(history) !== sourcePath) pushGenerated(history, sourcePath);
-
-            const files: Array<{ file_path: string; mime_type: string }> = [];
-            for (const [i, img] of images.entries())
-                files.push({
-                    file_path: save(
-                        await compact(img),
-                        img.mimeType,
-                        slug,
-                        stamp,
-                        images.length > 1 ? i + 1 : undefined,
-                    ),
-                    mime_type: img.mimeType,
-                });
-            // One history entry per call: undo after variations goes back past all of them, "last" = the last one.
-            pushGenerated(
-                history,
-                files.map((f) => f.file_path),
-            );
             const kind = isEdit ? "edited" : "generated";
+            const local = input.local === true && raw.length === 1;
+
+            if ("ahead" in result || Date.now() - started > HANDOFF_MS) {
+                // Still in the server's queue (or done too close to the tool's timeout): the watcher
+                // saves it and sends it to this chat.
+                const ahead = "ahead" in result ? result.ahead : 0;
+                const target = turnReplyTarget();
+                const sends = canDeliverImages(target?.channel);
+                // A local edit blends onto the prepared photo (upright, <=2048px), like below; the
+                // watcher deletes this copy once it has saved the result.
+                let blendSource: string | undefined;
+                if (local)
+                    try {
+                        const tmp = path.join(os.tmpdir(), "bhai_media");
+                        fs.mkdirSync(tmp, { recursive: true, mode: 0o700 });
+                        blendSource = writeNew(tmp, `${slug}_${stamp}_blend`, extFor(prepared[0].mimeType), prepared[0].buffer);
+                    } catch {}
+                trackImageJob({
+                    jobIds,
+                    prompt,
+                    kind,
+                    slug,
+                    history,
+                    ...(sourcePath ? { sourcePath } : {}),
+                    ...(blendSource ? { blendSource } : {}),
+                    ...(target && sends ? { target } : {}),
+                    // A scheduled task's result goes to the owner's own chats.
+                    ownerDm: isPrivateOwnerCaller() || (target?.to === "owner" && callerIsOwner() === true),
+                    createdAt: Date.now(),
+                });
+                console.log(`  🎨 generate_image: queued (${ahead} ahead) → ${sends ? target?.channel : "save only"}`);
+                return JSON.stringify({
+                    queued: true,
+                    position: ahead,
+                    note: `Azure is busy; the image is in Bhai's queue (${ahead} ahead) and ${sends ? "will be sent to this chat by itself" : "will be saved in Bhai's Images folder"} when it's ready. Tell the user that in one short line; don't call generate_image again for it.`,
+                });
+            }
+
+            const { images, credits } = result;
+            const dropped = (result.dropped ?? 0) + unqueued;
+            const files = await saveImages(images, {
+                slug,
+                stamp,
+                history,
+                sourcePath,
+                ...(local ? { localSource: prepared[0].buffer } : {}),
+            });
             // The turn's reply carries them (AgentResponse.images), also when a sub-agent made them.
             noteGeneratedImages(
                 files.map((f) => ({

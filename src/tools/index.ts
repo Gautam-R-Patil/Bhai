@@ -742,7 +742,8 @@ const TOOL_TIMEOUTS: Record<string, number> = {
     web_read: 60_000, // up to 3 tries of a 15s fetch, plus PDF parsing
     deep_research: 300_000, // 5 minutes for deep research
     import_memory: 300_000, // one model call per ~12K chars of a large export, then a dedupe check per fact
-    generate_image: 200_000, // a high-quality Azure edit takes up to ~3 min (its fetch gives up at 190s)
+    generate_image: 200_000, // waits up to 150s for the server's image queue, then hands the job to media/image-jobs.ts
+    create_presentation: 360_000, // outline + AI slide images (waited for up to 4 min, then stock) + render
     // File operations (coding primitives)
     read: 10_000,
     edit: 10_000,

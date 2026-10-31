@@ -18,6 +18,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { getDownloadsDir, getImagesDir, getWorkspaceDir, getBhaiHome } from "../config/paths.js";
 import { isStuckReplyPhrase, stuckActionButtons, withStuckReplyLine } from "../channel-text.js";
 import type { LLMClient } from "../llm.js";
+import { registerImageDelivery } from "../media/image-jobs.js";
 import {
     runAgent,
     getConversationHistory,
@@ -277,6 +278,14 @@ const restartNotice = (ask: string) =>
 
 export function initOverlayChat(llm: LLMClient): void {
     llmClient = llm;
+    // An image that waited in the server's queue: shown like a scheduled task's (and logged to the chat).
+    // No chat window open yet: the next tick tries again (for up to a day; the files are in Images).
+    registerImageDelivery("overlay", async (_to, images, text) => {
+        if (!ownerClients().length) return false;
+        if (!images.length) return sendOverlayNotification(text, { requested: true });
+        for (const [i, img] of images.entries()) await sendOverlayImage(img.path, i ? "" : text, { requested: true });
+        return true;
+    });
     // Pick up where the conversation left off before a restart.
     if (getConversationHistory().length === 0) {
         const recent = recentChatContext(12 * 60 * 60 * 1000, 20);
@@ -1342,6 +1351,7 @@ NOTE: Screenshot capture failed (screen recording permission may be needed). Ans
                 userId: "local",
                 isOwner: wsIsOwner(ws),
                 isPrivate: wsIsOwner(ws),
+                replyTo: wsIsOwner(ws) ? "local" : undefined,
                 onTurnEvent: live.relay.sink,
             }),
         );
@@ -1545,6 +1555,7 @@ async function handleFileAttachment(
                 userId: "local",
                 isOwner: wsIsOwner(ws),
                 isPrivate: wsIsOwner(ws),
+                replyTo: wsIsOwner(ws) ? "local" : undefined,
                 onTurnEvent: live.relay.sink,
             }),
         );

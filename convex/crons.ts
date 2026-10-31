@@ -47,4 +47,9 @@ crons.daily(
 // and BHAI_MAIL_PASS are set.
 crons.interval("bhai mail poll", { minutes: 1 }, internal.bhaiMailNode.poll, {});
 
+// Image queue: requeue jobs whose worker died, kick the worker while anything is queued
+// (so no job is ever stranded), expire day-old jobs,
+// delete finished ones (and their files) after 2 hours.
+crons.interval("image queue tick", { minutes: 1 }, internal.image.tickImageQueue, {});
+
 export default crons;

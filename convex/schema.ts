@@ -495,4 +495,40 @@ export default defineSchema({
     uidValidity: v.number(),
     lastUid: v.number(),
   }).index("by_name", ["name"]),
+
+  // ── Image generation queue (image.ts): one Azure call at a time, oldest first ──
+  image_jobs: defineTable({
+    accountId: v.id("accounts"),
+    otplessUserId: v.string(),       // for llm_call_log
+    status: v.union(v.literal("queued"), v.literal("running"), v.literal("done"), v.literal("failed")),
+    prompt: v.string(),
+    size: v.string(),
+    quality: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    n: v.number(),
+    background: v.optional(v.union(v.literal("transparent"), v.literal("opaque"), v.literal("auto"))),
+    inputs: v.array(v.object({ storageId: v.id("_storage"), mimeType: v.string() })), // ≤4, edit inputs
+    outputs: v.optional(v.array(v.object({ storageId: v.id("_storage"), mimeType: v.string() }))), // base64 text
+    dropped: v.optional(v.number()),
+    error: v.optional(v.object({
+      code: v.union(v.literal("blocked_by_safety"), v.literal("image_failed"), v.literal("not_configured")),
+      message: v.string(),
+    })),
+    creditsCharged: v.number(),      // taken at submit; lowered to what was delivered
+    refunded: v.boolean(),           // a refund happened: never a second
+    attempts: v.number(),            // hard (non-busy) attempts
+    busyStrikes: v.optional(v.number()), // timeouts/5xx on this job while Azure worked for others
+    createdAt: v.number(),           // place in line; kept when requeued
+    startedAt: v.optional(v.number()), // the current claim (also its token)
+    finishedAt: v.optional(v.number()),
+  })
+    .index("by_status_and_createdAt", ["status", "createdAt"])
+    .index("by_status_and_finishedAt", ["status", "finishedAt"]),
+
+  // One row: the queue worker's lease, the pause after Azure said busy, and the busy backoff.
+  image_queue_state: defineTable({
+    leaseUntil: v.number(),
+    pausedUntil: v.number(),
+    backoffS: v.optional(v.number()), // last pause with no retry-after (doubles to 5 min); 0 after a success
+    lastSuccessAt: v.optional(v.number()), // the last image Azure made, any job
+  }),
 });

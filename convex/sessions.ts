@@ -333,7 +333,7 @@ export const checkRequestRateLimit = internalMutation({
     windowMs: v.number(),
     maxRequests: v.number(),
   },
-  handler: async (ctx, { key, windowMs, maxRequests }): Promise<{ limited: boolean; retryAfterMs?: number }> => {
+  handler: async (ctx, { key, windowMs, maxRequests }): Promise<{ limited: boolean }> => {
     const now = Date.now();
     const existing = await ctx.db
       .query("request_rate_limits")
@@ -355,7 +355,7 @@ export const checkRequestRateLimit = internalMutation({
     }
 
     if (existing.requestCount >= maxRequests) {
-      return { limited: true, retryAfterMs: existing.windowStart + windowMs - now };
+      return { limited: true };
     }
 
     await ctx.db.patch(existing._id, { requestCount: existing.requestCount + 1 });

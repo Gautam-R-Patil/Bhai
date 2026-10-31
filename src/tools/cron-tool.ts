@@ -41,6 +41,8 @@ export interface CronCallerContext {
     conversationKey?: string;
     /** What generate_image made this turn (sub-agents included), for AgentResponse.images. */
     generatedImages?: GeneratedImage[];
+    /** Where a result that comes after the turn goes (ChannelContext.replyTo); unset for autonomous runs. */
+    replyTo?: { channel: string; to: string };
 }
 const _callerStorage = new AsyncLocalStorage<CronCallerContext>();
 // The tool the owner's main loop (agent.ts) is running; a sub-agent or swarm that tool
@@ -142,6 +144,18 @@ export const turnImages = (): Array<{ base64: string; mimeType: string }> | unde
 
 /** This turn's conversation key (media/image-memory.ts), or undefined outside a turn. */
 export const turnConversationKey = (): string | undefined => _callerStorage.getStore()?.conversationKey;
+
+/** The chat a late result of this turn goes to (an image still in the queue). */
+export const turnReplyTarget = (): CronCallerContext["replyTo"] => _callerStorage.getStore()?.replyTo;
+
+/**
+ * ChannelContext.replyTo as a late-result target: the chat that asked, or for an autonomous run only
+ * "owner" (a scheduled task with deliverTo: its channel's owner chats, as its own result goes).
+ */
+export function lateReplyTarget(c?: { channel: string; replyTo?: string; autonomous?: boolean }): CronCallerContext["replyTo"] {
+    if (!c?.replyTo || (c.autonomous && c.replyTo !== "owner")) return undefined;
+    return { channel: c.channel, to: c.replyTo };
+}
 
 /**
  * This turn's reply delivers its images by itself: a chat turn on these channels (email as

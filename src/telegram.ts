@@ -51,6 +51,7 @@ import type { Config } from "./config.js";
 import { encryptedFetch } from "./crypto-transport.js";
 import type { LLMClient } from "./llm.js";
 import { MODELS } from "./llm.js";
+import { registerImageDelivery } from "./media/image-jobs.js";
 import {
     conversationKey,
     lastInboundImages,
@@ -526,6 +527,17 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
     const bot = new Bot(config.telegramBotToken);
     _moduleBot = bot;
     _moduleConfig = config;
+    registerImageDelivery("telegram", async (to, images, text, ownerDm) => {
+        // A scheduled task's: the owners, as its own result goes (not while DND or offline holds it).
+        if (to === "owner") {
+            if (!(await sendProactiveMessage(bot, config, text))) return false;
+            for (const id of parseTelegramOwners(config)) await sendImages(bot.api, id, images, ownerDm);
+            return true;
+        }
+        await withTelegramRetry(() => bot.api.sendMessage(Number(to), text));
+        await sendImages(bot.api, Number(to), images, ownerDm);
+        return true;
+    });
     const startTime = Date.now();
     const telegramOwners = parseTelegramOwners(config);
 
@@ -1354,6 +1366,7 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                         userName: ctx.from?.first_name,
                         isOwner: senderIsOwner,
                         isPrivate: ctx.chat?.type === "private",
+                        replyTo: String(ctx.chat?.id ?? ""),
                     },
                 );
                 if (senderIsOwner) {
@@ -2119,6 +2132,7 @@ export async function runMediaTurn(
                 userName: ctx.from?.first_name,
                 isOwner: senderIsOwner,
                 isPrivate: (ctx.chat as { type?: string })?.type === "private",
+                replyTo: String(ctx.chat.id),
             },
         );
 
@@ -2268,6 +2282,7 @@ You can't listen to audio, so don't guess what's in it (no song names, no sounds
                 userName: ctx.from?.first_name,
                 isOwner: senderIsOwner,
                 isPrivate: ctx.chat?.type === "private",
+                replyTo: String(ctx.chat?.id ?? ""),
             },
         );
 
