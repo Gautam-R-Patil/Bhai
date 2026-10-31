@@ -66,5 +66,6 @@ describe("assembleToolNames", () => {
         expect(needsTools("Without switching apps: what's the Finder window called?")).toBe(true);
         expect(needsTools("I haven't slept yet")).toBe(false); // chat, not a changing fact
         expect(needsTools("thanks bhai, good night")).toBe(false);
+        expect(needsTools("bhai aaj Bengaluru mein mausam kaisa hai? chhata le jaun kya?")).toBe(true);
     });
 });

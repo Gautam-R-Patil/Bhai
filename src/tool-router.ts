@@ -915,7 +915,8 @@ export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: numb
     { pattern: /\b(sonos|speaker|airplay)\b/i, category: "media", minScore: 0.6 },
     { pattern: /\b(spectrogram|waveform|audio.?viz)\b/i, category: "media", minScore: 0.7 },
     // Weather / Search
-    { pattern: /\b(weather|forecast|temperature|rain|sunny|humid)\b/i, category: "web_search", minScore: 0.7 },
+    // Hinglish too: "aaj mausam kaisa hai? chhata le jaun?" took the chat lane and a request_tools round trip.
+    { pattern: /\b(weather|forecast|temperature|rain|sunny|humid|mausam|baa?rish|garmi|thand|chhat(?:a|ri)|umbrella)\b/i, category: "web_search", minScore: 0.7 },
     // Facts that change: "has Node 26 become LTS yet?" went to the classifier as chat (0.53)
     // and was answered from stale context with no search tool offered.
     { pattern: CHANGING_FACT, category: "web_search", minScore: 0.7 },
