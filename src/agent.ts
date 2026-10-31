@@ -524,8 +524,10 @@ export function finalReplyText(raw: string, channelContext?: ChannelContext): st
  */
 export function planAskQuestion(planText: string): string | null {
     if (!/\bASK_USER\b/i.test(planText.split("\n").slice(0, 3).join("\n"))) return null;
-    const question =
-        planText.match(/ASK_USER[:\s]*["']?([^"'\n]+)/i)?.[1] || planText.split("\n").find((l) => l.includes("?"));
+    // The rest of the line, minus one pair of wrapping quotes: stopping at the first quote turned
+    // ASK_USER "Which 'Time'? …" (the plan prompt's own example) and "What's …" into "Which"/"What".
+    const asked = planText.match(/ASK_USER[:\s]*(.+)/i)?.[1]?.trim().replace(/^(["'])(.*)\1$/, "$2");
+    const question = asked || planText.split("\n").find((l) => l.includes("?"));
     return question?.trim() || null;
 }
 
@@ -547,7 +549,8 @@ export function antiGivingUpFailures(
         const txt = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
         return (
             // A successful result can carry "error":null; only a set error counts.
-            /"error":\s*(?!null\b|false\b|"")/.test(txt) ||
+            // (whitespace inside the lookahead: pretty-printed JSON has '"error": null')
+            /"error":(?!\s*(?:null|false|"")\s*[,}\n])/.test(txt) ||
             txt.includes('"success":false') ||
             txt.includes("NOT_PLAYING") ||
             txt.includes("NO_RESULTS") ||

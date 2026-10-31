@@ -100,6 +100,9 @@ describe("antiGivingUpFailures", () => {
         expect(antiGivingUpFailures([msg(q), search], q, reply, 1)).toBe(0);
         // "error":null is not a failure even on an action task
         expect(antiGivingUpFailures([msg("find the fold"), search], "find the fold", reply, 1)).toBe(0);
+        // nor is a pretty-printed one ('"error": null', as JSON.stringify(x, null, 2) writes it)
+        const pretty: ChatCompletionMessageParam = { ...search, content: JSON.stringify({ success: true, error: null }, null, 2) };
+        expect(antiGivingUpFailures([msg("find the fold"), pretty], "find the fold", reply, 1)).toBe(0);
     });
 });
 
@@ -113,6 +116,11 @@ describe("planAskQuestion", () => {
         expect(planAskQuestion('1. ASK_USER "Which song did you mean: Pink Floyd or NF?"\n2. spotify play')).toBe(
             "Which song did you mean: Pink Floyd or NF?",
         );
+        // a quote or apostrophe inside the question doesn't cut it short
+        expect(planAskQuestion(`1. ASK_USER "Which 'Time'? Some options: Pink Floyd, MKJ, NF"\n2. spotify play`)).toBe(
+            "Which 'Time'? Some options: Pink Floyd, MKJ, NF",
+        );
+        expect(planAskQuestion("ASK_USER: What's the file called?")).toBe("What's the file called?");
     });
 });
 
