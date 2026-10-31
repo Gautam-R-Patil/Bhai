@@ -513,6 +513,10 @@ export function concurrentHistoryFork(concurrent: boolean, senderIsOwner: boolea
     return concurrent && senderIsOwner ? [...getConversationHistory()] : undefined;
 }
 
+export function isOwnerPrivateChat(owners: Set<number>, fromId: number | undefined, chatType: string | undefined): boolean {
+    return chatType === "private" && !!fromId && owners.has(fromId);
+}
+
 export function isPlatformOwner(channel: "telegram", userId: number, config: Config): boolean {
     if (channel !== "telegram") return false;
     return parseTelegramOwners(config).has(userId);
@@ -932,8 +936,9 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
         }
 
         // ── Record user activity + proactive response tracking ──
-        // Fire-and-forget: deliver dream results if available
-        (async () => {
+        // Fire-and-forget: deliver dream results if available. They come from the owner's own
+        // conversation and memory, and delivery empties the queue: the owner's private chat only.
+        if (isOwnerPrivateChat(telegramOwners, ctx.from?.id, ctx.chat?.type)) (async () => {
             try {
                 const { recordUserActivity, getDreamResultsForDelivery, formatDreamResults } = await import(
                     "./proactive/dreaming.js"
