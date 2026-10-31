@@ -430,7 +430,12 @@ export const winOsType: ToolDefinition = {
                 if (mod === "ctrl" || mod === "control") modifiers.push("^");
                 else if (mod === "shift") modifiers.push("+");
                 else if (mod === "alt" || mod === "option") modifiers.push("%");
-                else if (mod === "win" || mod === "command" || mod === "cmd") modifiers.push("^{ESC}"); // approximate
+                else if (mod === "cmd" || mod === "command" || mod === "meta") modifiers.push("^"); // Windows has no Cmd
+                else
+                    return JSON.stringify({
+                        success: false,
+                        error: `Modifier '${mod}' can't be sent on Windows (SendKeys has no Windows key); use ctrl, alt or shift.`,
+                    });
             }
 
             // Map special keys to SendKeys format

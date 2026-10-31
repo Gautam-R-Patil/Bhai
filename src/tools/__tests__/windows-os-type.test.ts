@@ -34,3 +34,22 @@ describe("Windows os_type never splices untrusted text into PowerShell", () => {
         expect(scripts[0]).toMatch(/^[\x00-\x7f]*$/); // ASCII-only script: no code-page mangling
     });
 });
+
+describe("Windows combos never open the Start menu for cmd/win", () => {
+    it("cmd+s is Ctrl+S", async () => {
+        scripts.length = 0;
+        const out = JSON.parse(await winOsType.handler({ combo: "command+s" }));
+        expect(out.success).toBe(true);
+        expect(scripts[0]).not.toContain("ESC");
+        expect(scripts[0]).toContain(Buffer.from("^s").toString("base64"));
+    });
+
+    it.each(["win+r", "super+d"])("%s fails instead of typing the letter", async (combo) => {
+        scripts.length = 0;
+        const out = JSON.parse(await winOsType.handler({ combo }));
+        expect(out.success).toBe(false);
+        expect(scripts).toHaveLength(0);
+        const { executeStructuredAction } = await import("../os-computer-action.js");
+        await expect(executeStructuredAction({ action: "key", text: combo })).rejects.toThrow(/can't be sent/);
+    });
+});

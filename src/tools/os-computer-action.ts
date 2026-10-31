@@ -1305,6 +1305,7 @@ function mapKeyComboToSendKeys(combo: string): string {
         else if (m === "alt" || m === "option") prefix += "%";
         else if (m === "shift") prefix += "+";
         else if (m === "cmd" || m === "command" || m === "meta") prefix += "^"; // Windows has no Cmd; treat as Ctrl
+        else throw new Error(`modifier '${m}' can't be sent on Windows (SendKeys has no Windows key)`);
     }
     const keyMap: Record<string, string> = {
         enter: "{ENTER}",
