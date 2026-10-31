@@ -92,12 +92,12 @@ describe("fenceToolResult (what the agent, sub-agents and voice hand the model)"
         expect(fenceToolResult("site_task", page)).toBe(wrapUntrustedToolResult("site_task", page));
         expect(fenceToolResult("get_current_time", page)).toBe(page);
     });
-    it("ATLAS_NO_UNTRUSTED_WRAP=true turns it off", () => {
-        process.env.ATLAS_NO_UNTRUSTED_WRAP = "true";
+    it("BHAI_NO_UNTRUSTED_WRAP=true turns it off", () => {
+        process.env.BHAI_NO_UNTRUSTED_WRAP = "true";
         try {
             expect(fenceToolResult("site_task", page)).toBe(page);
         } finally {
-            delete process.env.ATLAS_NO_UNTRUSTED_WRAP;
+            delete process.env.BHAI_NO_UNTRUSTED_WRAP;
         }
     });
 });

@@ -2,7 +2,7 @@
 // The real loop: Bhai's unpacked Chrome extension in Playwright's Chromium, the
 // real bridge (HTTP /discover → WS auth → commands), and the page driver over
 // ChromePageProxy, scripted through the synthetic shop. Native messaging is the
-// one piece not covered: Playwright's Chromium has no com.atlas.bridge host, so
+// one piece not covered: Playwright's Chromium has no com.bhai.bridge host, so
 // the extension takes its HTTP fallback (the fresh-install path).
 //
 // BRIDGE_E2E_RUNS=500 SITE_E2E_REQUIRE_BROWSER=1 for the acceptance run (0
@@ -10,7 +10,7 @@
 // only logs the timings. The extension hardcodes port 18800, so a running Bhai
 // skips this file locally; BRIDGE_E2E_PORT=<free port> runs it beside one with a
 // copy of the extension patched to that port (its id then pinned through
-// ATLAS_EXTENSION_IDS instead of the shipped-folder id; not on Windows, which
+// BHAI_EXTENSION_IDS instead of the shipped-folder id; not on Windows, which
 // hashes the path differently and accepts any origin while unpinned). A busy
 // port fails the run only in CI; SITE_E2E_REQUIRE_BROWSER (the owner's Mac,
 // where Bhai holds 18800) skips it.
@@ -62,7 +62,7 @@ if (PORT !== 18800) {
         const p = path.join(ext, f);
         writeFileSync(p, readFileSync(p, "utf8").replaceAll("18800", String(PORT)));
     }
-    if (process.platform !== "win32") process.env.ATLAS_EXTENSION_IDS = unpackedExtensionId(ext);
+    if (process.platform !== "win32") process.env.BHAI_EXTENSION_IDS = unpackedExtensionId(ext);
 }
 
 const portFree = (port: number) =>
@@ -82,7 +82,7 @@ let disconnects = 0;
 let bridgeUp = false;
 
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // many orders × ₹249 would hit the real daily cap
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000"; // many orders × ₹249 would hit the real daily cap
     if (!(await portFree(PORT))) {
         // Never point the test extension at someone else's bridge (a running Bhai's).
         if (process.env.CI) throw new Error(`port ${PORT} is busy: quit Bhai to run the bridge loop`);
@@ -114,7 +114,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
     await context?.close().catch(() => {});
     if (bridgeUp) closeChromeBridge();
     await shop?.close();
@@ -130,7 +130,7 @@ describe("Chrome extension ⇄ bridge loop", { retry: RUNS <= 3 ? 2 : 0 }, () =>
         if (skip) return ctx.skip(skip);
         const sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
         const id = new URL(sw.url()).host;
-        // Windows pins only ATLAS_EXTENSION_IDS (extension-origin.ts), so there any origin is accepted.
+        // Windows pins only BHAI_EXTENSION_IDS (extension-origin.ts), so there any origin is accepted.
         if (process.platform !== "win32") {
             expect(bhaiExtensionIds()?.has(id)).toBe(true);
             if (PORT === 18800) expect(id).toBe(unpackedExtensionId(ext)); // the shipped folder's own id

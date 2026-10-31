@@ -39,8 +39,8 @@ const shops = {} as Record<Variant, { shop: Shop; skillPath: string; settleMs: n
 // An unstopped run: per driver call, the ms from its start to the end of the flow.
 const calls0 = {} as Record<Variant, number[]>;
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
-    process.env.ATLAS_NO_AGENT_CURSOR = "true"; // a cursor glide would pad every action
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+    process.env.BHAI_NO_AGENT_CURSOR = "true"; // a cursor glide would pad every action
     try {
         const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -60,8 +60,8 @@ beforeAll(async () => {
     shops.S = { shop: s, skillPath: install(true), settleMs: ORDER_DELAY_MS + 500 };
 }, 60_000);
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
-    delete process.env.ATLAS_NO_AGENT_CURSOR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_NO_AGENT_CURSOR;
     await Promise.all(Object.values(shops).map((s) => s.shop.close()));
     await browser?.close();
 });

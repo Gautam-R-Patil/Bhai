@@ -445,7 +445,7 @@ describe("review round 3", () => {
     });
 
     it("a skill that hangs while the total is re-checked fails with its own reason, not total_changed", async () => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
         const hang = withManifest(
             cartSkill
                 .replace(
@@ -551,7 +551,7 @@ describe("Stop", () => {
     });
 
     it("Stop after the yes but before the mark: nothing sent, and the yes is spent", async () => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
         const skillPath = withManifest(cartSkill, manifest);
         const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
         const d = pageDriver();
@@ -586,11 +586,11 @@ describe("Stop", () => {
             checkpointDir: dir,
         });
         expect(again.reason).toBe("consent_required"); // a new yes is needed
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     });
 
     it("Stop while the submit runs: the order may exist, never sent again", async () => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
         const skillPath = withManifest(cartSkill, manifest);
         const dir = mkdtempSync(path.join(tmpdir(), "ckpt-"));
         const d = pageDriver();
@@ -632,7 +632,7 @@ describe("Stop", () => {
         });
         expect(again.reason).toBe("commit_unresolved");
         expect(d.calls.filter((a) => a.target?.sel === "#checkout").length).toBe(1);
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     });
 });
 
@@ -650,10 +650,10 @@ describe("offline at the yes, a closed tab", () => {
     );
     // Earlier describes booked orders against today's in-memory spend.
     beforeAll(() => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
     });
     afterAll(() => {
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     });
     const toConfirm = async (url = () => "https://shop.test/cart?id=p1&s=tok", online?: () => Promise<boolean>) => {
         const d = { ...pageDriver({ url }), online };
@@ -782,10 +782,10 @@ describe("an overlay over a target (the page driver's unblock / blocked_by_overl
         manifest,
     );
     beforeAll(() => {
-        process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
+        process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
     });
     afterAll(() => {
-        delete process.env.ATLAS_SPEND_CAP_DAY_INR;
+        delete process.env.BHAI_SPEND_CAP_DAY_INR;
     });
     // Select → confirm with `unblock`, logging snapshots, unblocks and the submit in order.
     const toConfirm = async (unblock: () => Promise<boolean>, price = () => 249) => {

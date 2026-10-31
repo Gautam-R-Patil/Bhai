@@ -64,8 +64,8 @@ let browser: any = null;
 let shop: Awaited<ReturnType<typeof startShop>>;
 let skillPath = "";
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000"; // 18 cells × 25 runs × ₹249 is past the real daily cap
-    process.env.ATLAS_NO_AGENT_CURSOR = "true"; // a cursor glide would pad every action
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000"; // 18 cells × 25 runs × ₹249 is past the real daily cap
+    process.env.BHAI_NO_AGENT_CURSOR = "true"; // a cursor glide would pad every action
     try {
         const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -79,8 +79,8 @@ beforeAll(async () => {
     skillPath = findSiteSkill(shop.url, [builtin]) as string;
 }, 60_000);
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
-    delete process.env.ATLAS_NO_AGENT_CURSOR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_NO_AGENT_CURSOR;
     await shop?.close();
     await browser?.close();
 });

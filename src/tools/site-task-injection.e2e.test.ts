@@ -104,9 +104,9 @@ function seen(raw: string): { json: Json; found: string[] } {
 // biome-ignore lint/suspicious/noExplicitAny: playwright is optional here
 let browser: any = null;
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
-    process.env.ATLAS_NO_AGENT_CURSOR = "true";
-    process.env.ATLAS_NO_SITE_MINT = "true";
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+    process.env.BHAI_NO_AGENT_CURSOR = "true";
+    process.env.BHAI_NO_SITE_MINT = "true";
     try {
         const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -117,9 +117,9 @@ beforeAll(async () => {
     }
 }, 60_000);
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
-    delete process.env.ATLAS_NO_AGENT_CURSOR;
-    delete process.env.ATLAS_NO_SITE_MINT;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_NO_AGENT_CURSOR;
+    delete process.env.BHAI_NO_SITE_MINT;
     await browser?.close();
 });
 
@@ -308,7 +308,7 @@ describe("prompt injection on the synthetic shop", { retry: 2 }, () => {
                         ...center,
                         tag: "button",
                         text: "Place order",
-                        atlasId: "a7",
+                        bhaiId: "a7",
                         handle: page.locator("#checkout"),
                     },
                 ] as never);

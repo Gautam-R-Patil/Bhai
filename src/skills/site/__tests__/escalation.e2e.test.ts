@@ -28,8 +28,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import { SHOP_RESOLVER_ARG, startShop } from "./synthetic-shop.js";
 
-process.env.ATLAS_DATA_DIR = mkdtempSync(path.join(tmpdir(), "bhai-escalation-"));
-process.env.ATLAS_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
+process.env.BHAI_DATA_DIR = mkdtempSync(path.join(tmpdir(), "bhai-escalation-"));
+process.env.BHAI_OVERLAY_PORT = String(20000 + Math.floor(Math.random() * 20000));
 
 const RUNS = Number(process.env.SITE_ESCALATION_RUNS ?? 1);
 const PROMPT = "Enter the code the shop sent to your phone";
@@ -89,19 +89,19 @@ const restart = async () => {
  * order that blocks every new search. Not for the full chain, whose agent holds the first module.
  */
 const clean = async () => {
-    rmSync(path.join(process.env.ATLAS_DATA_DIR as string, "site-tasks"), { recursive: true, force: true });
+    rmSync(path.join(process.env.BHAI_DATA_DIR as string, "site-tasks"), { recursive: true, force: true });
     await restart();
 };
 const call = async (i: Record<string, unknown>): Promise<any> => JSON.parse(await site.handler(i));
 const checkpoint = (taskId: string) =>
-    JSON.parse(readFileSync(path.join(process.env.ATLAS_DATA_DIR as string, "site-tasks", `${taskId}.json`), "utf8"));
+    JSON.parse(readFileSync(path.join(process.env.BHAI_DATA_DIR as string, "site-tasks", `${taskId}.json`), "utf8"));
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let browser: any = null;
 let shop: Awaited<ReturnType<typeof startShop>>;
 beforeAll(async () => {
-    process.env.ATLAS_SPEND_CAP_DAY_INR = "1000000";
-    process.env.ATLAS_NO_AGENT_CURSOR = "true";
+    process.env.BHAI_SPEND_CAP_DAY_INR = "1000000";
+    process.env.BHAI_NO_AGENT_CURSOR = "true";
     try {
         const { chromium } = await import("playwright-core");
         browser = await chromium.launch({ headless: true, args: [SHOP_RESOLVER_ARG] });
@@ -114,8 +114,8 @@ beforeAll(async () => {
     shop = await startShop({ otp: true });
 }, 60_000);
 afterAll(async () => {
-    delete process.env.ATLAS_SPEND_CAP_DAY_INR;
-    delete process.env.ATLAS_NO_AGENT_CURSOR;
+    delete process.env.BHAI_SPEND_CAP_DAY_INR;
+    delete process.env.BHAI_NO_AGENT_CURSOR;
     await shop?.close();
     await browser?.close();
 });
@@ -210,12 +210,12 @@ describe("escalation to the owner", { retry: process.env.SITE_ESCALATION_RUNS ? 
         if (!browser) return ctx.skip();
         // A failed attempt leaves its order parked (commit sent), which refuses every later
         // search: each attempt starts clean in the agent's own site_task, so a retry can pass.
-        rmSync(path.join(process.env.ATLAS_DATA_DIR as string, "site-tasks"), { recursive: true, force: true });
+        rmSync(path.join(process.env.BHAI_DATA_DIR as string, "site-tasks"), { recursive: true, force: true });
         agentSite._resetSiteTask();
         const chat = await import("../../../overlay/overlay-chat.js");
         chat.initOverlayChat(fakeLLM as never);
         const ws = new WebSocket(
-            `ws://127.0.0.1:${process.env.ATLAS_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`,
+            `ws://127.0.0.1:${process.env.BHAI_OVERLAY_PORT}/?localToken=${chat.getOverlayLocalToken()}`,
         );
         const frames: Array<{ m: { type: string; text?: string; turn?: string }; at: number }> = [];
         ws.on("message", (d) => frames.push({ m: JSON.parse(String(d)), at: performance.now() }));

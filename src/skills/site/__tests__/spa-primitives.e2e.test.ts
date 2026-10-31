@@ -98,7 +98,7 @@ describe("SPA primitives on the synthetic shop", { retry: 2 }, () => {
             const t0 = Date.now();
             const s = await runSiteTask({ skillPath, phase: "search", input: { query: "paneer" }, driver: b.driver });
             const ms = Date.now() - t0;
-            delete process.env.ATLAS_SITE_EXPECT_IDLE_MS;
+            delete process.env.BHAI_SITE_EXPECT_IDLE_MS;
             expect([s.status, s.task.lastOutcome, s.options?.map((o) => o.id)]).toEqual([
                 "options",
                 "results",

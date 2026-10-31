@@ -234,7 +234,7 @@ export function looksLikeMidSentence(text: string): boolean {
 // accessibility tree, web_search results, browser_* page dumps) otherwise
 // balloon the next llm.chat input from ~30K to ~400K tokens and make every
 // subsequent turn 5-6s slower.
-const MAX_TOOL_RESULT_CHARS = Number(process.env.ATLAS_VOICE_TOOL_RESULT_MAX) || 2000;
+const MAX_TOOL_RESULT_CHARS = Number(process.env.BHAI_VOICE_TOOL_RESULT_MAX) || 2000;
 
 function truncateToolResult(result: unknown): string {
     const s = typeof result === "string" ? result : JSON.stringify(result ?? {});
