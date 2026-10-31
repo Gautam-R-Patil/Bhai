@@ -507,6 +507,12 @@ export function parseTelegramOwners(config: Config): Set<number> {
     );
 }
 
+/** A turn running alongside another gets a copy of the owner's history: the owner's private turns
+ *  only. Anyone else's gets none, so runAgent gives them their own guest history. */
+export function concurrentHistoryFork(concurrent: boolean, senderIsOwner: boolean) {
+    return concurrent && senderIsOwner ? [...getConversationHistory()] : undefined;
+}
+
 export function isPlatformOwner(channel: "telegram", userId: number, config: Config): boolean {
     if (channel !== "telegram") return false;
     return parseTelegramOwners(config).has(userId);
@@ -1307,16 +1313,16 @@ export function createTelegramBot(config: Config, llm: LLMClient): Bot {
                     }
                 }, STATUS_DELAY_MS);
 
-                const historyFork = shouldFork ? [...getConversationHistory()] : undefined;
+                // Owner powers (tools, memory, history) only in the owner's private chat: in a
+                // group the reply — and whatever a tool or memory put in it — is everyone's.
+                const senderIsOwner =
+                    !!ctx.from?.id && telegramOwners.has(ctx.from.id) && ctx.chat?.type === "private";
+                const historyFork = concurrentHistoryFork(shouldFork, senderIsOwner);
 
                 // Wire progress so sub-agent/research updates flow through our live-status
                 setSwarmProgress(progressCallback);
                 setDeepResearchProgress(progressCallback);
                 setLongTaskProgress(progressCallback);
-                // Owner powers (tools, memory, history) only in the owner's private chat: in a
-                // group the reply — and whatever a tool or memory put in it — is everyone's.
-                const senderIsOwner =
-                    !!ctx.from?.id && telegramOwners.has(ctx.from.id) && ctx.chat?.type === "private";
                 // The answer to "What should I do with it?" (a button or typed) is about that photo:
                 // the model sees it (already remembered, so `capture` keeps it from being added twice).
                 const photo = senderIsOwner
