@@ -860,7 +860,10 @@ const CHANGING_FACT =
     /\b(yet|latest|newest|currently|right now|as of (?:now|today)|nowadays|today'?s|this (?:week|month|year)|news|recent(?:ly)?|release date|price of)\b/i;
 
 /** "Has X happened yet?", "what's the latest on Y?": the answer may have changed since anything in context. */
-export const asksChangingFact = (message: string): boolean => /\?\s*$/.test(message) && CHANGING_FACT.test(message);
+// A question anywhere: "…right now? one line" ends with the ask for brevity, not the "?".
+export const asksChangingFact = (message: string): boolean =>
+    (message.includes("?") || /^\s*(what|which|who|when|where|has|have|is|are|did|does|do|how)\b/i.test(message)) &&
+    CHANGING_FACT.test(message);
 
 export const KEYWORD_BOOSTS: { pattern: RegExp; category: string; minScore: number }[] = [
     // Music / Media
