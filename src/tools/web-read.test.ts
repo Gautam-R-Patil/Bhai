@@ -16,6 +16,14 @@ describe("web_read", () => {
         expect(r.text).toHaveLength(12_000);
     });
 
+    it("a page the fetcher cut at its cap is reported as cut, even at max_chars 50000", async () => {
+        fetchPageContent.mockResolvedValueOnce("x".repeat(50_000));
+        const r = await run({ url: "https://en.wikipedia.org/wiki/Long_article", max_chars: 50_000 });
+        expect(r).toMatchObject({ success: true, truncated: true });
+        expect(r.total_chars).toBeUndefined();
+        expect(r.note).toMatch(/longer than 50000/);
+    });
+
     it("refuses non-http URLs before fetching", async () => {
         fetchPageContent.mockClear();
         expect((await run({ url: "file:///etc/passwd" })).error).toMatch(/http/);

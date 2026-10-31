@@ -9,6 +9,7 @@ import { getLocation } from "../location/index.js";
 import type { ToolDefinition } from "./get-current-time.js";
 import { baseUrlHostMatches } from "../utils/atomic-io.js";
 import { fetchPageContent } from "../research/fetcher.js";
+import { MAX_CONTENT_PER_PAGE } from "../research/profiles.js";
 
 // One log line per engine and failure kind — a silent `return []` hid that
 // Tavily/Exa had no API key, so every search quietly ran on Bing scraping.
@@ -664,6 +665,10 @@ export const webRead: ToolDefinition = {
                 url,
                 error: "Couldn't read that page (not found, blocked, private address, or it needs a real browser). Try browser_navigate.",
             });
+        }
+        // The fetcher already cut the page at MAX_CONTENT_PER_PAGE, so its real length is unknown.
+        if (text.length >= MAX_CONTENT_PER_PAGE) {
+            return JSON.stringify({ success: true, url, text: text.slice(0, max), truncated: true, note: `The page is longer than ${MAX_CONTENT_PER_PAGE} characters; only its first ${MAX_CONTENT_PER_PAGE} can be read here.` });
         }
         return JSON.stringify({ success: true, url, text: text.slice(0, max), ...(text.length > max ? { truncated: true, total_chars: text.length } : {}) });
     },
